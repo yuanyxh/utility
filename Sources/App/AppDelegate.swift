@@ -52,33 +52,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 翻译面板
-        hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                let selected = TranslationPanelController.getSelectedText()
+        let tranOK = hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
+            guard let self = self else { return }
+            let selected = self.translationPanel.getSelectedText()
 
-                if self.translationPanel.isPanelVisible {
-                    if let text = selected {
-                        self.translationPanel.fillAndTranslate(text)
-                    }
-                } else {
-                    self.translationPanel.show(with: selected)
+            if self.translationPanel.isPanelVisible {
+                if let text = selected {
+                    self.translationPanel.fillAndTranslate(text)
                 }
+            } else {
+                self.translationPanel.show(with: selected)
+                // 无选中文本时在面板上提示
+                if selected == nil {
+                    fputs("[tran] ⚠️ 未检测到选中文本（需辅助功能权限）\n", stderr)
+                }
+            }
+        }
+        if !tranOK {
+            fputs("[tran] option+d failed, registering option+t as fallback\n", stderr)
+            hotkeyManager.register(hotkey: "option+t", id: "tran2") { [weak self] in
+                guard let self = self else { return }
+                let selected = self.translationPanel.getSelectedText()
+                self.translationPanel.show(with: selected)
             }
         }
 
         // OCR 翻译
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                Task {
-                    if let text = await OCRService.selectAndRecognize() {
-                        await MainActor.run {
-                            if self.translationPanel.isPanelVisible {
-                                self.translationPanel.fillAndTranslate(text)
-                            } else {
-                                self.translationPanel.show(with: text)
-                            }
+            guard let self = self else { return }
+            Task {
+                if let text = await OCRService.selectAndRecognize() {
+                    await MainActor.run {
+                        if self.translationPanel.isPanelVisible {
+                            self.translationPanel.fillAndTranslate(text)
+                        } else {
+                            self.translationPanel.show(with: text)
                         }
                     }
                 }

@@ -257,6 +257,11 @@ public final class TranslationPanelController: NSWindowController {
     }
 
     private func performTranslation(withText text: String) {
+        // DEBUG
+        try? "performTranslation called at \(Date())\ntext=[\(text)]\nlen=\(text.count)\n".write(
+            toFile: "/tmp/utility_trace.log", atomically: true, encoding: .utf8
+        )
+
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
@@ -379,8 +384,19 @@ public final class TranslationPanelController: NSWindowController {
         NSApplication.shared.hide(nil)
     }
 
-    /// 获取当前活跃 app 的选中文本（通过 Accessibility API）
-    public static func getSelectedText() -> String? {
+    /// 获取当前选中文本（优先 Accessibility API，失败时回退到模拟复制）
+    func getSelectedText() -> String? {
+        // 方法一：Accessibility API（需辅助功能权限）
+        if let text = Self._getSelectedTextAccessibility() {
+            return text
+        }
+
+        // 方法二：模拟 cmd+c → 读粘贴板 → 恢复
+        return Self._getSelectedTextPasteboard()
+    }
+
+    /// Accessibility API 方式
+    private static func _getSelectedTextAccessibility() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let appPID = app.processIdentifier
 
@@ -399,6 +415,40 @@ public final class TranslationPanelController: NSWindowController {
             return text
         }
         return nil
+    }
+
+    /// 模拟复制方式（通用，无需权限）
+    private static func _getSelectedTextPasteboard() -> String? {
+        let pb = NSPasteboard.general
+        let savedChangeCount = pb.changeCount
+
+        // 保存当前粘贴板内容
+        let savedData = pb.data(forType: .string)
+
+        // 模拟 cmd+c
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true) else { return nil }
+        keyDown.flags = .maskCommand
+        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false) else { return nil }
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+
+        // 等粘贴板更新
+        usleep(100_000) // 100ms
+
+        // 读取粘贴板
+        let copiedText = pb.string(forType: .string)
+
+        // 恢复原内容（如果有且改变了才恢复）
+        if pb.changeCount != savedChangeCount {
+            pb.clearContents()
+            if let saved = savedData {
+                pb.setData(saved, forType: .string)
+            }
+        }
+
+        return copiedText
     }
 }
 
