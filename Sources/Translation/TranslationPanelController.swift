@@ -53,25 +53,10 @@ private final class TranslationTextView: NSTextView {
 public final class TranslationPanelController: NSWindowController {
     private let sourceTextView = TranslationTextView()
     private let targetTextView = NSTextView()
+    private let sourceLangPopup = NSPopUpButton()
+    private let targetLangPopup = NSPopUpButton()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
-
-    // 语种选择器
-    private lazy var sourceLangPicker: LanguagePicker = {
-        let picker = LanguagePicker(title: "auto", languages: languages) { [weak self] code, _ in
-            // 语言切换时重新翻译
-            guard let self = self, !self.sourceTextView.string.isEmpty else { return }
-            self.startTranslation(text: self.sourceTextView.string)
-        }
-        return picker
-    }()
-    private lazy var targetLangPicker: LanguagePicker = {
-        let picker = LanguagePicker(title: "zh", languages: languages) { [weak self] code, _ in
-            guard let self = self, !self.sourceTextView.string.isEmpty else { return }
-            self.startTranslation(text: self.sourceTextView.string)
-        }
-        return picker
-    }()
 
     /// 下面板遮罩层
     private let overlay = TargetOverlayView()
@@ -126,11 +111,12 @@ public final class TranslationPanelController: NSWindowController {
         let sourceLabel = NSTextField(labelWithString: "原文")
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
+        sourceLangPopup.target = self
         setupLanguagePopups()
 
         let sourceSpacer = NSView()
         sourceSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let sourceTopRow = NSStackView(views: [sourceLabel, sourceSpacer, sourceLangPicker.button])
+        let sourceTopRow = NSStackView(views: [sourceLabel, sourceSpacer, sourceLangPopup])
         sourceTopRow.orientation = .horizontal
         sourceTopRow.alignment = .firstBaseline
 
@@ -161,9 +147,11 @@ public final class TranslationPanelController: NSWindowController {
         let targetLabel = NSTextField(labelWithString: "译文")
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
+        targetLangPopup.target = self
+
         let targetSpacer = NSView()
         targetSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let targetTopRow = NSStackView(views: [targetLabel, targetSpacer, targetLangPicker.button])
+        let targetTopRow = NSStackView(views: [targetLabel, targetSpacer, targetLangPopup])
         targetTopRow.orientation = .horizontal
         targetTopRow.alignment = .firstBaseline
 
@@ -244,21 +232,22 @@ public final class TranslationPanelController: NSWindowController {
     // MARK: - Languages
 
     private func setupLanguagePopups() {
-        // LanguagePicker 在 init 时已经加载了语言列表
-        // 这里只需要重置选中项
+        for (code, name) in languages {
+            sourceLangPopup.addItem(withTitle: name)
+            sourceLangPopup.lastItem?.representedObject = code
+            targetLangPopup.addItem(withTitle: name)
+            targetLangPopup.lastItem?.representedObject = code
+        }
         resetLanguageSelection()
     }
 
     private func resetLanguageSelection() {
+        sourceLangPopup.selectItem(at: 0) // auto
         let config = ConfigManager.shared.config.translation
-        sourceLangPicker.selectedCode = config.sourceLang
-        targetLangPicker.selectedCode = config.targetLang
-        // 更新按钮标题
-        if let name = languages.first(where: { $0.code == config.sourceLang })?.name {
-            sourceLangPicker.button.title = name
-        }
-        if let name = languages.first(where: { $0.code == config.targetLang })?.name {
-            targetLangPicker.button.title = name
+        if let idx = languages.firstIndex(where: { $0.code == config.targetLang }) {
+            targetLangPopup.selectItem(at: idx)
+        } else {
+            targetLangPopup.selectItem(at: 0) // auto
         }
     }
 
@@ -318,9 +307,11 @@ public final class TranslationPanelController: NSWindowController {
         frame.origin.y = mouse.y - frame.height + 30
         window?.setFrame(frame, display: true)
     }
+
+// MARK: - Show / Close
     /// 回调方式触发翻译
     func startTranslation(text: String) {
-        // 取消旧任务，用序列号防止旧任务的回调干扰
+        // 取消旧任务，序列号防止旧回调干扰
         currentTask?.cancel()
         currentTask = nil
         let seq = translationSeq + 1
@@ -335,23 +326,20 @@ public final class TranslationPanelController: NSWindowController {
 
         targetTextView.string = ""
         overlay.showLoading()
-
-        let sourceCode = sourceLangPicker.selectedCode
-        let targetCode = targetLangPicker.selectedCode
-
+        let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
+        let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
         currentTask = Translator.shared.translate(
             text: text, source: sourceCode, target: targetCode,
             completion: { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    guard seq == self.translationSeq else { return }  // 旧任务回调，忽略
+                    guard seq == self.translationSeq else { return }
                     self.currentTask = nil
                     if let result = result {
                         self.targetTextView.string = result
                         self.overlay.hide()
                         self.targetTextView.scrollToEndOfDocument(nil)
                     } else if let error = error {
-                        // 取消导致的错误不显示
                         if (error as NSError).code == NSURLErrorCancelled { return }
                         self.overlay.showError(error.localizedDescription)
                     }
@@ -401,11 +389,7 @@ public final class TranslationPanelController: NSWindowController {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        
-        // 重置语种列表滚动位置
-        sourceLangPicker.resetScroll()
-        targetLangPicker.resetScroll()
-        
+
         if !pendingText.isEmpty {
             // 延迟设焦点 + 滚动到底部
             let pos = pendingText.utf16.count
