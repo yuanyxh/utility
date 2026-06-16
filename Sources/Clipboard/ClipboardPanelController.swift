@@ -8,6 +8,7 @@ public final class ClipboardPanelController: NSWindowController {
     private let scrollView = NSScrollView()
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
+    private var eventMonitor: Any?
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
@@ -22,9 +23,19 @@ public final class ClipboardPanelController: NSWindowController {
 
         super.init(window: panel)
         setupUI()
+        setupDeactivateObserver()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Setup
 
     private func setupUI() {
         guard let panel = window else { return }
@@ -55,18 +66,30 @@ public final class ClipboardPanelController: NSWindowController {
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .noBorder
+        // 滚动条：overlay 模式 = 自动隐藏 + 细条
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScroller?.controlSize = .small
 
-        // 布局
+        // 布局：顶部留 44px 给原生按钮
         let stack = NSStackView(views: [searchField, scrollView])
         stack.orientation = .vertical
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.edgeInsets = NSEdgeInsets(top: 44, left: 12, bottom: 12, right: 12)
         panel.contentView = stack
 
         // 键盘事件
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
         }
+    }
+
+    /// 失焦自动关闭
+    private func setupDeactivateObserver() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(close),
+            name: NSWindow.didResignKeyNotification, object: window
+        )
     }
 
     // MARK: - Actions

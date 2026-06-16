@@ -1,7 +1,7 @@
 import Cocoa
 
 /// 翻译面板 — 26 语种支持
-/// 上方原文 + 左语言选择，下方译文 + 右语言选择
+/// 上方原文 + 左侧语言选择，下方译文 + 右侧语言选择
 /// enter 翻译，cmd+enter 换行，esc 关闭，ctrl+enter 粘贴译文
 public final class TranslationPanelController: NSWindowController {
     private let sourceTextView = NSTextView()
@@ -11,6 +11,7 @@ public final class TranslationPanelController: NSWindowController {
     private let loadingIndicator = NSProgressIndicator()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
+    private var eventMonitor: Any?
 
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
@@ -25,7 +26,7 @@ public final class TranslationPanelController: NSWindowController {
     ]
 
     public init() {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 340),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
@@ -36,9 +37,19 @@ public final class TranslationPanelController: NSWindowController {
 
         super.init(window: panel)
         setupUI()
+        setupDeactivateObserver()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Setup
 
     private func setupUI() {
         guard let panel = window else { return }
@@ -46,6 +57,7 @@ public final class TranslationPanelController: NSWindowController {
         // ---- 原文区 ----
         let sourceLabel = NSTextField(labelWithString: "原文")
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
+        sourceLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         sourceLangPopup.target = self
         setupLanguagePopups()
@@ -53,6 +65,7 @@ public final class TranslationPanelController: NSWindowController {
         let sourceTopRow = NSStackView(views: [sourceLabel, sourceLangPopup])
         sourceTopRow.orientation = .horizontal
         sourceTopRow.alignment = .firstBaseline
+        sourceTopRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         sourceTextView.isEditable = true
         sourceTextView.isRichText = false
@@ -65,20 +78,26 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
         scrollViewSource.borderType = .noBorder
+        scrollViewSource.scrollerStyle = .overlay
+        scrollViewSource.autohidesScrollers = true
+        scrollViewSource.verticalScroller?.controlSize = .small
 
         let sourceSection = NSStackView(views: [sourceTopRow, scrollViewSource])
         sourceSection.orientation = .vertical
         sourceSection.spacing = 4
+        sourceSection.setHuggingPriority(.defaultLow, for: .horizontal)
 
         // ---- 译文区 ----
         let targetLabel = NSTextField(labelWithString: "译文")
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
+        targetLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         targetLangPopup.target = self
 
         let targetTopRow = NSStackView(views: [targetLabel, targetLangPopup])
         targetTopRow.orientation = .horizontal
         targetTopRow.alignment = .firstBaseline
+        targetTopRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         targetTextView.isEditable = false
         targetTextView.isRichText = false
@@ -91,10 +110,14 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewTarget.documentView = targetTextView
         scrollViewTarget.hasVerticalScroller = true
         scrollViewTarget.borderType = .noBorder
+        scrollViewTarget.scrollerStyle = .overlay
+        scrollViewTarget.autohidesScrollers = true
+        scrollViewTarget.verticalScroller?.controlSize = .small
 
         let targetSection = NSStackView(views: [targetTopRow, scrollViewTarget])
         targetSection.orientation = .vertical
         targetSection.spacing = 4
+        targetSection.setHuggingPriority(.defaultLow, for: .horizontal)
 
         // ---- 加载指示 ----
         loadingIndicator.style = .spinning
@@ -108,7 +131,8 @@ public final class TranslationPanelController: NSWindowController {
         let mainStack = NSStackView(views: [sourceSection, divider, targetSection])
         mainStack.orientation = .vertical
         mainStack.spacing = 10
-        mainStack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        // 顶部 44px 留给原生按钮
+        mainStack.edgeInsets = NSEdgeInsets(top: 44, left: 12, bottom: 12, right: 12)
 
         // 等分高度
         scrollViewSource.heightAnchor.constraint(equalTo: scrollViewTarget.heightAnchor).isActive = true
@@ -121,9 +145,17 @@ public final class TranslationPanelController: NSWindowController {
         loadingIndicator.centerYAnchor.constraint(equalTo: panel.contentView!.centerYAnchor).isActive = true
 
         // 键盘监听
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
         }
+    }
+
+    /// 失焦自动关闭
+    private func setupDeactivateObserver() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(close),
+            name: NSWindow.didResignKeyNotification, object: window
+        )
     }
 
     // MARK: - Languages
@@ -160,9 +192,8 @@ public final class TranslationPanelController: NSWindowController {
                 return nil
             }
             // cmd+enter → 换行（默认行为）
-        case 46: // cmd+enter (M)
-            if event.modifierFlags.contains(.command) &&
-                event.modifierFlags.contains(.shift) {
+        case 46: // m / M
+            if event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.command) {
                 // ctrl+enter — 粘贴译文到原焦点
                 pasteTranslation()
                 close()
@@ -239,7 +270,7 @@ public final class TranslationPanelController: NSWindowController {
 
         let mouse = NSEvent.mouseLocation
         var frame = window?.frame ?? .zero
-        frame.origin.x = mouse.x - 260
+        frame.origin.x = mouse.x - 310
         frame.origin.y = mouse.y - frame.height + 30
         window?.setFrame(frame, display: true)
 

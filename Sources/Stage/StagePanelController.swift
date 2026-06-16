@@ -19,9 +19,21 @@ public final class StagePanelController: NSWindowController {
 
         super.init(window: panel)
         setupUI()
+        setupDeactivateObserver()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func setupDeactivateObserver() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(close),
+            name: NSWindow.didResignKeyNotification, object: window
+        )
+    }
 
     private func setupUI() {
         guard let panel = window else { return }
@@ -41,6 +53,9 @@ public final class StagePanelController: NSWindowController {
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScroller?.controlSize = .small
 
         // 标题
         let titleLabel = NSTextField(labelWithString: "拖拽文件/文本到菜单栏图标即可暂存")
@@ -51,7 +66,7 @@ public final class StagePanelController: NSWindowController {
         let stack = NSStackView(views: [titleLabel, scrollView])
         stack.orientation = .vertical
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.edgeInsets = NSEdgeInsets(top: 44, left: 12, bottom: 12, right: 12)
         panel.contentView = stack
     }
 
