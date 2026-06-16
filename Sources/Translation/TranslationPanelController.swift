@@ -19,7 +19,6 @@ private final class TranslationTextView: NSTextView {
                 // cmd+enter → 翻译进行中时不响应
                 if controller?.isTranslating == true { return true }
                 controller?.pasteTranslation()
-                controller?.close()
                 return true
             }
             if flags == .shift {
@@ -324,17 +323,25 @@ public final class TranslationPanelController: NSWindowController {
         guard !text.isEmpty else { return }
         guard !overlay.isVisible || overlay.mode == .error else { return }
 
+        // 先把译文写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        let source = CGEventSource(stateID: .combinedSessionState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
-        keyDown.flags = .maskCommand
-        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        // 隐藏面板，让原焦点应用回到前台
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
+
+        // 等应用切换后再模拟 cmd+v
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
+            keyDown.flags = .maskCommand
+            guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
 
     // MARK: - Show / Close
