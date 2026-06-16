@@ -223,6 +223,11 @@ public final class TranslationPanelController: NSWindowController {
                 close()
                 return nil
             }
+        case 0: // a — cmd+a 全选（nonactivatingPanel 下菜单不可用）
+            if event.modifierFlags.contains(.command) {
+                sourceTextView.selectAll(nil)
+                return nil
+            }
         default:
             break
         }
@@ -294,6 +299,7 @@ public final class TranslationPanelController: NSWindowController {
         overlay.hide()
         resetLanguageSelection()
         sourceTextView.becomeFirstResponder()
+        sourceTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
         performTranslation()
     }
 
@@ -341,7 +347,12 @@ public final class TranslationPanelController: NSWindowController {
 
         if hasContent {
             sourceTextView.becomeFirstResponder()
-            performTranslation()
+            // 滚动到顶部
+            sourceTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            // 延迟一帧触发翻译，确保 text view 完成内容渲染
+            DispatchQueue.main.async { [weak self] in
+                self?.performTranslation()
+            }
         } else {
             sourceTextView.becomeFirstResponder()
         }
