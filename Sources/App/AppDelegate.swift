@@ -4,6 +4,9 @@ import Carbon
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBar = MenuBarManager()
     private let hotkeyManager = HotkeyManager.shared
+    private let clipboardStorage = ClipboardStorage()
+    private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
+    private lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[Utility] Starting up...")
@@ -22,13 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[Utility] Database setup failed: \(error)")
         }
 
-        // 3. 注册热键
+        // 3. 启动剪切板监视
+        clipboardWatcher.start()
+
+        // 4. 注册热键
         registerAllHotkeys()
 
-        // 4. 安装 Carbon 事件处理器
+        // 5. 安装 Carbon 事件处理器
         installEventHandler()
 
-        // 5. 更新菜单栏显示
+        // 6. 更新菜单栏显示
         menuBar.updateConfigDisplay()
 
         print("[Utility] Ready")
@@ -39,9 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerAllHotkeys() {
         let config = ConfigManager.shared.config
 
-        // 剪切板面板 — 后期由 ClipboardManager 接管
-        hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") {
-            print("[Hotkey] Clipboard panel")
+        // 剪切板面板
+        hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") { [weak self] in
+            self?.clipboardPanel.show()
         }
 
         // 翻译面板
