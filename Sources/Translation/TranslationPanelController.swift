@@ -53,10 +53,25 @@ private final class TranslationTextView: NSTextView {
 public final class TranslationPanelController: NSWindowController {
     private let sourceTextView = TranslationTextView()
     private let targetTextView = NSTextView()
-    private let sourceLangPopup = NSPopUpButton()
-    private let targetLangPopup = NSPopUpButton()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
+
+    // 语种选择器
+    private lazy var sourceLangPicker: LanguagePicker = {
+        let picker = LanguagePicker(title: "auto", languages: languages) { [weak self] code, _ in
+            // 语言切换时重新翻译
+            guard let self = self, !self.sourceTextView.string.isEmpty else { return }
+            self.startTranslation(text: self.sourceTextView.string)
+        }
+        return picker
+    }()
+    private lazy var targetLangPicker: LanguagePicker = {
+        let picker = LanguagePicker(title: "zh", languages: languages) { [weak self] code, _ in
+            guard let self = self, !self.sourceTextView.string.isEmpty else { return }
+            self.startTranslation(text: self.sourceTextView.string)
+        }
+        return picker
+    }()
 
     /// 下面板遮罩层
     private let overlay = TargetOverlayView()
@@ -111,12 +126,11 @@ public final class TranslationPanelController: NSWindowController {
         let sourceLabel = NSTextField(labelWithString: "原文")
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
-        sourceLangPopup.target = self
         setupLanguagePopups()
 
         let sourceSpacer = NSView()
         sourceSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let sourceTopRow = NSStackView(views: [sourceLabel, sourceSpacer, sourceLangPopup])
+        let sourceTopRow = NSStackView(views: [sourceLabel, sourceSpacer, sourceLangPicker.button])
         sourceTopRow.orientation = .horizontal
         sourceTopRow.alignment = .firstBaseline
 
@@ -147,11 +161,9 @@ public final class TranslationPanelController: NSWindowController {
         let targetLabel = NSTextField(labelWithString: "译文")
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
-        targetLangPopup.target = self
-
         let targetSpacer = NSView()
         targetSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let targetTopRow = NSStackView(views: [targetLabel, targetSpacer, targetLangPopup])
+        let targetTopRow = NSStackView(views: [targetLabel, targetSpacer, targetLangPicker.button])
         targetTopRow.orientation = .horizontal
         targetTopRow.alignment = .firstBaseline
 
@@ -232,22 +244,21 @@ public final class TranslationPanelController: NSWindowController {
     // MARK: - Languages
 
     private func setupLanguagePopups() {
-        for (code, name) in languages {
-            sourceLangPopup.addItem(withTitle: name)
-            sourceLangPopup.lastItem?.representedObject = code
-            targetLangPopup.addItem(withTitle: name)
-            targetLangPopup.lastItem?.representedObject = code
-        }
+        // LanguagePicker 在 init 时已经加载了语言列表
+        // 这里只需要重置选中项
         resetLanguageSelection()
     }
 
     private func resetLanguageSelection() {
-        sourceLangPopup.selectItem(at: 0) // auto
         let config = ConfigManager.shared.config.translation
-        if let idx = languages.firstIndex(where: { $0.code == config.targetLang }) {
-            targetLangPopup.selectItem(at: idx)
-        } else {
-            targetLangPopup.selectItem(at: 0) // auto
+        sourceLangPicker.selectedCode = config.sourceLang
+        targetLangPicker.selectedCode = config.targetLang
+        // 更新按钮标题
+        if let name = languages.first(where: { $0.code == config.sourceLang })?.name {
+            sourceLangPicker.button.title = name
+        }
+        if let name = languages.first(where: { $0.code == config.targetLang })?.name {
+            targetLangPicker.button.title = name
         }
     }
 
@@ -325,8 +336,8 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.string = ""
         overlay.showLoading()
 
-        let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
-        let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
+        let sourceCode = sourceLangPicker.selectedCode
+        let targetCode = targetLangPicker.selectedCode
 
         currentTask = Translator.shared.translate(
             text: text, source: sourceCode, target: targetCode,
@@ -390,7 +401,11 @@ public final class TranslationPanelController: NSWindowController {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-
+        
+        // 重置语种列表滚动位置
+        sourceLangPicker.resetScroll()
+        targetLangPicker.resetScroll()
+        
         if !pendingText.isEmpty {
             // 延迟设焦点 + 滚动到底部
             let pos = pendingText.utf16.count
