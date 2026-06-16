@@ -28,7 +28,7 @@ public final class TranslationPanelController: NSWindowController {
     ]
 
     public init() {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
@@ -78,6 +78,7 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
+        sourceTextView.delegate = self
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
@@ -285,15 +286,20 @@ public final class TranslationPanelController: NSWindowController {
         performTranslation()
     }
 
-    public func show(with text: String? = nil) {
-        if let text = text, !text.isEmpty {
-            sourceTextView.string = text
-        } else {
-            sourceTextView.string = ""
-        }
+    /// 重置面板状态
+    private func resetState() {
+        sourceTextView.string = ""
         targetTextView.string = ""
         overlay.hide()
         resetLanguageSelection()
+    }
+
+    public func show(with text: String? = nil) {
+        resetState()
+
+        if let text = text, !text.isEmpty {
+            sourceTextView.string = text
+        }
 
         let mouse = NSEvent.mouseLocation
         var frame = window?.frame ?? .zero
@@ -334,6 +340,18 @@ public final class TranslationPanelController: NSWindowController {
     }
 }
 
+// MARK: - NSTextViewDelegate — Enter 触发翻译，阻止换行
+
+extension TranslationPanelController: NSTextViewDelegate {
+    public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            performTranslation()
+            return true // 阻止换行
+        }
+        return false
+    }
+}
+
 // MARK: - Target Overlay View
 
 extension TranslationPanelController {
@@ -359,7 +377,7 @@ extension TranslationPanelController {
 
         private func setup() {
             wantsLayer = true
-            layer?.backgroundColor = CGColor(red: 0xF5/0xFF, green: 0xF5/0xFF, blue: 0xF5/0xFF, alpha: 0.92)
+            layer?.backgroundColor = CGColor(red: 0xF5/0xFF, green: 0xF5/0xFF, blue: 0xF5/0xFF, alpha: 0.72)
             layer?.cornerRadius = 4
 
             spinner.style = .spinning
@@ -404,10 +422,6 @@ extension TranslationPanelController {
             spinner.stopAnimation(nil)
             messageLabel.stringValue = message
             isHidden = false
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                self?.hide()
-            }
         }
 
         func hide() {
