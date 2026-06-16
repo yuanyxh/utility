@@ -162,6 +162,17 @@ public final class TranslationPanelController: NSWindowController {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event) ?? event
         }
+
+        // 拖动停止时记忆位置
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(savePosition),
+            name: NSWindow.didMoveNotification, object: panel
+        )
+    }
+
+    @objc private func savePosition() {
+        guard let origin = window?.frame.origin else { return }
+        UserDefaults.standard.set(NSStringFromPoint(origin), forKey: "translation_panel_origin")
     }
 
     /// 失焦自动关闭
@@ -286,6 +297,15 @@ public final class TranslationPanelController: NSWindowController {
         performTranslation()
     }
 
+    /// 回退定位：鼠标左下方
+    private func fallbackPosition() {
+        let mouse = NSEvent.mouseLocation
+        var frame = window?.frame ?? .zero
+        frame.origin.x = mouse.x - 310
+        frame.origin.y = mouse.y - frame.height + 30
+        window?.setFrame(frame, display: true)
+    }
+
     /// 重置面板状态
     private func resetState() {
         sourceTextView.string = ""
@@ -297,19 +317,34 @@ public final class TranslationPanelController: NSWindowController {
     public func show(with text: String? = nil) {
         resetState()
 
+        let hasContent: Bool
         if let text = text, !text.isEmpty {
             sourceTextView.string = text
+            hasContent = true
+        } else {
+            hasContent = false
         }
 
-        let mouse = NSEvent.mouseLocation
-        var frame = window?.frame ?? .zero
-        frame.origin.x = mouse.x - 310
-        frame.origin.y = mouse.y - frame.height + 30
-        window?.setFrame(frame, display: true)
-
+        // 定位：记忆位置优先，否则鼠标位置
+        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+            let savedPoint = NSPointFromString(saved)
+            if !NSEqualPoints(savedPoint, .zero) {
+                window?.setFrameOrigin(savedPoint)
+            } else {
+                fallbackPosition()
+            }
+        } else {
+            fallbackPosition()
+        }
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        sourceTextView.becomeFirstResponder()
+
+        if hasContent {
+            sourceTextView.becomeFirstResponder()
+            performTranslation()
+        } else {
+            sourceTextView.becomeFirstResponder()
+        }
     }
 
     public override func close() {
