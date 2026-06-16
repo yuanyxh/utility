@@ -8,10 +8,12 @@ public final class TranslationPanelController: NSWindowController {
     private let targetTextView = NSTextView()
     private let sourceLangPopup = NSPopUpButton()
     private let targetLangPopup = NSPopUpButton()
-    private let loadingIndicator = NSProgressIndicator()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
     private var eventMonitor: Any?
+
+    /// 下面板遮罩层
+    private let overlay = TargetOverlayView()
 
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
@@ -53,19 +55,20 @@ public final class TranslationPanelController: NSWindowController {
 
     private func setupUI() {
         guard let panel = window else { return }
+        let content = panel.contentView!
 
         // ---- 原文区 ----
         let sourceLabel = NSTextField(labelWithString: "原文")
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
-        sourceLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         sourceLangPopup.target = self
         setupLanguagePopups()
 
-        let sourceTopRow = NSStackView(views: [sourceLabel, sourceLangPopup])
+        let sourceSpacer = NSView()
+        sourceSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let sourceTopRow = NSStackView(views: [sourceLabel, sourceSpacer, sourceLangPopup])
         sourceTopRow.orientation = .horizontal
         sourceTopRow.alignment = .firstBaseline
-        sourceTopRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         sourceTextView.isEditable = true
         sourceTextView.isRichText = false
@@ -75,7 +78,6 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
-        sourceTextView.isHorizontallyResizable = false
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
@@ -83,24 +85,24 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewSource.scrollerStyle = .overlay
         scrollViewSource.autohidesScrollers = true
         scrollViewSource.verticalScroller?.controlSize = .small
-        scrollViewSource.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrollViewSource.translatesAutoresizingMaskIntoConstraints = false
 
         let sourceSection = NSStackView(views: [sourceTopRow, scrollViewSource])
         sourceSection.orientation = .vertical
         sourceSection.spacing = 4
-        sourceSection.setHuggingPriority(.defaultLow, for: .horizontal)
+        sourceSection.translatesAutoresizingMaskIntoConstraints = false
 
         // ---- 译文区 ----
         let targetLabel = NSTextField(labelWithString: "译文")
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
-        targetLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         targetLangPopup.target = self
 
-        let targetTopRow = NSStackView(views: [targetLabel, targetLangPopup])
+        let targetSpacer = NSView()
+        targetSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let targetTopRow = NSStackView(views: [targetLabel, targetSpacer, targetLangPopup])
         targetTopRow.orientation = .horizontal
         targetTopRow.alignment = .firstBaseline
-        targetTopRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         targetTextView.isEditable = false
         targetTextView.isRichText = false
@@ -110,7 +112,6 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         targetTextView.layer?.cornerRadius = 4
         targetTextView.textContainerInset = NSSize(width: 6, height: 6)
-        targetTextView.isHorizontallyResizable = false
 
         scrollViewTarget.documentView = targetTextView
         scrollViewTarget.hasVerticalScroller = true
@@ -118,37 +119,53 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewTarget.scrollerStyle = .overlay
         scrollViewTarget.autohidesScrollers = true
         scrollViewTarget.verticalScroller?.controlSize = .small
-        scrollViewTarget.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrollViewTarget.translatesAutoresizingMaskIntoConstraints = false
 
         let targetSection = NSStackView(views: [targetTopRow, scrollViewTarget])
         targetSection.orientation = .vertical
         targetSection.spacing = 4
-        targetSection.setHuggingPriority(.defaultLow, for: .horizontal)
+        targetSection.translatesAutoresizingMaskIntoConstraints = false
 
-        // ---- 加载指示 ----
-        loadingIndicator.style = .spinning
-        loadingIndicator.isDisplayedWhenStopped = false
-        loadingIndicator.controlSize = .small
+        // ---- 遮罩层 ----
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.isHidden = true
 
-        // ---- 分隔线 + 布局 ----
+        // ---- 分隔线 ----
         let divider = NSBox()
         divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
 
-        let mainStack = NSStackView(views: [sourceSection, divider, targetSection])
-        mainStack.orientation = .vertical
-        mainStack.spacing = 10
-        // 顶部 44px 留给原生按钮
-        mainStack.edgeInsets = NSEdgeInsets(top: 44, left: 12, bottom: 12, right: 12)
+        // ---- 布局 ----
+        content.addSubview(sourceSection)
+        content.addSubview(divider)
+        content.addSubview(targetSection)
+        content.addSubview(overlay)
 
-        // 等分高度
-        scrollViewSource.heightAnchor.constraint(equalTo: scrollViewTarget.heightAnchor).isActive = true
-        panel.contentView = mainStack
+        let padding: CGFloat = 12
+        let topPadding: CGFloat = 44
 
-        // 加载指示器覆盖
-        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
-        panel.contentView?.addSubview(loadingIndicator)
-        loadingIndicator.centerXAnchor.constraint(equalTo: panel.contentView!.centerXAnchor).isActive = true
-        loadingIndicator.centerYAnchor.constraint(equalTo: panel.contentView!.centerYAnchor).isActive = true
+        NSLayoutConstraint.activate([
+            sourceSection.topAnchor.constraint(equalTo: content.topAnchor, constant: topPadding),
+            sourceSection.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
+            sourceSection.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
+
+            divider.topAnchor.constraint(equalTo: sourceSection.bottomAnchor, constant: 10),
+            divider.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
+            divider.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
+
+            targetSection.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
+            targetSection.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
+            targetSection.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
+            targetSection.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -padding),
+
+            scrollViewSource.heightAnchor.constraint(equalTo: scrollViewTarget.heightAnchor),
+
+            // 遮罩覆盖下面板 scroll view 区域
+            overlay.topAnchor.constraint(equalTo: scrollViewTarget.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor),
+        ])
 
         // 键盘监听
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -179,7 +196,6 @@ public final class TranslationPanelController: NSWindowController {
     private func resetLanguageSelection() {
         sourceLangPopup.selectItem(at: 0) // auto
         let config = ConfigManager.shared.config.translation
-        // target 也默认 auto
         if let idx = languages.firstIndex(where: { $0.code == config.targetLang }) {
             targetLangPopup.selectItem(at: idx)
         } else {
@@ -196,14 +212,11 @@ public final class TranslationPanelController: NSWindowController {
             return nil
         case 36: // return
             if !event.modifierFlags.contains(.command) {
-                // enter → 触发翻译
                 performTranslation()
                 return nil
             }
-            // cmd+enter → 换行（默认行为）
         case 46: // m / M
             if event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.command) {
-                // ctrl+enter — 粘贴译文到原焦点
                 pasteTranslation()
                 close()
                 return nil
@@ -223,8 +236,9 @@ public final class TranslationPanelController: NSWindowController {
         let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
         let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
 
-        loadingIndicator.startAnimation(nil)
-        targetTextView.string = "翻译中…"
+        // 清空译文 + 显示遮罩加载
+        targetTextView.string = ""
+        overlay.showLoading()
 
         Task {
             do {
@@ -233,12 +247,11 @@ public final class TranslationPanelController: NSWindowController {
                 )
                 await MainActor.run {
                     self.targetTextView.string = result
-                    self.loadingIndicator.stopAnimation(nil)
+                    self.overlay.hide()
                 }
             } catch {
                 await MainActor.run {
-                    self.targetTextView.string = "翻译失败: \(error.localizedDescription)"
-                    self.loadingIndicator.stopAnimation(nil)
+                    self.overlay.showError(error.localizedDescription)
                 }
             }
         }
@@ -248,13 +261,13 @@ public final class TranslationPanelController: NSWindowController {
 
     private func pasteTranslation() {
         let text = targetTextView.string
-        guard !text.isEmpty, text != "翻译中…", !text.hasPrefix("翻译失败") else { return }
+        guard !text.isEmpty else { return }
+        guard !overlay.isVisible || overlay.mode == .error else { return }
 
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // 模拟 cmd+v
         let source = CGEventSource(stateID: .combinedSessionState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
         keyDown.flags = .maskCommand
@@ -266,8 +279,6 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Show / Close
 
-    /// 显示翻译面板
-    /// - Parameter text: 初始填入的文本（选中文本自动传入）
     public func show(with text: String? = nil) {
         if let text = text, !text.isEmpty {
             sourceTextView.string = text
@@ -275,9 +286,9 @@ public final class TranslationPanelController: NSWindowController {
             sourceTextView.string = ""
         }
         targetTextView.string = ""
+        overlay.hide()
         resetLanguageSelection()
 
-        // 定位到鼠标位置
         let mouse = NSEvent.mouseLocation
         var frame = window?.frame ?? .zero
         frame.origin.x = mouse.x - 310
@@ -291,7 +302,6 @@ public final class TranslationPanelController: NSWindowController {
 
     public override func close() {
         window?.orderOut(nil)
-        // 还原焦点
         NSApplication.shared.hide(nil)
     }
 
@@ -315,5 +325,87 @@ public final class TranslationPanelController: NSWindowController {
             return text
         }
         return nil
+    }
+}
+
+// MARK: - Target Overlay View
+
+extension TranslationPanelController {
+    enum OverlayMode {
+        case loading
+        case error
+    }
+
+    /// 下面板遮罩：半透明背景 + 居中内容
+    final class TargetOverlayView: NSView {
+        private let spinner = NSProgressIndicator()
+        private let messageLabel = NSTextField(labelWithString: "")
+
+        private(set) var mode: OverlayMode = .loading
+        var isVisible: Bool { !isHidden }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            setup()
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        private func setup() {
+            wantsLayer = true
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.85).cgColor
+            layer?.cornerRadius = 6
+
+            spinner.style = .spinning
+            spinner.controlSize = .regular
+            spinner.translatesAutoresizingMaskIntoConstraints = false
+            spinner.isDisplayedWhenStopped = false
+
+            messageLabel.font = NSFont.systemFont(ofSize: 14)
+            messageLabel.textColor = NSColor.systemRed
+            messageLabel.alignment = .center
+            messageLabel.lineBreakMode = .byWordWrapping
+            messageLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            addSubview(spinner)
+            addSubview(messageLabel)
+
+            NSLayoutConstraint.activate([
+                spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -16),
+
+                messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+                messageLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 16),
+                messageLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
+                messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
+            ])
+        }
+
+        func showLoading() {
+            mode = .loading
+            messageLabel.stringValue = ""
+            spinner.startAnimation(nil)
+            isHidden = false
+        }
+
+        func showError(_ message: String) {
+            mode = .error
+            spinner.stopAnimation(nil)
+            messageLabel.stringValue = message
+            messageLabel.font = NSFont.systemFont(ofSize: 14)
+            messageLabel.textColor = NSColor.systemRed
+            isHidden = false
+
+            // 3 秒后自动隐藏
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.hide()
+            }
+        }
+
+        func hide() {
+            spinner.stopAnimation(nil)
+            messageLabel.stringValue = ""
+            isHidden = true
+        }
     }
 }
