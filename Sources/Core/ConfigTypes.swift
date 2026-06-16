@@ -35,7 +35,11 @@ public struct TranslationConfig: Codable {
     var hotkey: String = "option+d"
     var hotkeyOCR: String = "option+shift+d"
     var sourceLang: String = "auto"
-    var targetLang: String = "zh"
+    /// 默认目标语言（"auto" = 由 AI 根据第一/第二语言自动判断）
+    var targetLang: String = "auto"
+    /// 第一语言（用户的母语，用于 auto 模式判断翻译方向）
+    var firstLang: String = "zh"
+    /// 第二语言（用户常用的外语）
     var secondLang: String = "en"
 
     /// 自定义翻译提示词，例如 "你是一个专业的技术文档翻译，保留代码和专有名词不翻译"

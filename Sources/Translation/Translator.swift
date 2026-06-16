@@ -12,7 +12,7 @@ public final class Translator {
     /// - Parameters:
     ///   - text: 待翻译文本
     ///   - source: 源语言代码（如 "en", "auto"）
-    ///   - target: 目标语言代码（如 "zh"）
+    ///   - target: 目标语言代码（如 "zh", "auto" — auto 时由 AI 根据第一/第二语言判断）
     /// - Returns: 翻译结果
     public func translate(text: String, source: String = "auto", target: String = "zh") async throws -> String {
         let config = ConfigManager.shared.config
@@ -22,13 +22,32 @@ public final class Translator {
 
         // 构建 system prompt：优先用户自定义，否则用默认模板
         let systemPrompt: String
+        let effectiveTarget: String
         if !config.translation.prompt.isEmpty {
-            systemPrompt = config.translation.prompt
+            // 用户自定义提示词中的变量替换
+            var prompt = config.translation.prompt
                 .replacingOccurrences(of: "{source}", with: source)
-                .replacingOccurrences(of: "{target}", with: target)
+            if target == "auto" {
+                // target 为 auto：用 firstLang/secondLang 说明翻译规则
+                prompt = prompt
+                    .replacingOccurrences(of: "{target}", with: "auto")
+                effectiveTarget = "auto"
+            } else {
+                prompt = prompt.replacingOccurrences(of: "{target}", with: target)
+                effectiveTarget = target
+            }
+            systemPrompt = prompt
         } else {
-            systemPrompt = PromptManager.shared.prompt(for: "translate",
-                variables: ["source": source, "target": target])
+            if target == "auto" {
+                systemPrompt = PromptManager.shared.prompt(for: "translate_auto",
+                    variables: ["first": config.translation.firstLang,
+                                "second": config.translation.secondLang])
+                effectiveTarget = "auto"
+            } else {
+                systemPrompt = PromptManager.shared.prompt(for: "translate",
+                    variables: ["source": source, "target": target])
+                effectiveTarget = target
+            }
         }
 
         let url = URL(string: config.ai.baseURL)!

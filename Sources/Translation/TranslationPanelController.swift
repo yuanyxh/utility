@@ -74,6 +74,8 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.layer?.borderWidth = 0.5
         sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         sourceTextView.layer?.cornerRadius = 4
+        sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
+        sourceTextView.isHorizontallyResizable = false
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
@@ -81,6 +83,7 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewSource.scrollerStyle = .overlay
         scrollViewSource.autohidesScrollers = true
         scrollViewSource.verticalScroller?.controlSize = .small
+        scrollViewSource.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let sourceSection = NSStackView(views: [sourceTopRow, scrollViewSource])
         sourceSection.orientation = .vertical
@@ -106,6 +109,8 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.layer?.borderWidth = 0.5
         targetTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         targetTextView.layer?.cornerRadius = 4
+        targetTextView.textContainerInset = NSSize(width: 6, height: 6)
+        targetTextView.isHorizontallyResizable = false
 
         scrollViewTarget.documentView = targetTextView
         scrollViewTarget.hasVerticalScroller = true
@@ -113,6 +118,7 @@ public final class TranslationPanelController: NSWindowController {
         scrollViewTarget.scrollerStyle = .overlay
         scrollViewTarget.autohidesScrollers = true
         scrollViewTarget.verticalScroller?.controlSize = .small
+        scrollViewTarget.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let targetSection = NSStackView(views: [targetTopRow, scrollViewTarget])
         targetSection.orientation = .vertical
@@ -172,9 +178,12 @@ public final class TranslationPanelController: NSWindowController {
 
     private func resetLanguageSelection() {
         sourceLangPopup.selectItem(at: 0) // auto
-        let targetCode = ConfigManager.shared.config.translation.targetLang
-        if let idx = languages.firstIndex(where: { $0.code == targetCode }) {
+        let config = ConfigManager.shared.config.translation
+        // target 也默认 auto
+        if let idx = languages.firstIndex(where: { $0.code == config.targetLang }) {
             targetLangPopup.selectItem(at: idx)
+        } else {
+            targetLangPopup.selectItem(at: 0) // auto
         }
     }
 
