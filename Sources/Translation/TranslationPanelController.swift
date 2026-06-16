@@ -3,14 +3,60 @@ import Cocoa
 /// 翻译面板 — 26 语种支持
 /// 上方原文 + 左侧语言选择，下方译文 + 右侧语言选择
 /// enter 翻译，cmd+enter 换行，esc 关闭，ctrl+enter 粘贴译文
+/// 自定义面板 — 用 performKeyEquivalent 处理快捷键
+private final class TranslationPanel: NSPanel {
+    weak var controller: TranslationPanelController?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch event.keyCode {
+        case 53: // esc
+            controller?.close()
+            return true
+        case 36: // return / enter
+            if !flags.contains(.command) {
+                controller?.performTranslation()
+                return true
+            }
+            // cmd+enter = 默认换行
+        case 46: // m / M
+            if flags == .control {
+                controller?.pasteTranslation()
+                controller?.close()
+                return true
+            }
+        default:
+            break
+        }
+        // 标准 cmd+编辑快捷键（cmd+c/x/v/a/z 等）交给 NSTextView 的 keyDown:
+        return false
+    }
+}
+
+/// 自定义 NSTextView：Enter 触发翻译，阻止换行
+private final class TranslationTextView: NSTextView {
+    weak var controller: TranslationPanelController?
+
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 36, !flags.contains(.command) {
+            // 纯 Enter → 翻译
+            controller?.performTranslation()
+            return
+        }
+        // cmd+enter → 换行；其他键正常处理
+        super.keyDown(with: event)
+    }
+}
+
 public final class TranslationPanelController: NSWindowController {
-    private let sourceTextView = NSTextView()
+    private let sourceTextView = TranslationTextView()
     private let targetTextView = NSTextView()
     private let sourceLangPopup = NSPopUpButton()
     private let targetLangPopup = NSPopUpButton()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
-    private var eventMonitor: Any?
 
     /// 下面板遮罩层
     private let overlay = TargetOverlayView()
@@ -28,9 +74,9 @@ public final class TranslationPanelController: NSWindowController {
     ]
 
     public init() {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
-                             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
-                             backing: .buffered, defer: false)
+        let panel = TranslationPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
+                                     styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
+                                     backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -38,6 +84,8 @@ public final class TranslationPanelController: NSWindowController {
         panel.isMovableByWindowBackground = true
 
         super.init(window: panel)
+        panel.controller = self
+        sourceTextView.controller = self
         setupUI()
         setupDeactivateObserver()
     }
@@ -45,9 +93,6 @@ public final class TranslationPanelController: NSWindowController {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -78,7 +123,6 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
         sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
-        sourceTextView.delegate = self
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
@@ -158,11 +202,6 @@ public final class TranslationPanelController: NSWindowController {
             overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor, constant: -1),
         ])
 
-        // 键盘监听
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event) ?? event
-        }
-
         // 拖动停止时记忆位置
         NotificationCenter.default.addObserver(
             self, selector: #selector(savePosition),
@@ -207,36 +246,9 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Key Events
 
-    private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
-        switch event.keyCode {
-        case 53: // esc — 关闭
-            close()
-            return nil
-        case 36: // return
-            if !event.modifierFlags.contains(.command) {
-                performTranslation()
-                return nil
-            }
-        case 46: // m / M
-            if event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.command) {
-                pasteTranslation()
-                close()
-                return nil
-            }
-        case 0: // a — cmd+a 全选（nonactivatingPanel 下菜单不可用）
-            if event.modifierFlags.contains(.command) {
-                sourceTextView.selectAll(nil)
-                return nil
-            }
-        default:
-            break
-        }
-        return event
-    }
-
     // MARK: - Translation
 
-    private func performTranslation() {
+    fileprivate func performTranslation() {
         let text = sourceTextView.string
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
@@ -266,7 +278,7 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Paste Translation
 
-    private func pasteTranslation() {
+    fileprivate func pasteTranslation() {
         let text = targetTextView.string
         guard !text.isEmpty else { return }
         guard !overlay.isVisible || overlay.mode == .error else { return }
@@ -383,18 +395,6 @@ public final class TranslationPanelController: NSWindowController {
             return text
         }
         return nil
-    }
-}
-
-// MARK: - NSTextViewDelegate — Enter 触发翻译，阻止换行
-
-extension TranslationPanelController: NSTextViewDelegate {
-    public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            performTranslation()
-            return true // 阻止换行
-        }
-        return false
     }
 }
 
