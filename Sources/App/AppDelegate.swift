@@ -53,30 +53,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 翻译面板
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
-            guard let self = self else { return }
-            let selected = TranslationPanelController.getSelectedText()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let selected = TranslationPanelController.getSelectedText()
 
-            if self.translationPanel.isPanelVisible {
-                // 面板已显示：只填入选文并触发翻译
-                if let text = selected {
-                    self.translationPanel.fillAndTranslate(text)
+                if self.translationPanel.isPanelVisible {
+                    if let text = selected {
+                        self.translationPanel.fillAndTranslate(text)
+                    }
+                } else {
+                    self.translationPanel.show(with: selected)
                 }
-            } else {
-                // 面板未显示：弹出面板（带选中文本）
-                self.translationPanel.show(with: selected)
             }
         }
 
         // OCR 翻译
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
-            guard let self = self else { return }
-            Task {
-                if let text = await OCRService.selectAndRecognize() {
-                    await MainActor.run {
-                        if self.translationPanel.isPanelVisible {
-                            self.translationPanel.fillAndTranslate(text)
-                        } else {
-                            self.translationPanel.show(with: text)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                Task {
+                    if let text = await OCRService.selectAndRecognize() {
+                        await MainActor.run {
+                            if self.translationPanel.isPanelVisible {
+                                self.translationPanel.fillAndTranslate(text)
+                            } else {
+                                self.translationPanel.show(with: text)
+                            }
                         }
                     }
                 }
