@@ -409,15 +409,12 @@ public final class TranslationPanelController: NSWindowController {
         NSApplication.shared.activate(ignoringOtherApps: true)
 
         if !pendingText.isEmpty {
-            // 定时器设置焦点和滚动（避免在 show 内部阻塞）
+            // 延迟设焦点 + 滚动到底部
             let pos = pendingText.utf16.count
-            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
                 self.sourceTextView.becomeFirstResponder()
                 self.sourceTextView.setSelectedRange(NSRange(location: pos, length: 0))
-                // 先确保文本容器完成布局
-                self.sourceTextView.layoutManager?.ensureLayout(for: self.sourceTextView.textContainer!)
-                // 再滚动到末尾
                 self.sourceTextView.scrollToEndOfDocument(nil)
             }
         }
