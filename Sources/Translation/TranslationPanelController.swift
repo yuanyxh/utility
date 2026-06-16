@@ -413,7 +413,8 @@ public final class TranslationPanelController: NSWindowController {
             let pos = pendingText.utf16.count
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                self.sourceTextView.becomeFirstResponder()
+                self.window?.makeKey()
+                self.window?.makeFirstResponder(self.sourceTextView)
                 self.sourceTextView.setSelectedRange(NSRange(location: pos, length: 0))
                 self.sourceTextView.scrollToEndOfDocument(nil)
             }
