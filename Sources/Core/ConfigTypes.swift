@@ -17,6 +17,14 @@ public struct AIConfig: Codable {
     var baseURL: String = "https://api.deepseek.com"
     var apiKey: String = ""
     var model: String = "deepseek-v4-flash"
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? "https://api.deepseek.com"
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? "deepseek-v4-flash"
+    }
 }
 
 // MARK: - Clipboard
@@ -27,6 +35,16 @@ public struct ClipboardConfig: Codable {
     var hotkey: String = "cmd+shift+c"
     var maxItems: Int = 1000
     var pollInterval: Double = 0.3
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        maxDays = try c.decodeIfPresent(Int.self, forKey: .maxDays) ?? 3
+        excludeApps = try c.decodeIfPresent([String].self, forKey: .excludeApps) ?? ["SecurityAgent", "KeychainAccess"]
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "cmd+shift+c"
+        maxItems = try c.decodeIfPresent(Int.self, forKey: .maxItems) ?? 1000
+        pollInterval = try c.decodeIfPresent(Double.self, forKey: .pollInterval) ?? 0.3
+    }
 }
 
 // MARK: - Translation
@@ -35,29 +53,48 @@ public struct TranslationConfig: Codable {
     var hotkey: String = "option+d"
     var hotkeyOCR: String = "option+shift+d"
     var sourceLang: String = "auto"
-    /// 默认目标语言（"auto" = 由 AI 根据第一/第二语言自动判断）
     var targetLang: String = "auto"
-    /// 第一语言（用户的母语，用于 auto 模式判断翻译方向）
     var firstLang: String = "zh"
-    /// 第二语言（用户常用的外语）
     var secondLang: String = "en"
-
-    /// 自定义翻译提示词，例如 "你是一个专业的技术文档翻译，保留代码和专有名词不翻译"
-    /// 支持 {source} 和 {target} 变量替换
     var prompt: String = ""
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+d"
+        hotkeyOCR = try c.decodeIfPresent(String.self, forKey: .hotkeyOCR) ?? "option+shift+d"
+        sourceLang = try c.decodeIfPresent(String.self, forKey: .sourceLang) ?? "auto"
+        targetLang = try c.decodeIfPresent(String.self, forKey: .targetLang) ?? "auto"
+        firstLang = try c.decodeIfPresent(String.self, forKey: .firstLang) ?? "zh"
+        secondLang = try c.decodeIfPresent(String.self, forKey: .secondLang) ?? "en"
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+    }
 }
 
-// MARK: - Stage (Drag & Drop)
+// MARK: - Stage
 
 public struct StageConfig: Codable {
     var storageLimit: Int = 50
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        storageLimit = try c.decodeIfPresent(Int.self, forKey: .storageLimit) ?? 50
+    }
 }
 
 // MARK: - RSS
 
 public struct RSSConfig: Codable {
     var feeds: [RSSFeedConfig] = []
-    var updateInterval: Int = 30  // 分钟
+    var updateInterval: Int = 30
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        feeds = try c.decodeIfPresent([RSSFeedConfig].self, forKey: .feeds) ?? []
+        updateInterval = try c.decodeIfPresent(Int.self, forKey: .updateInterval) ?? 30
+    }
 }
 
 public struct RSSFeedConfig: Codable {
@@ -69,7 +106,11 @@ public struct RSSFeedConfig: Codable {
 // MARK: - Prompt Templates
 
 public struct PromptConfig: Codable {
-    /// 提示词模板字典：键是功能名，值是提示词内容
-    /// 例如 "summarize": "请用中文总结以下内容的要点"
     var templates: [String: String] = [:]
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        templates = try c.decodeIfPresent([String: String].self, forKey: .templates) ?? [:]
+    }
 }
