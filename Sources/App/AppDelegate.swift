@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clipboardStorage = ClipboardStorage()
     private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
     private lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
+    private lazy var translationPanel = TranslationPanelController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[Utility] Starting up...")
@@ -51,13 +52,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 翻译面板
-        hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") {
-            print("[Hotkey] Translation panel")
+        hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
+            let selected = TranslationPanelController.getSelectedText()
+            self?.translationPanel.show(with: selected)
         }
 
         // OCR 翻译
-        hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") {
-            print("[Hotkey] OCR translation")
+        hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
+            Task {
+                if let text = await OCRService.selectAndRecognize() {
+                    await MainActor.run {
+                        self?.translationPanel.show(with: text)
+                    }
+                }
+            }
         }
     }
 
