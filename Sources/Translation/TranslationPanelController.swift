@@ -61,6 +61,9 @@ public final class TranslationPanelController: NSWindowController {
     /// 下面板遮罩层
     private let overlay = TargetOverlayView()
 
+    /// 当前翻译任务（用于取消）
+    private var currentTask: URLSessionTask?
+
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
         ("auto", "自动检测"),
@@ -252,39 +255,7 @@ public final class TranslationPanelController: NSWindowController {
 
     fileprivate func performTranslation() {
         let text = sourceTextView.string
-        performTranslation(withText: text)
-    }
-
-    private func performTranslation(withText text: String) {
-        // DEBUG
-        try? "performTranslation called at \(Date())\ntext=[\(text)]\nlen=\(text.count)\n".write(
-            toFile: "/tmp/utility_trace.log", atomically: true, encoding: .utf8
-        )
-
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
-        let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
-
-        // 清空译文 + 显示遮罩加载
-        targetTextView.string = ""
-        overlay.showLoading()
-
-        Task {
-            do {
-                let result = try await Translator.shared.translate(
-                    text: text, source: sourceCode, target: targetCode
-                )
-                await MainActor.run {
-                    self.targetTextView.string = result
-                    self.overlay.hide()
-                }
-            } catch {
-                await MainActor.run {
-                    self.overlay.showError(error.localizedDescription)
-                }
-            }
-        }
+        startTranslation(text: text)
     }
 
     // MARK: - Paste Translation
@@ -323,7 +294,7 @@ public final class TranslationPanelController: NSWindowController {
         resetLanguageSelection()
         sourceTextView.becomeFirstResponder()
         sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
-        performTranslation(withText: text)
+        startTranslation(text: text)
     }
 
     /// 回退定位：鼠标左下方
@@ -334,26 +305,30 @@ public final class TranslationPanelController: NSWindowController {
         frame.origin.y = mouse.y - frame.height + 30
         window?.setFrame(frame, display: true)
     }
-
-// MARK: - Show / Close
-
     /// 回调方式触发翻译
     func startTranslation(text: String) {
+        cancelTranslation()
+
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {
             overlay.showError("未配置 AI API Key")
             return
         }
+
         targetTextView.string = ""
         overlay.showLoading()
+
         let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
         let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
-        Translator.shared.translate(
+
+        currentTask = Translator.shared.translate(
             text: text, source: sourceCode, target: targetCode,
             completion: { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    if self.currentTask == nil { return }
+                    self.currentTask = nil
                     if let result = result {
                         self.targetTextView.string = result
                         self.overlay.hide()
@@ -422,8 +397,16 @@ public final class TranslationPanelController: NSWindowController {
     }
 
     public override func close() {
+        cancelTranslation()
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
+    }
+
+    /// 取消当前翻译任务
+    func cancelTranslation() {
+        currentTask?.cancel()
+        currentTask = nil
+        overlay.hide()
     }
 
     /// NSScrollView 扩展：滚动到底部

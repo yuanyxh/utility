@@ -9,12 +9,14 @@ public final class Translator {
     private init() {}
 
     /// 回调方式翻译（兼容 Carbon 回调上下文，不依赖 Swift Concurrency）
+    /// - Returns: URLSessionTask（可用于取消）
+    @discardableResult
     public func translate(text: String, source: String = "auto", target: String = "zh",
-                          completion: @escaping (String?, Error?) -> Void) {
+                          completion: @escaping (String?, Error?) -> Void) -> URLSessionTask? {
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {
             completion(nil, TranslationError.missingAPIKey)
-            return
+            return nil
         }
 
         let systemPrompt: String
@@ -41,7 +43,7 @@ public final class Translator {
         guard let url = URL(string: config.ai.baseURL)?
                 .appendingPathComponent("v1/chat/completions") else {
             completion(nil, TranslationError.apiError)
-            return
+            return nil
         }
 
         var request = URLRequest(url: url)
@@ -60,7 +62,7 @@ public final class Translator {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        session.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
             if let error = error {
                 completion(nil, error)
                 return
@@ -71,22 +73,18 @@ public final class Translator {
                 completion(nil, TranslationError.apiError)
                 return
             }
-            struct APIResponse: Codable {
-                let choices: [Choice]
-            }
-            struct Choice: Codable {
-                let message: Message
-            }
-            struct Message: Codable {
-                let content: String
-            }
+            struct APIResponse: Codable { let choices: [Choice] }
+            struct Choice: Codable { let message: Message }
+            struct Message: Codable { let content: String }
             if let apiResp = try? JSONDecoder().decode(APIResponse.self, from: data),
                let content = apiResp.choices.first?.message.content {
                 completion(content, nil)
             } else {
                 completion(nil, TranslationError.apiError)
             }
-        }.resume()
+        }
+        task.resume()
+        return task
     }
 
     /// async/await 版本
