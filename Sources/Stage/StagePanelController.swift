@@ -88,31 +88,12 @@ public final class StagePanelController: NSWindowController {
         items = (try? StageManager.shared.all()) ?? []
         tableView.reloadData()
 
-        // 智能定位
+        // 定位到鼠标位置
         let mouse = NSEvent.mouseLocation
-        guard let screen = window?.screen ?? NSScreen.main else { return }
-        let screenFrame = screen.visibleFrame
-        let panelSize = window?.frame.size ?? NSSize(width: 400, height: 400)
-        let padding: CGFloat = 12
-
-        let candidates: [(x: CGFloat, y: CGFloat)] = [
-            (mouse.x + padding, mouse.y - panelSize.height - padding),
-            (mouse.x - panelSize.width - padding, mouse.y - panelSize.height - padding),
-            (mouse.x + padding, mouse.y + padding),
-            (mouse.x - panelSize.width - padding, mouse.y + padding),
-        ]
-
-        var origin: NSPoint = NSPoint(x: mouse.x + padding, y: mouse.y - panelSize.height - padding)
-        for candidate in candidates {
-            let rect = NSRect(origin: NSPoint(x: candidate.x, y: candidate.y),
-                              size: panelSize)
-            if screenFrame.contains(rect) {
-                origin = NSPoint(x: candidate.x, y: candidate.y)
-                break
-            }
-        }
-
-        window?.setFrameOrigin(origin)
+        var frame = window?.frame ?? .zero
+        frame.origin.x = mouse.x - 200
+        frame.origin.y = mouse.y - frame.height + 30
+        window?.setFrame(frame, display: true)
 
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
