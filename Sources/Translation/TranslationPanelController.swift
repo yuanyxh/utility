@@ -328,25 +328,38 @@ public final class TranslationPanelController: NSWindowController {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // 隐藏面板，让原焦点应用回到前台
+        // 记录目标 app
+        guard let target = NSWorkspace.shared.frontmostApplication else {
+            window?.orderOut(nil)
+            NSApplication.shared.hide(nil)
+            return
+        }
+
+        // 隐藏面板，触发 app 切换
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
 
-        // 监听下一个前台应用激活，完成后模拟 cmd+v
-        var token: NSObjectProtocol?
-        token = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { _ in
-            if let t = token { NSWorkspace.shared.notificationCenter.removeObserver(t) }
-            let source = CGEventSource(stateID: .combinedSessionState)
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
-            keyDown.flags = .maskCommand
-            guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+        // 轮询目标 app 的焦点元素，就绪后发 cmd+v
+        func pollFocus(for app: NSRunningApplication) {
+            let appRef = AXUIElementCreateApplication(app.processIdentifier)
+            var focused: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
+            if result == .success, focused != nil {
+                // 焦点就绪，发 cmd+v
+                let source = CGEventSource(stateID: .combinedSessionState)
+                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+                kd.flags = .maskCommand
+                ku.flags = .maskCommand
+                kd.post(tap: .cghidEventTap)
+                ku.post(tap: .cghidEventTap)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
+                pollFocus(for: app)
+            }
         }
+        pollFocus(for: target)
     }
 
     // MARK: - Show / Close
