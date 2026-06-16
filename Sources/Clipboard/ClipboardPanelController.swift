@@ -12,7 +12,7 @@ public final class ClipboardPanelController: NSWindowController {
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 380),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
@@ -51,7 +51,7 @@ public final class ClipboardPanelController: NSWindowController {
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
         col.title = ""
-        col.minWidth = 380
+        col.minWidth = 320
         col.resizingMask = .autoresizingMask
         tableView.addTableColumn(col)
         tableView.headerView = nil
@@ -179,12 +179,36 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.reloadData()
         searchField.stringValue = ""
 
-        // 定位到鼠标位置
+        // 智能定位：根据鼠标位置选择最佳角落
         let mouse = NSEvent.mouseLocation
-        var frame = window?.frame ?? .zero
-        frame.origin.x = mouse.x - 210
-        frame.origin.y = mouse.y - frame.height + 30
-        window?.setFrame(frame, display: true)
+        guard let screen = window?.screen ?? NSScreen.main else { return }
+        let screenFrame = screen.visibleFrame
+        let panelSize = window?.frame.size ?? NSSize(width: 360, height: 380)
+        let padding: CGFloat = 12
+
+        // 尝试顺序：右下 → 左下 → 右上 → 左上
+        let candidates: [(x: CGFloat, y: CGFloat)] = [
+            // 右下：鼠标右下角
+            (mouse.x + padding, mouse.y - panelSize.height - padding),
+            // 左下：鼠标左下角
+            (mouse.x - panelSize.width - padding, mouse.y - panelSize.height - padding),
+            // 右上：鼠标右上角
+            (mouse.x + padding, mouse.y + padding),
+            // 左上：鼠标左上角
+            (mouse.x - panelSize.width - padding, mouse.y + padding),
+        ]
+
+        var origin: NSPoint = NSPoint(x: mouse.x + padding, y: mouse.y - panelSize.height - padding)
+        for candidate in candidates {
+            let rect = NSRect(origin: NSPoint(x: candidate.x, y: candidate.y),
+                              size: panelSize)
+            if screenFrame.contains(rect) {
+                origin = NSPoint(x: candidate.x, y: candidate.y)
+                break
+            }
+        }
+
+        window?.setFrameOrigin(origin)
 
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
