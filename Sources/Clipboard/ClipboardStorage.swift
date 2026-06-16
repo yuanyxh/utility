@@ -3,11 +3,13 @@ import GRDB
 
 /// 剪切板存储（GRDB）
 public final class ClipboardStorage {
-    private let db: DatabaseQueue
-
-    public init() {
-        self.db = AppDatabase.shared.dbQueue
+    private var db: DatabaseQueue {
+        if let q = AppDatabase.shared.dbQueue { return q }
+        try! AppDatabase.shared.setup()
+        return AppDatabase.shared.dbQueue
     }
+
+    public init() {}
 
     // MARK: - CRUD
 

@@ -5,11 +5,14 @@ import GRDB
 /// 自动接收拖拽到菜单栏的文件/文本
 public final class StageManager {
     public static let shared = StageManager()
-    private let db: DatabaseQueue
-
-    private init() {
-        self.db = AppDatabase.shared.dbQueue
+    private var db: DatabaseQueue {
+        if let q = AppDatabase.shared.dbQueue { return q }
+        // 延迟初始化（可能在 setup() 之前被调用）
+        try! AppDatabase.shared.setup()
+        return AppDatabase.shared.dbQueue
     }
+
+    private init() {}
 
     // MARK: - CRUD
 

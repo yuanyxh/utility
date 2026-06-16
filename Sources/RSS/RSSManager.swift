@@ -5,11 +5,13 @@ import GRDB
 /// Headless 设计，供 CLI 和 Hermes Agent 调用
 public final class RSSManager {
     public static let shared = RSSManager()
-    private let db: DatabaseQueue
-
-    private init() {
-        self.db = AppDatabase.shared.dbQueue
+    private var db: DatabaseQueue {
+        if let q = AppDatabase.shared.dbQueue { return q }
+        try! AppDatabase.shared.setup()
+        return AppDatabase.shared.dbQueue
     }
+
+    private init() {}
 
     /// 抓取所有订阅源，合并新条目到数据库
     @discardableResult

@@ -18,7 +18,7 @@ clipboard:
 
 translation:
   hotkey: "option+d"
-  hotkeyOCR: "option+shift+d"
+  hotkeyOCR: "option+d"
   sourceLang: "auto"
   targetLang: "zh"
   secondLang: "en"
