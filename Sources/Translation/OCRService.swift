@@ -166,25 +166,33 @@ private final class ScreenSelector: NSObject {
 
     private func captureAndReturn(rect: CGRect, screen: NSScreen) {
         log("captureAndReturn")
-        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            log("no displayID"); completion?(nil); cleanup(); OCRService.activeSelector = nil; return
+        // 截图和裁切在后台线程执行，避免卡主线程
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+                DispatchQueue.main.async { self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
+                return
+            }
+            guard let fullImage = CGDisplayCreateImage(displayID) else {
+                DispatchQueue.main.async { self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
+                return
+            }
+            let scale = screen.backingScaleFactor
+            let screenFrame = screen.frame
+            let cropRect = CGRect(
+                x: rect.minX * scale,
+                y: (screenFrame.height - rect.maxY) * scale,
+                width: rect.width * scale,
+                height: rect.height * scale
+            )
+            let cropped = fullImage.cropping(to: cropRect)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.cleanup()
+                self.completion?(cropped)
+                OCRService.activeSelector = nil
+                self.log("captureAndReturn done")
+            }
         }
-        guard let fullImage = CGDisplayCreateImage(displayID) else {
-            log("no fullImage"); completion?(nil); cleanup(); OCRService.activeSelector = nil; return
-        }
-        let scale = screen.backingScaleFactor
-        let screenFrame = screen.frame
-        let cropRect = CGRect(
-            x: rect.minX * scale,
-            y: (screenFrame.height - rect.maxY) * scale,
-            width: rect.width * scale,
-            height: rect.height * scale
-        )
-        let cropped = fullImage.cropping(to: cropRect)
-        cleanup()
-        completion?(cropped)
-        OCRService.activeSelector = nil
-        log("captureAndReturn done")
     }
 
     private func cleanup() {
@@ -257,7 +265,7 @@ private final class SelectionOverlay: NSView {
         rect.fill(using: .destinationAtop)
         NSColor.darkGray.withAlphaComponent(0.9).setStroke()
         let path = NSBezierPath(rect: rect)
-        path.lineWidth = 1
+        path.lineWidth = 0.5
         path.stroke()
         let sizeText = "\(Int(rect.width)) × \(Int(rect.height))"
         let sizeAttrs: [NSAttributedString.Key: Any] = [

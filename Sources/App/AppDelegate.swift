@@ -81,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.translationPanel.fillAndTranslate(text)
                         } else {
                             self.translationPanel.show(with: text)
+                            // OCR 识别完成后自动翻译
+                            Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                                self.translationPanel.startTranslation(text: text)
+                            }
                         }
                     }
                 }
