@@ -121,6 +121,7 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
 
         scrollViewSource.wantsLayer = true
+        scrollViewSource.canDrawSubviewsIntoLayer = true
         scrollViewSource.layer?.borderWidth = 0.5
         scrollViewSource.layer?.borderColor = NSColor.separatorColor.cgColor
         scrollViewSource.layer?.cornerRadius = 4
@@ -155,6 +156,7 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.textContainerInset = NSSize(width: 6, height: 6)
 
         scrollViewTarget.wantsLayer = true
+        scrollViewTarget.canDrawSubviewsIntoLayer = true
         scrollViewTarget.layer?.borderWidth = 0.5
         scrollViewTarget.layer?.borderColor = NSColor.separatorColor.cgColor
         scrollViewTarget.layer?.cornerRadius = 4
@@ -355,7 +357,7 @@ public final class TranslationPanelController: NSWindowController {
                     if let result = result {
                         self.targetTextView.string = result
                         self.overlay.hide()
-                        self.scrollToBottom(self.scrollViewTarget)
+                        self.targetTextView.scrollToEndOfDocument(nil)
                     } else if let error = error {
                         self.overlay.showError(error.localizedDescription)
                     }
@@ -409,11 +411,14 @@ public final class TranslationPanelController: NSWindowController {
         if !pendingText.isEmpty {
             // 定时器设置焦点和滚动（避免在 show 内部阻塞）
             let pos = pendingText.utf16.count
-            Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { [weak self] _ in
+            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
                 self.sourceTextView.becomeFirstResponder()
                 self.sourceTextView.setSelectedRange(NSRange(location: pos, length: 0))
-                self.scrollToBottom(self.scrollViewSource)
+                // 先确保文本容器完成布局
+                self.sourceTextView.layoutManager?.ensureLayout(for: self.sourceTextView.textContainer!)
+                // 再滚动到末尾
+                self.sourceTextView.scrollToEndOfDocument(nil)
             }
         }
     }
@@ -558,6 +563,7 @@ extension TranslationPanelController {
         func showLoading() {
             mode = .loading
             messageLabel.stringValue = ""
+            messageLabel.isHidden = true
             spinner.isHidden = false
             spinner.startAnimation(nil)
             isHidden = false
@@ -568,6 +574,7 @@ extension TranslationPanelController {
             spinner.isHidden = true
             spinner.stopAnimation(nil)
             messageLabel.stringValue = message
+            messageLabel.isHidden = false
             isHidden = false
         }
 
