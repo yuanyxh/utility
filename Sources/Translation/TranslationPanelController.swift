@@ -63,6 +63,8 @@ public final class TranslationPanelController: NSWindowController {
 
     /// 当前翻译任务（用于取消）
     private var currentTask: URLSessionTask?
+    /// 翻译序列号（用于判断任务是否已过期）
+    private var translationSeq: UInt = 0
 
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
@@ -307,7 +309,11 @@ public final class TranslationPanelController: NSWindowController {
     }
     /// 回调方式触发翻译
     func startTranslation(text: String) {
-        cancelTranslation()
+        // 取消旧任务，用序列号防止旧任务的回调干扰
+        currentTask?.cancel()
+        currentTask = nil
+        let seq = translationSeq + 1
+        translationSeq = seq
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let config = ConfigManager.shared.config
@@ -327,13 +333,15 @@ public final class TranslationPanelController: NSWindowController {
             completion: { [weak self] result, error in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    if self.currentTask == nil { return }
+                    guard seq == self.translationSeq else { return }  // 旧任务回调，忽略
                     self.currentTask = nil
                     if let result = result {
                         self.targetTextView.string = result
                         self.overlay.hide()
                         self.targetTextView.scrollToEndOfDocument(nil)
                     } else if let error = error {
+                        // 取消导致的错误不显示
+                        if (error as NSError).code == NSURLErrorCancelled { return }
                         self.overlay.showError(error.localizedDescription)
                     }
                 }
@@ -406,7 +414,6 @@ public final class TranslationPanelController: NSWindowController {
     func cancelTranslation() {
         currentTask?.cancel()
         currentTask = nil
-        overlay.hide()
     }
 
     /// NSScrollView 扩展：滚动到底部
