@@ -4,7 +4,7 @@ import Cocoa
 /// 上方原文 + 左侧语言选择，下方译文 + 右侧语言选择
 /// enter 翻译，cmd+enter 换行，esc 关闭，ctrl+enter 粘贴译文
 /// 自定义面板 — 用 performKeyEquivalent 处理快捷键
-private final class TranslationPanel: NSPanel {
+private final class TranslationTextView: NSTextView {
     weak var controller: TranslationPanelController?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -15,38 +15,74 @@ private final class TranslationPanel: NSPanel {
             controller?.close()
             return true
         case 36: // return / enter
-            if !flags.contains(.command) {
-                controller?.performTranslation()
-                return true
-            }
-            // cmd+enter = 默认换行
-        case 46: // m / M
             if flags == .control {
+                // ctrl+enter → 粘贴译文并关闭
                 controller?.pasteTranslation()
                 controller?.close()
                 return true
             }
+            if !flags.contains(.command) && !flags.contains(.control) {
+                // 纯 Enter → 翻译
+                controller?.performTranslation()
+                return true
+            }
+            // cmd+enter → 换行（交给默认处理）
+            return false
         default:
             break
         }
-        // 标准 cmd+编辑快捷键（cmd+c/x/v/a/z 等）交给 NSTextView 的 keyDown:
+        // cmd+c/x/v/a/z 交给 NSTextView 原生处理
         return false
     }
-}
-
-/// 自定义 NSTextView：Enter 触发翻译，阻止换行
-private final class TranslationTextView: NSTextView {
-    weak var controller: TranslationPanelController?
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if event.keyCode == 36, !flags.contains(.command) {
-            // 纯 Enter → 翻译
+        if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control) {
             controller?.performTranslation()
             return
         }
-        // cmd+enter → 换行；其他键正常处理
         super.keyDown(with: event)
+    }
+}
+
+/// 自定义 NSPanel：拦截 cmd+c/x/v/a/z 等编辑快捷键交给第一响应者
+private final class TranslationPanel: NSPanel {
+    weak var controller: TranslationPanelController?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command {
+            switch event.keyCode {
+            case 8:  // c
+                if let textView = firstResponder as? NSTextView {
+                    textView.copy(nil)
+                    return true
+                }
+            case 7:  // x
+                if let textView = firstResponder as? NSTextView, textView.isEditable {
+                    textView.cut(nil)
+                    return true
+                }
+            case 9:  // v
+                if let textView = firstResponder as? NSTextView, textView.isEditable {
+                    textView.paste(nil)
+                    return true
+                }
+            case 0:  // a
+                if let textView = firstResponder as? NSTextView {
+                    textView.selectAll(nil)
+                    return true
+                }
+            case 6:  // z
+                if let textView = firstResponder as? NSTextView, textView.isEditable {
+                    textView.undoManager?.undo()
+                    return true
+                }
+            default:
+                break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }
 
