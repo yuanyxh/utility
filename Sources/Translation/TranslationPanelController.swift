@@ -373,36 +373,38 @@ extension TranslationPanelController {
             messageLabel.lineBreakMode = .byWordWrapping
             messageLabel.translatesAutoresizingMaskIntoConstraints = false
 
-            addSubview(spinner)
-            addSubview(messageLabel)
+            // 用垂直 stack 包裹 spinner + label，整体居中
+            let stack = NSStackView(views: [spinner, messageLabel])
+            stack.orientation = .vertical
+            stack.spacing = 16
+            stack.alignment = .centerX
+            stack.translatesAutoresizingMaskIntoConstraints = false
+
+            addSubview(stack)
 
             NSLayoutConstraint.activate([
-                spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
-                spinner.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -16),
-
-                messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-                messageLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 16),
-                messageLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
-                messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
+                stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+                stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
             ])
         }
 
         func showLoading() {
             mode = .loading
             messageLabel.stringValue = ""
+            spinner.isHidden = false
             spinner.startAnimation(nil)
             isHidden = false
         }
 
         func showError(_ message: String) {
             mode = .error
+            spinner.isHidden = true
             spinner.stopAnimation(nil)
             messageLabel.stringValue = message
-            messageLabel.font = NSFont.systemFont(ofSize: 14)
-            messageLabel.textColor = NSColor.systemRed
             isHidden = false
 
-            // 3 秒后自动隐藏
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 self?.hide()
             }
@@ -410,6 +412,7 @@ extension TranslationPanelController {
 
         func hide() {
             spinner.stopAnimation(nil)
+            spinner.isHidden = true
             messageLabel.stringValue = ""
             isHidden = true
         }

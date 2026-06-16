@@ -69,10 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // OCR 翻译
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
+            guard let self = self else { return }
             Task {
                 if let text = await OCRService.selectAndRecognize() {
                     await MainActor.run {
-                        self?.translationPanel.show(with: text)
+                        if self.translationPanel.isPanelVisible {
+                            self.translationPanel.fillAndTranslate(text)
+                        } else {
+                            self.translationPanel.show(with: text)
+                        }
                     }
                 }
             }
