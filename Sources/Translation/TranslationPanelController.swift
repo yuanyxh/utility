@@ -15,10 +15,16 @@ private final class TranslationTextView: NSTextView {
             controller?.close()
             return true
         case 36: // return / enter
-            if flags == .control {
-                // ctrl+enter → 粘贴译文并关闭
+            if flags == .command {
+                // cmd+enter → 翻译进行中时不响应
+                if controller?.isTranslating == true { return true }
                 controller?.pasteTranslation()
                 controller?.close()
+                return true
+            }
+            if flags == .shift {
+                // shift+enter → 换行
+                insertNewline(nil)
                 return true
             }
             if !flags.contains(.command) && !flags.contains(.control) {
@@ -26,7 +32,6 @@ private final class TranslationTextView: NSTextView {
                 controller?.performTranslation()
                 return true
             }
-            // cmd+enter → 换行（交给默认处理）
             return false
         default:
             break
@@ -37,7 +42,7 @@ private final class TranslationTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control) {
+        if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
             controller?.performTranslation()
             return
         }
@@ -98,7 +103,9 @@ public final class TranslationPanelController: NSWindowController {
     private let overlay = TargetOverlayView()
 
     /// 当前翻译任务（用于取消）
-    private var currentTask: URLSessionTask?
+    var currentTask: URLSessionTask?
+    /// 是否有正在运行的翻译
+    var isTranslating: Bool { currentTask != nil }
     /// 翻译序列号（用于判断任务是否已过期）
     private var translationSeq: UInt = 0
 
