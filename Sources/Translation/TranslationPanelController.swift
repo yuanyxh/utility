@@ -130,14 +130,8 @@ public final class TranslationPanelController: NSWindowController {
         overlay.translatesAutoresizingMaskIntoConstraints = false
         overlay.isHidden = true
 
-        // ---- 分隔线 ----
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-
         // ---- 布局 ----
         content.addSubview(sourceSection)
-        content.addSubview(divider)
         content.addSubview(targetSection)
         content.addSubview(overlay)
 
@@ -149,22 +143,18 @@ public final class TranslationPanelController: NSWindowController {
             sourceSection.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
             sourceSection.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
 
-            divider.topAnchor.constraint(equalTo: sourceSection.bottomAnchor, constant: 10),
-            divider.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
-            divider.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
-
-            targetSection.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
+            targetSection.topAnchor.constraint(equalTo: sourceSection.bottomAnchor, constant: 14),
             targetSection.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
             targetSection.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
             targetSection.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -padding),
 
             scrollViewSource.heightAnchor.constraint(equalTo: scrollViewTarget.heightAnchor),
 
-            // 遮罩覆盖下面板 scroll view 区域
-            overlay.topAnchor.constraint(equalTo: scrollViewTarget.topAnchor),
-            overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor),
-            overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor),
+            // 遮罩覆盖下面板区域（缩进 1pt 不挡住边框）
+            overlay.topAnchor.constraint(equalTo: scrollViewTarget.topAnchor, constant: 1),
+            overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor, constant: 1),
+            overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor, constant: -1),
+            overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor, constant: -1),
         ])
 
         // 键盘监听
@@ -279,6 +269,22 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Show / Close
 
+    /// 面板是否正在显示
+    var isPanelVisible: Bool {
+        window?.isVisible ?? false
+    }
+
+    /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
+    func fillAndTranslate(_ text: String) {
+        guard !text.isEmpty else { return }
+        sourceTextView.string = text
+        targetTextView.string = ""
+        overlay.hide()
+        resetLanguageSelection()
+        sourceTextView.becomeFirstResponder()
+        performTranslation()
+    }
+
     public func show(with text: String? = nil) {
         if let text = text, !text.isEmpty {
             sourceTextView.string = text
@@ -353,8 +359,8 @@ extension TranslationPanelController {
 
         private func setup() {
             wantsLayer = true
-            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.85).cgColor
-            layer?.cornerRadius = 6
+            layer?.backgroundColor = CGColor(red: 0xF5/0xFF, green: 0xF5/0xFF, blue: 0xF5/0xFF, alpha: 0.92)
+            layer?.cornerRadius = 4
 
             spinner.style = .spinning
             spinner.controlSize = .regular
