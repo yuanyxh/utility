@@ -332,8 +332,13 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
 
-        // 等应用切换后再模拟 cmd+v
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        // 监听下一个前台应用激活，完成后模拟 cmd+v
+        var token: NSObjectProtocol?
+        token = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { _ in
+            if let t = token { NSWorkspace.shared.notificationCenter.removeObserver(t) }
             let source = CGEventSource(stateID: .combinedSessionState)
             guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
             keyDown.flags = .maskCommand
