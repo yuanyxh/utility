@@ -72,7 +72,7 @@ public final class MenuBarManager: NSObject {
         do {
             try ConfigManager.shared.reload()
         } catch {
-            print("[MenuBar] Reload failed: \(error)")
+            Log.debug("[MenuBar] Reload failed: \(error)")
         }
     }
 

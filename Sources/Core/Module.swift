@@ -38,7 +38,7 @@ public final class ModuleRegistry {
 
     public func register(_ module: AppModule) {
         modules[module.name] = module
-        print("[Module] Registered: \(module.name)")
+        Log.debug("[Module] Registered: \(module.name)")
     }
 
     public func setupAll() {
@@ -46,7 +46,7 @@ public final class ModuleRegistry {
             do {
                 try module.setup()
             } catch {
-                print("[Module] Setup failed: \(module.name): \(error)")
+                Log.debug("[Module] Setup failed: \(module.name): \(error)")
             }
         }
     }
@@ -56,7 +56,7 @@ public final class ModuleRegistry {
             do {
                 try module.registerHotkeys(using: .shared)
             } catch {
-                print("[Module] Hotkey registration failed: \(module.name): \(error)")
+                Log.debug("[Module] Hotkey registration failed: \(module.name): \(error)")
             }
         }
     }

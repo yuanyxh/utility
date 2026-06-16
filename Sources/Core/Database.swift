@@ -15,7 +15,7 @@ public final class AppDatabase {
         let dbPath = dir.appendingPathComponent("data.sqlite").path
         dbQueue = try DatabaseQueue(path: dbPath)
         try migrator.migrate(dbQueue)
-        print("[Database] Opened at \(dbPath)")
+        Log.debug("[Database] Opened at \(dbPath)")
     }
 
     // MARK: - Migrations

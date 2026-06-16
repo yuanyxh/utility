@@ -19,7 +19,7 @@ public final class HotkeyManager {
     @discardableResult
     public func register(hotkey: String, id: String, handler: @escaping () -> Void) -> Bool {
         guard let (keyCode, flags) = parse(hotkey: hotkey) else {
-            print("[Hotkey] Failed to parse: \(hotkey)")
+            Log.debug("[Hotkey] Failed to parse: \(hotkey)")
             return false
         }
 
@@ -30,7 +30,7 @@ public final class HotkeyManager {
         let status = RegisterEventHotKey(UInt32(keyCode), flags, hotkeyID,
                                           GetEventDispatcherTarget(), 0, &hotkeyRef)
         guard status == noErr else {
-            print("[Hotkey] RegisterEventHotKey failed: \(status)")
+            Log.debug("[Hotkey] RegisterEventHotKey failed: \(status)")
             return false
         }
 

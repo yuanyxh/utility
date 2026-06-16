@@ -26,7 +26,7 @@ public final class ConfigManager {
         let data = try Data(contentsOf: configFile)
         let decoder = YAMLDecoder()
         config = try decoder.decode(AppConfig.self, from: data)
-        print("[Config] Loaded from \(configFile.path)")
+        Log.debug("[Config] Loaded from \(configFile.path)")
     }
 
     public func reload() throws {
@@ -45,7 +45,7 @@ public final class ConfigManager {
         \(yaml)
         """
         try commented.write(to: configFile, atomically: true, encoding: .utf8)
-        print("[Config] Created default config at \(configFile.path)")
+        Log.debug("[Config] Created default config at \(configFile.path)")
     }
 
     /// 获取某个配置值的字符串表示（用于菜单栏展示）

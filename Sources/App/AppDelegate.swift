@@ -10,20 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var translationPanel = TranslationPanelController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        print("[Utility] Starting up...")
+        Log.debug("[Utility] Starting up...")
 
         // 1. 加载配置
         do {
             try ConfigManager.shared.load()
         } catch {
-            print("[Utility] Config load failed: \(error)")
+            Log.debug("[Utility] Config load failed: \(error)")
         }
 
         // 2. 初始化数据库
         do {
             try AppDatabase.shared.setup()
         } catch {
-            print("[Utility] Database setup failed: \(error)")
+            Log.debug("[Utility] Database setup failed: \(error)")
         }
 
         // 3. 启动剪切板监视
@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 6. 更新菜单栏显示
         menuBar.updateConfigDisplay()
 
-        print("[Utility] Ready")
+        Log.debug("[Utility] Ready")
     }
 
     // MARK: - Hotkeys
@@ -85,6 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        print("[Utility] Shutting down...")
+        Log.debug("[Utility] Shutting down...")
     }
 }
