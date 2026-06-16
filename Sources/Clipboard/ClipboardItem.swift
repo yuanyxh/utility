@@ -15,6 +15,8 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
     /// 文本内容的纯文本副本（用于搜索）
     public var searchText: String?
 
+    public static let databaseTableName = "clipboard_item"
+
     public init(id: String = UUID().uuidString,
                 timestamp: Date = Date(),
                 type: String,

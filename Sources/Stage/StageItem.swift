@@ -10,6 +10,8 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
     /// 文本内容 UTF-8 / 文件 bookmark data
     public var content: Data
 
+    public static let databaseTableName = "stage_item"
+
     public init(id: String = UUID().uuidString,
                 timestamp: Date = Date(),
                 type: String,
