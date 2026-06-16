@@ -118,15 +118,14 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.isEditable = true
         sourceTextView.isRichText = false
         sourceTextView.font = NSFont.systemFont(ofSize: 13)
-        sourceTextView.wantsLayer = true
-        sourceTextView.layer?.borderWidth = 0.5
-        sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
-        sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
-        scrollViewSource.borderType = .noBorder
+        scrollViewSource.wantsLayer = true
+        scrollViewSource.layer?.borderWidth = 0.5
+        scrollViewSource.layer?.borderColor = NSColor.separatorColor.cgColor
+        scrollViewSource.layer?.cornerRadius = 4
         scrollViewSource.scrollerStyle = .overlay
         scrollViewSource.autohidesScrollers = true
         scrollViewSource.verticalScroller?.controlSize = .small
@@ -160,7 +159,10 @@ public final class TranslationPanelController: NSWindowController {
 
         scrollViewTarget.documentView = targetTextView
         scrollViewTarget.hasVerticalScroller = true
-        scrollViewTarget.borderType = .noBorder
+        scrollViewTarget.wantsLayer = true
+        scrollViewTarget.layer?.borderWidth = 0.5
+        scrollViewTarget.layer?.borderColor = NSColor.separatorColor.cgColor
+        scrollViewTarget.layer?.cornerRadius = 4
         scrollViewTarget.scrollerStyle = .overlay
         scrollViewTarget.autohidesScrollers = true
         scrollViewTarget.verticalScroller?.controlSize = .small
@@ -306,12 +308,14 @@ public final class TranslationPanelController: NSWindowController {
     /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
     func fillAndTranslate(_ text: String) {
         guard !text.isEmpty else { return }
-        sourceTextView.string = text
-        targetTextView.string = ""
+        sourceTextView.textStorage?.setAttributedString(
+            NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
+        )
+        targetTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
         overlay.hide()
         resetLanguageSelection()
         sourceTextView.becomeFirstResponder()
-        sourceTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
         performTranslation()
     }
 
@@ -326,8 +330,8 @@ public final class TranslationPanelController: NSWindowController {
 
     /// 重置面板状态
     private func resetState() {
-        sourceTextView.string = ""
-        targetTextView.string = ""
+        sourceTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        targetTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
         overlay.hide()
         resetLanguageSelection()
     }
@@ -337,7 +341,9 @@ public final class TranslationPanelController: NSWindowController {
 
         let hasContent: Bool
         if let text = text, !text.isEmpty {
-            sourceTextView.string = text
+            sourceTextView.textStorage?.setAttributedString(
+                NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
+            )
             hasContent = true
         } else {
             hasContent = false
@@ -359,10 +365,10 @@ public final class TranslationPanelController: NSWindowController {
 
         if hasContent {
             sourceTextView.becomeFirstResponder()
-            // 滚动到顶部
-            sourceTextView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            // 光标移到开头、滚动到顶部
+            sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
             // 延迟一帧触发翻译，确保 text view 完成内容渲染
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.performTranslation()
             }
         } else {
