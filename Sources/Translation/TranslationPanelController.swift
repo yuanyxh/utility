@@ -118,14 +118,15 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.isEditable = true
         sourceTextView.isRichText = false
         sourceTextView.font = NSFont.systemFont(ofSize: 13)
+        sourceTextView.wantsLayer = true
+        sourceTextView.layer?.borderWidth = 0.5
+        sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
+        sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
 
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
-        scrollViewSource.wantsLayer = true
-        scrollViewSource.layer?.borderWidth = 0.5
-        scrollViewSource.layer?.borderColor = NSColor.separatorColor.cgColor
-        scrollViewSource.layer?.cornerRadius = 4
+        scrollViewSource.borderType = .noBorder
         scrollViewSource.scrollerStyle = .overlay
         scrollViewSource.autohidesScrollers = true
         scrollViewSource.verticalScroller?.controlSize = .small
@@ -252,6 +253,10 @@ public final class TranslationPanelController: NSWindowController {
 
     fileprivate func performTranslation() {
         let text = sourceTextView.string
+        performTranslation(withText: text)
+    }
+
+    private func performTranslation(withText text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
@@ -308,15 +313,13 @@ public final class TranslationPanelController: NSWindowController {
     /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
     func fillAndTranslate(_ text: String) {
         guard !text.isEmpty else { return }
-        sourceTextView.textStorage?.setAttributedString(
-            NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
-        )
-        targetTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        sourceTextView.string = text
+        targetTextView.string = ""
         overlay.hide()
         resetLanguageSelection()
         sourceTextView.becomeFirstResponder()
         sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
-        performTranslation()
+        performTranslation(withText: text)
     }
 
     /// 回退定位：鼠标左下方
@@ -330,8 +333,8 @@ public final class TranslationPanelController: NSWindowController {
 
     /// 重置面板状态
     private func resetState() {
-        sourceTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
-        targetTextView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        sourceTextView.string = ""
+        targetTextView.string = ""
         overlay.hide()
         resetLanguageSelection()
     }
@@ -339,14 +342,12 @@ public final class TranslationPanelController: NSWindowController {
     public func show(with text: String? = nil) {
         resetState()
 
-        let hasContent: Bool
+        let pendingText: String
         if let text = text, !text.isEmpty {
-            sourceTextView.textStorage?.setAttributedString(
-                NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
-            )
-            hasContent = true
+            sourceTextView.string = text
+            pendingText = text
         } else {
-            hasContent = false
+            pendingText = ""
         }
 
         // 定位：记忆位置优先，否则鼠标位置
@@ -363,16 +364,15 @@ public final class TranslationPanelController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
 
-        if hasContent {
-            sourceTextView.becomeFirstResponder()
-            // 光标移到开头、滚动到顶部
+        sourceTextView.becomeFirstResponder()
+
+        if !pendingText.isEmpty {
+            // 光标移到开头 → 自动滚动到顶部
             sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
-            // 延迟一帧触发翻译，确保 text view 完成内容渲染
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.performTranslation()
+            // 延迟触发翻译，跑在面板完全显示之后
+            DispatchQueue.main.async { [weak self] in
+                self?.performTranslation(withText: pendingText)
             }
-        } else {
-            sourceTextView.becomeFirstResponder()
         }
     }
 
