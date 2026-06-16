@@ -339,8 +339,11 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
 
-        // 轮询目标 app 的焦点元素，就绪后发 cmd+v
+        // 轮询目标 app 的焦点元素，就绪后发 cmd+v（最多 100 次 ≈ 800ms）
+        var attempts = 0
         func pollFocus(for app: NSRunningApplication) {
+            attempts += 1
+            guard attempts < 100 else { return } // 超时放弃
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
             var focused: CFTypeRef?
             let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
