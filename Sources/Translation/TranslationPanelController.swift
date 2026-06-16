@@ -112,6 +112,7 @@ public final class TranslationPanelController: NSWindowController {
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
         sourceLangPopup.target = self
+        sourceLangPopup.action = #selector(sourceLangChanged)
         setupLanguagePopups()
 
         let sourceSpacer = NSView()
@@ -148,6 +149,7 @@ public final class TranslationPanelController: NSWindowController {
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
         targetLangPopup.target = self
+        targetLangPopup.action = #selector(targetLangChanged)
 
         let targetSpacer = NSView()
         targetSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -249,6 +251,18 @@ public final class TranslationPanelController: NSWindowController {
         } else {
             targetLangPopup.selectItem(at: 0) // auto
         }
+    }
+
+    // MARK: - Language Change
+
+    @objc private func sourceLangChanged(_ sender: Any) {
+        guard !sourceTextView.string.isEmpty else { return }
+        startTranslation(text: sourceTextView.string)
+    }
+
+    @objc private func targetLangChanged(_ sender: Any) {
+        guard !sourceTextView.string.isEmpty else { return }
+        startTranslation(text: sourceTextView.string)
     }
 
     // MARK: - Key Events
