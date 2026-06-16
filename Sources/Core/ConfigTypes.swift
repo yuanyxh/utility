@@ -51,7 +51,7 @@ public struct ClipboardConfig: Codable {
 
 public struct TranslationConfig: Codable {
     var hotkey: String = "option+d"
-    var hotkeyOCR: String = "option+shift+d"
+    var hotkeyOCR: String = "option+s"
     var sourceLang: String = "auto"
     var targetLang: String = "auto"
     var firstLang: String = "zh"
@@ -62,7 +62,7 @@ public struct TranslationConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+d"
-        hotkeyOCR = try c.decodeIfPresent(String.self, forKey: .hotkeyOCR) ?? "option+shift+d"
+        hotkeyOCR = try c.decodeIfPresent(String.self, forKey: .hotkeyOCR) ?? "option+s"
         sourceLang = try c.decodeIfPresent(String.self, forKey: .sourceLang) ?? "auto"
         targetLang = try c.decodeIfPresent(String.self, forKey: .targetLang) ?? "auto"
         firstLang = try c.decodeIfPresent(String.self, forKey: .firstLang) ?? "zh"

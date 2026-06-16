@@ -79,7 +79,7 @@ translation:
   # 弹出翻译面板的快捷键
   hotkey: "option+d"
   # OCR 截图翻译的快捷键
-  hotkeyOCR: "option+shift+d"
+  hotkeyOCR: "option+s"
   # 默认源语言（"auto" = 自动检测）
   sourceLang: "auto"
   # 默认目标语言
@@ -170,7 +170,7 @@ translation:
 |--------|------|--------|
 | `cmd+shift+c` | 弹出剪切板面板 | `clipboard.hotkey` |
 | `option+d` | 弹出翻译面板 | `translation.hotkey` |
-| `option+shift+d` | OCR 区域截图翻译 | `translation.hotkeyOCR` |
+| `option+s` | OCR 区域截图翻译 | `translation.hotkeyOCR` |
 | **拖拽文件/文本到菜单栏** | 自动暂存 | 无快捷键，拖拽即用 |
 
 ### 翻译面板内快捷键
@@ -270,7 +270,7 @@ AI 驱动的文本翻译面板。
 
 截取屏幕任意区域并识别文字，自动进入翻译流程。
 
-1. 按 `option+shift+d`
+1. 按 `option+s`
 2. 屏幕变成半透明遮罩层
 3. **鼠标拖拽框选**要识别的区域
 4. 松开鼠标 → 自动 OCR 识别 → 文字填入翻译面板
