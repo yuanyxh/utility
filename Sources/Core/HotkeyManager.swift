@@ -1,21 +1,14 @@
 import Cocoa
 import Carbon
 
-/// 全局热键管理器
-/// 基于 Carbon EventHotKey，解析 "cmd+shift+c" 格式快捷键字符串
+/// 全局热键管理器（基于 Carbon，正确消耗事件）
 public final class HotkeyManager {
     public static let shared = HotkeyManager()
     private var handlers: [UInt32: () -> Void] = [:]
-    /// 保留 hotkey ref 防止被释放
     private var hotkeyRefs: [UInt32: EventHotKeyRef] = [:]
 
     private init() {}
 
-    /// 注册一个全局热键
-    /// - Parameters:
-    ///   - hotkey: 快捷键字符串，如 "cmd+shift+c"
-    ///   - id: 唯一标识
-    ///   - handler: 触发回调
     @discardableResult
     public func register(hotkey: String, id: String, handler: @escaping () -> Void) -> Bool {
         guard let (keyCode, flags) = parse(hotkey: hotkey) else {
@@ -30,7 +23,7 @@ public final class HotkeyManager {
         let status = RegisterEventHotKey(UInt32(keyCode), flags, hotkeyID,
                                           GetEventDispatcherTarget(), 0, &hotkeyRef)
         guard status == noErr else {
-            fputs("[Hotkey] RegisterEventHotKey \(hotkey) (\(id)) failed: \(status)\n", stderr)
+            fputs("[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)\n", stderr)
             return false
         }
 
@@ -39,7 +32,6 @@ public final class HotkeyManager {
         return true
     }
 
-    /// 由 Carbon 事件回调调用
     public func handleEvent(event: EventRef?) -> Bool {
         var hkID = EventHotKeyID()
         let err = GetEventParameter(event, EventParamName(kEventParamDirectObject),
@@ -53,7 +45,13 @@ public final class HotkeyManager {
         return false
     }
 
-    // MARK: - Parsing
+    private func fourCharCode(from string: String) -> UInt32 {
+        var code: UInt32 = 0
+        for byte in string.utf8.prefix(4) {
+            code = (code << 8) + UInt32(byte)
+        }
+        return code
+    }
 
     private func parse(hotkey: String) -> (keyCode: UInt16, flags: UInt32)? {
         let parts = hotkey.lowercased().split(separator: "+").map(String.init)
@@ -74,17 +72,7 @@ public final class HotkeyManager {
         guard keyCode != 0 else { return nil }
         return (keyCode, flags)
     }
-
-    private func fourCharCode(from string: String) -> UInt32 {
-        var code: UInt32 = 0
-        for byte in string.utf8.prefix(4) {
-            code = (code << 8) + UInt32(byte)
-        }
-        return code
-    }
 }
-
-// MARK: - Key Code Map
 
 private let keyCodeMap: [String: UInt16] = [
     "c": 8, "d": 2, "f": 3, "v": 9, "s": 1, "a": 0,

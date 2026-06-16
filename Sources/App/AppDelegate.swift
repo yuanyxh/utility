@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 翻译面板
-        let tranOK = hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
+        hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
             guard let self = self else { return }
             let selected = self.translationPanel.getSelectedText()
 
@@ -62,18 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else {
                 self.translationPanel.show(with: selected)
-                // 无选中文本时在面板上提示
-                if selected == nil {
-                    fputs("[tran] ⚠️ 未检测到选中文本（需辅助功能权限）\n", stderr)
+                if let text = selected {
+                    let panel = self.translationPanel
+                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                        panel.startTranslation(text: text)
+                    }
                 }
-            }
-        }
-        if !tranOK {
-            fputs("[tran] option+d failed, registering option+t as fallback\n", stderr)
-            hotkeyManager.register(hotkey: "option+t", id: "tran2") { [weak self] in
-                guard let self = self else { return }
-                let selected = self.translationPanel.getSelectedText()
-                self.translationPanel.show(with: selected)
             }
         }
 

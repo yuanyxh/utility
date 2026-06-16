@@ -118,12 +118,12 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.isEditable = true
         sourceTextView.isRichText = false
         sourceTextView.font = NSFont.systemFont(ofSize: 13)
-        sourceTextView.wantsLayer = true
-        sourceTextView.layer?.borderWidth = 0.5
-        sourceTextView.layer?.borderColor = NSColor.separatorColor.cgColor
-        sourceTextView.layer?.cornerRadius = 4
         sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
 
+        scrollViewSource.wantsLayer = true
+        scrollViewSource.layer?.borderWidth = 0.5
+        scrollViewSource.layer?.borderColor = NSColor.separatorColor.cgColor
+        scrollViewSource.layer?.cornerRadius = 4
         scrollViewSource.documentView = sourceTextView
         scrollViewSource.hasVerticalScroller = true
         scrollViewSource.borderType = .noBorder
@@ -152,18 +152,15 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.isEditable = false
         targetTextView.isRichText = false
         targetTextView.font = NSFont.systemFont(ofSize: 13)
-        targetTextView.wantsLayer = true
-        targetTextView.layer?.borderWidth = 0.5
-        targetTextView.layer?.borderColor = NSColor.separatorColor.cgColor
-        targetTextView.layer?.cornerRadius = 4
         targetTextView.textContainerInset = NSSize(width: 6, height: 6)
 
-        scrollViewTarget.documentView = targetTextView
-        scrollViewTarget.hasVerticalScroller = true
         scrollViewTarget.wantsLayer = true
         scrollViewTarget.layer?.borderWidth = 0.5
         scrollViewTarget.layer?.borderColor = NSColor.separatorColor.cgColor
         scrollViewTarget.layer?.cornerRadius = 4
+        scrollViewTarget.documentView = targetTextView
+        scrollViewTarget.hasVerticalScroller = true
+        scrollViewTarget.borderType = .noBorder
         scrollViewTarget.scrollerStyle = .overlay
         scrollViewTarget.autohidesScrollers = true
         scrollViewTarget.verticalScroller?.controlSize = .small
@@ -200,8 +197,8 @@ public final class TranslationPanelController: NSWindowController {
 
             // 遮罩覆盖下面板区域（缩进 1pt 不挡住边框）
             overlay.topAnchor.constraint(equalTo: scrollViewTarget.topAnchor, constant: 1),
-            overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor, constant: 1),
-            overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor, constant: -1),
+            overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor),
             overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor, constant: -1),
         ])
 
@@ -336,6 +333,46 @@ public final class TranslationPanelController: NSWindowController {
         window?.setFrame(frame, display: true)
     }
 
+// MARK: - Show / Close
+
+    /// 回调方式触发翻译
+    func startTranslation(text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let config = ConfigManager.shared.config
+        guard !config.ai.apiKey.isEmpty else {
+            overlay.showError("未配置 AI API Key")
+            return
+        }
+        targetTextView.string = ""
+        overlay.showLoading()
+        let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
+        let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
+        Translator.shared.translate(
+            text: text, source: sourceCode, target: targetCode,
+            completion: { [weak self] result, error in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if let result = result {
+                        self.targetTextView.string = result
+                        self.overlay.hide()
+                        self.scrollToBottom(self.scrollViewTarget)
+                    } else if let error = error {
+                        self.overlay.showError(error.localizedDescription)
+                    }
+                }
+            }
+        )
+    }
+
+    func showTranslationResult(_ result: String) {
+        targetTextView.string = result
+        overlay.hide()
+    }
+
+    func showTranslationError(_ message: String) {
+        overlay.showError(message)
+    }
+
     /// 重置面板状态
     private func resetState() {
         sourceTextView.string = ""
@@ -369,19 +406,29 @@ public final class TranslationPanelController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
 
-        sourceTextView.becomeFirstResponder()
-
         if !pendingText.isEmpty {
-            // 光标移到开头 → 自动滚动到顶部
-            sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
-            // 直接触发翻译
-            performTranslation(withText: pendingText)
+            // 定时器设置焦点和滚动（避免在 show 内部阻塞）
+            let pos = pendingText.utf16.count
+            Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                self.sourceTextView.becomeFirstResponder()
+                self.sourceTextView.setSelectedRange(NSRange(location: pos, length: 0))
+                self.scrollToBottom(self.scrollViewSource)
+            }
         }
     }
 
     public override func close() {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
+    }
+
+    /// NSScrollView 扩展：滚动到底部
+    private func scrollToBottom(_ scrollView: NSScrollView) {
+        guard let docView = scrollView.documentView else { return }
+        let maxY = max(docView.bounds.height - scrollView.contentSize.height, 0)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     /// 获取当前选中文本（优先 Accessibility API，失败时回退到模拟复制）

@@ -8,12 +8,88 @@ public final class Translator {
 
     private init() {}
 
-    /// 翻译文本
-    /// - Parameters:
-    ///   - text: 待翻译文本
-    ///   - source: 源语言代码（如 "en", "auto"）
-    ///   - target: 目标语言代码（如 "zh", "auto" — auto 时由 AI 根据第一/第二语言判断）
-    /// - Returns: 翻译结果
+    /// 回调方式翻译（兼容 Carbon 回调上下文，不依赖 Swift Concurrency）
+    public func translate(text: String, source: String = "auto", target: String = "zh",
+                          completion: @escaping (String?, Error?) -> Void) {
+        let config = ConfigManager.shared.config
+        guard !config.ai.apiKey.isEmpty else {
+            completion(nil, TranslationError.missingAPIKey)
+            return
+        }
+
+        let systemPrompt: String
+        if !config.translation.prompt.isEmpty {
+            var prompt = config.translation.prompt
+                .replacingOccurrences(of: "{source}", with: source)
+            if target == "auto" {
+                prompt = prompt.replacingOccurrences(of: "{target}", with: "auto")
+            } else {
+                prompt = prompt.replacingOccurrences(of: "{target}", with: target)
+            }
+            systemPrompt = prompt
+        } else {
+            if target == "auto" {
+                systemPrompt = PromptManager.shared.prompt(for: "translate_auto",
+                    variables: ["first": config.translation.firstLang,
+                                "second": config.translation.secondLang])
+            } else {
+                systemPrompt = PromptManager.shared.prompt(for: "translate",
+                    variables: ["source": source, "target": target])
+            }
+        }
+
+        guard let url = URL(string: config.ai.baseURL)?
+                .appendingPathComponent("v1/chat/completions") else {
+            completion(nil, TranslationError.apiError)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(config.ai.apiKey)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any] = [
+            "model": config.ai.model,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": text]
+            ],
+            "stream": false,
+            "temperature": 0.1
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        session.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            guard let data = data,
+                  let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                completion(nil, TranslationError.apiError)
+                return
+            }
+            struct APIResponse: Codable {
+                let choices: [Choice]
+            }
+            struct Choice: Codable {
+                let message: Message
+            }
+            struct Message: Codable {
+                let content: String
+            }
+            if let apiResp = try? JSONDecoder().decode(APIResponse.self, from: data),
+               let content = apiResp.choices.first?.message.content {
+                completion(content, nil)
+            } else {
+                completion(nil, TranslationError.apiError)
+            }
+        }.resume()
+    }
+
+    /// async/await 版本
     public func translate(text: String, source: String = "auto", target: String = "zh") async throws -> String {
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {

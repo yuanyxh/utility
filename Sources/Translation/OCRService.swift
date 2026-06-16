@@ -4,8 +4,23 @@ import Vision
 /// OCR 区域截图服务
 /// 用户拖拽框选屏幕区域，esc 取消，识别后返回文本
 public final class OCRService {
-    /// 启动区域选择 + OCR 识别
-    /// - Returns: 识别到的文本，用户取消则返回 nil
+    /// 启动区域选择 + OCR 识别（回调方式，兼容 Carbon 上下文）
+    public static func selectAndRecognize(completion: @escaping (String?) -> Void) {
+        DispatchQueue.main.async {
+            let selector = ScreenSelector()
+            selector.startCapture { image in
+                guard let image = image else {
+                    completion(nil)
+                    return
+                }
+                recognizeText(in: image) { text in
+                    completion(text)
+                }
+            }
+        }
+    }
+
+    /// async/await 版本
     public static func selectAndRecognize() async -> String? {
         return await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
@@ -25,6 +40,30 @@ public final class OCRService {
     }
 
     /// 对 CGImage 进行 OCR 文字识别
+    private static func recognizeText(in cgImage: CGImage, completion: @escaping (String) -> Void) {
+        let request = VNRecognizeTextRequest { request, error in
+            guard error == nil else {
+                completion("")
+                return
+            }
+            let results = request.results as? [VNRecognizedTextObservation] ?? []
+            let text = results
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: "\n")
+            completion(text)
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["zh-Hans", "en-US"]
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            completion("")
+        }
+    }
+
     private static func recognizeText(in cgImage: CGImage) async -> String {
         return await withCheckedContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
