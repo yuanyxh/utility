@@ -16,9 +16,9 @@ private final class TranslationTextView: NSTextView {
             return true
         case 36: // return / enter
             if flags == .command {
-                // cmd+enter → 翻译进行中时不响应
+                // cmd+enter → 翻译
                 if controller?.isTranslating == true { return true }
-                controller?.pasteTranslation()
+                controller?.performTranslation()
                 return true
             }
             if flags == .shift {
@@ -27,8 +27,9 @@ private final class TranslationTextView: NSTextView {
                 return true
             }
             if !flags.contains(.command) && !flags.contains(.control) {
-                // 纯 Enter → 翻译
-                controller?.performTranslation()
+                // 纯 Enter → 粘贴并关闭
+                controller?.pasteTranslation()
+                controller?.close()
                 return true
             }
             return false
@@ -42,7 +43,8 @@ private final class TranslationTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
-            controller?.performTranslation()
+            controller?.pasteTranslation()
+            controller?.close()
             return
         }
         super.keyDown(with: event)
