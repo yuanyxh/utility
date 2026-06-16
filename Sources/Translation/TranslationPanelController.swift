@@ -369,10 +369,8 @@ public final class TranslationPanelController: NSWindowController {
         if !pendingText.isEmpty {
             // 光标移到开头 → 自动滚动到顶部
             sourceTextView.setSelectedRange(NSRange(location: 0, length: 0))
-            // 延迟触发翻译，跑在面板完全显示之后
-            DispatchQueue.main.async { [weak self] in
-                self?.performTranslation(withText: pendingText)
-            }
+            // 直接触发翻译
+            performTranslation(withText: pendingText)
         }
     }
 
