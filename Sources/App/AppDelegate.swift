@@ -57,18 +57,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 翻译面板
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
             guard let self = self else { return }
-            let selected = self.translationPanel.getSelectedText()
 
             if self.translationPanel.isPanelVisible {
+                // 已显示 → 直接填入并翻译
+                let selected = self.translationPanel.getSelectedText()
                 if let text = selected {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
-                self.translationPanel.show(with: selected)
-                if let text = selected {
-                    let panel = self.translationPanel
-                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                        panel.startTranslation(text: text)
+                // 先显示面板（快），再异步获取选中文本
+                self.translationPanel.show(with: "读取选中文本…")
+                DispatchQueue.main.async {
+                    let selected = self.translationPanel.getSelectedText()
+                    if let text = selected, !text.isEmpty {
+                        self.translationPanel.fillAndTranslate(text)
+                        Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                            self.translationPanel.startTranslation(text: text)
+                        }
+                    } else {
+                        self.translationPanel.sourceTextView.string = ""
                     }
                 }
             }
