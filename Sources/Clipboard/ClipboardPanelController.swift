@@ -99,9 +99,10 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            close()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            return
         }
+        close()
     }
 
     // MARK: - Actions

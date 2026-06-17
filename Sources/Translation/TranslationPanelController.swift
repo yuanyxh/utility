@@ -280,10 +280,10 @@ public final class TranslationPanelController: NSWindowController {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
-        // 切到外部 app 才关闭，在本 app 内切换面板保持
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            close()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            return
         }
+        close()
     }
 
     // MARK: - Languages
