@@ -231,9 +231,10 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil }
-        guard operation != [] else { return }  // 无有效目标，保留
+        guard operation != [] else { return }
         guard let id = draggingItemId else { return }
         try? StageManager.shared.remove(id)
         reload()
+        if items.isEmpty { close() }
     }
 }
