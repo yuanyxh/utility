@@ -109,6 +109,8 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     private func paste(item: ClipboardItem) {
+        NSLog("[utility] clipboard paste: type=\(item.type) id=\(item.id)")
+
         // 先把内容写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -169,28 +171,36 @@ public final class ClipboardPanelController: NSWindowController {
             return
         }
 
+        NSLog("[utility] clipboard paste: pasteboard written")
+
         // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
+            NSLog("[utility] clipboard paste: no target app")
             window?.orderOut(nil)
             NSApplication.shared.hide(nil)
             return
         }
+        NSLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
+        NSLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
 
         // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
         var didPaste = false
         let pasteNow = {
             guard !didPaste else { return }
             didPaste = true
+            NSLog("[utility] clipboard pasteNow FIRED")
             // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                NSLog("[utility] clipboard pasteNow: sending cmd+v via System Events")
                 // 用 System Events 发送 cmd+v（对 Chrome 网页内容也有效）
                 let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
                 var error: NSDictionary?
                 script?.executeAndReturnError(&error)
                 if let err = error {
+                    NSLog("[utility] clipboard pasteNow: System Events failed: \(err)")
                     // 降级到 CGEventPost（对原生 UI 依然有效）
                     let source = CGEventSource(stateID: .combinedSessionState)
                     if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -199,7 +209,10 @@ public final class ClipboardPanelController: NSWindowController {
                         ku.flags = .maskCommand
                         kd.post(tap: .cghidEventTap)
                         ku.post(tap: .cghidEventTap)
+                        NSLog("[utility] clipboard pasteNow: CGEventPost fallback sent")
                     }
+                } else {
+                    NSLog("[utility] clipboard pasteNow: System Events cmd+v sent OK")
                 }
             }
         }
@@ -210,9 +223,17 @@ public final class ClipboardPanelController: NSWindowController {
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.processIdentifier == target.processIdentifier else { return }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                NSLog("[utility] clipboard didActivate: no app")
+                return
+            }
+            NSLog("[utility] clipboard didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
+            guard app.processIdentifier == target.processIdentifier else {
+                NSLog("[utility] clipboard didActivate: PID mismatch, skipping")
+                return
+            }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+            NSLog("[utility] clipboard didActivate: MATCH, pasting...")
             pasteNow()
         }
 
@@ -221,8 +242,8 @@ public final class ClipboardPanelController: NSWindowController {
         func pollFocus(for app: NSRunningApplication) {
             attempts += 1
             guard attempts < 150 else {
-                // AX 超时，清理通知观察者
                 if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+                NSLog("[utility] clipboard AX poll: timeout after 150 attempts")
                 return
             }
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
@@ -230,6 +251,7 @@ public final class ClipboardPanelController: NSWindowController {
             let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
             if result == .success, focused != nil {
                 if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+                NSLog("[utility] clipboard AX poll: focus at attempt \(attempts), pasting...")
                 pasteNow()
                 return
             }
@@ -237,6 +259,7 @@ public final class ClipboardPanelController: NSWindowController {
                 pollFocus(for: app)
             }
         }
+        NSLog("[utility] clipboard paste: starting AX poll")
         pollFocus(for: target)
     }
 
