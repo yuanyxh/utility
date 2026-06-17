@@ -70,16 +70,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
-                // 在 show() 激活 app 之前获取选中文本（首次打开跳过剪贴板兜底，快速响应）
-                self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-                let selected = self.translationPanel.getSelectedText(skipClipboardFallback: true)
-                if let text = selected, !text.isEmpty {
-                    self.translationPanel.show(with: text)
-                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                        self.translationPanel.startTranslation(text: text)
+                // 立即弹出空面板（不激活），后台逐步获取选中文本
+                self.translationPanel.showEmpty()
+
+                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                    // 1. AX 快速路径
+                    if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
+                        self.translationPanel.fillAndTranslate(text)
+                        self.translationPanel.activateForInput()
+                        return
                     }
-                } else {
-                    self.translationPanel.show(with: nil)
+                    // 2. 剪贴板兜底（源 app 仍在前台，cmd+c 有效）
+                    if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
+                        self.translationPanel.fillAndTranslate(text)
+                        self.translationPanel.activateForInput()
+                        return
+                    }
+                    // 3. 无选中文本 → 激活面板，用户手动输入
+                    self.translationPanel.activateForInput()
                 }
             }
         }

@@ -515,34 +515,52 @@ public final class TranslationPanelController: NSWindowController {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    /// 获取当前选中文本（AX → 剪贴板兜底）
-    func getSelectedText(skipClipboardFallback: Bool = false) -> String? {
-        let app = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication
-        guard let app = app else { return nil }
-        let appPID = app.processIdentifier
-
-        // 1. AX 路径（快速且不污染粘贴板）
-        let appRef = AXUIElementCreateApplication(appPID)
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appRef,
-                                                    kAXFocusedUIElementAttribute as CFString, &value)
-        if result == .success, let focused = value {
-            let focusedElement = focused as! AXUIElement
-            var selectedText: CFTypeRef?
-            let textResult = AXUIElementCopyAttributeValue(
-                focusedElement, kAXSelectedTextAttribute as CFString, &selectedText)
-            if textResult == .success, let text = selectedText as? String, !text.isEmpty {
-                return text
+    /// 空面板弹出（不激活，保留源 app 前台便于后续获取选中文本）
+    func showEmpty() {
+        resetState()
+        previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+        // 定位
+        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+            let savedPoint = NSPointFromString(saved)
+            if !NSEqualPoints(savedPoint, .zero) {
+                window?.setFrameOrigin(savedPoint)
+            } else {
+                fallbackPosition()
             }
+        } else {
+            fallbackPosition()
         }
+        window?.orderFront(nil)
+    }
 
-        if skipClipboardFallback { return nil }
-        // 2. AX 失败 → 剪贴板兜底：模拟 cmd+c
+    /// 激活面板接收键盘输入
+    func activateForInput() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    /// AX 快速获取选中文本（不触发剪贴板兜底）
+    func tryAXSelectedText() -> String? {
+        guard let app = previousFrontmostApp else { return nil }
+        let appRef = AXUIElementCreateApplication(app.processIdentifier)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+              let focused = value else { return nil }
+        let el = focused as! AXUIElement
+        var selectedText: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXSelectedTextAttribute as CFString, &selectedText) == .success,
+              let text = selectedText as? String, !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// AX → 剪贴板兜底（全路径，面板已显示时用）
+    func getSelectedText() -> String? {
+        if let text = tryAXSelectedText() { return text }
         return clipboardFallbackSelectedText()
     }
 
     /// 通过模拟 cmd+c 从粘贴板获取选中文本（不阻塞主线程）
-    private func clipboardFallbackSelectedText() -> String? {
+    func clipboardFallbackSelectedText() -> String? {
         let pb = NSPasteboard.general
 
         // 保存当前粘贴板内容
