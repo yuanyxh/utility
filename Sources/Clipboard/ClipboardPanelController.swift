@@ -114,11 +114,13 @@ public final class ClipboardPanelController: NSWindowController {
         // 先把内容写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
+        var pasteText: String? = nil
 
         switch item.type {
         case "text":
             guard let str = String(data: item.content, encoding: .utf8) else { return }
             pb.setString(str, forType: .string)
+            pasteText = str
         case "file":
             pb.setData(item.content, forType: .fileURL)
         case "image":
@@ -182,8 +184,7 @@ public final class ClipboardPanelController: NSWindowController {
         }
         debugLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // 两路并进：AX 轮询 + didActivate
-        // 注意：didActivate observer 必须在 hide(nil) 之前注册 —— hide 可能同步触发激活通知
+        // Cmd+V 兜底（非文本项如 image/file/batch 使用）
         var didPaste = false
         let pasteNow = {
             guard !didPaste else { return }
@@ -212,7 +213,8 @@ public final class ClipboardPanelController: NSWindowController {
             }
         }
 
-        // 路 1: didActivateApplicationNotification 兜底（必须在 hide 前注册）
+        // didActivate observer（必须在 hide(nil) 之前注册）
+        // 文本项走 AX 注入（网页 <input>/<textarea> 可靠），非文本项走 Cmd+V
         var notifToken: NSObjectProtocol?
         notifToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -228,39 +230,19 @@ public final class ClipboardPanelController: NSWindowController {
                 return
             }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-            debugLog("[utility] clipboard didActivate: MATCH, pasting...")
-            pasteNow()
+            if let t = pasteText {
+                debugLog("[utility] clipboard didActivate: MATCH, AX injecting...")
+                pasteTextWithAXFallback(text: t, to: target, logPrefix: "clipboard")
+            } else {
+                debugLog("[utility] clipboard didActivate: MATCH, pasting...")
+                pasteNow()
+            }
         }
 
         // 隐藏面板（didActivate 通知此时可能同步触发）
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
         debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
-
-        // 路 2: AX 轮询（异步兜底）
-        var attempts = 0
-        func pollFocus(for app: NSRunningApplication) {
-            attempts += 1
-            guard attempts < 150 else {
-                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                debugLog("[utility] clipboard AX poll: timeout after 150 attempts")
-                return
-            }
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            var focused: CFTypeRef?
-            let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
-            if result == .success, focused != nil {
-                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                debugLog("[utility] clipboard AX poll: focus at attempt \(attempts), pasting...")
-                pasteNow()
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
-                pollFocus(for: app)
-            }
-        }
-        debugLog("[utility] clipboard paste: starting AX poll")
-        pollFocus(for: target)
     }
 
     // MARK: - Keyboard

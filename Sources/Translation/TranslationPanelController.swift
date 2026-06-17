@@ -345,39 +345,9 @@ public final class TranslationPanelController: NSWindowController {
         }
         debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
+        // AX 注入：直接写值到目标 app 焦点元素
+        // 对网页 <input>/<textarea> 可靠（无需等 Blink 渲染进程焦点就位，不走按键模拟）
         // 注意：didActivate observer 必须在 hide(nil) 之前注册 —— hide 可能同步触发激活通知
-        var didPaste = false
-        let pasteNow = {
-            guard !didPaste else { return }
-            didPaste = true
-            debugLog("[utility] pasteNow FIRED")
-            // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                debugLog("[utility] pasteNow: sending cmd+v via System Events")
-                // 用 System Events 发送 cmd+v（对 Chrome 网页内容也有效）
-                let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
-                var error: NSDictionary?
-                script?.executeAndReturnError(&error)
-                if let err = error {
-                    debugLog("[utility] pasteNow: System Events failed: \(err)")
-                    // 降级到 CGEventPost（对原生 UI 依然有效）
-                    let source = CGEventSource(stateID: .combinedSessionState)
-                    if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                       let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
-                        kd.flags = .maskCommand
-                        ku.flags = .maskCommand
-                        kd.post(tap: .cghidEventTap)
-                        ku.post(tap: .cghidEventTap)
-                        debugLog("[utility] pasteNow: CGEventPost fallback sent")
-                    }
-                } else {
-                    debugLog("[utility] pasteNow: System Events cmd+v sent OK")
-                }
-            }
-        }
-
-        // 路 1: didActivateApplicationNotification 兜底（必须在 hide 前注册）
         var notifToken: NSObjectProtocol?
         notifToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -393,8 +363,8 @@ public final class TranslationPanelController: NSWindowController {
                 return
             }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-            debugLog("[utility] didActivate: MATCH, pasting...")
-            pasteNow()
+            debugLog("[utility] didActivate: MATCH, AX injecting...")
+            pasteTextWithAXFallback(text: text, to: target, logPrefix: "translation")
         }
 
         // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
@@ -402,31 +372,6 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
         debugLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
-
-        // 路 2: AX 轮询（异步兜底）
-        var attempts = 0
-        func pollFocus(for app: NSRunningApplication) {
-            attempts += 1
-            guard attempts < 150 else {
-                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                debugLog("[utility] AX poll: timeout after 150 attempts")
-                return
-            }
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            var focused: CFTypeRef?
-            let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
-            if result == .success, focused != nil {
-                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                debugLog("[utility] AX poll: focus acquired at attempt \(attempts), pasting...")
-                pasteNow()
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
-                pollFocus(for: app)
-            }
-        }
-        debugLog("[utility] pasteTranslation: starting AX poll")
-        pollFocus(for: target)
     }
 
     // MARK: - Show / Close
