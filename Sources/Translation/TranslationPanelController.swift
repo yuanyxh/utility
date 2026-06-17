@@ -510,26 +510,82 @@ public final class TranslationPanelController: NSWindowController {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    /// 获取当前选中文本（仅 Accessibility API，无选中返回 nil）
+    /// 获取当前选中文本（AX → 剪贴板兜底）
     func getSelectedText() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let appPID = app.processIdentifier
 
+        // 1. AX 路径（快速且不污染粘贴板）
         let appRef = AXUIElementCreateApplication(appPID)
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appRef,
                                                     kAXFocusedUIElementAttribute as CFString, &value)
-        guard result == .success, let focused = value else { return nil }
-
-        let focusedElement = focused as! AXUIElement
-        var selectedText: CFTypeRef?
-        let textResult = AXUIElementCopyAttributeValue(
-            focusedElement, kAXSelectedTextAttribute as CFString, &selectedText)
-
-        if textResult == .success, let text = selectedText as? String, !text.isEmpty {
-            return text
+        if result == .success, let focused = value {
+            let focusedElement = focused as! AXUIElement
+            var selectedText: CFTypeRef?
+            let textResult = AXUIElementCopyAttributeValue(
+                focusedElement, kAXSelectedTextAttribute as CFString, &selectedText)
+            if textResult == .success, let text = selectedText as? String, !text.isEmpty {
+                return text
+            }
         }
-        return nil
+
+        // 2. AX 失败 → 剪贴板兜底：模拟 cmd+c
+        return clipboardFallbackSelectedText()
+    }
+
+    /// 通过模拟 cmd+c 从粘贴板获取选中文本（不阻塞主线程）
+    private func clipboardFallbackSelectedText() -> String? {
+        let pb = NSPasteboard.general
+
+        // 保存当前粘贴板内容
+        let savedItems = pb.pasteboardItems?.flatMap { item -> [(String, Data)] in
+            item.types.compactMap { type -> (String, Data)? in
+                guard let data = item.data(forType: type) else { return nil }
+                return (type.rawValue, data)
+            }
+        } ?? []
+
+        // 清空粘贴板，准备接收 cmd+c 写入
+        pb.clearContents()
+        let postClearCount = pb.changeCount
+
+        // 模拟 cmd+c
+        guard let source = CGEventSource(stateID: .combinedSessionState) else {
+            restoreClipboard(savedItems); return nil
+        }
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false) else {
+            restoreClipboard(savedItems); return nil
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+
+        // 轮询等待 cmd+c 写入（最多 ~500ms，用 run loop 不阻塞主线程）
+        var result: String?
+        for _ in 0..<10 {
+            CFRunLoopRunInMode(.defaultMode, 0.05, false)
+            if pb.changeCount > postClearCount {
+                result = pb.string(forType: .string)
+                break
+            }
+        }
+
+        // 恢复原始粘贴板内容（无论是否获取到）
+        restoreClipboard(savedItems)
+
+        return result
+    }
+
+    /// 恢复粘贴板到指定内容
+    private func restoreClipboard(_ items: [(String, Data)]) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        for (typeRaw, data) in items {
+            pb.setData(data, forType: NSPasteboard.PasteboardType(typeRaw))
+        }
     }
 }
 
