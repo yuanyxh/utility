@@ -85,10 +85,9 @@ public final class StageWindowController: NSWindowController {
         guard let screen = window?.screen ?? NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
         let panelSize = window?.frame.size ?? NSSize(width: 260, height: 400)
-        let x = screenFrame.minX + 8
-        let y = screenFrame.minY + 8
-        window?.setFrame(NSRect(x: x, y: y, width: panelSize.width, height: panelSize.height),
-                         display: true)
+        let x = screenFrame.minX
+        let y = screenFrame.minY
+        window?.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     public func show() {
