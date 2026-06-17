@@ -45,8 +45,9 @@ public final class ClipboardPanelController: NSWindowController {
         searchField.target = self
         searchField.action = #selector(searchChanged)
         searchField.sendsWholeSearchString = false
-        searchField.bezelStyle = .roundedBezel
-        searchField.font = NSFont.systemFont(ofSize: 13)
+        searchField.bezelStyle = .squareBezel
+        searchField.controlSize = .small
+        searchField.font = NSFont.systemFont(ofSize: 12)
 
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
