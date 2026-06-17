@@ -40,15 +40,19 @@ private final class TranslationTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let flags = event.modifierFlags
+
+        // cmd+z — undo（仅 cmd，不含 shift）
+        if flags.contains(.command), !flags.contains(.shift), event.keyCode == 6 {
+            debugLog("[utility] keyDown: cmd+z undo, undoManager=\(String(describing: undoManager)), canUndo=\(undoManager?.canUndo ?? false)")
+            undoManager?.undo()
+            return
+        }
+
+        // Enter 变体
         if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
             if controller?.isTranslating == true { return }
             controller?.pasteTranslation()
-            return
-        }
-        if flags == .command, event.keyCode == 6 {
-            // cmd+z — undo
-            undoManager?.undo()
             return
         }
         super.keyDown(with: event)
