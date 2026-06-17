@@ -242,8 +242,9 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil; draggingItem = nil }
-        guard operation != [] else { return }
-        guard let item = draggingItem else { return }
+        NSLog("[StageMove] endedAt operation=%lu", operation.rawValue)
+        guard operation != [] else { NSLog("[StageMove] operation empty, skip"); return }
+        guard let item = draggingItem else { NSLog("[StageMove] no draggingItem"); return }
         tryMoveOrRemove(item: item)
         reload()
         if items.isEmpty { close() }
@@ -268,6 +269,8 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             try? StageManager.shared.remove(item.id)
             return
         }
+        print("[StageMove] type=\(item.type), fileURLs.count=\(fileURLs.count)")
+        NSLog("[StageMove] type=%@ fileURLs=%lu", item.type, fileURLs.count)
         guard !fileURLs.isEmpty else { return }
 
         // 备份目录
@@ -281,7 +284,16 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         // 逐文件备份验证 → 移到废纸篓
         var backupOK = true
         for url in fileURLs {
-            let dest = backupDir.appendingPathComponent(url.lastPathComponent)
+            var dest = backupDir.appendingPathComponent(url.lastPathComponent)
+            // 避免同名冲突
+            var counter = 1
+            while fm.fileExists(atPath: dest.path) {
+                let name = url.deletingPathExtension().lastPathComponent
+                let ext = url.pathExtension
+                let suffix = ext.isEmpty ? "_\(counter)" : "_\(counter).\(ext)"
+                dest = backupDir.appendingPathComponent("\(name)\(suffix)")
+                counter += 1
+            }
             do {
                 try fm.copyItem(at: url, to: dest)
                 let srcSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
@@ -292,14 +304,20 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             }
         }
 
-        guard backupOK else { return }  // 备份失败，不删
+        guard backupOK else { NSLog("[StageMove] backup FAILED, abort"); return }  // 备份失败，不删
 
-        // 移入废纸篓
-        for url in fileURLs {
-            try? fm.trashItem(at: url, resultingItemURL: nil)
+        // 移入废纸篓 — 延迟 0.5s，等 Finder 完成粘贴再删源文件
+        let urlsToTrash = fileURLs
+        let itemId = item.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            for url in urlsToTrash {
+                try? fm.trashItem(at: url, resultingItemURL: nil)
+            }
+            NSLog("[StageMove] trashed %lu files", urlsToTrash.count)
+            try? StageManager.shared.remove(itemId)
+            self?.reload()
+            if self?.items.isEmpty == true { self?.close() }
         }
-
-        try? StageManager.shared.remove(item.id)
 
         // 日清过期备份（>1天）
         if let contents = try? fm.contentsOfDirectory(at: backupDir.deletingLastPathComponent(),
