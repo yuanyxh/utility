@@ -74,12 +74,15 @@ public final class ClipboardPanelController: NSWindowController {
 
         // 键盘事件
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, self.window?.isVisible == true else {
+                return event
+            }
             switch event.keyCode {
             case 36 where !event.modifierFlags.contains(.command): // return
-                self?.selectItem()
+                self.selectItem()
                 return nil
             case 53: // esc
-                self?.close()
+                self.close()
                 return nil
             default:
                 return event
