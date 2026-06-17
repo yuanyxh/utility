@@ -588,9 +588,9 @@ public final class TranslationPanelController: NSWindowController {
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
 
-        // 轮询等待 cmd+c 写入（最多 ~500ms，用 run loop 不阻塞主线程）
+        // 轮询等待 cmd+c 写入（最多 ~300ms，用 run loop 不阻塞主线程）
         var result: String?
-        for _ in 0..<10 {
+        for _ in 0..<6 {
             CFRunLoopRunInMode(.defaultMode, 0.05, false)
             if pb.changeCount > postClearCount {
                 result = pb.string(forType: .string)
