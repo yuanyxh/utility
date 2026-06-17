@@ -4,7 +4,7 @@ import Cocoa
 /// NSPanel + NSTableView + NSSearchField
 public final class ClipboardPanelController: NSWindowController {
     private let tableView = NSTableView()
-    private let searchField = NSSearchField()
+    private let searchField = PaddedSearchField()
     private let scrollView = NSScrollView()
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
@@ -48,8 +48,6 @@ public final class ClipboardPanelController: NSWindowController {
         searchField.bezelStyle = .squareBezel
         searchField.controlSize = .small
         searchField.font = NSFont.systemFont(ofSize: 12)
-        // 替换 cell 以调整搜索图标与输入区的间距
-        searchField.cell = PaddedSearchFieldCell(textCell: "")
 
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
@@ -377,7 +375,14 @@ private final class NumberCircleView: NSView {
     }
 }
 
-// MARK: - Padded Search Field Cell
+// MARK: - Padded Search Field
+
+private final class PaddedSearchField: NSSearchField {
+    override class var cellClass: AnyClass? {
+        get { PaddedSearchFieldCell.self }
+        set {}
+    }
+}
 
 private final class PaddedSearchFieldCell: NSSearchFieldCell {
     override func searchTextRect(forBounds rect: NSRect) -> NSRect {
