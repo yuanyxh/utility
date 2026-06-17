@@ -52,7 +52,6 @@ public final class StageWindowController: NSWindowController {
         tableView.addTableColumn(col)
         tableView.headerView = nil
         tableView.rowHeight = 36
-        tableView.usesAutomaticRowHeights = true
         tableView.dataSource = self
         tableView.delegate = self
         tableView.backgroundColor = .clear
@@ -159,6 +158,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         // 文本
         let label = NSTextField(labelWithString: item.displayText)
         label.lineBreakMode = .byTruncatingTail
+        label.cell?.usesSingleLineMode = true
         label.font = NSFont.systemFont(ofSize: 12)
         label.textColor = NSColor.labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -187,8 +187,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
             label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
-            label.topAnchor.constraint(equalTo: cell.topAnchor, constant: 4),
-            label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -4),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 
             del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: 0),
             del.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
