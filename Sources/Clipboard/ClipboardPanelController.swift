@@ -191,7 +191,6 @@ public final class ClipboardPanelController: NSWindowController {
 
         debugLog("[utility] clipboard paste: pasteboard written")
 
-        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             debugLog("[utility] clipboard paste: no target app")
             window?.orderOut(nil)
@@ -200,65 +199,32 @@ public final class ClipboardPanelController: NSWindowController {
         }
         debugLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // Cmd+V 兜底（非文本项如 image/file/batch 使用）
-        var didPaste = false
-        let pasteNow = {
-            guard !didPaste else { return }
-            didPaste = true
-            debugLog("[utility] clipboard pasteNow FIRED")
-            // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
+        // 隐藏面板 → 直接调度 Cmd+V（剪切板面板不调 activate，hide(nil) 不触发
+        // didActivateApplicationNotification，无需观察者等待）
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
+        debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
+
+        if pasteText != nil {
+            schedulePaste(to: target, logPrefix: "clipboard")
+        } else {
+            // 非文本项（图片/文件/批量）：50ms 后发 Cmd+V
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                debugLog("[utility] clipboard pasteNow: sending cmd+v via System Events")
                 let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
                 var error: NSDictionary?
                 script?.executeAndReturnError(&error)
-                if let err = error {
-                    debugLog("[utility] clipboard pasteNow: System Events failed: \(err)")
-                    let source = CGEventSource(stateID: .combinedSessionState)
-                    if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                       let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
+                if error != nil {
+                    let src = CGEventSource(stateID: .combinedSessionState)
+                    if let kd = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
+                       let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
                         kd.flags = .maskCommand
                         ku.flags = .maskCommand
                         kd.post(tap: .cghidEventTap)
                         ku.post(tap: .cghidEventTap)
-                        debugLog("[utility] clipboard pasteNow: CGEventPost fallback sent")
                     }
-                } else {
-                    debugLog("[utility] clipboard pasteNow: System Events cmd+v sent OK")
                 }
             }
         }
-
-        // didActivate observer（必须在 hide(nil) 之前注册）
-        // 文本项走 AX 注入（网页 <input>/<textarea> 可靠），非文本项走 Cmd+V
-        var notifToken: NSObjectProtocol?
-        notifToken = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-                debugLog("[utility] clipboard didActivate: no app")
-                return
-            }
-            debugLog("[utility] clipboard didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
-            guard app.processIdentifier == target.processIdentifier else {
-                debugLog("[utility] clipboard didActivate: PID mismatch, skipping")
-                return
-            }
-            if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-            if let t = pasteText {
-                debugLog("[utility] clipboard didActivate: MATCH, pasting...")
-                schedulePaste(to: target, logPrefix: "clipboard")
-            } else {
-                debugLog("[utility] clipboard didActivate: MATCH, pasting (non-text)...")
-                pasteNow()
-            }
-        }
-
-        // 隐藏面板（didActivate 通知此时可能同步触发）
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
-        debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
     }
 
     // MARK: - Keyboard
