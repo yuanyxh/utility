@@ -7,6 +7,9 @@ import Cocoa
 private final class TranslationTextView: NSTextView {
     weak var controller: TranslationPanelController?
 
+    private let _undoManager = UndoManager()
+    override var undoManager: UndoManager? { _undoManager }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -44,7 +47,6 @@ private final class TranslationTextView: NSTextView {
 
         // cmd+z — undo（仅 cmd，不含 shift）
         if flags.contains(.command), !flags.contains(.shift), event.keyCode == 6 {
-            debugLog("[utility] keyDown: cmd+z undo, undoManager=\(String(describing: undoManager)), canUndo=\(undoManager?.canUndo ?? false)")
             undoManager?.undo()
             return
         }
