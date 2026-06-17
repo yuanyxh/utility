@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clipboardStorage = ClipboardStorage()
     private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
     lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
-    private lazy var translationPanel = TranslationPanelController()
+    lazy var translationPanel = TranslationPanelController()
     private lazy var stageWindow = StageWindowController()
     private lazy var stageMonitor = StageDropMonitor.shared
 

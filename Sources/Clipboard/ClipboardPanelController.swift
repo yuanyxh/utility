@@ -120,8 +120,8 @@ public final class ClipboardPanelController: NSWindowController {
 
     private func translationPanelIfVisible() -> TranslationPanelController? {
         guard let delegate = NSApplication.shared.delegate as? AppDelegate else { return nil }
-        let panel = delegate.value(forKey: "translationPanel") as? TranslationPanelController
-        return panel?.isPanelVisible == true ? panel : nil
+        let panel = delegate.translationPanel
+        return panel.isPanelVisible ? panel : nil
     }
 
     private func paste(item: ClipboardItem) {
