@@ -516,7 +516,7 @@ public final class TranslationPanelController: NSWindowController {
     }
 
     /// 获取当前选中文本（AX → 剪贴板兜底）
-    func getSelectedText() -> String? {
+    func getSelectedText(skipClipboardFallback: Bool = false) -> String? {
         let app = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication
         guard let app = app else { return nil }
         let appPID = app.processIdentifier
@@ -536,6 +536,7 @@ public final class TranslationPanelController: NSWindowController {
             }
         }
 
+        if skipClipboardFallback { return nil }
         // 2. AX 失败 → 剪贴板兜底：模拟 cmd+c
         return clipboardFallbackSelectedText()
     }

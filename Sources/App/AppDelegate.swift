@@ -70,9 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
-                // 在 show() 激活 app 之前获取选中文本
+                // 在 show() 激活 app 之前获取选中文本（首次打开跳过剪贴板兜底，快速响应）
                 self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-                let selected = self.translationPanel.getSelectedText()
+                let selected = self.translationPanel.getSelectedText(skipClipboardFallback: true)
                 if let text = selected, !text.isEmpty {
                     self.translationPanel.show(with: text)
                     Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
