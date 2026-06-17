@@ -6,6 +6,7 @@ public final class StageWindowController: NSWindowController {
     private let scrollView = NSScrollView()
     private var items: [StageItem] = []
     private let clearButton = NSButton()
+    private var draggingItemId: String?
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
@@ -223,11 +224,16 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             return false
         }
 
-        // 拖出后删除
-        try? StageManager.shared.remove(item.id)
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-            self?.reload()
-        }
+        // 不在此删除 — 等 draggingSession:endedAt: 确认有效目标后再移除
+        draggingItemId = item.id
         return true
+    }
+
+    public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        defer { draggingItemId = nil }
+        guard operation != [] else { return }  // 无有效目标，保留
+        guard let id = draggingItemId else { return }
+        try? StageManager.shared.remove(id)
+        reload()
     }
 }
