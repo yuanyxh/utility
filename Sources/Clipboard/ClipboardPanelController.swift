@@ -126,6 +126,17 @@ public final class ClipboardPanelController: NSWindowController {
             pb.setData(item.content, forType: .fileURL)
         case "image":
             pb.setData(item.content, forType: .tiff)
+        case "image_batch":
+            guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
+            let pbItems: [NSPasteboardItem] = dicts.compactMap { dict in
+                guard let format = dict["format"] as? String,
+                      let data = dict["data"] as? Data else { return nil }
+                let pbItem = NSPasteboardItem()
+                pbItem.setData(data, forType: NSPasteboard.PasteboardType(format))
+                return pbItem
+            }
+            guard !pbItems.isEmpty else { return }
+            pb.writeObjects(pbItems)
         default:
             return
         }
@@ -295,6 +306,27 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         circleView.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(circleView)
 
+        var previousView: NSView = circleView
+        let gap: CGFloat = 6
+
+        // 图片缩略图（仅单张图片）
+        if item.type == "image", let image = NSImage(data: item.content) {
+            let imgView = NSImageView()
+            imgView.image = image
+            imgView.wantsLayer = true
+            imgView.layer?.cornerRadius = 3
+            imgView.layer?.masksToBounds = true
+            imgView.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(imgView)
+            NSLayoutConstraint.activate([
+                imgView.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
+                imgView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                imgView.widthAnchor.constraint(equalToConstant: 20),
+                imgView.heightAnchor.constraint(equalToConstant: 20),
+            ])
+            previousView = imgView
+        }
+
         // 文本标签
         let text = displayText(for: item)
         let label = NSTextField(labelWithString: text)
@@ -315,7 +347,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             circleView.widthAnchor.constraint(equalToConstant: 16),
             circleView.heightAnchor.constraint(equalToConstant: 16),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
+            label.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
             label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             label.heightAnchor.constraint(equalToConstant: 16),
@@ -333,7 +365,12 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         case "file":
             return "📄 \(item.application ?? "文件")"
         case "image":
-            return "🖼️ 图片 \(item.application ?? "")"
+            return "图片 \(item.application ?? "")"
+        case "image_batch":
+            if let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] {
+                return "📁 \(dicts.count) 个文件"
+            }
+            return "📁 文件"
         default:
             return "(未知)"
         }
