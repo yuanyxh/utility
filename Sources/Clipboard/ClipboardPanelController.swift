@@ -232,7 +232,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
-        let cell = NSView()
+        let cell = NSTableCellView()
         cell.identifier = NSUserInterfaceItemIdentifier("ClipboardCell")
 
         // 序号圆圈
@@ -252,6 +252,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
+        cell.textField = label
         cell.addSubview(label)
 
         NSLayoutConstraint.activate([
