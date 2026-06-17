@@ -24,7 +24,7 @@ public final class StageManager {
     }
 
     public func add(fileURL url: URL) throws {
-        let bookmark = try url.bookmarkData(options: .withSecurityScope,
+        let bookmark = try url.bookmarkData(options: [],
                                              includingResourceValuesForKeys: nil,
                                              relativeTo: nil)
         try add(type: "fileURL", content: bookmark)

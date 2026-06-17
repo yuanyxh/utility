@@ -40,7 +40,7 @@ public final class StageWindowController: NSWindowController {
         // 表格
         let col = NSTableColumn(identifier: .init("item"))
         col.title = ""
-        col.minWidth = 220
+        col.width = 180
         col.resizingMask = .autoresizingMask
         tableView.addTableColumn(col)
         tableView.headerView = nil
@@ -52,10 +52,11 @@ public final class StageWindowController: NSWindowController {
         tableView.selectionHighlightStyle = .regular
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
 
-        // 注册拖入类型（文件、图片、文本、URL）
+        // tableView 注册拖入（落点区域 = 表格可见范围）
         tableView.registerForDraggedTypes([
             .string, .fileURL, .tiff, .png,
-            .init("public.jpeg"), .init("NSFilenamesPboardType")
+            .init("public.jpeg"), .init("public.heic"),
+            .init("NSFilenamesPboardType"), .init("NSPasteboardTypeFileURL"),
         ])
 
         // 拖拽排序/移出
@@ -202,13 +203,33 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
     public func tableView(_: NSTableView, acceptDrop info: NSDraggingInfo, row _: Int, dropOperation _: NSTableView.DropOperation) -> Bool {
         let pb = info.draggingPasteboard
         var added = false
+        NSLog("[Stage] acceptDrop called, types: \(pb.types?.map(\.rawValue) ?? [])")
 
-        // 文件
+        // 文件 — 多种路径兜底
+        // 路径 1: NSFilenamesPboardType (传统 Finder 拖拽)
         if let files = pb.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] {
             for path in files {
                 try? StageManager.shared.add(fileURL: URL(fileURLWithPath: path))
                 added = true
             }
+        }
+        // 路径 2: 逐 item 检查 fileURL data（现代 Finder / 跨 app）
+        if !added, let pbItems = pb.pasteboardItems {
+            for item in pbItems {
+                if let data = item.data(forType: .fileURL),
+                   let urlStr = String(data: data, encoding: .utf8) {
+                    let url = URL(fileURLWithPath: urlStr.replacingOccurrences(of: "file://", with: ""))
+                    try? StageManager.shared.add(fileURL: url)
+                    added = true
+                    break
+                }
+            }
+        }
+        // 路径 3: .fileURL string 兜底
+        if !added, let urlStr = pb.string(forType: .fileURL) {
+            let url = URL(fileURLWithPath: urlStr.replacingOccurrences(of: "file://", with: ""))
+            try? StageManager.shared.add(fileURL: url)
+            added = true
         }
         // 图片
         if !added {
@@ -225,13 +246,15 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             try? StageManager.shared.add(text: str)
             added = true
         }
-        // URL
-        if !added, let urlStr = pb.string(forType: .fileURL), let url = URL(string: urlStr) {
-            try? StageManager.shared.add(url: url)
-            added = true
-        }
 
-        if added { reload() }
+        if added {
+            DispatchQueue.main.async { [weak self] in
+                self?.reload()
+            }
+            NSLog("[Stage] acceptDrop: added successfully")
+        } else {
+            NSLog("[Stage] acceptDrop: nothing matched")
+        }
         return added
     }
 
