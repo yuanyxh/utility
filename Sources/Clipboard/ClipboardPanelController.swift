@@ -15,7 +15,7 @@ public final class ClipboardPanelController: NSWindowController {
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
+        let panel = ClipboardPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
@@ -323,7 +323,6 @@ public final class ClipboardPanelController: NSWindowController {
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
         }
-        searchField.becomeFirstResponder()
         installEventTap()
     }
 
@@ -593,4 +592,11 @@ private final class PaddedSearchFieldCell: NSSearchFieldCell {
         r.size.width -= 6
         return r
     }
+}
+
+// MARK: - Clipboard Panel (never becomes key, doesn't steal focus)
+
+private final class ClipboardPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 }
