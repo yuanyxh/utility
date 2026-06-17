@@ -140,22 +140,47 @@ public final class ClipboardPanelController: NSWindowController {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
 
-        // 轮询目标 app 的 AX 焦点元素，就绪后发 cmd+v
+        // 两路并进：AX 轮询（主流 app）+ didActivate（Electron 等不暴露 AX 的 app）
+        var didPaste = false
+        let pasteNow = {
+            guard !didPaste else { return }
+            didPaste = true
+            let source = CGEventSource(stateID: .combinedSessionState)
+            guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                  let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+            kd.flags = .maskCommand
+            ku.flags = .maskCommand
+            kd.post(tap: .cghidEventTap)
+            ku.post(tap: .cghidEventTap)
+        }
+
+        // 路 1: didActivateApplicationNotification 兜底
+        var notifToken: NSObjectProtocol?
+        notifToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier == target.processIdentifier else { return }
+            if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+            pasteNow()
+        }
+
+        // 路 2: AX 焦点轮询
         var attempts = 0
         func pollFocus(for app: NSRunningApplication) {
             attempts += 1
-            guard attempts < 100 else { return }
+            guard attempts < 150 else {
+                // AX 超时，清理通知观察者
+                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+                return
+            }
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
             var focused: CFTypeRef?
             let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
             if result == .success, focused != nil {
-                let source = CGEventSource(stateID: .combinedSessionState)
-                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-                kd.flags = .maskCommand
-                ku.flags = .maskCommand
-                kd.post(tap: .cghidEventTap)
-                ku.post(tap: .cghidEventTap)
+                if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
+                pasteNow()
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
