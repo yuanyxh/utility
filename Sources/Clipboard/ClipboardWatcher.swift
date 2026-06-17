@@ -64,6 +64,7 @@ public final class ClipboardWatcher {
         guard let pbItems = pasteboard.pasteboardItems, !pbItems.isEmpty else { return }
 
         // 1. 从 pasteboard 直接获取图片（浏览器、截图工具等）
+        // 2. 从文件 URL 读取（Finder 复制）
         var allImages: [(clip: ImageClip, source: String)] = pbItems.compactMap { item in
             for type in Self.imageUTIs {
                 if let data = item.data(forType: type) {
@@ -71,22 +72,23 @@ public final class ClipboardWatcher {
                             pasteboardOwner() ?? "")
                 }
             }
-            // 2. 从文件 URL 读取（Finder 复制）
             if let urlStr = item.string(forType: .fileURL),
                let url = URL(string: urlStr),
                Self.imageExtensions.contains(url.pathExtension.lowercased()),
                let data = try? Data(contentsOf: url) {
                 let uti = Self.utiForExtension(url.pathExtension)
                 return (ImageClip(format: uti, data: data),
-                        url.lastPathComponent)  // 存文件名
+                        url.lastPathComponent)
             }
             return nil
         }
 
         if allImages.count > 1 {
-            // 多张图片 → batch
-            let clips = allImages.map { $0.clip }
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: clips, requiringSecureCoding: false) {
+            // 多张图片 → batch（先转 [[String: Any]] 适配 NSKeyedArchiver）
+            let dicts: [[String: Any]] = allImages.map {
+                ["format": $0.clip.format, "data": $0.clip.data]
+            }
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: dicts, requiringSecureCoding: false) {
                 let appName = allImages.first?.source ?? pasteboardOwner()
                 let clip = ClipboardItem(type: "image_batch", content: data, application: appName)
                 try? storage.add(clip)
