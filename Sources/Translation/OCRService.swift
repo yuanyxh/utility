@@ -87,7 +87,13 @@ private final class ScreenSelector: NSObject {
     }
 
     func startCapture(completion: @escaping (CGImage?) -> Void) {
-        self.completion = completion
+        var completed = false
+        let safeCompletion: (CGImage?) -> Void = { image in
+            guard !completed else { return }
+            completed = true
+            completion(image)
+        }
+        self.completion = safeCompletion
         guard let screen = NSScreen.main else { completion(nil); return }
         log("startCapture")
 
