@@ -259,7 +259,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             circleView.widthAnchor.constraint(equalToConstant: 14),
             circleView.heightAnchor.constraint(equalToConstant: 14),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 2),
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 4),
             label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             label.heightAnchor.constraint(equalToConstant: 16),
@@ -295,7 +295,7 @@ private final class LighterSelectionRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.4).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.68).setFill()
         bounds.fill()
     }
 
