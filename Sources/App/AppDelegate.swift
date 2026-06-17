@@ -70,17 +70,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
-                // 先显示面板（快），再异步获取选中文本
+                // 先保存源 app、显示面板（快），再获取选中文本
+                self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
                 self.translationPanel.show(with: "读取选中文本…")
-                DispatchQueue.main.async {
+                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                     let selected = self.translationPanel.getSelectedText()
                     if let text = selected, !text.isEmpty {
                         self.translationPanel.fillAndTranslate(text)
                         Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                             self.translationPanel.startTranslation(text: text)
                         }
-                    } else {
-                        // 无选中文本，保持初始状态
                     }
                 }
             }

@@ -111,7 +111,7 @@ public final class TranslationPanelController: NSWindowController {
     private var translationSeq: UInt = 0
 
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
-    private var previousFrontmostApp: NSRunningApplication?
+    var previousFrontmostApp: NSRunningApplication?
 
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
