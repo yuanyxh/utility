@@ -1,26 +1,25 @@
 import Cocoa
 
 /// 剪切板快速粘贴面板
-/// NSPanel + NSTableView + NSSearchField
+/// NSPanel + NSTableView
 public final class ClipboardPanelController: NSWindowController {
     private let tableView = NSTableView()
-    private let searchField = PaddedSearchField()
     private let scrollView = NSScrollView()
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
     private var eventMonitor: Any?
-    private var eventTap: CFMachPort?
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
     private var previousFrontmostApp: NSRunningApplication?
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
-        let panel = ClipboardPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
-                             styleMask: [.borderless, .nonactivatingPanel, .resizable],
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
+                             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
+        panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
 
         super.init(window: panel)
@@ -41,15 +40,6 @@ public final class ClipboardPanelController: NSWindowController {
 
     private func setupUI() {
         guard let panel = window else { return }
-
-        // 搜索框
-        searchField.placeholderString = "搜索剪切板…"
-        searchField.target = self
-        searchField.action = #selector(searchChanged)
-        searchField.sendsWholeSearchString = false
-        searchField.bezelStyle = .squareBezel
-        searchField.controlSize = .small
-        searchField.font = NSFont.systemFont(ofSize: 12)
 
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
@@ -76,10 +66,10 @@ public final class ClipboardPanelController: NSWindowController {
         scrollView.verticalScroller?.controlSize = .mini
 
         // 布局：顶部留 44px 给原生按钮
-        let stack = NSStackView(views: [searchField, scrollView])
+        let stack = NSStackView(views: [scrollView])
         stack.orientation = .vertical
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 2, right: 8)
+        stack.spacing = 0
+        stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
         // 键盘事件
@@ -97,13 +87,6 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     // MARK: - Actions
-
-    @objc private func searchChanged() {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
-        items = (try? (query.isEmpty ? storage.all() : storage.search(query))) ?? []
-        tableView.reloadData()
-        if !items.isEmpty { tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false) }
-    }
 
     @objc private func selectItem() {
         guard tableView.selectedRow >= 0, tableView.selectedRow < items.count else { return }
@@ -246,11 +229,6 @@ public final class ClipboardPanelController: NSWindowController {
                 selectItem()
                 return nil
             }
-        case 3: // f — cmd+f 搜索（搜索框已聚焦，此处不起作用但保留兼容）
-            if event.modifierFlags.contains(.command) {
-                searchField.becomeFirstResponder()
-                return nil
-            }
         case 125: // down — 下移选择
             let next = min(tableView.selectedRow + 1, items.count - 1)
             tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
@@ -272,7 +250,6 @@ public final class ClipboardPanelController: NSWindowController {
     public func show() {
         items = (try? storage.all()) ?? []
         tableView.reloadData()
-        searchField.stringValue = ""
 
         // 智能定位：根据鼠标位置选择最佳角落
         let mouse = NSEvent.mouseLocation
@@ -317,80 +294,18 @@ public final class ClipboardPanelController: NSWindowController {
         // 记录当前前台 app，粘贴时恢复到它
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
-        window?.orderFront(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
         }
-        installEventTap()
     }
 
     public override func close() {
-        removeEventTap()
         window?.orderOut(nil)
         // 释放资源：清空 items（释放图片 Data）、清空 table 视图（释放缩略图 NSImage）
         items = []
-        searchField.stringValue = ""
         tableView.reloadData()
-    }
-
-    // MARK: - Event Tap
-
-    private func installEventTap() {
-        removeEventTap()
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard type == .keyDown, let refcon = refcon else {
-                return Unmanaged.passUnretained(event)
-            }
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            let ctrl = Unmanaged<ClipboardPanelController>.fromOpaque(refcon).takeUnretainedValue()
-            // 只拦截 Panel 可见时的键盘事件
-            guard ctrl.window?.isVisible == true else {
-                return Unmanaged.passUnretained(event)
-            }
-            switch keyCode {
-            case 53: // esc
-                ctrl.perform(#selector(ctrl.close), with: nil, afterDelay: 0)
-                return nil
-            case 36: // return/enter
-                if event.flags.contains(.maskCommand) {
-                    return Unmanaged.passUnretained(event) // cmd+enter 放行
-                }
-                ctrl.perform(#selector(ctrl.selectItem), with: nil, afterDelay: 0)
-                return nil
-            case 125: // down
-                let next = min(ctrl.tableView.selectedRow + 1, ctrl.items.count - 1)
-                ctrl.tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(next, 0))
-                return nil
-            case 126: // up
-                let prev = ctrl.tableView.selectedRow - 1
-                ctrl.tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(prev, 0))
-                return nil
-            default:
-                return Unmanaged.passUnretained(event)
-            }
-        }
-        let ptr = Unmanaged.passUnretained(self).toOpaque()
-        if let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
-            callback: callback,
-            userInfo: ptr
-        ) {
-            eventTap = tap
-            let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
-        }
-    }
-
-    private func removeEventTap() {
-        if let tap = eventTap {
-            CFMachPortInvalidate(tap)
-            eventTap = nil
-        }
     }
 }
 
@@ -572,29 +487,4 @@ private final class NumberCircleView: NSView {
         fillColor.setFill()
         path.fill()
     }
-}
-
-// MARK: - Padded Search Field
-
-private final class PaddedSearchField: NSSearchField {
-    override class var cellClass: AnyClass? {
-        get { PaddedSearchFieldCell.self }
-        set {}
-    }
-}
-
-private final class PaddedSearchFieldCell: NSSearchFieldCell {
-    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-        var r = super.searchTextRect(forBounds: rect)
-        r.origin.x += 6
-        r.size.width -= 6
-        return r
-    }
-}
-
-// MARK: - Clipboard Panel (never becomes key, doesn't steal focus)
-
-private final class ClipboardPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
 }
