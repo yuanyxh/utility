@@ -162,7 +162,6 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         label.font = NSFont.systemFont(ofSize: 12)
         label.textColor = NSColor.labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
-        cell.textField = label
 
         // 删除按钮
         let del = NSButton()
