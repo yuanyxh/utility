@@ -87,7 +87,7 @@ public final class StageWindowController: NSWindowController {
         let stack = NSStackView(views: [headerStack, scrollView])
         stack.orientation = .vertical
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 4)
         panel.contentView = stack
     }
 
