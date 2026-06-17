@@ -92,10 +92,16 @@ public final class ClipboardWatcher {
                 try? storage.add(clip)
             }
         } else if allImages.count == 1 {
-            // 单张图片
-            let clip = ClipboardItem(type: "image", content: allImages[0].clip.data,
-                                      application: allImages[0].source)
-            try? storage.add(clip)
+            // 单张图片 — 编码格式信息供 paste 时还原原始类型
+            let dict: [String: Any] = [
+                "format": allImages[0].clip.format,
+                "data": allImages[0].clip.data,
+            ]
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: dict, requiringSecureCoding: false) {
+                let clip = ClipboardItem(type: "image", content: data,
+                                          application: allImages[0].source)
+                try? storage.add(clip)
+            }
         } else if let firstText = pbItems.first(where: { $0.types.contains(.string) }),
                   let str = firstText.string(forType: .string) {
             // 文本

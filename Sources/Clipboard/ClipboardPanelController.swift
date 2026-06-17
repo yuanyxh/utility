@@ -125,15 +125,27 @@ public final class ClipboardPanelController: NSWindowController {
         case "file":
             pb.setData(item.content, forType: .fileURL)
         case "image":
-            // 写缓存文件供 Finder 粘贴（同时设两种类型确保兼容）
+            // 解码格式信息（新格式：dict；旧格式：raw data 兜底）
+            let format: String
+            let imageData: Data
+            if let dict = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [String: Any],
+               let fmt = dict["format"] as? String,
+               let dat = dict["data"] as? Data {
+                format = fmt
+                imageData = dat
+            } else {
+                format = "public.tiff"
+                imageData = item.content
+            }
+            let ext = Self.extensionForUTI(format)
             let cacheDir = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache/utility")
             try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
             let cacheFile = cacheDir
-                .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).tiff")
-            try? item.content.write(to: cacheFile)
+                .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).\(ext)")
+            try? imageData.write(to: cacheFile)
             let pbItem = NSPasteboardItem()
-            pbItem.setData(item.content, forType: .tiff)
+            pbItem.setData(imageData, forType: .init(format))
             pbItem.setString(cacheFile.absoluteString, forType: .fileURL)
             pbItem.setPropertyList([cacheFile.path], forType: .init("NSFilenamesPboardType"))
             pb.writeObjects([pbItem])
@@ -279,6 +291,19 @@ public final class ClipboardPanelController: NSWindowController {
 
         window?.setFrameOrigin(origin)
 
+        // 清理过期的粘贴缓存文件（>1天）
+        let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/utility")
+        if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.creationDateKey]) {
+            let cutoff = Date().addingTimeInterval(-86400)
+            for url in files {
+                if let attrs = try? url.resourceValues(forKeys: [.creationDateKey]),
+                   let date = attrs.creationDate, date < cutoff {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }
+
         // 记录当前前台 app，粘贴时恢复到它
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
@@ -321,21 +346,31 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         let gap: CGFloat = 6
 
         // 图片缩略图（仅单张图片，放大 + 不要文字）
-        if item.type == "image", let image = NSImage(data: item.content) {
-            let imgView = NSImageView()
-            imgView.image = image
-            imgView.wantsLayer = true
-            imgView.layer?.cornerRadius = 3
-            imgView.layer?.masksToBounds = true
-            imgView.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(imgView)
-            NSLayoutConstraint.activate([
-                imgView.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
-                imgView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                imgView.widthAnchor.constraint(equalToConstant: 24),
-                imgView.heightAnchor.constraint(equalToConstant: 24),
-            ])
-            previousView = imgView
+        if item.type == "image" {
+            // 解码获取原始图片数据（兼容新旧格式）
+            let imageData: Data
+            if let dict = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [String: Any],
+               let dat = dict["data"] as? Data {
+                imageData = dat
+            } else {
+                imageData = item.content
+            }
+            if let image = ClipboardPanelController.downsampleImage(data: imageData, to: NSSize(width: 24, height: 24)) {
+                let imgView = NSImageView()
+                imgView.image = image
+                imgView.wantsLayer = true
+                imgView.layer?.cornerRadius = 3
+                imgView.layer?.masksToBounds = true
+                imgView.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(imgView)
+                NSLayoutConstraint.activate([
+                    imgView.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
+                    imgView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                    imgView.widthAnchor.constraint(equalToConstant: 24),
+                    imgView.heightAnchor.constraint(equalToConstant: 24),
+                ])
+                previousView = imgView
+            }
         }
 
         // 文本标签（非单图条目才需要）
@@ -389,6 +424,38 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         default:
             return "(未知)"
         }
+    }
+}
+
+// MARK: - Image helpers
+
+private extension ClipboardPanelController {
+    static func extensionForUTI(_ uti: String) -> String {
+        switch uti {
+        case "public.png": return "png"
+        case "public.jpeg": return "jpg"
+        case "public.tiff": return "tiff"
+        case "public.heic": return "heic"
+        case "com.compuserve.gif": return "gif"
+        case "public.webp": return "webp"
+        case "public.bmp": return "bmp"
+        default: return "png"
+        }
+    }
+
+    /// 从图片数据下采样创建小图（避免全分辨率解码的内存开销）
+    static func downsampleImage(data: Data, to pointSize: NSSize) -> NSImage? {
+        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithData(data as CFData, opts) else { return nil }
+        let maxDim = max(pointSize.width, pointSize.height) * 2  // Retina 兼容
+        let downsample: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDim,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(src, 0, downsample as CFDictionary) else { return nil }
+        return NSImage(cgImage: cgImage, size: pointSize)
     }
 }
 
