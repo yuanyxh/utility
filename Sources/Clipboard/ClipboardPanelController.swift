@@ -93,16 +93,12 @@ public final class ClipboardPanelController: NSWindowController {
     /// 失焦自动关闭（仅切到外部 app 时）
     private func setupDeactivateObserver() {
         NotificationCenter.default.addObserver(
-            self, selector: #selector(windowDidResignKey(_:)),
-            name: NSWindow.didResignKeyNotification, object: window
+            self, selector: #selector(appDidResignActive),
+            name: NSApplication.didResignActiveNotification, object: nil
         )
     }
 
-    @objc private func windowDidResignKey(_ notification: Notification) {
-        if let keyWindow = NSApplication.shared.keyWindow,
-           keyWindow != window {
-            return
-        }
+    @objc private func appDidResignActive() {
         close()
     }
 
