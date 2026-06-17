@@ -90,12 +90,18 @@ public final class ClipboardPanelController: NSWindowController {
         }
     }
 
-    /// 失焦自动关闭
+    /// 失焦自动关闭（仅切到外部 app 时）
     private func setupDeactivateObserver() {
         NotificationCenter.default.addObserver(
-            self, selector: #selector(close),
+            self, selector: #selector(windowDidResignKey(_:)),
             name: NSWindow.didResignKeyNotification, object: window
         )
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            close()
+        }
     }
 
     // MARK: - Actions

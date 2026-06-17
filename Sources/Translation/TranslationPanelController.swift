@@ -274,9 +274,16 @@ public final class TranslationPanelController: NSWindowController {
     /// 失焦自动关闭
     private func setupDeactivateObserver() {
         NotificationCenter.default.addObserver(
-            self, selector: #selector(close),
+            self, selector: #selector(windowDidResignKey(_:)),
             name: NSWindow.didResignKeyNotification, object: window
         )
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        // 切到外部 app 才关闭，在本 app 内切换面板保持
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            close()
+        }
     }
 
     // MARK: - Languages
@@ -498,9 +505,7 @@ public final class TranslationPanelController: NSWindowController {
     public override func close() {
         cancelTranslation()
         window?.orderOut(nil)
-        if !AppDelegate.isShowingClipboard {
-            NSApplication.shared.hide(nil)
-        }
+        NSApplication.shared.hide(nil)
     }
 
     /// 取消当前翻译任务
