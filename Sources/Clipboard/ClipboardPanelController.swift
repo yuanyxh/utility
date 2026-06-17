@@ -12,7 +12,7 @@ public final class ClipboardPanelController: NSWindowController {
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 380),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 288, height: 380),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
@@ -51,7 +51,7 @@ public final class ClipboardPanelController: NSWindowController {
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
         col.title = ""
-        col.minWidth = 320
+        col.minWidth = 256
         col.resizingMask = .autoresizingMask
         tableView.addTableColumn(col)
         tableView.headerView = nil
