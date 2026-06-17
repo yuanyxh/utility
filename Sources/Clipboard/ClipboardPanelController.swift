@@ -149,25 +149,21 @@ public final class ClipboardPanelController: NSWindowController {
                 selectItem()
                 return nil
             }
-        case 3: // f — cmd+f 搜索
+        case 3: // f — cmd+f 搜索（搜索框已聚焦，此处不起作用但保留兼容）
             if event.modifierFlags.contains(.command) {
                 searchField.becomeFirstResponder()
                 return nil
             }
-        case 125: // down
-            if searchField.currentEditor() == nil {
-                let next = min(tableView.selectedRow + 1, items.count - 1)
-                tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
-                tableView.scrollRowToVisible(max(next, 0))
-                return nil
-            }
-        case 126: // up
-            if searchField.currentEditor() == nil {
-                let prev = tableView.selectedRow - 1
-                tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
-                tableView.scrollRowToVisible(max(prev, 0))
-                return nil
-            }
+        case 125: // down — 下移选择
+            let next = min(tableView.selectedRow + 1, items.count - 1)
+            tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
+            tableView.scrollRowToVisible(max(next, 0))
+            return nil
+        case 126: // up — 上移选择
+            let prev = tableView.selectedRow - 1
+            tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
+            tableView.scrollRowToVisible(max(prev, 0))
+            return nil
         default:
             break
         }
@@ -210,8 +206,10 @@ public final class ClipboardPanelController: NSWindowController {
 
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        if !items.isEmpty { tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false) }
-        tableView.becomeFirstResponder()
+        if !items.isEmpty {
+            tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
+        }
+        searchField.becomeFirstResponder()
     }
 
     public override func close() {
