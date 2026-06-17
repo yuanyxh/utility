@@ -14,12 +14,6 @@ private final class TranslationTextView: NSTextView {
         case 53: // esc
             controller?.close()
             return true
-        case 6: // z — undo
-            if flags == .command {
-                undoManager?.undo()
-                return true
-            }
-            return false
         case 36: // return / enter
             if flags == .command {
                 // cmd+enter → 翻译（允许取消旧翻译重新开始）
@@ -50,6 +44,11 @@ private final class TranslationTextView: NSTextView {
         if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
             if controller?.isTranslating == true { return }
             controller?.pasteTranslation()
+            return
+        }
+        if flags == .command, event.keyCode == 6 {
+            // cmd+z — undo
+            undoManager?.undo()
             return
         }
         super.keyDown(with: event)
