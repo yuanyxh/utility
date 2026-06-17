@@ -317,6 +317,10 @@ public final class ClipboardPanelController: NSWindowController {
 
     public override func close() {
         window?.orderOut(nil)
+        // 释放资源：清空 items（释放图片 Data）、清空 table 视图（释放缩略图 NSImage）
+        items = []
+        searchField.stringValue = ""
+        tableView.reloadData()
     }
 }
 
