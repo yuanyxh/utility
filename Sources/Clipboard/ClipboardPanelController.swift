@@ -186,12 +186,12 @@ public final class ClipboardPanelController: NSWindowController {
         // 隐藏面板，触发 app 切换回原焦点 app
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             window?.orderOut(nil)
-            NSApplication.shared.hide(nil)
             return
         }
 
         window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
+        // 直接激活目标 app，不走 hide(nil) 避免触发 didResignActive 干扰
+        target.activate(options: .activateIgnoringOtherApps)
 
         // 两路并进：AX 轮询（主流 app）+ didActivate（Electron 等不暴露 AX 的 app）
         var didPaste = false
