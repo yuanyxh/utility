@@ -23,6 +23,7 @@ public final class ClipboardPanelController: NSWindowController {
         panel.hidesOnDeactivate = false
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
+        panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary, .stationary]
 
         super.init(window: panel)
         setupUI()
