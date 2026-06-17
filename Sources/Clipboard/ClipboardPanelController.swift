@@ -70,7 +70,7 @@ public final class ClipboardPanelController: NSWindowController {
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
-        scrollView.verticalScroller?.controlSize = .small
+        scrollView.verticalScroller?.controlSize = .mini
 
         // 布局：顶部留 44px 给原生按钮
         let stack = NSStackView(views: [searchField, scrollView])
@@ -254,7 +254,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(label)
 
         NSLayoutConstraint.activate([
-            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 16),
             circleView.heightAnchor.constraint(equalToConstant: 16),
@@ -303,7 +303,7 @@ private final class LighterSelectionRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.68).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.54).setFill()
         bounds.fill()
     }
 
