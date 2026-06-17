@@ -30,6 +30,13 @@ public final class StageManager {
         try add(type: "fileURL", content: bookmark)
     }
 
+    public func addFiles(urls: [URL]) throws {
+        guard !urls.isEmpty else { return }
+        let paths = urls.map { $0.path }
+        let json = try JSONEncoder().encode(paths)
+        try add(type: "fileGroup", content: json)
+    }
+
     public func add(imageData: Data) throws {
         try add(type: "image", content: imageData)
     }

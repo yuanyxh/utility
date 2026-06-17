@@ -5,9 +5,9 @@ import GRDB
 public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
     public var id: String
     public var timestamp: Date
-    /// text / fileURL / image / url
+    /// text / fileURL / image / url / fileGroup
     public var type: String
-    /// 文本内容 UTF-8 / 文件 bookmark / 图片 Data / URL UTF-8
+    /// 文本内容 UTF-8 / 文件 bookmark / 图片 Data / URL UTF-8 / fileGroup JSON paths
     public var content: Data
 
     public static let databaseTableName = "stage_item"
@@ -31,6 +31,14 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
                          bookmarkDataIsStale: &isStale)
     }
 
+    public func resolveFileGroup() -> [URL] {
+        guard type == "fileGroup" else { return [] }
+        guard let paths = try? JSONDecoder().decode([String].self, from: content) else { return [] }
+        return paths.map { URL(fileURLWithPath: $0) }.filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
+    }
+
     /// 显示用摘要
     public var displayText: String {
         switch type {
@@ -42,6 +50,9 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
                 return url.lastPathComponent
             }
             return "文件"
+        case "fileGroup":
+            let count = resolveFileGroup().count
+            return "\(count) 个文件"
         case "image":
             return "图片"
         case "url":
@@ -57,6 +68,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         switch type {
         case "text": return "📄"
         case "fileURL": return "📁"
+        case "fileGroup": return "📁"
         case "image": return "🖼"
         case "url": return "🔗"
         default: return "📄"

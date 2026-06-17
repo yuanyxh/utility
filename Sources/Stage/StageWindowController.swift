@@ -214,6 +214,13 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 pboard.setString(url.absoluteString, forType: .fileURL)
                 pboard.setPropertyList([url.path], forType: .init("NSFilenamesPboardType"))
             }
+        case "fileGroup":
+            let urls = item.resolveFileGroup()
+            guard !urls.isEmpty else { return false }
+            pboard.setPropertyList(urls.map(\.path), forType: .init("NSFilenamesPboardType"))
+            if urls.count == 1 {
+                pboard.setString(urls[0].absoluteString, forType: .fileURL)
+            }
         case "image":
             pboard.setData(item.content, forType: .tiff)
         case "url":

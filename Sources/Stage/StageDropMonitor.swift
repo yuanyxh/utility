@@ -127,18 +127,21 @@ public final class StageDropMonitor {
 
         // URL（文件 + 链接）
         if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
-            var addedAny = false
-            for url in urls {
-                let fileURL = url.standardizedFileURL
-                if fileURL.isFileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                    try? StageManager.shared.add(fileURL: fileURL)
-                    addedAny = true
-                } else {
-                    try? StageManager.shared.add(url: url)
-                    addedAny = true
+            let fileURLs = urls.map { $0.standardizedFileURL }.filter { $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }
+            let webURLs = urls.filter { !$0.standardizedFileURL.isFileURL }
+
+            if fileURLs.count > 1 {
+                try? StageManager.shared.addFiles(urls: fileURLs)
+            } else {
+                for url in fileURLs {
+                    try? StageManager.shared.add(fileURL: url)
                 }
             }
-            if addedAny {
+            for url in webURLs {
+                try? StageManager.shared.add(url: url)
+            }
+
+            if !fileURLs.isEmpty || !webURLs.isEmpty {
                 stageWindow?.reload()
                 return
             }
