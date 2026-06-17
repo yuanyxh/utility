@@ -17,6 +17,11 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
 
     public static let databaseTableName = "clipboard_item"
 
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, type, content, application
+        case searchText = "search_text"
+    }
+
     public init(id: String = UUID().uuidString,
                 timestamp: Date = Date(),
                 type: String,
