@@ -14,36 +14,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.debug("[Utility] Starting up...")
 
-        // 无 Info.plist LSUIElement，代码设置（无 Dock 图标）
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        // 1. 加载配置
-        do {
-            try ConfigManager.shared.load()
-        } catch {
-            Log.debug("[Utility] Config load failed: \(error)")
-        }
+        do { try ConfigManager.shared.load() } catch { Log.debug("[Utility] Config load failed: \(error)") }
+        do { try AppDatabase.shared.setup() } catch { Log.debug("[Utility] Database setup failed: \(error)") }
 
-        // 2. 初始化数据库
-        do {
-            try AppDatabase.shared.setup()
-        } catch {
-            Log.debug("[Utility] Database setup failed: \(error)")
-        }
-
-        // 3. 启动剪切板监视
         clipboardWatcher.start()
-
-        // 4. 注册热键
         registerAllHotkeys()
-
-        // 5. 安装 Carbon 事件处理器
         installEventHandler()
-
-        // 6. 更新菜单栏显示
         menuBar.updateConfigDisplay()
-
-        // 7. 启动暂存监控
         stageMonitor.start(with: stageWindow)
 
         Log.debug("[Utility] Ready")
@@ -54,31 +33,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerAllHotkeys() {
         let config = ConfigManager.shared.config
 
-        // 剪切板面板
         hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") { [weak self] in
             self?.clipboardPanel.show()
         }
 
-        // 翻译面板
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
             guard let self = self else { return }
 
             if self.translationPanel.isPanelVisible {
-                // 已显示 → 直接填入并翻译
                 let selected = self.translationPanel.getSelectedText()
                 if let text = selected {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
                 self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-                // 先 AX 试（快，<1ms），有文本直接 show+translate
                 if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
                     self.translationPanel.show(with: text)
                     Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                         self.translationPanel.startTranslation(text: text)
                     }
                 } else {
-                    // AX 失败 → 出空面板，后台剪贴板兜底
                     self.translationPanel.showEmpty()
                     Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                         if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
@@ -92,7 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // OCR 翻译
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
             guard let self = self else { return }
             Task {
@@ -102,7 +75,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.translationPanel.fillAndTranslate(text)
                         } else {
                             self.translationPanel.show(with: text)
-                            // OCR 识别完成后自动翻译
                             Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                                 self.translationPanel.startTranslation(text: text)
                             }

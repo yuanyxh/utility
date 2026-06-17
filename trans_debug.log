@@ -1,0 +1,5 @@
+2026-06-17 11:25:17 +0000 [AppDelegate] hotkey fired, isVisible=false
+2026-06-17 11:25:17 +0000 [AppDelegate] AX returned: nil
+2026-06-17 11:25:17 +0000 [AppDelegate] → empty+fallback
+2026-06-17 11:25:17 +0000 [AppDelegate] fallback got text: 在 macOS 中，由于系统设计逻辑不同，你
+2026-06-17 11:25:17 +0000 [Panel] fillAndTranslate: 在 macOS 中，由于系统设计逻辑不同，你
