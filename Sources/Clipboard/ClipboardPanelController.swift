@@ -248,19 +248,21 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.textField = label
         cell.addSubview(label)
 
         NSLayoutConstraint.activate([
-            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 14),
             circleView.heightAnchor.constraint(equalToConstant: 14),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 4),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 2),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            label.heightAnchor.constraint(equalToConstant: 16),
         ])
 
         return cell
@@ -293,7 +295,7 @@ private final class LighterSelectionRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 1.0).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.4).setFill()
         bounds.fill()
     }
 
