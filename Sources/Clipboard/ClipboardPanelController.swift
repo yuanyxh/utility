@@ -66,7 +66,7 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.style = .plain
 
         scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
@@ -303,7 +303,7 @@ private final class LighterSelectionRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.54).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).setFill()
         bounds.fill()
     }
 
