@@ -63,6 +63,7 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.delegate = self
         tableView.backgroundColor = NSColor.controlBackgroundColor
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        tableView.style = .plain
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
