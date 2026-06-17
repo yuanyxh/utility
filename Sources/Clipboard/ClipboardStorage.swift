@@ -27,10 +27,10 @@ public final class ClipboardStorage {
                     // 解码当前条目原始图片数据
                     guard let currentRaw = Self.rawImageData(from: item) else { return nil }
                     // 遍历同类型已有条目，解码后逐字节对比
-                    let existing = try ClipboardItem
+                    let existing = try? ClipboardItem
                         .filter(Column("type") == item.type)
                         .fetchAll(db)
-                    for ex in existing {
+                    for ex in existing ?? [] {
                         guard let exRaw = Self.rawImageData(from: ex) else { continue }
                         if currentRaw == exRaw { return ex.id }
                     }
