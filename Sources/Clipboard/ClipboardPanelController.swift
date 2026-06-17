@@ -92,7 +92,14 @@ public final class ClipboardPanelController: NSWindowController {
 
     /// 失焦自动关闭（仅切到外部 app 时）
     private func setupDeactivateObserver() {
-        // 由 selectItem() 主动关闭；外部 app 切换靠 didResignActive
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidResignActive),
+            name: NSApplication.didResignActiveNotification, object: nil
+        )
+    }
+
+    @objc private func appDidResignActive() {
+        close()
     }
 
     // MARK: - Actions
@@ -186,12 +193,12 @@ public final class ClipboardPanelController: NSWindowController {
         // 隐藏面板，触发 app 切换回原焦点 app
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             window?.orderOut(nil)
+            NSApplication.shared.hide(nil)
             return
         }
 
         window?.orderOut(nil)
-        // 直接激活目标 app，不走 hide(nil) 避免触发 didResignActive 干扰
-        target.activate(options: .activateIgnoringOtherApps)
+        NSApplication.shared.hide(nil)
 
         // 两路并进：AX 轮询（主流 app）+ didActivate（Electron 等不暴露 AX 的 app）
         var didPaste = false

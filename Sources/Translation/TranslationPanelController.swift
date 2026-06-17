@@ -508,7 +508,12 @@ public final class TranslationPanelController: NSWindowController {
     public override func close() {
         cancelTranslation()
         window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
+        // 粘贴面板可见时不 hide app
+        let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
+            .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
+        if !clipVisible {
+            NSApplication.shared.hide(nil)
+        }
     }
 
     /// 取消当前翻译任务
