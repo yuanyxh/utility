@@ -10,3 +10,19 @@ public enum Log {
         #endif
     }
 }
+
+/// 调试日志 — 写入 ~/Library/Logs/utility-paste.log
+public func debugLog(_ msg: String) {
+    let logPath = NSHomeDirectory() + "/Library/Logs/utility-paste.log"
+    let line = "[\(Date().timeIntervalSince1970)] \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        // 追加写入
+        if let handle = FileHandle(forWritingAtPath: logPath) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: logPath))
+        }
+    }
+}

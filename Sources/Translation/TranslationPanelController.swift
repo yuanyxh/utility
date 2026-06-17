@@ -324,47 +324,47 @@ public final class TranslationPanelController: NSWindowController {
 
     fileprivate func pasteTranslation() {
         let text = targetTextView.string
-        guard !text.isEmpty else { NSLog("[utility] pasteTranslation: empty text"); return }
+        guard !text.isEmpty else { debugLog("[utility] pasteTranslation: empty text"); return }
         guard !overlay.isVisible || overlay.mode == .error else {
-            NSLog("[utility] pasteTranslation: overlay blocking (mode=\(overlay.mode))"); return
+            debugLog("[utility] pasteTranslation: overlay blocking (mode=\(overlay.mode))"); return
         }
 
-        NSLog("[utility] pasteTranslation: text=\(text.prefix(50))... targetLen=\(text.utf16.count)")
+        debugLog("[utility] pasteTranslation: text=\(text.prefix(50))... targetLen=\(text.utf16.count)")
 
         // 先把译文写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        NSLog("[utility] pasteTranslation: pasteboard written")
+        debugLog("[utility] pasteTranslation: pasteboard written")
 
         // 记录目标 app（面板打开前的前台 app，而非当前自己）
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
-            NSLog("[utility] pasteTranslation: no target app")
+            debugLog("[utility] pasteTranslation: no target app")
             window?.orderOut(nil)
             return
         }
-        NSLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
+        debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
         // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
-        NSLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
+        debugLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
 
         // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
         var didPaste = false
         let pasteNow = {
             guard !didPaste else { return }
             didPaste = true
-            NSLog("[utility] pasteNow FIRED")
+            debugLog("[utility] pasteNow FIRED")
             // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                NSLog("[utility] pasteNow: sending cmd+v via System Events")
+                debugLog("[utility] pasteNow: sending cmd+v via System Events")
                 // 用 System Events 发送 cmd+v（对 Chrome 网页内容也有效）
                 let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
                 var error: NSDictionary?
                 script?.executeAndReturnError(&error)
                 if let err = error {
-                    NSLog("[utility] pasteNow: System Events failed: \(err)")
+                    debugLog("[utility] pasteNow: System Events failed: \(err)")
                     // 降级到 CGEventPost（对原生 UI 依然有效）
                     let source = CGEventSource(stateID: .combinedSessionState)
                     if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
@@ -373,10 +373,10 @@ public final class TranslationPanelController: NSWindowController {
                         ku.flags = .maskCommand
                         kd.post(tap: .cghidEventTap)
                         ku.post(tap: .cghidEventTap)
-                        NSLog("[utility] pasteNow: CGEventPost fallback sent")
+                        debugLog("[utility] pasteNow: CGEventPost fallback sent")
                     }
                 } else {
-                    NSLog("[utility] pasteNow: System Events cmd+v sent OK")
+                    debugLog("[utility] pasteNow: System Events cmd+v sent OK")
                 }
             }
         }
@@ -388,16 +388,16 @@ public final class TranslationPanelController: NSWindowController {
             object: nil, queue: .main
         ) { notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-                NSLog("[utility] didActivate: no app in notification")
+                debugLog("[utility] didActivate: no app in notification")
                 return
             }
-            NSLog("[utility] didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
+            debugLog("[utility] didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
             guard app.processIdentifier == target.processIdentifier else {
-                NSLog("[utility] didActivate: PID mismatch, skipping")
+                debugLog("[utility] didActivate: PID mismatch, skipping")
                 return
             }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-            NSLog("[utility] didActivate: MATCH, pasting...")
+            debugLog("[utility] didActivate: MATCH, pasting...")
             pasteNow()
         }
 
@@ -407,7 +407,7 @@ public final class TranslationPanelController: NSWindowController {
             attempts += 1
             guard attempts < 150 else {
                 if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                NSLog("[utility] AX poll: timeout after 150 attempts")
+                debugLog("[utility] AX poll: timeout after 150 attempts")
                 return
             }
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
@@ -415,7 +415,7 @@ public final class TranslationPanelController: NSWindowController {
             let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
             if result == .success, focused != nil {
                 if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-                NSLog("[utility] AX poll: focus acquired at attempt \(attempts), pasting...")
+                debugLog("[utility] AX poll: focus acquired at attempt \(attempts), pasting...")
                 pasteNow()
                 return
             }
@@ -423,7 +423,7 @@ public final class TranslationPanelController: NSWindowController {
                 pollFocus(for: app)
             }
         }
-        NSLog("[utility] pasteTranslation: starting AX poll")
+        debugLog("[utility] pasteTranslation: starting AX poll")
         pollFocus(for: target)
     }
 
