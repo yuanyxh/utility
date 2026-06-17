@@ -203,34 +203,18 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
     public func tableView(_: NSTableView, acceptDrop info: NSDraggingInfo, row _: Int, dropOperation _: NSTableView.DropOperation) -> Bool {
         let pb = info.draggingPasteboard
         var added = false
-        NSLog("[Stage] acceptDrop called, types: \(pb.types?.map(\.rawValue) ?? [])")
 
-        // 文件 — 多种路径兜底
-        // 路径 1: NSFilenamesPboardType (传统 Finder 拖拽)
-        if let files = pb.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] {
-            for path in files {
-                try? StageManager.shared.add(fileURL: URL(fileURLWithPath: path))
-                added = true
-            }
-        }
-        // 路径 2: 逐 item 检查 fileURL data（现代 Finder / 跨 app）
-        if !added, let pbItems = pb.pasteboardItems {
-            for item in pbItems {
-                if let data = item.data(forType: .fileURL),
-                   let urlStr = String(data: data, encoding: .utf8) {
-                    let url = URL(fileURLWithPath: urlStr.replacingOccurrences(of: "file://", with: ""))
-                    try? StageManager.shared.add(fileURL: url)
+        // 文件 — 使用 readObjects 统一处理所有类型
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                let fileURL = url.standardizedFileURL
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    try? StageManager.shared.add(fileURL: fileURL)
                     added = true
-                    break
                 }
             }
         }
-        // 路径 3: .fileURL string 兜底
-        if !added, let urlStr = pb.string(forType: .fileURL) {
-            let url = URL(fileURLWithPath: urlStr.replacingOccurrences(of: "file://", with: ""))
-            try? StageManager.shared.add(fileURL: url)
-            added = true
-        }
+
         // 图片
         if !added {
             for type in [NSPasteboard.PasteboardType.tiff, .png, .init("public.jpeg"), .init("public.heic")] {
@@ -241,6 +225,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 }
             }
         }
+
         // 文本
         if !added, let str = pb.string(forType: .string) {
             try? StageManager.shared.add(text: str)
@@ -251,9 +236,6 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.reload()
             }
-            NSLog("[Stage] acceptDrop: added successfully")
-        } else {
-            NSLog("[Stage] acceptDrop: nothing matched")
         }
         return added
     }

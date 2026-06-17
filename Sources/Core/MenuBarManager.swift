@@ -92,9 +92,22 @@ private final class DragTargetView: NSView {
     var onDropText: ((String) -> Void)?
     var onDropFile: ((URL) -> Void)?
 
-    override func awakeFromNib() {
-        super.awakeFromNib()
-        registerForDraggedTypes([.string, .fileURL, .URL])
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([
+            .string, .fileURL, .URL,
+            .init("NSFilenamesPboardType"),
+            .init("public.file-url"),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([
+            .string, .fileURL, .URL,
+            .init("NSFilenamesPboardType"),
+            .init("public.file-url"),
+        ])
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -107,19 +120,25 @@ private final class DragTargetView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
+        var handled = false
 
-        if let data = pb.data(forType: .fileURL),
-           let urlStr = String(data: data, encoding: .utf8) {
-            let url = URL(fileURLWithPath: urlStr.replacingOccurrences(of: "file://", with: ""))
-            onDropFile?(url)
-            return true
+        // 文件 — readObjects 统一处理所有类型
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                let fileURL = url.standardizedFileURL
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    onDropFile?(fileURL)
+                }
+            }
+            handled = true
         }
 
-        if let text = pb.string(forType: .string) {
+        // 文本
+        if !handled, let text = pb.string(forType: .string) {
             onDropText?(text)
-            return true
+            handled = true
         }
 
-        return false
+        return handled
     }
 }
