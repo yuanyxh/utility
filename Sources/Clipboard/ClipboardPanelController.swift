@@ -48,7 +48,8 @@ public final class ClipboardPanelController: NSWindowController {
         searchField.bezelStyle = .squareBezel
         searchField.controlSize = .small
         searchField.font = NSFont.systemFont(ofSize: 12)
-        (searchField.cell as? NSSearchFieldCell)?.searchTextPositionAdjustment = NSSize(width: 6, height: 0)
+        // 替换 cell 以调整搜索图标与输入区的间距
+        searchField.cell = PaddedSearchFieldCell(textCell: "")
 
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
@@ -373,5 +374,16 @@ private final class NumberCircleView: NSView {
             : NSColor(red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0)
         fillColor.setFill()
         path.fill()
+    }
+}
+
+// MARK: - Padded Search Field Cell
+
+private final class PaddedSearchFieldCell: NSSearchFieldCell {
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.searchTextRect(forBounds: rect)
+        r.origin.x += 6
+        r.size.width -= 6
+        return r
     }
 }
