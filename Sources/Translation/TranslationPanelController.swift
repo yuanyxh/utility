@@ -26,7 +26,7 @@ private final class TranslationTextView: NSTextView {
                 return true
             }
             if !flags.contains(.command) && !flags.contains(.control) {
-                // 纯 Enter → 粘贴并关闭（pasteTranslation 已处理隐藏）
+                // 纯 Enter → 粘贴并关闭（pasteTranslation 已处理隐藏，翻译中忽略）
                 if controller?.isTranslating == true { return true }
                 controller?.pasteTranslation()
                 return true
@@ -381,6 +381,12 @@ public final class TranslationPanelController: NSWindowController {
         window?.isVisible ?? false
     }
 
+    /// 由粘贴面板插入文本到原文区
+    func insertText(_ text: String) {
+        sourceTextView.string = text
+        sourceTextView.scrollToEndOfDocument(nil)
+    }
+
     /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
     func fillAndTranslate(_ text: String) {
         guard !text.isEmpty else { return }
@@ -501,7 +507,14 @@ public final class TranslationPanelController: NSWindowController {
     public override func close() {
         cancelTranslation()
         window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
+        // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
+        DispatchQueue.main.async {
+            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
+                .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
+            if !clipVisible {
+                NSApplication.shared.hide(nil)
+            }
+        }
     }
 
     /// 取消当前翻译任务
