@@ -378,6 +378,12 @@ public final class TranslationPanelController: NSWindowController {
         window?.isVisible ?? false
     }
 
+    /// 由粘贴面板插入文本到原文区
+    func insertText(_ text: String) {
+        sourceTextView.string = text
+        sourceTextView.scrollToEndOfDocument(nil)
+    }
+
     /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
     func fillAndTranslate(_ text: String) {
         guard !text.isEmpty else { return }
