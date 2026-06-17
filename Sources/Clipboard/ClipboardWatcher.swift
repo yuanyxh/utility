@@ -43,18 +43,12 @@ public final class ClipboardWatcher {
 
         guard let pbItem = pasteboard.pasteboardItems?.first else { return }
 
-        // 判断类型并存储
+        // 判断类型并存储（仅文本和图片，排除文件）
         if let str = pbItem.string(forType: .string) {
             let clip = ClipboardItem(type: "text",
                                       content: str.data(using: .utf8) ?? Data(),
                                       application: pasteboardOwner())
             try? storage.add(clip)
-        } else if let _ = pbItem.data(forType: .fileURL) {
-            if let data = pbItem.data(forType: .fileURL) {
-                let clip = ClipboardItem(type: "file", content: data,
-                                          application: pasteboardOwner())
-                try? storage.add(clip)
-            }
         } else if let _ = pbItem.data(forType: .tiff) {
             if let data = pbItem.data(forType: .tiff) {
                 let clip = ClipboardItem(type: "image", content: data,
