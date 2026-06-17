@@ -26,7 +26,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         guard type == "fileURL" else { return nil }
         var isStale = false
         return try? URL(resolvingBookmarkData: content,
-                         options: .withSecurityScope,
+                         options: [],
                          relativeTo: nil,
                          bookmarkDataIsStale: &isStale)
     }
