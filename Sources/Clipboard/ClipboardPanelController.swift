@@ -51,7 +51,7 @@ public final class ClipboardPanelController: NSWindowController {
         // 表格
         let col = NSTableColumn(identifier: .init("content"))
         col.title = ""
-        col.minWidth = 256
+        col.minWidth = 100
         col.resizingMask = .autoresizingMask
         tableView.addTableColumn(col)
         tableView.headerView = nil
@@ -62,11 +62,11 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.dataSource = self
         tableView.delegate = self
         tableView.backgroundColor = NSColor.controlBackgroundColor
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .noBorder
-        // 滚动条：overlay 模式 = 自动隐藏 + 细条
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
         scrollView.verticalScroller?.controlSize = .small
@@ -226,38 +226,119 @@ public final class ClipboardPanelController: NSWindowController {
 extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
     public func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
+    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = LighterSelectionRowView()
+        view.identifier = NSUserInterfaceItemIdentifier("ClipboardRow")
+        return view
+    }
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
-
         let cell = NSTableCellView()
-        let text: String
-        switch item.type {
-        case "text":
-            text = String(data: item.content, encoding: .utf8) ?? "(不可读)"
-        case "file":
-            text = "📄 \(item.application ?? "文件")"
-        case "image":
-            text = "🖼️ 图片 \(item.application ?? "")"
-        default:
-            text = "(未知)"
-        }
+        cell.identifier = NSUserInterfaceItemIdentifier("ClipboardCell")
 
+        // 序号圆圈
+        let circleView = NumberCircleView()
+        circleView.number = row + 1
+        circleView.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(circleView)
+
+        // 文本标签
+        let text = displayText(for: item)
         let label = NSTextField(labelWithString: text)
         label.lineBreakMode = .byTruncatingTail
-        label.font = NSFont.systemFont(ofSize: 13)
         label.cell?.truncatesLastVisibleLine = true
+        label.maximumNumberOfLines = 1
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.translatesAutoresizingMaskIntoConstraints = false
         cell.textField = label
         cell.addSubview(label)
 
-        label.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            circleView.widthAnchor.constraint(equalToConstant: 20),
+            circleView.heightAnchor.constraint(equalToConstant: 20),
+
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 8),
             label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
         return cell
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 32 }
+
+    private func displayText(for item: ClipboardItem) -> String {
+        switch item.type {
+        case "text":
+            return String(data: item.content, encoding: .utf8) ?? "(不可读)"
+        case "file":
+            return "📄 \(item.application ?? "文件")"
+        case "image":
+            return "🖼️ 图片 \(item.application ?? "")"
+        default:
+            return "(未知)"
+        }
+    }
+}
+
+// MARK: - Lighter Selection Row View
+
+private final class LighterSelectionRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        NSColor.selectedControlTextColor.withAlphaComponent(0.12).setFill()
+        bounds.fill()
+    }
+
+    override var selectionHighlightStyle: NSTableView.SelectionHighlightStyle {
+        get { .regular }
+        set {}
+    }
+}
+
+// MARK: - Number Circle View
+
+private final class NumberCircleView: NSView {
+    var number: Int = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let diameter: CGFloat = 16
+        let circleRect = CGRect(
+            x: (bounds.width - diameter) / 2,
+            y: (bounds.height - diameter) / 2,
+            width: diameter,
+            height: diameter
+        )
+
+        // 圆圈
+        let path = NSBezierPath(ovalIn: circleRect)
+        NSColor.tertiaryLabelColor.setStroke()
+        path.lineWidth = 1.0
+        path.stroke()
+
+        // 序号
+        let text = "\(number)"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        let size = (text as NSString).size(withAttributes: attrs)
+        let drawPoint = NSPoint(
+            x: circleRect.midX - size.width / 2,
+            y: circleRect.midY - size.height / 2 - 1
+        )
+        (text as NSString).draw(at: drawPoint, withAttributes: attrs)
+    }
 }
