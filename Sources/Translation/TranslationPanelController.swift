@@ -517,7 +517,8 @@ public final class TranslationPanelController: NSWindowController {
 
     /// 获取当前选中文本（AX → 剪贴板兜底）
     func getSelectedText() -> String? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let app = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication
+        guard let app = app else { return nil }
         let appPID = app.processIdentifier
 
         // 1. AX 路径（快速且不污染粘贴板）
