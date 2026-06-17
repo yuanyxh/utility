@@ -223,8 +223,11 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
         for url in urls {
             let fileURL = url.standardizedFileURL
-            if FileManager.default.fileExists(atPath: fileURL.path) {
+            if fileURL.isFileURL, FileManager.default.fileExists(atPath: fileURL.path) {
                 try? StageManager.shared.add(fileURL: fileURL)
+                added = true
+            } else {
+                try? StageManager.shared.add(url: url)
                 added = true
             }
         }

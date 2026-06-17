@@ -125,15 +125,20 @@ public final class StageDropMonitor {
     private func processDrop() {
         let dragPb = NSPasteboard(name: .drag)
 
-        // 文件
-        if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+        // URL（文件 + 链接）
+        if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            var addedAny = false
             for url in urls {
                 let fileURL = url.standardizedFileURL
-                if FileManager.default.fileExists(atPath: fileURL.path) {
+                if fileURL.isFileURL, FileManager.default.fileExists(atPath: fileURL.path) {
                     try? StageManager.shared.add(fileURL: fileURL)
+                    addedAny = true
+                } else {
+                    try? StageManager.shared.add(url: url)
+                    addedAny = true
                 }
             }
-            if !urls.isEmpty {
+            if addedAny {
                 stageWindow?.reload()
                 return
             }
