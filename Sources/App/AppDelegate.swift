@@ -76,14 +76,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
                     // 1. AX 快速路径
                     if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
-                        self.translationPanel.fillAndTranslate(text)
                         self.translationPanel.activateForInput()
+                        self.translationPanel.fillAndTranslate(text)
                         return
                     }
-                    // 2. 剪贴板兜底（源 app 仍在前台，cmd+c 有效）
+                    // 2. 剪贴板兜底
                     if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
-                        self.translationPanel.fillAndTranslate(text)
                         self.translationPanel.activateForInput()
+                        self.translationPanel.fillAndTranslate(text)
                         return
                     }
                     // 3. 无选中文本 → 激活面板，用户手动输入

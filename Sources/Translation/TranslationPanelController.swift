@@ -535,7 +535,9 @@ public final class TranslationPanelController: NSWindowController {
 
     /// 激活面板接收键盘输入
     func activateForInput() {
-        window?.makeKeyAndOrderFront(nil)
+        window?.makeKey()
+        window?.makeFirstResponder(sourceTextView)
+        window?.orderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
