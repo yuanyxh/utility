@@ -36,7 +36,7 @@ public final class StageWindowController: NSWindowController {
         guard let panel = window else { return }
 
         // 清空按钮（右上角）
-        clearButton.title = "× 清空"
+        clearButton.title = "清空"
         clearButton.bezelStyle = .rounded
         clearButton.controlSize = .small
         clearButton.font = NSFont.systemFont(ofSize: 11)
@@ -182,7 +182,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         del.title = "×"
         del.bezelStyle = .inline
         del.controlSize = .small
-        del.font = NSFont.systemFont(ofSize: 10)
+        del.font = NSFont.systemFont(ofSize: 14)
         del.tag = row
         del.target = self
         del.action = #selector(deleteItem(_:))
@@ -204,7 +204,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
             del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
             del.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            del.widthAnchor.constraint(equalToConstant: 20),
+            del.widthAnchor.constraint(equalToConstant: 28),
         ])
 
         return cell

@@ -39,14 +39,14 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             return str.prefix(80) + (str.count > 80 ? "…" : "")
         case "fileURL":
             if let url = resolveFileURL() {
-                return "📁 \(url.lastPathComponent)"
+                return url.lastPathComponent
             }
-            return "📁 文件"
+            return "文件"
         case "image":
-            return "🖼 图片"
+            return "图片"
         case "url":
             let str = String(data: content, encoding: .utf8) ?? ""
-            return "🔗 \(str.prefix(60))"
+            return String(str.prefix(60))
         default:
             return "(未知)"
         }
