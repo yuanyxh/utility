@@ -8,7 +8,7 @@ public final class StageWindowController: NSWindowController {
     private let clearButton = NSButton()
 
     public init() {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 400),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 221, height: 340),
                              styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         panel.level = .floating
@@ -84,7 +84,7 @@ public final class StageWindowController: NSWindowController {
     public func positionAtBottomLeft() {
         guard let screen = window?.screen ?? NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
-        let panelSize = window?.frame.size ?? NSSize(width: 260, height: 400)
+        let panelSize = window?.frame.size ?? NSSize(width: 221, height: 340)
         let x = screenFrame.minX
         let y = screenFrame.minY
         window?.setFrameOrigin(NSPoint(x: x, y: y))
