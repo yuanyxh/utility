@@ -8,19 +8,20 @@ public final class StageWindowController: NSWindowController {
     private let clearButton = NSButton()
 
     public init() {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 221, height: 340),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
                              styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
-        panel.backgroundColor = NSColor.controlBackgroundColor
+        panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.collectionBehavior = [.transient, .ignoresCycle]
 
         super.init(window: panel)
         setupUI()
+        addVisualEffectView()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -51,8 +52,11 @@ public final class StageWindowController: NSWindowController {
         tableView.selectionHighlightStyle = .regular
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
 
-        // 注册拖入类型
-        tableView.registerForDraggedTypes([.string, .fileURL, .tiff, .png, .init("public.jpeg")])
+        // 注册拖入类型（文件、图片、文本、URL）
+        tableView.registerForDraggedTypes([
+            .string, .fileURL, .tiff, .png,
+            .init("public.jpeg"), .init("NSFilenamesPboardType")
+        ])
 
         // 拖拽排序/移出
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
@@ -84,7 +88,7 @@ public final class StageWindowController: NSWindowController {
     public func positionAtBottomLeft() {
         guard let screen = window?.screen ?? NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
-        let panelSize = window?.frame.size ?? NSSize(width: 221, height: 340)
+        let panelSize = window?.frame.size ?? NSSize(width: 200, height: 320)
         let x = screenFrame.minX
         let y = screenFrame.minY
         window?.setFrameOrigin(NSPoint(x: x, y: y))
@@ -98,6 +102,20 @@ public final class StageWindowController: NSWindowController {
 
     public override func close() {
         window?.orderOut(nil)
+    }
+
+    private func addVisualEffectView() {
+        guard let cv = window?.contentView else { return }
+        let visual = NSVisualEffectView(frame: cv.bounds)
+        visual.autoresizingMask = [.width, .height]
+        visual.blendingMode = .behindWindow
+        visual.state = .active
+        visual.material = .windowBackground
+        visual.wantsLayer = true
+        visual.layer?.cornerRadius = 10
+        visual.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        visual.layer?.masksToBounds = true
+        cv.addSubview(visual, positioned: .below, relativeTo: nil)
     }
 
     // MARK: - Actions
