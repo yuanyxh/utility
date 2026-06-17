@@ -244,6 +244,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         let label = NSTextField(labelWithString: text)
         label.lineBreakMode = .byTruncatingTail
         label.cell?.truncatesLastVisibleLine = true
+        label.cell?.usesSingleLineMode = true
         label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 13)
         label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
@@ -252,13 +253,13 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(label)
 
         NSLayoutConstraint.activate([
-            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            circleView.widthAnchor.constraint(equalToConstant: 16),
-            circleView.heightAnchor.constraint(equalToConstant: 16),
+            circleView.widthAnchor.constraint(equalToConstant: 14),
+            circleView.heightAnchor.constraint(equalToConstant: 14),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
@@ -292,7 +293,7 @@ private final class LighterSelectionRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.12).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 1.0).setFill()
         bounds.fill()
     }
 
@@ -346,7 +347,7 @@ private final class NumberCircleView: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let diameter: CGFloat = 16
+        let diameter: CGFloat = 14
         let circleRect = CGRect(
             x: (bounds.width - diameter) / 2,
             y: (bounds.height - diameter) / 2,
