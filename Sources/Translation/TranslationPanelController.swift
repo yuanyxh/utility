@@ -26,10 +26,9 @@ private final class TranslationTextView: NSTextView {
                 return true
             }
             if !flags.contains(.command) && !flags.contains(.control) {
-                // 纯 Enter → 粘贴并关闭（翻译中忽略）
+                // 纯 Enter → 粘贴并关闭（pasteTranslation 已处理隐藏）
                 if controller?.isTranslating == true { return true }
                 controller?.pasteTranslation()
-                controller?.close()
                 return true
             }
             return false
@@ -45,7 +44,6 @@ private final class TranslationTextView: NSTextView {
         if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
             if controller?.isTranslating == true { return }
             controller?.pasteTranslation()
-            controller?.close()
             return
         }
         super.keyDown(with: event)
