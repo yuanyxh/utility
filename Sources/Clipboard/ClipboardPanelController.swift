@@ -125,13 +125,17 @@ public final class ClipboardPanelController: NSWindowController {
         case "file":
             pb.setData(item.content, forType: .fileURL)
         case "image":
-            // 写 temp 文件供 Finder 粘贴
-            let tempURL = FileManager.default.temporaryDirectory
+            // 写缓存文件供 Finder 粘贴（同时设两种类型确保兼容）
+            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache/utility")
+            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            let cacheFile = cacheDir
                 .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).tiff")
-            try? item.content.write(to: tempURL)
+            try? item.content.write(to: cacheFile)
             let pbItem = NSPasteboardItem()
             pbItem.setData(item.content, forType: .tiff)
-            pbItem.setPropertyList([tempURL.path], forType: .init("NSFilenamesPboardType"))
+            pbItem.setString(cacheFile.absoluteString, forType: .fileURL)
+            pbItem.setPropertyList([cacheFile.path], forType: .init("NSFilenamesPboardType"))
             pb.writeObjects([pbItem])
         case "image_batch":
             guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
