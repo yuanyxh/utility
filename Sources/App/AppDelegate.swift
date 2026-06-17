@@ -70,24 +70,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.translationPanel.fillAndTranslate(text)
                 }
             } else {
-                // 立即弹出空面板（不激活），后台逐步获取选中文本
-                self.translationPanel.showEmpty()
-
-                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                    // 1. AX 快速路径
-                    if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
-                        self.translationPanel.activateForInput()
-                        self.translationPanel.fillAndTranslate(text)
-                        return
+                self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+                // 先 AX 试（快，<1ms），有文本直接 show+translate
+                if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
+                    self.translationPanel.show(with: text)
+                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                        self.translationPanel.startTranslation(text: text)
                     }
-                    // 2. 剪贴板兜底
-                    if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
-                        self.translationPanel.activateForInput()
-                        self.translationPanel.fillAndTranslate(text)
-                        return
+                } else {
+                    // AX 失败 → 出空面板，后台剪贴板兜底
+                    self.translationPanel.showEmpty()
+                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                        if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
+                            self.translationPanel.activateForInput()
+                            self.translationPanel.fillAndTranslate(text)
+                        } else {
+                            self.translationPanel.activateForInput()
+                        }
                     }
-                    // 3. 无选中文本 → 激活面板，用户手动输入
-                    self.translationPanel.activateForInput()
                 }
             }
         }
