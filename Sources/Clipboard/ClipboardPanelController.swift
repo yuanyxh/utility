@@ -125,7 +125,14 @@ public final class ClipboardPanelController: NSWindowController {
         case "file":
             pb.setData(item.content, forType: .fileURL)
         case "image":
-            pb.setData(item.content, forType: .tiff)
+            // 写 temp 文件供 Finder 粘贴
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).tiff")
+            try? item.content.write(to: tempURL)
+            let pbItem = NSPasteboardItem()
+            pbItem.setData(item.content, forType: .tiff)
+            pbItem.setPropertyList([tempURL.path], forType: .init("NSFilenamesPboardType"))
+            pb.writeObjects([pbItem])
         case "image_batch":
             guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
             let pbItems: [NSPasteboardItem] = dicts.compactMap { dict in
@@ -309,7 +316,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         var previousView: NSView = circleView
         let gap: CGFloat = 6
 
-        // 图片缩略图（仅单张图片）
+        // 图片缩略图（仅单张图片，放大 + 不要文字）
         if item.type == "image", let image = NSImage(data: item.content) {
             let imgView = NSImageView()
             imgView.image = image
@@ -321,36 +328,40 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             NSLayoutConstraint.activate([
                 imgView.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
                 imgView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                imgView.widthAnchor.constraint(equalToConstant: 20),
-                imgView.heightAnchor.constraint(equalToConstant: 20),
+                imgView.widthAnchor.constraint(equalToConstant: 24),
+                imgView.heightAnchor.constraint(equalToConstant: 24),
             ])
             previousView = imgView
         }
 
-        // 文本标签
-        let text = displayText(for: item)
-        let label = NSTextField(labelWithString: text)
-        label.lineBreakMode = .byTruncatingTail
-        label.cell?.truncatesLastVisibleLine = true
-        label.cell?.usesSingleLineMode = true
-        label.maximumNumberOfLines = 1
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        cell.textField = label
-        cell.addSubview(label)
+        // 文本标签（非单图条目才需要）
+        if item.type != "image" {
+            let text = displayText(for: item)
+            let label = NSTextField(labelWithString: text)
+            label.lineBreakMode = .byTruncatingTail
+            label.cell?.truncatesLastVisibleLine = true
+            label.cell?.usesSingleLineMode = true
+            label.maximumNumberOfLines = 1
+            label.font = NSFont.systemFont(ofSize: 13)
+            label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.textField = label
+            cell.addSubview(label)
+
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
+                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                label.heightAnchor.constraint(equalToConstant: 16),
+            ])
+        }
 
         NSLayoutConstraint.activate([
             circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 16),
             circleView.heightAnchor.constraint(equalToConstant: 16),
-
-            label.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            label.heightAnchor.constraint(equalToConstant: 16),
         ])
 
         return cell
