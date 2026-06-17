@@ -280,7 +280,9 @@ public final class TranslationPanelController: NSWindowController {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+        // 如果有本 app 其他窗口成为 key，不关闭
+        if let keyWindow = NSApplication.shared.keyWindow,
+           keyWindow != window {
             return
         }
         close()

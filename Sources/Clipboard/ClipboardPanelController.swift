@@ -99,7 +99,8 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+        if let keyWindow = NSApplication.shared.keyWindow,
+           keyWindow != window {
             return
         }
         close()
