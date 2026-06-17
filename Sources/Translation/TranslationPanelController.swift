@@ -110,6 +110,9 @@ public final class TranslationPanelController: NSWindowController {
     /// 翻译序列号（用于判断任务是否已过期）
     private var translationSeq: UInt = 0
 
+    /// 面板打开前的前台 app（粘贴时恢复到该 app）
+    private var previousFrontmostApp: NSRunningApplication?
+
     /// 26 种语言（按使用量排序）
     private let languages: [(code: String, name: String)] = [
         ("auto", "自动检测"),
@@ -330,8 +333,8 @@ public final class TranslationPanelController: NSWindowController {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // 记录目标 app
-        guard let target = NSWorkspace.shared.frontmostApplication else {
+        // 记录目标 app（面板打开前的前台 app，而非当前自己）
+        guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             window?.orderOut(nil)
             NSApplication.shared.hide(nil)
             return
@@ -474,6 +477,8 @@ public final class TranslationPanelController: NSWindowController {
         } else {
             fallbackPosition()
         }
+        // 记录当前前台 app，粘贴时恢复到它
+        previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
 
