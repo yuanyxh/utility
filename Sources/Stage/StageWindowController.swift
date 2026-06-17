@@ -95,7 +95,6 @@ public final class StageWindowController: NSWindowController {
 
     public func reload() {
         items = (try? StageManager.shared.all()) ?? []
-        print("[StageWindow] reload: \(items.count) items")
         tableView.reloadData()
         clearButton.isHidden = items.isEmpty
     }
@@ -219,51 +218,36 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_: NSTableView, acceptDrop info: NSDraggingInfo, row _: Int, dropOperation _: NSTableView.DropOperation) -> Bool {
         let pb = info.draggingPasteboard
-        print("[Stage] acceptDrop called, types: \(pb.types?.map(\.rawValue) ?? [])")
         var added = false
 
-        // 文件 — 使用 readObjects 统一处理所有类型
         let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
-        print("[Stage] readObjects URLs: \(urls.map(\.path))")
         for url in urls {
             let fileURL = url.standardizedFileURL
-            print("[Stage] processing file: \(fileURL.path), exists=\(FileManager.default.fileExists(atPath: fileURL.path))")
             if FileManager.default.fileExists(atPath: fileURL.path) {
-                do {
-                    try StageManager.shared.add(fileURL: fileURL)
-                    added = true
-                    print("[Stage] added file OK: \(fileURL.lastPathComponent)")
-                } catch {
-                    print("[Stage] add file FAILED: \(error)")
-                }
+                try? StageManager.shared.add(fileURL: fileURL)
+                added = true
             }
         }
 
-        // 图片
         if !added {
             for type in [NSPasteboard.PasteboardType.tiff, .png, .init("public.jpeg"), .init("public.heic")] {
                 if let data = pb.data(forType: type) {
                     try? StageManager.shared.add(imageData: data)
                     added = true
-                    print("[Stage] added image, size=\(data.count)")
                     break
                 }
             }
         }
 
-        // 文本
         if !added, let str = pb.string(forType: .string) {
             try? StageManager.shared.add(text: str)
             added = true
-            print("[Stage] added text: \(str.prefix(40))...")
         }
 
         if added {
             DispatchQueue.main.async { [weak self] in
                 self?.reload()
             }
-        } else {
-            print("[Stage] acceptDrop: NOTHING MATCHED")
         }
         return added
     }

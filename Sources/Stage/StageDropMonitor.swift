@@ -1,12 +1,15 @@
 import Cocoa
 
-/// 全局拖拽监听器 — 事件驱动，无轮询
-/// 窗口始终在线（alpha=0.01），拖拽开始时拉至完全可见，松手后若仍无内容则淡出
+/// 全局拖拽监听器 — EventTap 驱动
+/// 窗口始终在线（alpha=0.01），拖拽开始时拉至完全可见，
+/// 松手时若鼠标在窗口内则读取 drag pasteboard 直接处理 drop，
+/// 不依赖 NSView 拖拽系统（nonactivatingPanel 窗口不收 drag 事件）
 public final class StageDropMonitor {
     public static let shared = StageDropMonitor()
     private weak var stageWindow: StageWindowController?
     private var eventTap: CFMachPort?
     private var isDragging = false
+    private var windowShown = false
 
     private init() {}
 
@@ -43,9 +46,8 @@ public final class StageDropMonitor {
             eventTap = tap
             let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
-            print("[StageDrop] EventTap installed OK")
         } else {
-            print("[StageDrop] EventTap FAILED — no Accessibility permission?")
+            Log.debug("[StageDrop] EventTap FAILED — need Accessibility permission")
         }
     }
 
@@ -53,53 +55,74 @@ public final class StageDropMonitor {
         switch type {
         case .leftMouseDown:
             isDragging = true
-            // 拖拽开始 → 窗口完全可见
-            stageWindow?.show()
-            print("[StageDrop] Drag started, window shown")
+            if !windowShown {
+                stageWindow?.show()
+                windowShown = true
+            }
 
         case .leftMouseUp:
             isDragging = false
-            // 松手后，如果无内容且鼠标不在窗口区 → 淡出
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                let items = (try? StageManager.shared.count()) ?? 0
-                if items > 0 { return }  // 有内容，保持可见
-
-                let mouse = NSEvent.mouseLocation
-                if let frame = self.stageWindow?.window?.frame {
-                    let inWindow = NSRect(x: frame.minX - 20, y: frame.minY - 20,
-                                          width: frame.width + 40, height: frame.height + 40)
-                        .contains(mouse)
-                    if !inWindow {
-                        self.stageWindow?.close()
-                        print("[StageDrop] No items, mouse outside, faded out")
-                    }
-                }
+            windowShown = false
+            let mouse = NSEvent.mouseLocation
+            if isMouseInWindow(mouse) {
+                processDrop()
+            }
+            let items = (try? StageManager.shared.count()) ?? 0
+            if items == 0 {
+                stageWindow?.close()
             }
 
         case .leftMouseDragged:
-            guard isDragging else { break }
-            // 拖拽中，确保窗口可见（已有内容时可能已经可见）
-            if stageWindow?.window?.alphaValue != 1.0 {
-                stageWindow?.show()
-            }
-
-            // 远离窗口且无内容 → 淡出
-            let mouse = NSEvent.mouseLocation
-            let windowFrame = stageWindow?.window?.frame ?? .zero
-            let hitZone = NSRect(x: windowFrame.minX - 20, y: windowFrame.minY - 20,
-                                 width: windowFrame.width + 40, height: windowFrame.height + 40)
-            if !hitZone.contains(mouse) {
-                let items = (try? StageManager.shared.count()) ?? 0
-                if items == 0 {
-                    stageWindow?.close()
-                    print("[StageDrop] Drag away from window, no items, faded out")
-                }
-            }
+            break
 
         default:
             break
         }
         return Unmanaged.passUnretained(event)
+    }
+
+    // MARK: - Helpers
+
+    private func isMouseInWindow(_ mouse: NSPoint) -> Bool {
+        guard let frame = stageWindow?.window?.frame else { return false }
+        return NSRect(x: frame.minX - 20, y: frame.minY - 20,
+                      width: frame.width + 40, height: frame.height + 40)
+            .contains(mouse)
+    }
+
+    private func processDrop() {
+        let dragPb = NSPasteboard(name: .drag)
+
+        // 文件
+        if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                let fileURL = url.standardizedFileURL
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    try? StageManager.shared.add(fileURL: fileURL)
+                }
+            }
+            if !urls.isEmpty {
+                stageWindow?.reload()
+                return
+            }
+        }
+
+        // 文本
+        if let text = dragPb.string(forType: .string), !text.isEmpty {
+            try? StageManager.shared.add(text: text)
+            stageWindow?.reload()
+            return
+        }
+
+        // 图片
+        for type in [NSPasteboard.PasteboardType.tiff, .png,
+                     NSPasteboard.PasteboardType("public.jpeg"),
+                     NSPasteboard.PasteboardType("public.heic")] {
+            if let data = dragPb.data(forType: type) {
+                try? StageManager.shared.add(imageData: data)
+                stageWindow?.reload()
+                return
+            }
+        }
     }
 }
