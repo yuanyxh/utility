@@ -134,7 +134,7 @@ public final class ClipboardPanelController: NSWindowController {
             }
             let ext = Self.extensionForUTI(format)
             let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/utility")
+                .appendingPathComponent(".cache/utility/clip")
             try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
             let cacheFile = cacheDir
                 .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).\(ext)")
@@ -147,7 +147,7 @@ public final class ClipboardPanelController: NSWindowController {
         case "image_batch":
             guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
             let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/utility")
+                .appendingPathComponent(".cache/utility/clip")
             try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
             let now = Int(Date().timeIntervalSince1970)
             let pbItems: [NSPasteboardItem] = dicts.enumerated().compactMap { (i, dict) in
@@ -292,7 +292,7 @@ public final class ClipboardPanelController: NSWindowController {
 
         // 清理过期的粘贴缓存文件（>1天）
         let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility")
+            .appendingPathComponent(".cache/utility/clip")
         if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.creationDateKey]) {
             let cutoff = Date().addingTimeInterval(-86400)
             for url in files {
