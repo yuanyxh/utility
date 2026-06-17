@@ -318,7 +318,6 @@ public final class ClipboardPanelController: NSWindowController {
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
         window?.makeKeyAndOrderFront(nil)
-        NSApplication.shared.activate(ignoringOtherApps: true)
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
         }
