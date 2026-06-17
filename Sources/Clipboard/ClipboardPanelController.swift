@@ -184,13 +184,16 @@ public final class ClipboardPanelController: NSWindowController {
         let pasteNow = {
             guard !didPaste else { return }
             didPaste = true
-            let source = CGEventSource(stateID: .combinedSessionState)
-            guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                  let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-            kd.flags = .maskCommand
-            ku.flags = .maskCommand
-            kd.post(tap: .cghidEventTap)
-            ku.post(tap: .cghidEventTap)
+            // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                let source = CGEventSource(stateID: .combinedSessionState)
+                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+                kd.flags = .maskCommand
+                ku.flags = .maskCommand
+                kd.post(tap: .cghidEventTap)
+                ku.post(tap: .cghidEventTap)
+            }
         }
 
         // 路 1: didActivateApplicationNotification 兜底
