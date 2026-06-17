@@ -9,6 +9,7 @@ public final class ClipboardPanelController: NSWindowController {
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
     private var eventMonitor: Any?
+    private var eventTap: CFMachPort?
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
     private var previousFrontmostApp: NSRunningApplication?
 
@@ -317,19 +318,81 @@ public final class ClipboardPanelController: NSWindowController {
         // 记录当前前台 app，粘贴时恢复到它
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
-        window?.makeKeyAndOrderFront(nil)
+        window?.orderFront(nil)
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
         }
         searchField.becomeFirstResponder()
+        installEventTap()
     }
 
     public override func close() {
+        removeEventTap()
         window?.orderOut(nil)
         // 释放资源：清空 items（释放图片 Data）、清空 table 视图（释放缩略图 NSImage）
         items = []
         searchField.stringValue = ""
         tableView.reloadData()
+    }
+
+    // MARK: - Event Tap
+
+    private func installEventTap() {
+        removeEventTap()
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard type == .keyDown, let refcon = refcon else {
+                return Unmanaged.passUnretained(event)
+            }
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let ctrl = Unmanaged<ClipboardPanelController>.fromOpaque(refcon).takeUnretainedValue()
+            // 只拦截 Panel 可见时的键盘事件
+            guard ctrl.window?.isVisible == true else {
+                return Unmanaged.passUnretained(event)
+            }
+            switch keyCode {
+            case 53: // esc
+                ctrl.perform(#selector(ctrl.close), with: nil, afterDelay: 0)
+                return nil
+            case 36: // return/enter
+                if event.flags.contains(.maskCommand) {
+                    return Unmanaged.passUnretained(event) // cmd+enter 放行
+                }
+                ctrl.perform(#selector(ctrl.selectItem), with: nil, afterDelay: 0)
+                return nil
+            case 125: // down
+                let next = min(ctrl.tableView.selectedRow + 1, ctrl.items.count - 1)
+                ctrl.tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
+                ctrl.tableView.scrollRowToVisible(max(next, 0))
+                return nil
+            case 126: // up
+                let prev = ctrl.tableView.selectedRow - 1
+                ctrl.tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
+                ctrl.tableView.scrollRowToVisible(max(prev, 0))
+                return nil
+            default:
+                return Unmanaged.passUnretained(event)
+            }
+        }
+        let ptr = Unmanaged.passUnretained(self).toOpaque()
+        if let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+            callback: callback,
+            userInfo: ptr
+        ) {
+            eventTap = tap
+            let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
+        }
+    }
+
+    private func removeEventTap() {
+        if let tap = eventTap {
+            CFMachPortInvalidate(tap)
+            eventTap = nil
+        }
     }
 }
 
