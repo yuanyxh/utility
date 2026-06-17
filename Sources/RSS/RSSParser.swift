@@ -33,6 +33,12 @@ public final class RSSParser: NSObject, XMLParserDelegate {
             currentTitle = ""; currentLink = ""; currentDesc = ""
             currentPubDate = ""; currentGUID = ""
         }
+
+        // Atom: <link href="..." /> 从属性中取
+        if isItem, elementName == "link", let href = attributeDict["href"],
+           !href.isEmpty, currentLink.isEmpty {
+            currentLink = href
+        }
     }
 
     public func parser(_ parser: XMLParser, foundCharacters string: String) {
@@ -43,7 +49,9 @@ public final class RSSParser: NSObject, XMLParserDelegate {
             // Atom 可能把 link 放属性里
             currentLink += string
         case "description", "summary", "content": currentDesc += string
-        case "pubDate", "published", "updated": currentPubDate += string
+        case "pubDate", "published", "updated":
+            // 多个日期元素时只取第一个（Atom 有 published + updated）
+            if currentPubDate.isEmpty { currentPubDate = string }
         case "guid", "id": currentGUID += string
         default: break
         }
@@ -75,6 +83,9 @@ public final class RSSParser: NSObject, XMLParserDelegate {
             { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"; return f }(),
             { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"; return f }(),
             { let f = DateFormatter(); f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"; return f }(),
+            // Atom: "2026-06-17T00:58:31Z" (Z literal = UTC)
+            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssX"; return f }(),
+            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSX"; return f }(),
         ]
         for f in formatters {
             if let date = f.date(from: str) { return date }

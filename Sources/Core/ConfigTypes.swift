@@ -101,6 +101,19 @@ public struct RSSFeedConfig: Codable {
     var name: String
     var url: String
     var tags: [String] = []
+
+    public init(name: String, url: String, tags: [String] = []) {
+        self.name = name
+        self.url = url
+        self.tags = tags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        url = try c.decode(String.self, forKey: .url)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+    }
 }
 
 // MARK: - Prompt Templates
