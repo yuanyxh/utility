@@ -9,6 +9,8 @@ public final class ClipboardPanelController: NSWindowController {
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
     private var eventMonitor: Any?
+    /// 面板打开前的前台 app（粘贴时恢复到该 app）
+    private var previousFrontmostApp: NSRunningApplication?
 
     public init(storage: ClipboardStorage) {
         self.storage = storage
@@ -112,6 +114,7 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     private func paste(item: ClipboardItem) {
+        // 先把内容写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
 
@@ -127,14 +130,39 @@ public final class ClipboardPanelController: NSWindowController {
             return
         }
 
-        // 模拟 cmd+v
-        let source = CGEventSource(stateID: .combinedSessionState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true) else { return }
-        keyDown.flags = .maskCommand
-        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        // 隐藏面板，触发 app 切换回原焦点 app
+        guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
+            window?.orderOut(nil)
+            NSApplication.shared.hide(nil)
+            return
+        }
+
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
+
+        // 轮询目标 app 的 AX 焦点元素，就绪后发 cmd+v
+        var attempts = 0
+        func pollFocus(for app: NSRunningApplication) {
+            attempts += 1
+            guard attempts < 100 else { return }
+            let appRef = AXUIElementCreateApplication(app.processIdentifier)
+            var focused: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
+            if result == .success, focused != nil {
+                let source = CGEventSource(stateID: .combinedSessionState)
+                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+                kd.flags = .maskCommand
+                ku.flags = .maskCommand
+                kd.post(tap: .cghidEventTap)
+                ku.post(tap: .cghidEventTap)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
+                pollFocus(for: app)
+            }
+        }
+        pollFocus(for: target)
     }
 
     // MARK: - Keyboard
@@ -203,6 +231,9 @@ public final class ClipboardPanelController: NSWindowController {
         }
 
         window?.setFrameOrigin(origin)
+
+        // 记录当前前台 app，粘贴时恢复到它
+        previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
