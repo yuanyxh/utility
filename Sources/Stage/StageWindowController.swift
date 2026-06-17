@@ -158,7 +158,9 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         // 文本
         let label = NSTextField(labelWithString: item.displayText)
         label.lineBreakMode = .byTruncatingTail
+        label.cell?.truncatesLastVisibleLine = true
         label.cell?.usesSingleLineMode = true
+        label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 12)
         label.textColor = NSColor.labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -187,6 +189,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
             label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            label.heightAnchor.constraint(equalToConstant: 16),
 
             del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: 0),
             del.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
