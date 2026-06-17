@@ -384,6 +384,7 @@ public final class TranslationPanelController: NSWindowController {
         targetTextView.string = ""
         overlay.hide()
         resetLanguageSelection()
+        sourceTextView.scrollToEndOfDocument(nil)
         startTranslation(text: text)
     }
 
