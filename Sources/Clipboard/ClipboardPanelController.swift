@@ -110,8 +110,25 @@ public final class ClipboardPanelController: NSWindowController {
         guard tableView.selectedRow >= 0, tableView.selectedRow < items.count else { return }
         let item = items[tableView.selectedRow]
         try? storage.moveToTop(item.id)
+
+        // 翻译面板打开 → 直接插入原文区
+        if let trans = translationPanelIfVisible(),
+           let text = String(data: item.content, encoding: .utf8) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            trans.insertText(text)
+            close()
+            return
+        }
+
         paste(item: item)
         close()
+    }
+
+    private func translationPanelIfVisible() -> TranslationPanelController? {
+        guard let delegate = NSApplication.shared.delegate as? AppDelegate else { return nil }
+        let panel = delegate.value(forKey: "translationPanel") as? TranslationPanelController
+        return panel?.isPanelVisible == true ? panel : nil
     }
 
     private func paste(item: ClipboardItem) {
