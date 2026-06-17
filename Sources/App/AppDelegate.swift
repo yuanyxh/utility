@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.debug("[Utility] Starting up...")
 
+        // 无 Info.plist，代码设置 LSUIElement（无 Dock 图标）
+        NSApplication.shared.setActivationPolicy(.accessory)
+
         // 1. 加载配置
         do {
             try ConfigManager.shared.load()
