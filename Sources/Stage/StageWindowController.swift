@@ -7,6 +7,7 @@ public final class StageWindowController: NSWindowController {
     private var items: [StageItem] = []
     private let clearButton = NSButton()
     private var draggingItemId: String?
+    private var draggingItem: StageItem?
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
@@ -235,15 +236,81 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
         // 不在此删除 — 等 draggingSession:endedAt: 确认有效目标后再移除
         draggingItemId = item.id
+        draggingItem = item
         return true
     }
 
     public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        defer { draggingItemId = nil }
+        defer { draggingItemId = nil; draggingItem = nil }
         guard operation != [] else { return }
-        guard let id = draggingItemId else { return }
-        try? StageManager.shared.remove(id)
+        guard let item = draggingItem else { return }
+        tryMoveOrRemove(item: item)
         reload()
         if items.isEmpty { close() }
+    }
+
+    // MARK: - Move on drag out
+
+    private func tryMoveOrRemove(item: StageItem) {
+        let config = ConfigManager.shared.config.stage
+        guard config.moveOnDragOut else {
+            try? StageManager.shared.remove(item.id)
+            return
+        }
+        // 获取文件 URL 列表
+        let fileURLs: [URL]
+        switch item.type {
+        case "fileURL":
+            if let url = item.resolveFileURL() { fileURLs = [url] } else { return }
+        case "fileGroup":
+            fileURLs = item.resolveFileGroup()
+        default:
+            try? StageManager.shared.remove(item.id)
+            return
+        }
+        guard !fileURLs.isEmpty else { return }
+
+        // 备份目录
+        let fm = FileManager.default
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let backupDir = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/utility/stage/\(formatter.string(from: Date()))")
+        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+
+        // 逐文件备份验证 → 移到废纸篓
+        var backupOK = true
+        for url in fileURLs {
+            let dest = backupDir.appendingPathComponent(url.lastPathComponent)
+            do {
+                try fm.copyItem(at: url, to: dest)
+                let srcSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                let dstSize = (try? dest.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                guard srcSize == dstSize else { backupOK = false; break }
+            } catch {
+                backupOK = false; break
+            }
+        }
+
+        guard backupOK else { return }  // 备份失败，不删
+
+        // 移入废纸篓
+        for url in fileURLs {
+            try? fm.trashItem(at: url, resultingItemURL: nil)
+        }
+
+        try? StageManager.shared.remove(item.id)
+
+        // 日清过期备份（>1天）
+        if let contents = try? fm.contentsOfDirectory(at: backupDir.deletingLastPathComponent(),
+                                                       includingPropertiesForKeys: [.contentModificationDateKey]) {
+            let cutoff = Date().addingTimeInterval(-86400)
+            for dir in contents {
+                if let attrs = try? dir.resourceValues(forKeys: [.contentModificationDateKey]),
+                   let date = attrs.contentModificationDate, date < cutoff {
+                    try? fm.removeItem(at: dir)
+                }
+            }
+        }
     }
 }

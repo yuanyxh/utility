@@ -72,7 +72,13 @@ public struct TranslationConfig: Codable {
 // MARK: - Stage
 
 public struct StageConfig: Codable {
+    var moveOnDragOut: Bool = false
+
     public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        moveOnDragOut = try c.decodeIfPresent(Bool.self, forKey: .moveOnDragOut) ?? false
+    }
 }
 
 // MARK: - RSS
