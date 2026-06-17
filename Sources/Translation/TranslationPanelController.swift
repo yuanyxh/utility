@@ -498,10 +498,7 @@ public final class TranslationPanelController: NSWindowController {
     public override func close() {
         cancelTranslation()
         window?.orderOut(nil)
-        // 检查是否还有其他面板打开，没有再 hide app
-        let clipboardVisible = (NSApplication.shared.delegate as? AppDelegate)
-            .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
-        if !clipboardVisible {
+        if !AppDelegate.isShowingClipboard {
             NSApplication.shared.hide(nil)
         }
     }

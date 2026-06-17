@@ -2,6 +2,7 @@ import Cocoa
 import Carbon
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var isShowingClipboard = false
     private let menuBar = MenuBarManager()
     private let hotkeyManager = HotkeyManager.shared
     private let clipboardStorage = ClipboardStorage()
@@ -34,7 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let config = ConfigManager.shared.config
 
         hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") { [weak self] in
+            AppDelegate.isShowingClipboard = true
             self?.clipboardPanel.show()
+            AppDelegate.isShowingClipboard = false
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
