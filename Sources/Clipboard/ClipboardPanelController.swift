@@ -271,126 +271,32 @@ public final class ClipboardPanelController: NSWindowController {
 
     public func show() {
         items = (try? storage.all()) ?? []
-        tableView.reloadData()
-        searchField.stringValue = ""
+        if items.isEmpty { return }
 
-        // 智能定位：根据鼠标位置选择最佳角落
+        let menu = NSMenu()
+        for (i, item) in items.enumerated() {
+            let text = displayText(for: item)
+            let menuItem = NSMenuItem(title: text, action: #selector(menuPaste(_:)), keyEquivalent: "")
+            menuItem.tag = i
+            menuItem.representedObject = item
+            menu.addItem(menuItem)
+        }
+
+        // 在鼠标位置弹出
         let mouse = NSEvent.mouseLocation
-        guard let screen = window?.screen ?? NSScreen.main else { return }
-        let screenFrame = screen.visibleFrame
-        let panelSize = window?.frame.size ?? NSSize(width: 360, height: 380)
-        let padding: CGFloat = 12
+        menu.popUp(positioning: nil, at: mouse, in: nil)
 
-        // 尝试顺序：右下 → 左下 → 右上 → 左上
-        let candidates: [(x: CGFloat, y: CGFloat)] = [
-            (mouse.x + padding, mouse.y - panelSize.height - padding),
-            (mouse.x - panelSize.width - padding, mouse.y - panelSize.height - padding),
-            (mouse.x + padding, mouse.y + padding),
-            (mouse.x - panelSize.width - padding, mouse.y + padding),
-        ]
+        // 用户选中后触发粘贴
+    }
 
-        var origin: NSPoint = NSPoint(x: mouse.x + padding, y: mouse.y - panelSize.height - padding)
-        for candidate in candidates {
-            let rect = NSRect(origin: NSPoint(x: candidate.x, y: candidate.y),
-                              size: panelSize)
-            if screenFrame.contains(rect) {
-                origin = NSPoint(x: candidate.x, y: candidate.y)
-                break
-            }
-        }
-
-        window?.setFrameOrigin(origin)
-
-        // 清理过期的粘贴缓存文件（>1天）
-        let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility")
-        if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.creationDateKey]) {
-            let cutoff = Date().addingTimeInterval(-86400)
-            for url in files {
-                if let attrs = try? url.resourceValues(forKeys: [.creationDateKey]),
-                   let date = attrs.creationDate, date < cutoff {
-                    try? FileManager.default.removeItem(at: url)
-                }
-            }
-        }
-
-        // 记录当前前台 app，粘贴时恢复到它
-        previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-
-        window?.orderFront(nil)
-        if !items.isEmpty {
-            tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
-        }
-        installEventTap()
+    @objc private func menuPaste(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? ClipboardItem else { return }
+        try? storage.moveToTop(item.id)
+        paste(item: item)
     }
 
     public override func close() {
-        removeEventTap()
-        window?.orderOut(nil)
-        // 释放资源：清空 items（释放图片 Data）、清空 table 视图（释放缩略图 NSImage）
-        items = []
-        searchField.stringValue = ""
-        tableView.reloadData()
-    }
-
-    // MARK: - Event Tap
-
-    private func installEventTap() {
-        removeEventTap()
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard type == .keyDown, let refcon = refcon else {
-                return Unmanaged.passUnretained(event)
-            }
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            let ctrl = Unmanaged<ClipboardPanelController>.fromOpaque(refcon).takeUnretainedValue()
-            // 只拦截 Panel 可见时的键盘事件
-            guard ctrl.window?.isVisible == true else {
-                return Unmanaged.passUnretained(event)
-            }
-            switch keyCode {
-            case 53: // esc
-                ctrl.perform(#selector(ctrl.close), with: nil, afterDelay: 0)
-                return nil
-            case 36: // return/enter
-                if event.flags.contains(.maskCommand) {
-                    return Unmanaged.passUnretained(event) // cmd+enter 放行
-                }
-                ctrl.perform(#selector(ctrl.selectItem), with: nil, afterDelay: 0)
-                return nil
-            case 125: // down
-                let next = min(ctrl.tableView.selectedRow + 1, ctrl.items.count - 1)
-                ctrl.tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(next, 0))
-                return nil
-            case 126: // up
-                let prev = ctrl.tableView.selectedRow - 1
-                ctrl.tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(prev, 0))
-                return nil
-            default:
-                return Unmanaged.passUnretained(event)
-            }
-        }
-        let ptr = Unmanaged.passUnretained(self).toOpaque()
-        if let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
-            callback: callback,
-            userInfo: ptr
-        ) {
-            eventTap = tap
-            let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
-        }
-    }
-
-    private func removeEventTap() {
-        if let tap = eventTap {
-            CFMachPortInvalidate(tap)
-            eventTap = nil
-        }
+        // no-op, menu auto-dismisses
     }
 }
 
