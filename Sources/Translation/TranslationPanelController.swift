@@ -14,6 +14,12 @@ private final class TranslationTextView: NSTextView {
         case 53: // esc
             controller?.close()
             return true
+        case 6: // z — undo
+            if flags == .command {
+                undoManager?.undo()
+                return true
+            }
+            return false
         case 36: // return / enter
             if flags == .command {
                 // cmd+enter → 翻译（允许取消旧翻译重新开始）
@@ -78,11 +84,8 @@ private final class TranslationPanel: NSPanel {
                     textView.selectAll(nil)
                     return true
                 }
-            case 6:  // z
-                if let textView = firstResponder as? NSTextView, textView.isEditable {
-                    NSApp.sendAction(Selector(("undo:")), to: textView, from: nil)
-                    return true
-                }
+            case 6:  // z — 留给 TranslationTextView 自行处理
+                break
             default:
                 break
             }
