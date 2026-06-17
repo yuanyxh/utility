@@ -15,22 +15,48 @@ public final class ClipboardStorage {
 
     public func add(_ item: ClipboardItem) throws {
         try db.write { db in
-            try item.insert(db)
+            // 查找重复项：文本比较 search_text，图片/batch 比较 content 数据
+            let dupeId: String? = {
+                if item.type == "text", let text = item.searchText {
+                    return try? String.fetchOne(db, sql: """
+                        SELECT id FROM clipboard_item
+                        WHERE type = 'text' AND search_text = ?
+                        LIMIT 1
+                    """, arguments: [text])
+                } else if item.type == "image" || item.type == "image_batch" {
+                    return try? String.fetchOne(db, sql: """
+                        SELECT id FROM clipboard_item
+                        WHERE type = ? AND content = ?
+                        LIMIT 1
+                    """, arguments: [item.type, item.content])
+                }
+                return nil
+            }()
 
-            // 1. 按保留天数清理
-            let maxDays = ConfigManager.shared.config.clipboard.maxDays
-            let cutoff = Date().addingTimeInterval(-Double(maxDays * 86400))
-            try db.execute(literal: """
-                DELETE FROM clipboard_item WHERE timestamp < \(cutoff)
-            """)
+            if let existingId = dupeId {
+                // 重复 → 更新时间戳移到顶部
+                try db.execute(literal: """
+                    UPDATE clipboard_item SET timestamp = \(Date()) WHERE id = \(existingId)
+                """)
+            } else {
+                // 新条目 → 正常插入
+                try item.insert(db)
 
-            // 2. 限制最大条目数
-            let maxItems = ConfigManager.shared.config.clipboard.maxItems
-            try db.execute(literal: """
-                DELETE FROM clipboard_item WHERE id NOT IN (
-                    SELECT id FROM clipboard_item ORDER BY timestamp DESC LIMIT \(maxItems)
-                )
-            """)
+                // 按保留天数清理
+                let maxDays = ConfigManager.shared.config.clipboard.maxDays
+                let cutoff = Date().addingTimeInterval(-Double(maxDays * 86400))
+                try db.execute(literal: """
+                    DELETE FROM clipboard_item WHERE timestamp < \(cutoff)
+                """)
+
+                // 限制最大条目数
+                let maxItems = ConfigManager.shared.config.clipboard.maxItems
+                try db.execute(literal: """
+                    DELETE FROM clipboard_item WHERE id NOT IN (
+                        SELECT id FROM clipboard_item ORDER BY timestamp DESC LIMIT \(maxItems)
+                    )
+                """)
+            }
         }
     }
 

@@ -24,6 +24,10 @@ public final class ClipboardWatcher {
         .init("public.bmp"),
     ]
 
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "tiff", "tif", "heic", "heif", "gif", "webp", "bmp"
+    ]
+
     public init(storage: ClipboardStorage) {
         self.storage = storage
         self.lastChangeCount = pasteboard.changeCount
@@ -59,25 +63,38 @@ public final class ClipboardWatcher {
 
         guard let pbItems = pasteboard.pasteboardItems, !pbItems.isEmpty else { return }
 
-        // 收集所有图片
-        let images: [ImageClip] = pbItems.compactMap { item in
+        // 1. 从 pasteboard 直接获取图片（浏览器、截图工具等）
+        var allImages: [(clip: ImageClip, source: String)] = pbItems.compactMap { item in
             for type in Self.imageUTIs {
                 if let data = item.data(forType: type) {
-                    return ImageClip(format: type.rawValue, data: data)
+                    return (ImageClip(format: type.rawValue, data: data),
+                            pasteboardOwner() ?? "")
                 }
+            }
+            // 2. 从文件 URL 读取（Finder 复制）
+            if let urlStr = item.string(forType: .fileURL),
+               let url = URL(string: urlStr),
+               Self.imageExtensions.contains(url.pathExtension.lowercased()),
+               let data = try? Data(contentsOf: url) {
+                let uti = Self.utiForExtension(url.pathExtension)
+                return (ImageClip(format: uti, data: data),
+                        url.lastPathComponent)  // 存文件名
             }
             return nil
         }
 
-        if images.count > 1 {
-            // 多个图片 → batch 存储
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: images, requiringSecureCoding: false) {
-                let clip = ClipboardItem(type: "image_batch", content: data, application: pasteboardOwner())
+        if allImages.count > 1 {
+            // 多张图片 → batch
+            let clips = allImages.map { $0.clip }
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: clips, requiringSecureCoding: false) {
+                let appName = allImages.first?.source ?? pasteboardOwner()
+                let clip = ClipboardItem(type: "image_batch", content: data, application: appName)
                 try? storage.add(clip)
             }
-        } else if images.count == 1 {
-            // 单个图片 → 存原始数据
-            let clip = ClipboardItem(type: "image", content: images[0].data, application: pasteboardOwner())
+        } else if allImages.count == 1 {
+            // 单张图片
+            let clip = ClipboardItem(type: "image", content: allImages[0].clip.data,
+                                      application: allImages[0].source)
             try? storage.add(clip)
         } else if let firstText = pbItems.first(where: { $0.types.contains(.string) }),
                   let str = firstText.string(forType: .string) {
@@ -86,6 +103,21 @@ public final class ClipboardWatcher {
                                       content: str.data(using: .utf8) ?? Data(),
                                       application: pasteboardOwner())
             try? storage.add(clip)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func utiForExtension(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "public.png"
+        case "jpg", "jpeg": return "public.jpeg"
+        case "tiff", "tif": return "public.tiff"
+        case "heic", "heif": return "public.heic"
+        case "gif": return "com.compuserve.gif"
+        case "webp": return "public.webp"
+        case "bmp": return "public.bmp"
+        default: return "public.png"
         }
     }
 
