@@ -19,17 +19,14 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
     let delay: TimeInterval = isBrowser ? 0.12 : 0.05
 
     DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-        debugLog("[utility] \(logPrefix) paste at \(delay)s\(isBrowser ? " (browser, dual-path)" : "")")
-        // System Events keystroke
+        debugLog("[utility] \(logPrefix) paste at \(delay)s\(isBrowser ? " (browser)" : "")")
+        // System Events keystroke 优先（对网页 input 有效）
         let script = NSAppleScript(source:
             "tell application \"System Events\" to keystroke \"v\" using command down")
         var error: NSDictionary?
         script?.executeAndReturnError(&error)
         if let err = error {
-            debugLog("[utility] \(logPrefix) System Events error: \(err)")
-        }
-        // CGEventPost 兜底（浏览器双路并进，提高命中率）
-        if isBrowser {
+            debugLog("[utility] \(logPrefix) System Events error, CGEventPost fallback: \(err)")
             let src = CGEventSource(stateID: .combinedSessionState)
             if let kd = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
                let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
@@ -37,8 +34,10 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
                 ku.flags = .maskCommand
                 kd.post(tap: .cghidEventTap)
                 ku.post(tap: .cghidEventTap)
-                debugLog("[utility] \(logPrefix) CGEventPost sent (browser dual-path)")
+                debugLog("[utility] \(logPrefix) CGEventPost fallback sent")
             }
+        } else {
+            debugLog("[utility] \(logPrefix) System Events Cmd+V OK")
         }
     }
 }

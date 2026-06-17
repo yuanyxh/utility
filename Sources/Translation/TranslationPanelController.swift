@@ -345,9 +345,7 @@ public final class TranslationPanelController: NSWindowController {
         }
         debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // AX 注入：直接写值到目标 app 焦点元素
-        // 对网页 <input>/<textarea> 可靠（无需等 Blink 渲染进程焦点就位，不走按键模拟）
-        // 注意：didActivate observer 必须在 hide(nil) 之前注册 —— hide 可能同步触发激活通知
+        // didActivate observer — 必须在 hide(nil) 之前注册（hide 可能同步触发激活通知）
         var notifToken: NSObjectProtocol?
         notifToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
