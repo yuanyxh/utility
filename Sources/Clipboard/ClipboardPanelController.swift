@@ -254,7 +254,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(label)
 
         NSLayoutConstraint.activate([
-            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
+            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 16),
             circleView.heightAnchor.constraint(equalToConstant: 16),
@@ -287,6 +287,14 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - Lighter Selection Row View
 
 private final class LighterSelectionRowView: NSTableRowView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+    }
+
+    required init?(coder: NSCoder) { nil }
+
     override var isSelected: Bool {
         didSet {
             enumerateCircleViews(in: self) { $0.isHighlighted = isSelected }
