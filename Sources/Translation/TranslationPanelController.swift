@@ -349,13 +349,21 @@ public final class TranslationPanelController: NSWindowController {
             didPaste = true
             // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                let source = CGEventSource(stateID: .combinedSessionState)
-                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-                kd.flags = .maskCommand
-                ku.flags = .maskCommand
-                kd.post(tap: .cghidEventTap)
-                ku.post(tap: .cghidEventTap)
+                // 用 System Events 发送 cmd+v（对 Chrome 网页内容也有效）
+                let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
+                var error: NSDictionary?
+                script?.executeAndReturnError(&error)
+                if let err = error {
+                    // 降级到 CGEventPost（对原生 UI 依然有效）
+                    let source = CGEventSource(stateID: .combinedSessionState)
+                    if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                       let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
+                        kd.flags = .maskCommand
+                        ku.flags = .maskCommand
+                        kd.post(tap: .cghidEventTap)
+                        ku.post(tap: .cghidEventTap)
+                    }
+                }
             }
         }
 
