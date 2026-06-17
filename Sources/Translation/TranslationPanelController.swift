@@ -509,8 +509,7 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderOut(nil)
         // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
         DispatchQueue.main.async {
-            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
-                .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
+            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)?.clipboardPanel.window?.isVisible ?? false
             if !clipVisible {
                 NSApplication.shared.hide(nil)
             }
