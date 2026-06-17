@@ -188,13 +188,9 @@ public final class ClipboardPanelController: NSWindowController {
 
         // 尝试顺序：右下 → 左下 → 右上 → 左上
         let candidates: [(x: CGFloat, y: CGFloat)] = [
-            // 右下：鼠标右下角
             (mouse.x + padding, mouse.y - panelSize.height - padding),
-            // 左下：鼠标左下角
             (mouse.x - panelSize.width - padding, mouse.y - panelSize.height - padding),
-            // 右上：鼠标右上角
             (mouse.x + padding, mouse.y + padding),
-            // 左上：鼠标左上角
             (mouse.x - panelSize.width - padding, mouse.y + padding),
         ]
 
@@ -250,6 +246,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         label.cell?.truncatesLastVisibleLine = true
         label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 13)
+        label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.textField = label
         cell.addSubview(label)
@@ -257,11 +254,11 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         NSLayoutConstraint.activate([
             circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            circleView.widthAnchor.constraint(equalToConstant: 20),
-            circleView.heightAnchor.constraint(equalToConstant: 20),
+            circleView.widthAnchor.constraint(equalToConstant: 16),
+            circleView.heightAnchor.constraint(equalToConstant: 16),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
@@ -287,9 +284,15 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - Lighter Selection Row View
 
 private final class LighterSelectionRowView: NSTableRowView {
+    override var isSelected: Bool {
+        didSet {
+            enumerateCircleViews(in: self) { $0.isHighlighted = isSelected }
+        }
+    }
+
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor.selectedControlTextColor.withAlphaComponent(0.12).setFill()
+        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.12).setFill()
         bounds.fill()
     }
 
@@ -297,18 +300,47 @@ private final class LighterSelectionRowView: NSTableRowView {
         get { .regular }
         set {}
     }
+
+    private func enumerateCircleViews(in view: NSView, handler: (NumberCircleView) -> Void) {
+        for subview in view.subviews {
+            if let circle = subview as? NumberCircleView {
+                handler(circle)
+            }
+            enumerateCircleViews(in: subview, handler: handler)
+        }
+    }
 }
 
 // MARK: - Number Circle View
 
 private final class NumberCircleView: NSView {
     var number: Int = 0 {
+        didSet { numberLabel.stringValue = "\(number)" }
+    }
+    var isHighlighted = false {
         didSet { needsDisplay = true }
     }
+
+    private let numberLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 10)
+        label.textColor = .white
+        label.alignment = .center
+        label.isEditable = false
+        label.isBordered = false
+        label.backgroundColor = .clear
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        addSubview(numberLabel)
+        NSLayoutConstraint.activate([
+            numberLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            numberLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { nil }
@@ -322,23 +354,12 @@ private final class NumberCircleView: NSView {
             height: diameter
         )
 
-        // 圆圈
+        // 实心圆
         let path = NSBezierPath(ovalIn: circleRect)
-        NSColor.tertiaryLabelColor.setStroke()
-        path.lineWidth = 1.0
-        path.stroke()
-
-        // 序号
-        let text = "\(number)"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-        ]
-        let size = (text as NSString).size(withAttributes: attrs)
-        let drawPoint = NSPoint(
-            x: circleRect.midX - size.width / 2,
-            y: circleRect.midY - size.height / 2 - 1
-        )
-        (text as NSString).draw(at: drawPoint, withAttributes: attrs)
+        let fillColor: NSColor = isHighlighted
+            ? NSColor(red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0)
+            : NSColor(red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0)
+        fillColor.setFill()
+        path.fill()
     }
 }
