@@ -271,16 +271,12 @@ public final class TranslationPanelController: NSWindowController {
         UserDefaults.standard.set(NSStringFromPoint(origin), forKey: "translation_panel_origin")
     }
 
-    /// 失焦自动关闭（仅切到外部 app 时）
+    /// 失焦自动关闭
     private func setupDeactivateObserver() {
         NotificationCenter.default.addObserver(
-            self, selector: #selector(appDidResignActive),
-            name: NSApplication.didResignActiveNotification, object: nil
+            self, selector: #selector(close),
+            name: NSWindow.didResignKeyNotification, object: window
         )
-    }
-
-    @objc private func appDidResignActive() {
-        close()
     }
 
     // MARK: - Languages
@@ -380,12 +376,6 @@ public final class TranslationPanelController: NSWindowController {
     /// 面板是否正在显示
     var isPanelVisible: Bool {
         window?.isVisible ?? false
-    }
-
-    /// 由粘贴面板插入文本到原文区
-    func insertText(_ text: String) {
-        sourceTextView.string = text
-        sourceTextView.scrollToEndOfDocument(nil)
     }
 
     /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
@@ -508,11 +498,13 @@ public final class TranslationPanelController: NSWindowController {
     public override func close() {
         cancelTranslation()
         window?.orderOut(nil)
-        // 粘贴面板可见时不 hide app
-        let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
-            .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
-        if !clipVisible {
-            NSApplication.shared.hide(nil)
+        // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
+        DispatchQueue.main.async {
+            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
+                .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
+            if !clipVisible {
+                NSApplication.shared.hide(nil)
+            }
         }
     }
 
