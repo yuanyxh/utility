@@ -338,11 +338,11 @@ public final class TranslationPanelController: NSWindowController {
             return
         }
 
-        // 隐藏面板，直接激活目标 app（不走 hide(nil)，LSUIElement 可能不触发目标激活）
+        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
         window?.orderOut(nil)
-        target.activate(options: .activateIgnoringOtherApps)
+        NSApplication.shared.hide(nil)
 
-        // 两路并进：AX 轮询（主流 app）+ didActivate（Electron 等不暴露 AX 的 app）
+        // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
         var didPaste = false
         let source = CGEventSource(stateID: .combinedSessionState)
         let pasteNow = {
