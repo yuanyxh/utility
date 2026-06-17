@@ -207,6 +207,10 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let item = items[row]
         pboard.clearContents()
 
+        // 拖出操作 mask：moveOnDragOut=true 时允许 Finder 移动（系统级 cmd+option+v）
+        let config = ConfigManager.shared.config.stage
+        tableView.setDraggingSourceOperationMask(config.moveOnDragOut ? [.copy, .move] : .copy, forLocal: false)
+
         switch item.type {
         case "text":
             if let str = String(data: item.content, encoding: .utf8) {
@@ -245,16 +249,22 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         NSLog("[StageMove] endedAt operation=%lu", operation.rawValue)
         guard operation != [] else { NSLog("[StageMove] operation empty, skip"); return }
         guard let item = draggingItem else { NSLog("[StageMove] no draggingItem"); return }
-        tryMoveOrRemove(item: item)
+        tryMoveOrRemove(item: item, operation: operation)
         reload()
         if items.isEmpty { close() }
     }
 
     // MARK: - Move on drag out
 
-    private func tryMoveOrRemove(item: StageItem) {
+    private func tryMoveOrRemove(item: StageItem, operation: NSDragOperation) {
         let config = ConfigManager.shared.config.stage
         guard config.moveOnDragOut else {
+            try? StageManager.shared.remove(item.id)
+            return
+        }
+        // Finder 已执行移动（cmd+option+v），无需备份/删除，只移除 DB
+        if operation == .move {
+            NSLog("[StageMove] Finder moved, just remove DB")
             try? StageManager.shared.remove(item.id)
             return
         }
