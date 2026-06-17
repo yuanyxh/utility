@@ -58,20 +58,6 @@ public final class StageWindowController: NSWindowController {
         tableView.selectionHighlightStyle = .regular
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
 
-        // tableView 注册拖入
-        tableView.registerForDraggedTypes([
-            .string, .fileURL, .tiff, .png,
-            .init("public.jpeg"), .init("public.heic"),
-            .init("NSFilenamesPboardType"), .init("NSPasteboardTypeFileURL"),
-        ])
-
-        // 窗口层也注册（保底，borderless 窗口不会被拖拽系统扫描）
-        panel.registerForDraggedTypes([
-            .string, .fileURL, .tiff, .png,
-            .init("public.jpeg"), .init("public.heic"),
-            .init("NSFilenamesPboardType"), .init("NSPasteboardTypeFileURL"),
-        ])
-
         // 拖拽排序/移出
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
 
@@ -210,52 +196,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
-    // MARK: - Drag into window
-
-    public func tableView(_: NSTableView, validateDrop info: NSDraggingInfo, proposedRow _: Int, proposedDropOperation _: NSTableView.DropOperation) -> NSDragOperation {
-        return .copy
-    }
-
-    public func tableView(_: NSTableView, acceptDrop info: NSDraggingInfo, row _: Int, dropOperation _: NSTableView.DropOperation) -> Bool {
-        let pb = info.draggingPasteboard
-        var added = false
-
-        let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
-        for url in urls {
-            let fileURL = url.standardizedFileURL
-            if fileURL.isFileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                try? StageManager.shared.add(fileURL: fileURL)
-                added = true
-            } else {
-                try? StageManager.shared.add(url: url)
-                added = true
-            }
-        }
-
-        if !added {
-            for type in [NSPasteboard.PasteboardType.tiff, .png, .init("public.jpeg"), .init("public.heic")] {
-                if let data = pb.data(forType: type) {
-                    try? StageManager.shared.add(imageData: data)
-                    added = true
-                    break
-                }
-            }
-        }
-
-        if !added, let str = pb.string(forType: .string) {
-            try? StageManager.shared.add(text: str)
-            added = true
-        }
-
-        if added {
-            DispatchQueue.main.async { [weak self] in
-                self?.reload()
-            }
-        }
-        return added
-    }
-
-    // MARK: - Drag out of window
+    // MARK: - Drag out of window (drag IN handled by StageDropMonitor via EventTap)
 
     public func tableView(_ tableView: NSTableView, writeRowsWith rowIndexes: IndexSet, to pboard: NSPasteboard) -> Bool {
         guard let row = rowIndexes.first, row < items.count else { return false }
