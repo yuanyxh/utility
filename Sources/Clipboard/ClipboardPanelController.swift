@@ -77,7 +77,7 @@ public final class ClipboardPanelController: NSWindowController {
         let stack = NSStackView(views: [searchField, scrollView])
         stack.orientation = .vertical
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 44, left: 12, bottom: 12, right: 12)
+        stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
         // 键盘事件
