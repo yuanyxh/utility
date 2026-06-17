@@ -182,11 +182,8 @@ public final class ClipboardPanelController: NSWindowController {
         }
         debugLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
-        debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
-
-        // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
+        // 两路并进：AX 轮询 + didActivate
+        // 注意：didActivate observer 必须在 hide(nil) 之前注册 —— hide 可能同步触发激活通知
         var didPaste = false
         let pasteNow = {
             guard !didPaste else { return }
@@ -195,13 +192,11 @@ public final class ClipboardPanelController: NSWindowController {
             // 延迟 50ms 让目标 app 切换稳定后再发 cmd+v
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 debugLog("[utility] clipboard pasteNow: sending cmd+v via System Events")
-                // 用 System Events 发送 cmd+v（对 Chrome 网页内容也有效）
                 let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
                 var error: NSDictionary?
                 script?.executeAndReturnError(&error)
                 if let err = error {
                     debugLog("[utility] clipboard pasteNow: System Events failed: \(err)")
-                    // 降级到 CGEventPost（对原生 UI 依然有效）
                     let source = CGEventSource(stateID: .combinedSessionState)
                     if let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
                        let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
@@ -217,7 +212,7 @@ public final class ClipboardPanelController: NSWindowController {
             }
         }
 
-        // 路 1: didActivateApplicationNotification 兜底
+        // 路 1: didActivateApplicationNotification 兜底（必须在 hide 前注册）
         var notifToken: NSObjectProtocol?
         notifToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -237,7 +232,12 @@ public final class ClipboardPanelController: NSWindowController {
             pasteNow()
         }
 
-        // 路 2: AX 焦点轮询
+        // 隐藏面板（didActivate 通知此时可能同步触发）
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
+        debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
+
+        // 路 2: AX 轮询（异步兜底）
         var attempts = 0
         func pollFocus(for app: NSRunningApplication) {
             attempts += 1

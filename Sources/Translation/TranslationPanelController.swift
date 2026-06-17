@@ -345,12 +345,8 @@ public final class TranslationPanelController: NSWindowController {
         }
         debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
-        debugLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
-
         // 两路并进：AX 轮询（主流 app）+ didActivate（浏览器等不暴露 AX 焦点元素的 app）
+        // 注意：didActivate observer 必须在 hide(nil) 之前注册 —— hide 可能同步触发激活通知
         var didPaste = false
         let pasteNow = {
             guard !didPaste else { return }
@@ -381,7 +377,7 @@ public final class TranslationPanelController: NSWindowController {
             }
         }
 
-        // 路 1: didActivateApplicationNotification 兜底
+        // 路 1: didActivateApplicationNotification 兜底（必须在 hide 前注册）
         var notifToken: NSObjectProtocol?
         notifToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -401,7 +397,13 @@ public final class TranslationPanelController: NSWindowController {
             pasteNow()
         }
 
-        // 路 2: AX 轮询
+        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
+        // （didActivate 通知此时可能同步触发）
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
+        debugLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
+
+        // 路 2: AX 轮询（异步兜底）
         var attempts = 0
         func pollFocus(for app: NSRunningApplication) {
             attempts += 1
