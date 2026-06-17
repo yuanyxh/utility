@@ -82,8 +82,8 @@ translation:
   hotkeyOCR: "option+s"
   # 默认源语言（"auto" = 自动检测）
   sourceLang: "auto"
-  # 默认目标语言
-  targetLang: "zh"
+  # 默认目标语言（"auto" = 根据 firstLang/secondLang 自动判断翻译方向）
+  targetLang: "auto"
   # 第二语言（用于自动判断翻译方向）
   secondLang: "en"
   # 自定义翻译提示词（选填）

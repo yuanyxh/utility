@@ -20,7 +20,7 @@ translation:
   hotkey: "option+d"
   hotkeyOCR: "option+s"
   sourceLang: "auto"
-  targetLang: "zh"
+  targetLang: "auto"
   secondLang: "en"
   prompt: ""
 
