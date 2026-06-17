@@ -363,8 +363,8 @@ public final class TranslationPanelController: NSWindowController {
                 return
             }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
-            debugLog("[utility] didActivate: MATCH, AX injecting...")
-            pasteTextWithAXFallback(text: text, to: target, logPrefix: "translation")
+            debugLog("[utility] didActivate: MATCH, pasting...")
+            sendPasteCmdV(delay: pasteDelay(for: target.bundleIdentifier), logPrefix: "translation")
         }
 
         // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app

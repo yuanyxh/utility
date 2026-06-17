@@ -247,10 +247,10 @@ public final class ClipboardPanelController: NSWindowController {
             }
             if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
             if let t = pasteText {
-                debugLog("[utility] clipboard didActivate: MATCH, AX injecting...")
-                pasteTextWithAXFallback(text: t, to: target, logPrefix: "clipboard")
-            } else {
                 debugLog("[utility] clipboard didActivate: MATCH, pasting...")
+                sendPasteCmdV(delay: pasteDelay(for: target.bundleIdentifier), logPrefix: "clipboard")
+            } else {
+                debugLog("[utility] clipboard didActivate: MATCH, pasting (non-text)...")
                 pasteNow()
             }
         }
