@@ -68,9 +68,8 @@ public final class MenuBarManager: NSObject {
     }
 
     @objc private func toggleStage() {
-        guard let wc = NSApplication.shared.delegate.flatMap({
-            ($0 as? AppDelegate)?.stageWindow
-        }) else { return }
+        guard let delegate = NSApplication.shared.delegate as? AppDelegate,
+              let wc = delegate.value(forKey: "stageWindow") as? StageWindowController else { return }
         if wc.window?.isVisible == true {
             wc.close()
         } else {

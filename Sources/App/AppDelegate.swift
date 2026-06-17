@@ -80,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.translationPanel.startTranslation(text: text)
                         }
                     } else {
-                        self.translationPanel.sourceTextView.string = ""
+                        // 无选中文本，保持初始状态
                     }
                 }
             }
