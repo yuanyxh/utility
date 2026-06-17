@@ -346,65 +346,30 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         circleView.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(circleView)
 
-        var previousView: NSView = circleView
-        let gap: CGFloat = 6
-
-        // 图片缩略图（仅单张图片，放大 + 不要文字）
-        if item.type == "image" {
-            // 解码获取原始图片数据（兼容新旧格式）
-            let imageData: Data
-            if let dict = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [String: Any],
-               let dat = dict["data"] as? Data {
-                imageData = dat
-            } else {
-                imageData = item.content
-            }
-            if let image = ClipboardPanelController.downsampleImage(data: imageData, to: NSSize(width: 24, height: 24)) {
-                let imgView = NSImageView()
-                imgView.image = image
-                imgView.wantsLayer = true
-                imgView.layer?.cornerRadius = 3
-                imgView.layer?.masksToBounds = true
-                imgView.translatesAutoresizingMaskIntoConstraints = false
-                cell.addSubview(imgView)
-                NSLayoutConstraint.activate([
-                    imgView.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
-                    imgView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                    imgView.widthAnchor.constraint(equalToConstant: 24),
-                    imgView.heightAnchor.constraint(equalToConstant: 24),
-                ])
-                previousView = imgView
-            }
-        }
-
-        // 文本标签（非单图条目才需要）
-        if item.type != "image" {
-            let text = displayText(for: item)
-            let label = NSTextField(labelWithString: text)
-            label.lineBreakMode = .byTruncatingTail
-            label.cell?.truncatesLastVisibleLine = true
-            label.cell?.usesSingleLineMode = true
-            label.maximumNumberOfLines = 1
-            label.font = NSFont.systemFont(ofSize: 13)
-            label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            label.translatesAutoresizingMaskIntoConstraints = false
-            cell.textField = label
-            cell.addSubview(label)
-
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: previousView.trailingAnchor, constant: gap),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                label.heightAnchor.constraint(equalToConstant: 16),
-            ])
-        }
+        // 文本标签
+        let text = displayText(for: item)
+        let label = NSTextField(labelWithString: text)
+        label.lineBreakMode = .byTruncatingTail
+        label.cell?.truncatesLastVisibleLine = true
+        label.cell?.usesSingleLineMode = true
+        label.maximumNumberOfLines = 1
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.textField = label
+        cell.addSubview(label)
 
         NSLayoutConstraint.activate([
             circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             circleView.widthAnchor.constraint(equalToConstant: 16),
             circleView.heightAnchor.constraint(equalToConstant: 16),
+
+            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            label.heightAnchor.constraint(equalToConstant: 16),
         ])
 
         return cell
@@ -419,7 +384,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         case "file":
             return "📄 \(item.application ?? "文件")"
         case "image":
-            return "图片 \(item.application ?? "")"
+            return "📄 \(item.application ?? "图片")"
         case "image_batch":
             if let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] {
                 return "📁 \(dicts.count) 个文件"
@@ -445,21 +410,6 @@ private extension ClipboardPanelController {
         case "public.bmp": return "bmp"
         default: return "png"
         }
-    }
-
-    /// 从图片数据下采样创建小图（避免全分辨率解码的内存开销）
-    static func downsampleImage(data: Data, to pointSize: NSSize) -> NSImage? {
-        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let src = CGImageSourceCreateWithData(data as CFData, opts) else { return nil }
-        let maxDim = max(pointSize.width, pointSize.height) * 2  // Retina 兼容
-        let downsample: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxDim,
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(src, 0, downsample as CFDictionary) else { return nil }
-        return NSImage(cgImage: cgImage, size: pointSize)
     }
 }
 
