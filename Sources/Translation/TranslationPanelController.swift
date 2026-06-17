@@ -80,7 +80,7 @@ private final class TranslationPanel: NSPanel {
                 }
             case 6:  // z
                 if let textView = firstResponder as? NSTextView, textView.isEditable {
-                    textView.undoManager?.undo()
+                    NSApp.sendAction(Selector(("undo:")), to: textView, from: nil)
                     return true
                 }
             default:
