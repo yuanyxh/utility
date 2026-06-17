@@ -16,14 +16,12 @@ public final class ClipboardPanelController: NSWindowController {
     public init(storage: ClipboardStorage) {
         self.storage = storage
         let panel = ClipboardPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
-                             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
+                             styleMask: [.borderless, .nonactivatingPanel, .resizable],
                              backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
-        panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
-        panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary, .stationary]
 
         super.init(window: panel)
         setupUI()
@@ -81,7 +79,7 @@ public final class ClipboardPanelController: NSWindowController {
         let stack = NSStackView(views: [searchField, scrollView])
         stack.orientation = .vertical
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
         // 键盘事件
