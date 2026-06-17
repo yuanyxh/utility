@@ -151,11 +151,21 @@ public final class ClipboardPanelController: NSWindowController {
             pb.writeObjects([pbItem])
         case "image_batch":
             guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
-            let pbItems: [NSPasteboardItem] = dicts.compactMap { dict in
+            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache/utility")
+            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            let now = Int(Date().timeIntervalSince1970)
+            let pbItems: [NSPasteboardItem] = dicts.enumerated().compactMap { (i, dict) in
                 guard let format = dict["format"] as? String,
                       let data = dict["data"] as? Data else { return nil }
+                let ext = Self.extensionForUTI(format)
+                let cacheFile = cacheDir
+                    .appendingPathComponent("clip_\(now)_\(i).\(ext)")
+                try? data.write(to: cacheFile)
                 let pbItem = NSPasteboardItem()
                 pbItem.setData(data, forType: NSPasteboard.PasteboardType(format))
+                pbItem.setString(cacheFile.absoluteString, forType: .fileURL)
+                pbItem.setPropertyList([cacheFile.path], forType: .init("NSFilenamesPboardType"))
                 return pbItem
             }
             guard !pbItems.isEmpty else { return }
