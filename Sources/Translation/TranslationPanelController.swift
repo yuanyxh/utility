@@ -16,8 +16,7 @@ private final class TranslationTextView: NSTextView {
             return true
         case 36: // return / enter
             if flags == .command {
-                // cmd+enter → 翻译
-                if controller?.isTranslating == true { return true }
+                // cmd+enter → 翻译（允许取消旧翻译重新开始）
                 controller?.performTranslation()
                 return true
             }
