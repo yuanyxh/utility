@@ -87,7 +87,7 @@ public final class StageWindowController: NSWindowController {
         let stack = NSStackView(views: [headerStack, scrollView])
         stack.orientation = .vertical
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
         panel.contentView = stack
     }
 
@@ -194,7 +194,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(del)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
             icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 20),
 
@@ -202,7 +202,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 
-            del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+            del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: 0),
             del.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             del.widthAnchor.constraint(equalToConstant: 32),
         ])
