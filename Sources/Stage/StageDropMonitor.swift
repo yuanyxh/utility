@@ -25,16 +25,6 @@ public final class StageDropMonitor {
         timer = nil
     }
 
-    private func log(_ msg: String) {
-        let line = "\(Date()) [StageMonitor] \(msg)\n"
-        if let d = line.data(using: .utf8) {
-            let p = "/tmp/stage_monitor.log"
-            if let fh = FileHandle(forWritingAtPath: p) {
-                fh.seekToEndOfFile(); fh.write(d); try? fh.close()
-            } else { try? d.write(to: URL(fileURLWithPath: p)) }
-        }
-    }
-
     private func tick() {
         let isPressed = CGEventSource.buttonState(.combinedSessionState, button: .left)
         let mouse = NSEvent.mouseLocation
@@ -42,11 +32,8 @@ public final class StageDropMonitor {
         let inZone = zone.contains(mouse)
         let items = (try? StageManager.shared.count()) ?? 0
 
-        log("tick pressed=\(isPressed) mouse=\(mouse) inZone=\(inZone) items=\(items) vis=\(windowVisible)")
-
         if isPressed && inZone {
             if !windowVisible {
-                log("  → SHOW (drag in zone)")
                 stageWindow?.show()
                 windowVisible = true
             }
@@ -57,7 +44,6 @@ public final class StageDropMonitor {
             let inWindow = windowFrame.contains(mouse)
 
             if !inWindow && items == 0 {
-                log("  → CLOSE (drop outside, empty)")
                 stageWindow?.close()
                 windowVisible = false
             } else if !inWindow {
@@ -70,7 +56,6 @@ public final class StageDropMonitor {
                 }
             }
         } else if !isPressed && items > 0 && !windowVisible {
-            log("  → SHOW (has items)")
             stageWindow?.show()
             windowVisible = true
         }
