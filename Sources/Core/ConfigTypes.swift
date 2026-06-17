@@ -33,7 +33,6 @@ public struct ClipboardConfig: Codable {
     var maxDays: Int = 3
     var excludeApps: [String] = ["SecurityAgent", "KeychainAccess"]
     var hotkey: String = "cmd+shift+c"
-    var maxItems: Int = 1000
     var pollInterval: Double = 0.3
 
     public init() {}
@@ -42,7 +41,6 @@ public struct ClipboardConfig: Codable {
         maxDays = try c.decodeIfPresent(Int.self, forKey: .maxDays) ?? 3
         excludeApps = try c.decodeIfPresent([String].self, forKey: .excludeApps) ?? ["SecurityAgent", "KeychainAccess"]
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "cmd+shift+c"
-        maxItems = try c.decodeIfPresent(Int.self, forKey: .maxItems) ?? 1000
         pollInterval = try c.decodeIfPresent(Double.self, forKey: .pollInterval) ?? 0.3
     }
 }
@@ -74,13 +72,7 @@ public struct TranslationConfig: Codable {
 // MARK: - Stage
 
 public struct StageConfig: Codable {
-    var storageLimit: Int = 50
-
     public init() {}
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        storageLimit = try c.decodeIfPresent(Int.self, forKey: .storageLimit) ?? 50
-    }
 }
 
 // MARK: - RSS

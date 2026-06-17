@@ -13,7 +13,6 @@ clipboard:
     - "SecurityAgent"
     - "KeychainAccess"
   hotkey: "cmd+shift+c"
-  maxItems: 1000
   pollInterval: 0.3
 
 translation:
@@ -23,9 +22,6 @@ translation:
   targetLang: "auto"
   secondLang: "en"
   prompt: ""
-
-stage:
-  storageLimit: 50
 
 rss:
   feeds: []

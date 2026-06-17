@@ -54,14 +54,6 @@ public final class ClipboardStorage {
                 try db.execute(literal: """
                     DELETE FROM clipboard_item WHERE timestamp < \(cutoff)
                 """)
-
-                // 限制最大条目数
-                let maxItems = ConfigManager.shared.config.clipboard.maxItems
-                try db.execute(literal: """
-                    DELETE FROM clipboard_item WHERE id NOT IN (
-                        SELECT id FROM clipboard_item ORDER BY timestamp DESC LIMIT \(maxItems)
-                    )
-                """)
             }
         }
     }

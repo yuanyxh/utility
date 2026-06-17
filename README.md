@@ -69,8 +69,6 @@ clipboard:
     - "KeychainAccess"
   # 弹出剪切板面板的快捷键
   hotkey: "cmd+shift+c"
-  # 最大存储条数
-  maxItems: 1000
   # 轮询间隔（秒）。越小响应越快，CPU 占用略增
   pollInterval: 0.3
 
@@ -91,11 +89,6 @@ translation:
   # 支持 {source} 和 {target} 变量替换
   # 示例: "你是一个专业的技术文档翻译，保留代码和专有名词不翻译"
   prompt: ""
-
-# ---------- 拖拽暂存 ----------
-stage:
-  # 最大暂存条目数
-  storageLimit: 50
 
 # ---------- RSS 订阅 ----------
 rss:
