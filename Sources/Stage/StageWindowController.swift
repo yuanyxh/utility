@@ -182,7 +182,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         del.title = "×"
         del.bezelStyle = .inline
         del.controlSize = .small
-        del.font = NSFont.systemFont(ofSize: 14)
+        del.font = NSFont.systemFont(ofSize: 16)
         del.tag = row
         del.target = self
         del.action = #selector(deleteItem(_:))
@@ -194,17 +194,17 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(del)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
             icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 24),
+            icon.widthAnchor.constraint(equalToConstant: 20),
 
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
-            label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -4),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
+            label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
 
-            del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            del.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
             del.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            del.widthAnchor.constraint(equalToConstant: 28),
+            del.widthAnchor.constraint(equalToConstant: 32),
         ])
 
         return cell
