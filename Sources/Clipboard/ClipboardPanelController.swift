@@ -8,7 +8,6 @@ public final class ClipboardPanelController: NSWindowController {
     private var items: [ClipboardItem] = []
     private let storage: ClipboardStorage
     private var eventMonitor: Any?
-    private var eventTap: CFMachPort?
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
     private var previousFrontmostApp: NSRunningApplication?
 
@@ -28,11 +27,9 @@ public final class ClipboardPanelController: NSWindowController {
         setupUI()
         setupDeactivateObserver()
     }
-
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        removeEventTap()
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -75,12 +72,18 @@ public final class ClipboardPanelController: NSWindowController {
         stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
-        // 键盘事件 — 使用全局 Event Tap（面板不成为 key window 时也能接收）
-        installEventTap()
-
-        // 本地事件监视器作为补充（面板 key 时用）
+        // 键盘事件
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event) ?? event
+            switch event.keyCode {
+            case 36 where !event.modifierFlags.contains(.command): // return
+                self?.selectItem()
+                return nil
+            case 53: // esc
+                self?.close()
+                return nil
+            default:
+                return event
+            }
         }
     }
 
@@ -300,77 +303,16 @@ public final class ClipboardPanelController: NSWindowController {
         // 记录当前前台 app，粘贴时恢复到它
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 
-        window?.orderFront(nil)
+        window?.makeKeyAndOrderFront(nil)
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
         }
     }
 
     public override func close() {
-        removeEventTap()
         window?.orderOut(nil)
-        // 释放资源：清空 items（释放图片 Data）、清空 table 视图
         items = []
         tableView.reloadData()
-    }
-
-    // MARK: - Event Tap
-
-    private func installEventTap() {
-        removeEventTap()
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard type == .keyDown, let refcon = refcon else {
-                return Unmanaged.passUnretained(event)
-            }
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            let ctrl = Unmanaged<ClipboardPanelController>.fromOpaque(refcon).takeUnretainedValue()
-            guard ctrl.window?.isVisible == true else {
-                return Unmanaged.passUnretained(event)
-            }
-            switch keyCode {
-            case 53: // esc
-                ctrl.perform(#selector(ctrl.close), with: nil, afterDelay: 0)
-                return nil
-            case 36: // return
-                if !event.flags.contains(.maskCommand) {
-                    ctrl.perform(#selector(ctrl.selectItem), with: nil, afterDelay: 0)
-                    return nil
-                }
-            case 125: // down
-                let next = min(ctrl.tableView.selectedRow + 1, ctrl.items.count - 1)
-                ctrl.tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(next, 0))
-                return nil
-            case 126: // up
-                let prev = ctrl.tableView.selectedRow - 1
-                ctrl.tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
-                ctrl.tableView.scrollRowToVisible(max(prev, 0))
-                return nil
-            default:
-                break
-            }
-            return Unmanaged.passUnretained(event)
-        }
-        let ptr = Unmanaged.passUnretained(self).toOpaque()
-        if let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
-            callback: callback,
-            userInfo: ptr
-        ) {
-            eventTap = tap
-            let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
-        }
-    }
-
-    private func removeEventTap() {
-        if let tap = eventTap {
-            CFMachPortInvalidate(tap)
-            eventTap = nil
-        }
     }
 }
 
