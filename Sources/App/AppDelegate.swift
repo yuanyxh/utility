@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
     private lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
     private lazy var translationPanel = TranslationPanelController()
+    private lazy var stageWindow = StageWindowController()
+    private lazy var stageMonitor = StageDropMonitor.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.debug("[Utility] Starting up...")
@@ -40,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 6. 更新菜单栏显示
         menuBar.updateConfigDisplay()
+
+        // 7. 启动暂存监控
+        stageMonitor.start(with: stageWindow)
 
         Log.debug("[Utility] Ready")
     }

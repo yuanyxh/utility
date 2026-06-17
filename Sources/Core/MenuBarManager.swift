@@ -32,6 +32,9 @@ public final class MenuBarManager: NSObject {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "清空剪切板", action: #selector(clearClipboard), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "暂存窗口", action: #selector(toggleStage), keyEquivalent: "s"))
+        menu.addItem(NSMenuItem(title: "清空暂存", action: #selector(clearStage), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
@@ -62,6 +65,21 @@ public final class MenuBarManager: NSObject {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    @objc private func toggleStage() {
+        guard let wc = NSApplication.shared.delegate.flatMap({
+            ($0 as? AppDelegate)?.stageWindow
+        }) else { return }
+        if wc.window?.isVisible == true {
+            wc.close()
+        } else {
+            wc.show()
+        }
+    }
+
+    @objc private func clearStage() {
+        try? StageManager.shared.clearAll()
     }
 
     @objc func updateConfigDisplay() {
