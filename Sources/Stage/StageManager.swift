@@ -17,6 +17,7 @@ public final class StageManager {
     public func add(type: String, content: Data) throws {
         let item = StageItem(type: type, content: content)
         try db.write { db in try item.insert(db) }
+        print("[StageManager] add OK: type=\(type), id=\(item.id)")
     }
 
     public func add(text: String) throws {
@@ -24,9 +25,11 @@ public final class StageManager {
     }
 
     public func add(fileURL url: URL) throws {
+        print("[StageManager] add(fileURL:) path=\(url.path)")
         let bookmark = try url.bookmarkData(options: [],
                                              includingResourceValuesForKeys: nil,
                                              relativeTo: nil)
+        print("[StageManager] bookmarkData size=\(bookmark.count)")
         try add(type: "fileURL", content: bookmark)
     }
 

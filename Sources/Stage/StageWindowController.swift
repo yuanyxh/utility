@@ -9,19 +9,25 @@ public final class StageWindowController: NSWindowController {
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
-                             styleMask: [.borderless, .nonactivatingPanel],
+                             styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
                              backing: .buffered, defer: false)
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.titleVisibility = .hidden
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.collectionBehavior = [.transient, .ignoresCycle]
+        panel.alphaValue = 0.01   // 始终在线，拖拽目标可被系统扫描到
 
         super.init(window: panel)
         setupUI()
         addVisualEffectView()
+        // 预显示，确保系统已将其纳入拖拽目标列表
+        panel.orderFront(nil)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -52,8 +58,15 @@ public final class StageWindowController: NSWindowController {
         tableView.selectionHighlightStyle = .regular
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
 
-        // tableView 注册拖入（落点区域 = 表格可见范围）
+        // tableView 注册拖入
         tableView.registerForDraggedTypes([
+            .string, .fileURL, .tiff, .png,
+            .init("public.jpeg"), .init("public.heic"),
+            .init("NSFilenamesPboardType"), .init("NSPasteboardTypeFileURL"),
+        ])
+
+        // 窗口层也注册（保底，borderless 窗口不会被拖拽系统扫描）
+        panel.registerForDraggedTypes([
             .string, .fileURL, .tiff, .png,
             .init("public.jpeg"), .init("public.heic"),
             .init("NSFilenamesPboardType"), .init("NSPasteboardTypeFileURL"),
@@ -82,6 +95,7 @@ public final class StageWindowController: NSWindowController {
 
     public func reload() {
         items = (try? StageManager.shared.all()) ?? []
+        print("[StageWindow] reload: \(items.count) items")
         tableView.reloadData()
         clearButton.isHidden = items.isEmpty
     }
@@ -98,11 +112,14 @@ public final class StageWindowController: NSWindowController {
     public func show() {
         reload()
         positionAtBottomLeft()
+        window?.alphaValue = 1.0
+        window?.hasShadow = true
         window?.orderFront(nil)
     }
 
     public override func close() {
-        window?.orderOut(nil)
+        window?.alphaValue = 0.01
+        window?.hasShadow = false
     }
 
     private func addVisualEffectView() {
@@ -202,15 +219,22 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_: NSTableView, acceptDrop info: NSDraggingInfo, row _: Int, dropOperation _: NSTableView.DropOperation) -> Bool {
         let pb = info.draggingPasteboard
+        print("[Stage] acceptDrop called, types: \(pb.types?.map(\.rawValue) ?? [])")
         var added = false
 
         // 文件 — 使用 readObjects 统一处理所有类型
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            for url in urls {
-                let fileURL = url.standardizedFileURL
-                if FileManager.default.fileExists(atPath: fileURL.path) {
-                    try? StageManager.shared.add(fileURL: fileURL)
+        let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+        print("[Stage] readObjects URLs: \(urls.map(\.path))")
+        for url in urls {
+            let fileURL = url.standardizedFileURL
+            print("[Stage] processing file: \(fileURL.path), exists=\(FileManager.default.fileExists(atPath: fileURL.path))")
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                do {
+                    try StageManager.shared.add(fileURL: fileURL)
                     added = true
+                    print("[Stage] added file OK: \(fileURL.lastPathComponent)")
+                } catch {
+                    print("[Stage] add file FAILED: \(error)")
                 }
             }
         }
@@ -221,6 +245,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
                 if let data = pb.data(forType: type) {
                     try? StageManager.shared.add(imageData: data)
                     added = true
+                    print("[Stage] added image, size=\(data.count)")
                     break
                 }
             }
@@ -230,12 +255,15 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         if !added, let str = pb.string(forType: .string) {
             try? StageManager.shared.add(text: str)
             added = true
+            print("[Stage] added text: \(str.prefix(40))...")
         }
 
         if added {
             DispatchQueue.main.async { [weak self] in
                 self?.reload()
             }
+        } else {
+            print("[Stage] acceptDrop: NOTHING MATCHED")
         }
         return added
     }

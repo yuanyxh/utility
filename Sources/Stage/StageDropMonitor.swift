@@ -1,13 +1,12 @@
 import Cocoa
 
 /// 全局拖拽监听器 — 事件驱动，无轮询
-/// 拖拽开始时弹出窗口（窗口本身即触发面板），拖入松手暂存
+/// 窗口始终在线（alpha=0.01），拖拽开始时拉至完全可见，松手后若仍无内容则淡出
 public final class StageDropMonitor {
     public static let shared = StageDropMonitor()
     private weak var stageWindow: StageWindowController?
     private var eventTap: CFMachPort?
     private var isDragging = false
-    private var windowVisible = false
 
     private init() {}
 
@@ -44,6 +43,9 @@ public final class StageDropMonitor {
             eventTap = tap
             let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
+            print("[StageDrop] EventTap installed OK")
+        } else {
+            print("[StageDrop] EventTap FAILED — no Accessibility permission?")
         }
     }
 
@@ -51,48 +53,53 @@ public final class StageDropMonitor {
         switch type {
         case .leftMouseDown:
             isDragging = true
+            // 拖拽开始 → 窗口完全可见
+            stageWindow?.show()
+            print("[StageDrop] Drag started, window shown")
+
         case .leftMouseUp:
             isDragging = false
-            let mouse = NSEvent.mouseLocation
-            let items = (try? StageManager.shared.count()) ?? 0
-            // 鼠标不在窗口内 + 无内容 → 隐藏
-            if let frame = stageWindow?.window?.frame {
-                let inWindow = NSRect(x: frame.minX - 20, y: frame.minY - 20,
-                                      width: frame.width + 40, height: frame.height + 40)
-                    .contains(mouse)
-                if !inWindow && items == 0 {
-                    stageWindow?.close()
-                    windowVisible = false
+            // 松手后，如果无内容且鼠标不在窗口区 → 淡出
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let items = (try? StageManager.shared.count()) ?? 0
+                if items > 0 { return }  // 有内容，保持可见
+
+                let mouse = NSEvent.mouseLocation
+                if let frame = self.stageWindow?.window?.frame {
+                    let inWindow = NSRect(x: frame.minX - 20, y: frame.minY - 20,
+                                          width: frame.width + 40, height: frame.height + 40)
+                        .contains(mouse)
+                    if !inWindow {
+                        self.stageWindow?.close()
+                        print("[StageDrop] No items, mouse outside, faded out")
+                    }
                 }
             }
+
         case .leftMouseDragged:
             guard isDragging else { break }
+            // 拖拽中，确保窗口可见（已有内容时可能已经可见）
+            if stageWindow?.window?.alphaValue != 1.0 {
+                stageWindow?.show()
+            }
+
+            // 远离窗口且无内容 → 淡出
             let mouse = NSEvent.mouseLocation
             let windowFrame = stageWindow?.window?.frame ?? .zero
             let hitZone = NSRect(x: windowFrame.minX - 20, y: windowFrame.minY - 20,
                                  width: windowFrame.width + 40, height: windowFrame.height + 40)
-
-            if !windowVisible && isDragging {
-                // 开始拖拽 → 显示窗口
-                stageWindow?.show()
-                windowVisible = true
-            }
-
-            // 鼠标在窗口附近 → 保持显示；远离 → 关闭（无内容时）
-            if windowVisible && !hitZone.contains(mouse) {
+            if !hitZone.contains(mouse) {
                 let items = (try? StageManager.shared.count()) ?? 0
                 if items == 0 {
                     stageWindow?.close()
-                    windowVisible = false
+                    print("[StageDrop] Drag away from window, no items, faded out")
                 }
             }
+
         default:
             break
         }
         return Unmanaged.passUnretained(event)
-    }
-
-    public func didCloseWindow() {
-        windowVisible = false
     }
 }
