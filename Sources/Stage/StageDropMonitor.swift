@@ -1,20 +1,32 @@
 import Cocoa
 
 /// 全局拖拽监听器 — EventTap 驱动
-/// 窗口始终在线（alpha=0.01），拖拽开始时拉至完全可见，
-/// 松手时若鼠标在窗口内则读取 drag pasteboard 直接处理 drop，
+///
+/// 核心规则:
+/// 1. 有暂存数据 → 窗口常驻显示（alpha=1.0）
+/// 2. 无数据时拖拽 → 鼠标靠近窗口区域才显示，远离则隐藏
+/// 3. 在窗口内松手 → 读 drag pasteboard 写入 StageManager
+///
 /// 不依赖 NSView 拖拽系统（nonactivatingPanel 窗口不收 drag 事件）
 public final class StageDropMonitor {
     public static let shared = StageDropMonitor()
     private weak var stageWindow: StageWindowController?
     private var eventTap: CFMachPort?
     private var isDragging = false
-    private var windowShown = false
+
+    private var isWindowVisible: Bool {
+        stageWindow?.window?.alphaValue == 1.0
+    }
 
     private init() {}
 
     public func start(with window: StageWindowController) {
         stageWindow = window
+        // 已有数据 → 窗口常驻显示
+        let items = (try? StageManager.shared.count()) ?? 0
+        if items > 0 {
+            window.show()
+        }
         installEventTap()
     }
 
@@ -55,25 +67,41 @@ public final class StageDropMonitor {
         switch type {
         case .leftMouseDown:
             isDragging = true
-            if !windowShown {
-                stageWindow?.show()
-                windowShown = true
-            }
+            // 不在此显示 — 只有 leftMouseDragged + 鼠标近窗口才显示
 
         case .leftMouseUp:
             isDragging = false
-            windowShown = false
             let mouse = NSEvent.mouseLocation
             if isMouseInWindow(mouse) {
                 processDrop()
             }
+            // 无内容且鼠标不在窗口内 → 淡出
             let items = (try? StageManager.shared.count()) ?? 0
-            if items == 0 {
+            if items == 0 && !isMouseInWindow(mouse) {
                 stageWindow?.close()
             }
 
         case .leftMouseDragged:
-            break
+            guard isDragging else { break }
+            let mouse = NSEvent.mouseLocation
+            let items = (try? StageManager.shared.count()) ?? 0
+
+            if items > 0 {
+                // 有数据：常驻显示，确保可见
+                if !isWindowVisible {
+                    stageWindow?.show()
+                }
+            } else if isMouseInWindow(mouse) {
+                // 无数据但拖拽到窗口区域：显示
+                if !isWindowVisible {
+                    stageWindow?.show()
+                }
+            } else {
+                // 无数据且远离：隐藏
+                if isWindowVisible {
+                    stageWindow?.close()
+                }
+            }
 
         default:
             break
