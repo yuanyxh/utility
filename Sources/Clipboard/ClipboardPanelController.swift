@@ -127,64 +127,38 @@ public final class ClipboardPanelController: NSWindowController {
     private func paste(item: ClipboardItem) {
         debugLog("[utility] clipboard paste: type=\(item.type) id=\(item.id)")
 
-        // 先把内容写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
-        var pasteText: String? = nil
 
         switch item.type {
         case "text":
             guard let str = String(data: item.content, encoding: .utf8) else { return }
             pb.setString(str, forType: .string)
-            pasteText = str
         case "file":
-            pb.setData(item.content, forType: .fileURL)
-        case "image":
-            // 解码格式信息（新格式：dict；旧格式：raw data 兜底）
-            let format: String
-            let imageData: Data
-            if let dict = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [String: Any],
-               let fmt = dict["format"] as? String,
-               let dat = dict["data"] as? Data {
-                format = fmt
-                imageData = dat
-            } else {
-                format = "public.tiff"
-                imageData = item.content
-            }
-            let ext = Self.extensionForUTI(format)
-            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/utility/clip")
-            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-            let cacheFile = cacheDir
-                .appendingPathComponent("clip_\(Int(Date().timeIntervalSince1970)).\(ext)")
-            try? imageData.write(to: cacheFile)
+            guard let info = try? JSONDecoder().decode([String: String].self, from: item.content),
+                  let path = info["path"] else { return }
+            let url = URL(fileURLWithPath: path)
             let pbItem = NSPasteboardItem()
-            pbItem.setData(imageData, forType: .init(format))
-            pbItem.setString(cacheFile.absoluteString, forType: .fileURL)
-            pbItem.setPropertyList([cacheFile.path], forType: .init("NSFilenamesPboardType"))
+            pbItem.setString(url.absoluteString, forType: .fileURL)
             pb.writeObjects([pbItem])
-        case "image_batch":
-            guard let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] else { return }
-            let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/utility/clip")
-            try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-            let now = Int(Date().timeIntervalSince1970)
-            let pbItems: [NSPasteboardItem] = dicts.enumerated().compactMap { (i, dict) in
-                guard let format = dict["format"] as? String,
-                      let data = dict["data"] as? Data else { return nil }
-                let ext = Self.extensionForUTI(format)
-                let cacheFile = cacheDir
-                    .appendingPathComponent("clip_\(now)_\(i).\(ext)")
-                try? data.write(to: cacheFile)
+        case "file_batch":
+            guard let info = try? JSONDecoder().decode([String: [String]].self, from: item.content),
+                  let paths = info["paths"] else { return }
+            let pbItems: [NSPasteboardItem] = paths.compactMap { path in
+                let url = URL(fileURLWithPath: path)
                 let pbItem = NSPasteboardItem()
-                pbItem.setData(data, forType: NSPasteboard.PasteboardType(format))
-                pbItem.setString(cacheFile.absoluteString, forType: .fileURL)
-                pbItem.setPropertyList([cacheFile.path], forType: .init("NSFilenamesPboardType"))
+                pbItem.setString(url.absoluteString, forType: .fileURL)
                 return pbItem
             }
             guard !pbItems.isEmpty else { return }
             pb.writeObjects(pbItems)
+        case "html":
+            guard let html = String(data: item.content, encoding: .utf8) else { return }
+            pb.setString(html, forType: .html)
+            // 同时写纯文本，让不支持富文本的目标也能粘贴
+            if let plainText = item.application {
+                pb.setString(plainText, forType: .string)
+            }
         default:
             return
         }
@@ -199,32 +173,11 @@ public final class ClipboardPanelController: NSWindowController {
         }
         debugLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // 隐藏面板 → 直接调度 Cmd+V（剪切板面板不调 activate，hide(nil) 不触发
-        // didActivateApplicationNotification，无需观察者等待）
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
         debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
 
-        if pasteText != nil {
-            schedulePaste(to: target, logPrefix: "clipboard")
-        } else {
-            // 非文本项（图片/文件/批量）：50ms 后发 Cmd+V
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
-                var error: NSDictionary?
-                script?.executeAndReturnError(&error)
-                if error != nil {
-                    let src = CGEventSource(stateID: .combinedSessionState)
-                    if let kd = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
-                       let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
-                        kd.flags = .maskCommand
-                        ku.flags = .maskCommand
-                        kd.post(tap: .cghidEventTap)
-                        ku.post(tap: .cghidEventTap)
-                    }
-                }
-            }
-        }
+        schedulePaste(to: target, logPrefix: "clipboard")
     }
 
     // MARK: - Keyboard
@@ -339,6 +292,28 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         circleView.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(circleView)
 
+        // 文件图标（仅 file/file_batch/html 显示）
+        let iconView = NSImageView()
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(iconView)
+
+        let showIcon: Bool
+        switch item.type {
+        case "file":
+            iconView.image = Self.fileIcon(for: item.content)
+            showIcon = true
+        case "file_batch":
+            iconView.image = NSWorkspace.shared.icon(forFileType: "public.folder")
+            showIcon = true
+        case "html":
+            iconView.image = NSWorkspace.shared.icon(forFileType: "public.html")
+            showIcon = true
+        default:
+            iconView.isHidden = true
+            showIcon = false
+        }
+
         // 文本标签
         let text = displayText(for: item)
         let label = NSTextField(labelWithString: text)
@@ -353,17 +328,36 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         cell.textField = label
         cell.addSubview(label)
 
-        NSLayoutConstraint.activate([
-            circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-            circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            circleView.widthAnchor.constraint(equalToConstant: 16),
-            circleView.heightAnchor.constraint(equalToConstant: 16),
+        if showIcon {
+            NSLayoutConstraint.activate([
+                circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                circleView.widthAnchor.constraint(equalToConstant: 16),
+                circleView.heightAnchor.constraint(equalToConstant: 16),
 
-            label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            label.heightAnchor.constraint(equalToConstant: 16),
-        ])
+                iconView.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 4),
+                iconView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 16),
+                iconView.heightAnchor.constraint(equalToConstant: 16),
+
+                label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
+                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                label.heightAnchor.constraint(equalToConstant: 16),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                circleView.widthAnchor.constraint(equalToConstant: 16),
+                circleView.heightAnchor.constraint(equalToConstant: 16),
+
+                label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
+                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                label.heightAnchor.constraint(equalToConstant: 16),
+            ])
+        }
 
         return cell
     }
@@ -375,14 +369,20 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         case "text":
             return String(data: item.content, encoding: .utf8) ?? "(不可读)"
         case "file":
-            return "📄 \(item.application ?? "文件")"
-        case "image":
-            return "📄 \(item.application ?? "图片")"
-        case "image_batch":
-            if let dicts = try? NSKeyedUnarchiver.unarchiveObject(with: item.content) as? [[String: Any]] {
-                return "📁 \(dicts.count) 个文件"
+            return item.application ?? "文件"
+        case "file_batch":
+            if let json = try? JSONDecoder().decode([String: [String]].self, from: item.content),
+               let paths = json["paths"] {
+                return "\(paths.count) 个文件"
             }
-            return "📁 文件"
+            return "文件"
+        case "html":
+            // 显示纯文本摘要
+            if let text = item.application, !text.isEmpty {
+                let line = text.prefix(80).replacingOccurrences(of: "\n", with: " ")
+                return String(line)
+            }
+            return "网页内容"
         default:
             return "(未知)"
         }
@@ -392,17 +392,11 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - Image helpers
 
 private extension ClipboardPanelController {
-    static func extensionForUTI(_ uti: String) -> String {
-        switch uti {
-        case "public.png": return "png"
-        case "public.jpeg": return "jpg"
-        case "public.tiff": return "tiff"
-        case "public.heic": return "heic"
-        case "com.compuserve.gif": return "gif"
-        case "public.webp": return "webp"
-        case "public.bmp": return "bmp"
-        default: return "png"
-        }
+    /// 从 JSON 编码的文件路径获取文件图标
+    static func fileIcon(for content: Data) -> NSImage? {
+        guard let dict = try? JSONDecoder().decode([String: String].self, from: content),
+              let path = dict["path"] else { return nil }
+        return NSWorkspace.shared.icon(forFile: path)
     }
 }
 
@@ -448,7 +442,14 @@ private final class LighterSelectionRowView: NSTableRowView {
 
 private final class NumberCircleView: NSView {
     var number: Int = 0 {
-        didSet { numberLabel.stringValue = "\(number)" }
+        didSet {
+            if number >= 100 {
+                numberLabel.isHidden = true
+            } else {
+                numberLabel.isHidden = false
+                numberLabel.stringValue = "\(number)"
+            }
+        }
     }
     var isHighlighted = false {
         didSet { needsDisplay = true }
@@ -456,7 +457,7 @@ private final class NumberCircleView: NSView {
 
     private let numberLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
-        label.font = NSFont.systemFont(ofSize: 10)
+        label.font = NSFont.systemFont(ofSize: 8)
         label.textColor = .white
         label.alignment = .center
         label.isEditable = false
@@ -487,12 +488,25 @@ private final class NumberCircleView: NSView {
             height: diameter
         )
 
-        // 实心圆
+        // 外层实心圆
         let path = NSBezierPath(ovalIn: circleRect)
         let fillColor: NSColor = isHighlighted
             ? NSColor(red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0)
             : NSColor(red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0)
         fillColor.setFill()
         path.fill()
+
+        // >=100：中心白色圆点
+        if number >= 100 {
+            let dotD: CGFloat = 6
+            let dotRect = CGRect(
+                x: (bounds.width - dotD) / 2,
+                y: (bounds.height - dotD) / 2,
+                width: dotD,
+                height: dotD
+            )
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+        }
     }
 }
