@@ -49,7 +49,7 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.addTableColumn(col)
         tableView.headerView = nil
         tableView.rowHeight = 32
-        tableView.intercellSpacing = NSSize(width: 0, height: 2)
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.target = self
         tableView.doubleAction = #selector(selectItem)
         tableView.dataSource = self
@@ -284,93 +284,66 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
-        let cell = NSTableCellView()
-        cell.identifier = NSUserInterfaceItemIdentifier("ClipboardCell")
+        let showIcon = item.type == "file" || item.type == "file_batch" || item.type == "html"
+        let identifier = NSUserInterfaceItemIdentifier(showIcon ? "ClipboardIcon" : "ClipboardText")
 
-        // 选中背景（cell 层绘制，替代 LighterSelectionRowView）
-        let isSelected = tableView.isRowSelected(row)
-        cell.wantsLayer = true
-        cell.layer?.cornerRadius = 4
-        cell.layer?.backgroundColor = isSelected
-            ? NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).cgColor
-            : NSColor.clear.cgColor
-
-        // 序号圆圈
-        let circleView = NumberCircleView()
-        circleView.number = row + 1
-        circleView.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(circleView)
-
-        // 文件图标（仅 file/file_batch/html 显示）
-        let iconView = NSImageView()
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(iconView)
-
-        let showIcon: Bool
-        switch item.type {
-        case "file":
-            iconView.image = Self.fileIcon(for: item.content)
-            showIcon = true
-        case "file_batch":
-            iconView.image = NSWorkspace.shared.icon(forFileType: "public.folder")
-            showIcon = true
-        case "html":
-            iconView.image = NSWorkspace.shared.icon(forFileType: "public.html")
-            showIcon = true
-        default:
-            iconView.isHidden = true
-            showIcon = false
+        if let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? ClipboardCell {
+            cell.showIcon = showIcon
+            let isSelected = tableView.isRowSelected(row)
+            cell.layer?.backgroundColor = isSelected ? Self.selBG : Self.clearBG
+            updateCell(cell, item: item, row: row, isSelected: isSelected)
+            return cell
         }
 
-        // 文本标签
-        let text = displayText(for: item)
-        let label = NSTextField(labelWithString: text)
+        let cell = ClipboardCell()
+        cell.identifier = identifier
+        cell.showIcon = showIcon
+        cell.wantsLayer = true
+        cell.layer?.cornerRadius = 4
+        let isSelected = tableView.isRowSelected(row)
+        cell.layer?.backgroundColor = isSelected ? Self.selBG : Self.clearBG
+
+        let circleView = NumberCircleView(frame: .zero)
+        cell.addSubview(circleView)
+
+        let iconView = NSImageView(frame: .zero)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        cell.addSubview(iconView)
+
+        let label = NSTextField(frame: .zero)
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
         label.lineBreakMode = .byTruncatingTail
         label.cell?.truncatesLastVisibleLine = true
         label.cell?.usesSingleLineMode = true
         label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.translatesAutoresizingMaskIntoConstraints = false
+        label.textColor = NSColor(red: 0x33/255, green: 0x33/255, blue: 0x33/255, alpha: 1.0)
         cell.textField = label
         cell.addSubview(label)
 
-        if showIcon {
-            NSLayoutConstraint.activate([
-                circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                circleView.widthAnchor.constraint(equalToConstant: 16),
-                circleView.heightAnchor.constraint(equalToConstant: 16),
-
-                iconView.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 4),
-                iconView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                iconView.widthAnchor.constraint(equalToConstant: 16),
-                iconView.heightAnchor.constraint(equalToConstant: 16),
-
-                label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                label.heightAnchor.constraint(equalToConstant: 16),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                circleView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                circleView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                circleView.widthAnchor.constraint(equalToConstant: 16),
-                circleView.heightAnchor.constraint(equalToConstant: 16),
-
-                label.leadingAnchor.constraint(equalTo: circleView.trailingAnchor, constant: 6),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -1),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                label.heightAnchor.constraint(equalToConstant: 16),
-            ])
-        }
-
-        circleView.isHighlighted = isSelected
-
+        updateCell(cell, item: item, row: row, isSelected: isSelected)
         return cell
+    }
+
+    private func updateCell(_ cell: NSTableCellView, item: ClipboardItem, row: Int, isSelected: Bool) {
+        // 圆圈
+        if let circle = cell.subviews.first(where: { $0 is NumberCircleView }) as? NumberCircleView {
+            circle.number = row + 1
+            circle.isHighlighted = isSelected
+        }
+        // 图标
+        if let icon = cell.subviews.first(where: { $0 is NSImageView }) as? NSImageView {
+            switch item.type {
+            case "file":      icon.image = Self.fileIcon(for: item.content)
+            case "file_batch": icon.image = NSWorkspace.shared.icon(forFileType: "public.folder")
+            case "html":      icon.image = NSWorkspace.shared.icon(forFileType: "public.html")
+            default: break
+            }
+        }
+        // 文本
+        cell.textField?.stringValue = displayText(for: item)
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
@@ -378,9 +351,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         tv.enumerateAvailableRowViews { rowView, row in
             guard let cell = rowView.view(atColumn: 0) as? NSTableCellView else { return }
             let selected = tv.isRowSelected(row)
-            cell.layer?.backgroundColor = selected
-                ? NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).cgColor
-                : NSColor.clear.cgColor
+            cell.layer?.backgroundColor = selected ? Self.selBG : Self.clearBG
             for sub in cell.subviews {
                 if let circle = sub as? NumberCircleView {
                     circle.isHighlighted = selected
@@ -404,7 +375,6 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             }
             return "文件"
         case "html":
-            // 显示纯文本摘要
             if let text = item.application, !text.isEmpty {
                 let line = text.prefix(80).replacingOccurrences(of: "\n", with: " ")
                 return String(line)
@@ -412,6 +382,32 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             return "网页内容"
         default:
             return "(未知)"
+        }
+    }
+
+    // 缓存颜色，避免每帧创建 NSColor
+    private static let selBG = NSColor(red: 0xCB/255, green: 0xCC/255, blue: 0xCC/255, alpha: 0.36).cgColor
+    private static let clearBG = NSColor.clear.cgColor
+}
+
+// MARK: - Clipboard Cell (frame layout, no Auto Layout)
+
+private final class ClipboardCell: NSTableCellView {
+    var showIcon = false
+
+    override func layout() {
+        super.layout()
+        let w = bounds.width
+        for sub in subviews {
+            if sub is NumberCircleView {
+                sub.frame = NSRect(x: 6, y: 8, width: 16, height: 16)
+            } else if sub is NSImageView {
+                sub.isHidden = !showIcon
+                sub.frame = NSRect(x: 26, y: 8, width: 16, height: 16)
+            } else if sub is NSTextField {
+                let labelX: CGFloat = showIcon ? 46 : 28
+                sub.frame = NSRect(x: labelX, y: 8, width: max(w - labelX - 4, 0), height: 16)
+            }
         }
     }
 }
@@ -432,70 +428,62 @@ private extension ClipboardPanelController {
 private final class NumberCircleView: NSView {
     var number: Int = 0 {
         didSet {
-            if number >= 100 {
-                numberLabel.isHidden = true
-            } else {
-                numberLabel.isHidden = false
-                numberLabel.stringValue = "\(number)"
-            }
+            let over99 = number >= 100
+            numberLabel.alphaValue = over99 ? 0 : 1
+            whiteDot.alphaValue = over99 ? 1 : 0
+            if !over99 { numberLabel.stringValue = "\(number)" }
         }
     }
     var isHighlighted = false {
-        didSet { needsDisplay = true }
+        didSet {
+            layer?.backgroundColor = isHighlighted ? Self.hlColor : Self.noColor
+        }
     }
+
+    private static let hlColor = NSColor(red: 0x34/255, green: 0x78/255, blue: 0xF6/255, alpha: 1.0).cgColor
+    private static let noColor = NSColor(red: 0xA4/255, green: 0xA4/255, blue: 0xA4/255, alpha: 1.0).cgColor
 
     private let numberLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
         label.font = NSFont.systemFont(ofSize: 8)
         label.textColor = .white
         label.alignment = .center
-        label.isEditable = false
-        label.isBordered = false
-        label.backgroundColor = .clear
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
+    }()
+
+    private let whiteDot: NSView = {
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = NSColor.white.cgColor
+        dot.layer?.cornerRadius = 3
+        dot.alphaValue = 0
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        return dot
     }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.masksToBounds = true
+        layer?.backgroundColor = Self.noColor
+
         addSubview(numberLabel)
+        addSubview(whiteDot)
         NSLayoutConstraint.activate([
             numberLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             numberLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            whiteDot.centerXAnchor.constraint(equalTo: centerXAnchor),
+            whiteDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            whiteDot.widthAnchor.constraint(equalToConstant: 6),
+            whiteDot.heightAnchor.constraint(equalToConstant: 6),
         ])
     }
 
-    required init?(coder: NSCoder) { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let diameter: CGFloat = 16
-        let circleRect = CGRect(
-            x: (bounds.width - diameter) / 2,
-            y: (bounds.height - diameter) / 2,
-            width: diameter,
-            height: diameter
-        )
-
-        // 外层实心圆
-        let path = NSBezierPath(ovalIn: circleRect)
-        let fillColor: NSColor = isHighlighted
-            ? NSColor(red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0)
-            : NSColor(red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0)
-        fillColor.setFill()
-        path.fill()
-
-        // >=100：中心白色圆点
-        if number >= 100 {
-            let dotD: CGFloat = 6
-            let dotRect = CGRect(
-                x: (bounds.width - dotD) / 2,
-                y: (bounds.height - dotD) / 2,
-                width: dotD,
-                height: dotD
-            )
-            NSColor.white.setFill()
-            NSBezierPath(ovalIn: dotRect).fill()
-        }
+    override func layout() {
+        super.layout()
     }
+
+    required init?(coder: NSCoder) { nil }
 }
