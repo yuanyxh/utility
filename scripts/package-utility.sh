@@ -22,6 +22,12 @@ mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 
 cp .build/release/utility "$APP/Contents/MacOS/"
+RES_BUNDLE=".build/arm64-apple-macosx/release/utility_utility.bundle"
+if [ -d "$RES_BUNDLE" ]; then
+    cp "$RES_BUNDLE/menubar-icon.png" "$APP/Contents/Resources/"
+    cp "$RES_BUNDLE/menubar-icon@2x.png" "$APP/Contents/Resources/"
+    cp "$RES_BUNDLE/AppIcon.icns" "$APP/Contents/Resources/"
+fi
 
 cat > "$APP/Contents/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,6 +49,8 @@ cat > "$APP/Contents/Info.plist" << EOF
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 EOF

@@ -12,8 +12,9 @@ public final class MenuBarManager: NSObject {
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "square.grid.2x2",
-                                            accessibilityDescription: "Utility")
+        let icon = Bundle.module.image(forResource: "menubar-icon")
+        icon?.isTemplate = true
+        statusItem.button?.image = icon
     }
 
     private func buildMenu() {
