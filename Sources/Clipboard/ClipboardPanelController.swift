@@ -265,6 +265,7 @@ public final class ClipboardPanelController: NSWindowController {
 
     public override func close() {
         window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
         items = []
         tableView.reloadData()
     }

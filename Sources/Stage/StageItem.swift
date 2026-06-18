@@ -1,5 +1,4 @@
 import Cocoa
-import Foundation
 import GRDB
 
 /// 暂存条目（GRDB Record）
