@@ -42,7 +42,7 @@ public final class StageManager {
     }
 
     public func remove(_ id: String) throws {
-        try db.write { db in
+        _ = try db.write { db in
             try StageItem.deleteOne(db, key: id)
         }
     }

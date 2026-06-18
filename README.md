@@ -145,7 +145,7 @@ ai:
 ```yaml
 ai:
   baseURL: "http://localhost:11434"
-  apiKey: "ollama"  # Ollama 不需要真实 key，但不能为空
+  apiKey: "ollama"
   model: "llama3.2"
 ```
 </details>
@@ -431,12 +431,11 @@ utility rss --fetch --unread | llm -s "筛选出 AI/LLM 相关文章，输出摘
 
 ## 日志与调试
 
-Debug 模式下日志输出到 stdout，可在终端看到 `[Utility]`、`[Config]`、`[Clipboard]` 等标记的消息。
-粘贴操作的详细日志写入 `~/Library/Logs/utility-paste.log`。
+Debug 模式下日志输出到 stdout。运行时追踪日志写入 `~/.cache/utility/debug.log`。
 
 ```bash
-# 查看粘贴日志
-tail -f ~/Library/Logs/utility-paste.log
+# 查看运行时日志
+tail -f ~/.cache/utility/debug.log
 
 # 数据文件位置
 ~/.config/utility/config.yaml     # 配置文件

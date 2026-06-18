@@ -156,9 +156,7 @@ public final class StageDropMonitor {
             .init("public.jpeg"), .init("public.heic")]
         for type in imageTypes {
             if let data = dragPb.data(forType: type) {
-                let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(".cache/utility/stage")
-                try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+                let cacheDir = AppPaths.stageCacheDir
                 let filename = "stage_\(Int(Date().timeIntervalSince1970)).png"
                 let fileURL = cacheDir.appendingPathComponent(filename)
                 try? data.write(to: fileURL)
@@ -170,7 +168,6 @@ public final class StageDropMonitor {
 
         // 富文本 HTML（网页拖入）
         if let html = dragPb.string(forType: .html) {
-            let id = UUID().uuidString
             let item = StageItem(type: "html", content: html.data(using: .utf8) ?? Data())
             try? AppDatabase.shared.dbQueue.write { db in try item.insert(db) }
             stageWindow?.reload()

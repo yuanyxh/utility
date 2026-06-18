@@ -19,7 +19,6 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
     let delay: TimeInterval = isBrowser ? 0.12 : 0.05
 
     DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-        debugLog("[utility] \(logPrefix) paste at \(delay)s\(isBrowser ? " (browser)" : "")")
         // System Events keystroke 优先（对网页 input 有效）
         let script = NSAppleScript(source:
             "tell application \"System Events\" to keystroke \"v\" using command down")
@@ -36,8 +35,6 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
                 ku.post(tap: .cghidEventTap)
                 debugLog("[utility] \(logPrefix) CGEventPost fallback sent")
             }
-        } else {
-            debugLog("[utility] \(logPrefix) System Events Cmd+V OK")
         }
     }
 }

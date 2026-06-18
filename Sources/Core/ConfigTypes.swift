@@ -14,16 +14,16 @@ public struct AppConfig: Codable {
 // MARK: - AI
 
 public struct AIConfig: Codable {
-    var baseURL: String = "https://api.deepseek.com"
+    var baseURL: String = ""
     var apiKey: String = ""
-    var model: String = "deepseek-v4-flash"
+    var model: String = ""
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? "https://api.deepseek.com"
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
-        model = try c.decodeIfPresent(String.self, forKey: .model) ?? "deepseek-v4-flash"
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
     }
 }
 

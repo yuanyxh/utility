@@ -274,7 +274,7 @@ public final class TranslationPanelController: NSWindowController {
 
     @objc private func savePosition() {
         guard let origin = window?.frame.origin else { return }
-        UserDefaults.standard.set(NSStringFromPoint(origin), forKey: "translation_panel_origin")
+        UserDefaults.standard.set(NSStringFromPoint(origin), forKey: UDKey.translationPanelOrigin)
     }
 
     /// 失焦自动关闭
@@ -343,7 +343,6 @@ public final class TranslationPanelController: NSWindowController {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        debugLog("[utility] pasteTranslation: pasteboard written")
 
         // 标记 watcher 跳过这次自触发变化
         if let delegate = NSApp.delegate as? AppDelegate {
@@ -379,7 +378,6 @@ public final class TranslationPanelController: NSWindowController {
                 debugLog("[utility] didActivate: PID mismatch, skipping")
                 return
             }
-            debugLog("[utility] didActivate: MATCH, pasting...")
             schedulePaste(to: target, logPrefix: "translation")
         }
 
@@ -387,7 +385,6 @@ public final class TranslationPanelController: NSWindowController {
         // （didActivate 通知此时可能同步触发）
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
-        debugLog("[utility] pasteTranslation: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
     }
 
     // MARK: - Show / Close
@@ -492,7 +489,7 @@ public final class TranslationPanelController: NSWindowController {
         }
 
         // 定位：记忆位置优先，否则鼠标位置
-        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+        if let saved = UserDefaults.standard.string(forKey: UDKey.translationPanelOrigin) {
             let savedPoint = NSPointFromString(saved)
             if !NSEqualPoints(savedPoint, .zero) {
                 window?.setFrameOrigin(savedPoint)
@@ -551,7 +548,7 @@ public final class TranslationPanelController: NSWindowController {
         resetState()
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         // 定位
-        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+        if let saved = UserDefaults.standard.string(forKey: UDKey.translationPanelOrigin) {
             let savedPoint = NSPointFromString(saved)
             if !NSEqualPoints(savedPoint, .zero) {
                 window?.setFrameOrigin(savedPoint)

@@ -3,9 +3,12 @@
 # 修改后通过菜单栏「重载配置」或重启生效
 
 ai:
-  baseURL: https://api.deepseek.com
+  # OpenAI 兼容 API 地址（只需 host，客户端自动追加 /chat/completions）
+  baseURL: ''
+  # API 密钥
   apiKey: ''
-  model: deepseek-v4-flash
+  # 模型名，例如 deepseek-v4-flash / gpt-4o-mini
+  model: ''
 clipboard:
   maxDays: 3
   excludeApps:
@@ -22,7 +25,7 @@ translation:
   secondLang: en
   prompt: ''
 stage:
-  moveOnDragOut: false
+  moveOnDragOut: true
 rss:
   feeds: []
   updateInterval: 30

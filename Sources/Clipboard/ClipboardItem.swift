@@ -12,14 +12,14 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
     public var content: Data
     /// 来源应用名称
     public var application: String?
-    /// 文本内容的纯文本副本（用于搜索）
-    public var searchText: String?
+    /// 文本内容的纯文本副本（用于去重）
+    public var plainText: String?
 
     public static let databaseTableName = "clipboard_item"
 
     enum CodingKeys: String, CodingKey {
         case id, timestamp, type, content, application
-        case searchText = "search_text"
+        case plainText = "search_text"
     }
 
     public init(id: String = UUID().uuidString,
@@ -33,7 +33,7 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
         self.content = content
         self.application = application
         if type == "text", let str = String(data: content, encoding: .utf8) {
-            self.searchText = str
+            self.plainText = str
         }
     }
 
@@ -44,6 +44,6 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
         static let type = Column("type")
         static let content = Column("content")
         static let application = Column("application")
-        static let searchText = Column("search_text")
+        static let plainText = Column("search_text")
     }
 }

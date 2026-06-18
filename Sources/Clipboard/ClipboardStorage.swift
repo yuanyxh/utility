@@ -15,9 +15,9 @@ public final class ClipboardStorage {
 
     public func add(_ item: ClipboardItem) throws {
         try db.write { db in
-            // 查找重复项：text 按 searchText，其他按 content 逐字节对比
+            // 查找重复项：text 按 plainText，其他按 content 逐字节对比
             let dupeId: String? = {
-                if item.type == "text", let text = item.searchText {
+                if item.type == "text", let text = item.plainText {
                     return try? String.fetchOne(db, sql: """
                         SELECT id FROM clipboard_item
                         WHERE type = 'text' AND search_text = ?
@@ -50,16 +50,6 @@ public final class ClipboardStorage {
     public func all() throws -> [ClipboardItem] {
         try db.read { db in
             try ClipboardItem
-                .order(Column("timestamp").desc)
-                .fetchAll(db)
-        }
-    }
-
-    public func search(_ query: String) throws -> [ClipboardItem] {
-        let pattern = "%\(query)%"
-        return try db.read { db in
-            try ClipboardItem
-                .filter(Column("search_text").like(pattern))
                 .order(Column("timestamp").desc)
                 .fetchAll(db)
         }

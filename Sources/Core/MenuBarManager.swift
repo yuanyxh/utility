@@ -26,11 +26,6 @@ public final class MenuBarManager: NSObject {
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
-
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(updateConfigDisplay),
-            name: .configDidReload, object: nil
-        )
     }
 
     // MARK: - Actions
@@ -53,9 +48,5 @@ public final class MenuBarManager: NSObject {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
-    }
-
-    @objc func updateConfigDisplay() {
-        // no-op, kept for notification observer
     }
 }

@@ -127,8 +127,6 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     private func paste(item: ClipboardItem) {
-        debugLog("[utility] clipboard paste: type=\(item.type) id=\(item.id)")
-
         let pb = NSPasteboard.general
         pb.clearContents()
 
@@ -178,11 +176,9 @@ public final class ClipboardPanelController: NSWindowController {
             NSApplication.shared.hide(nil)
             return
         }
-        debugLog("[utility] clipboard paste: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
-        debugLog("[utility] clipboard paste: hide done, frontmost=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
 
         schedulePaste(to: target, logPrefix: "clipboard")
     }
@@ -249,8 +245,7 @@ public final class ClipboardPanelController: NSWindowController {
         window?.setFrameOrigin(origin)
 
         // 清理过期的粘贴缓存文件（>1天）
-        let cacheDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility/clip")
+        let cacheDir = AppPaths.clipCacheDir
         if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.creationDateKey]) {
             let cutoff = Date().addingTimeInterval(-86400)
             for url in files {

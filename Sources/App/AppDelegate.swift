@@ -1,7 +1,7 @@
 import Cocoa
 import Carbon
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let menuBar = MenuBarManager()
     private let hotkeyManager = HotkeyManager.shared
     private let clipboardStorage = ClipboardStorage()
@@ -22,7 +22,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardWatcher.start()
         registerAllHotkeys()
         installEventHandler()
-        menuBar.updateConfigDisplay()
         stageMonitor.start(with: stageWindow)
 
         Log.debug("[Utility] Ready")
@@ -45,22 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let text = selected {
                     self.translationPanel.fillAndTranslate(text)
                 }
+                
+                return
+            }
+            
+            self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+            if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
+                self.translationPanel.show(with: text)
+                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                    self.translationPanel.startTranslation(text: text)
+                }
             } else {
-                self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-                if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
-                    self.translationPanel.show(with: text)
-                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                        self.translationPanel.startTranslation(text: text)
-                    }
-                } else {
-                    self.translationPanel.showEmpty()
-                    Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                        if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
-                            self.translationPanel.activateForInput()
-                            self.translationPanel.fillAndTranslate(text)
-                        } else {
-                            self.translationPanel.activateForInput()
-                        }
+                self.translationPanel.showEmpty()
+                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
+                    if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
+                        self.translationPanel.activateForInput()
+                        self.translationPanel.fillAndTranslate(text)
+                    } else {
+                        self.translationPanel.activateForInput()
                     }
                 }
             }
@@ -98,9 +99,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             1, eventSpec, nil, nil
         )
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        Log.debug("[Utility] Shutting down...")
     }
 }

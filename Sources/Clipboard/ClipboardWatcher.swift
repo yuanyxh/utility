@@ -8,13 +8,6 @@ public final class ClipboardWatcher {
     private var timer: Timer?
     private let storage: ClipboardStorage
 
-    private static let clipCacheDir: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility/clip")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
-
     private static let imageUTIs: [NSPasteboard.PasteboardType] = [
         .tiff, .png,
         .init("public.jpeg"),
@@ -64,11 +57,6 @@ public final class ClipboardWatcher {
 
         guard let pbItems = pasteboard.pasteboardItems, !pbItems.isEmpty else { return }
 
-        debugLog("[Clipboard] changeCount=\(current), items=\(pbItems.count)")
-        for (i, item) in pbItems.enumerated() {
-            debugLog("[Clipboard]   item[\(i)] types=\(item.types.map { $0.rawValue })")
-        }
-
         // ── 1. 文件 URL（Finder 复制，含图片/文件夹/任意文件）──
         let allFileURLs: [URL] = pbItems.compactMap { item in
             guard let urlStr = item.string(forType: .fileURL),
@@ -94,7 +82,6 @@ public final class ClipboardWatcher {
             let clip = ClipboardItem(type: "html", content: html.data(using: .utf8) ?? Data(),
                                       application: plainText ?? pasteboardOwner())
             try? storage.add(clip)
-            debugLog("[Clipboard] html from \(pasteboardOwner() ?? "?")")
             return
         }
 
@@ -108,7 +95,7 @@ public final class ClipboardWatcher {
             return
         }
 
-        debugLog("[Clipboard] no match")
+        // 无匹配类型，静默忽略
     }
 
     // MARK: - File storage
@@ -120,7 +107,6 @@ public final class ClipboardWatcher {
                 let clip = ClipboardItem(type: "file", content: data,
                                           application: urls[0].lastPathComponent)
                 try? storage.add(clip)
-                debugLog("[Clipboard] file: \(urls[0].lastPathComponent)")
             }
         } else {
             let paths = urls.map { $0.path }
@@ -128,7 +114,6 @@ public final class ClipboardWatcher {
                 let clip = ClipboardItem(type: "file_batch", content: data,
                                           application: "\(urls.count) 个文件")
                 try? storage.add(clip)
-                debugLog("[Clipboard] file_batch: \(urls.count) files")
             }
         }
     }
@@ -136,14 +121,13 @@ public final class ClipboardWatcher {
     /// 浏览器图片数据 → 写临时文件 → 存为 file
     private func storeImageFromData(_ imageData: Data) {
         let filename = "clip_\(Int(Date().timeIntervalSince1970)).png"
-        let fileURL = Self.clipCacheDir.appendingPathComponent(filename)
+        let fileURL = AppPaths.clipCacheDir.appendingPathComponent(filename)
         do {
             try imageData.write(to: fileURL)
             if let data = try? JSONEncoder().encode(["path": fileURL.path]) {
                 let clip = ClipboardItem(type: "file", content: data,
                                           application: filename)
                 try? storage.add(clip)
-                debugLog("[Clipboard] file (from image data): \(filename)")
             }
         } catch {
             debugLog("[Clipboard] image write failed: \(error)")

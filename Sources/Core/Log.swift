@@ -11,12 +11,13 @@ public enum Log {
     }
 }
 
-/// 调试日志 — 写入 ~/Library/Logs/utility-paste.log
+/// 运行时调试日志 — 写入 ~/.cache/utility/debug.log
+/// 用于记录 APP 运行时的操作追踪信息
 public func debugLog(_ msg: String) {
-    let logPath = NSHomeDirectory() + "/Library/Logs/utility-paste.log"
+    #if DEBUG
+    let logPath = AppPaths.debugLog
     let line = "[\(Date().timeIntervalSince1970)] \(msg)\n"
     if let data = line.data(using: .utf8) {
-        // 追加写入
         if let handle = FileHandle(forWritingAtPath: logPath) {
             handle.seekToEndOfFile()
             handle.write(data)
@@ -25,4 +26,5 @@ public func debugLog(_ msg: String) {
             try? data.write(to: URL(fileURLWithPath: logPath))
         }
     }
+    #endif
 }
