@@ -145,8 +145,20 @@ public final class OpenAIClient {
             return nil
         }
 
+        #if DEBUG
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let model = req.model
+        let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
+        #endif
+
         let task = session.dataTask(with: urlRequest) { data, response, error in
+            #if DEBUG
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            #endif
             if let error = error {
+                #if DEBUG
+                debugLog("[OpenAI] \(endpoint) \(model) failed \(String(format: "%.0f", elapsed))ms: \(error.localizedDescription)")
+                #endif
                 completion(.failure(error))
                 return
             }
@@ -156,6 +168,9 @@ public final class OpenAIClient {
             }
             guard httpResponse.statusCode == 200 else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                #if DEBUG
+                debugLog("[OpenAI] \(endpoint) \(model) HTTP \(httpResponse.statusCode) \(String(format: "%.0f", elapsed))ms")
+                #endif
                 completion(.failure(OpenAIError.httpError(httpResponse.statusCode, body)))
                 return
             }
@@ -165,8 +180,15 @@ public final class OpenAIClient {
             }
             do {
                 let result = try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
+                #if DEBUG
+                let contentLen = result.choices.first?.message.content?.count ?? 0
+                debugLog("[OpenAI] \(endpoint) \(model) OK \(String(format: "%.0f", elapsed))ms content=\(contentLen)")
+                #endif
                 completion(.success(result))
             } catch {
+                #if DEBUG
+                debugLog("[OpenAI] \(model) decode failed after \(String(format: "%.0f", elapsed))ms")
+                #endif
                 completion(.failure(OpenAIError.decodeFailed(error, data)))
             }
         }
@@ -177,6 +199,16 @@ public final class OpenAIClient {
     // MARK: - Async
 
     public func chat(request req: OpenAIChatRequest, baseURL: String) async throws -> OpenAIChatResponse {
+        #if DEBUG
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let model = req.model
+        let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
+        defer {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+            debugLog("[OpenAI] \(endpoint) \(model) done \(String(format: "%.0f", elapsed))ms")
+        }
+        #endif
+
         let urlRequest = try makeURLRequest(req, baseURL: baseURL)
         let (data, response) = try await session.data(for: urlRequest)
 
