@@ -360,6 +360,8 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
 
+        circleView.isHighlighted = tableView.isRowSelected(row)
+
         return cell
     }
 
