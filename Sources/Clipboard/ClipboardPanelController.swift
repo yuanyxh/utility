@@ -166,6 +166,11 @@ public final class ClipboardPanelController: NSWindowController {
 
         debugLog("[utility] clipboard paste: pasteboard written")
 
+        // 标记 watcher 跳过这次自触发变化
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.clipboardWatcher.skipCurrentChange()
+        }
+
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             debugLog("[utility] clipboard paste: no target app")
             window?.orderOut(nil)

@@ -345,6 +345,11 @@ public final class TranslationPanelController: NSWindowController {
         pb.setString(text, forType: .string)
         debugLog("[utility] pasteTranslation: pasteboard written")
 
+        // 标记 watcher 跳过这次自触发变化
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.clipboardWatcher.skipCurrentChange()
+        }
+
         // 记录目标 app（面板打开前的前台 app，而非当前自己）
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             debugLog("[utility] pasteTranslation: no target app")

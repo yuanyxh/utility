@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBar = MenuBarManager()
     private let hotkeyManager = HotkeyManager.shared
     private let clipboardStorage = ClipboardStorage()
-    private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
+    private(set) lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
     lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
     lazy var translationPanel = TranslationPanelController()
     private lazy var stageWindow = StageWindowController()

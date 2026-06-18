@@ -46,6 +46,12 @@ public final class ClipboardWatcher {
 
     // MARK: - Check
 
+    /// 标记当前 pasteboard 变化为"已处理"，让下次 check() 跳过
+    /// 用于面板自己写入 pasteboard 后避免 watcher 重复处理
+    public func skipCurrentChange() {
+        lastChangeCount = pasteboard.changeCount
+    }
+
     private func check() {
         let current = pasteboard.changeCount
         guard current != lastChangeCount else { return }
