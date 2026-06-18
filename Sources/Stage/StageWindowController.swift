@@ -270,83 +270,14 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             try? StageManager.shared.remove(item.id)
             return
         }
-        // Finder 已执行移动（cmd+option+v），无需备份/删除，只移除 DB
+        // Finder 已执行移动（cmd+opt+v）→ 只删 DB
         if operation == .move {
             NSLog("[StageMove] Finder moved, just remove DB")
             try? StageManager.shared.remove(item.id)
             return
         }
-        // 获取文件 URL 列表
-        let fileURLs: [URL]
-        switch item.type {
-        case "fileURL":
-            if let url = item.resolveFileURL() { fileURLs = [url] } else { return }
-        case "fileGroup":
-            fileURLs = item.resolveFileGroup()
-        default:
-            try? StageManager.shared.remove(item.id)
-            return
-        }
-        print("[StageMove] type=\(item.type), fileURLs.count=\(fileURLs.count)")
-        NSLog("[StageMove] type=%@ fileURLs=%lu", item.type, fileURLs.count)
-        guard !fileURLs.isEmpty else { return }
-
-        // 备份目录
-        let fm = FileManager.default
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let backupDir = fm.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility/stage/\(formatter.string(from: Date()))")
-        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
-
-        // 逐文件备份验证 → 移到废纸篓
-        var backupOK = true
-        for url in fileURLs {
-            var dest = backupDir.appendingPathComponent(url.lastPathComponent)
-            // 避免同名冲突
-            var counter = 1
-            while fm.fileExists(atPath: dest.path) {
-                let name = url.deletingPathExtension().lastPathComponent
-                let ext = url.pathExtension
-                let suffix = ext.isEmpty ? "_\(counter)" : "_\(counter).\(ext)"
-                dest = backupDir.appendingPathComponent("\(name)\(suffix)")
-                counter += 1
-            }
-            do {
-                try fm.copyItem(at: url, to: dest)
-                let srcSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                let dstSize = (try? dest.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                guard srcSize == dstSize else { backupOK = false; break }
-            } catch {
-                backupOK = false; break
-            }
-        }
-
-        guard backupOK else { NSLog("[StageMove] backup FAILED, abort"); return }  // 备份失败，不删
-
-        // 移入废纸篓 — 延迟 0.5s，等 Finder 完成粘贴再删源文件
-        let urlsToTrash = fileURLs
-        let itemId = item.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            for url in urlsToTrash {
-                try? fm.trashItem(at: url, resultingItemURL: nil)
-            }
-            NSLog("[StageMove] trashed %lu files", urlsToTrash.count)
-            try? StageManager.shared.remove(itemId)
-            self?.reload()
-            if self?.items.isEmpty == true { self?.close() }
-        }
-
-        // 日清过期备份（>1天）
-        if let contents = try? fm.contentsOfDirectory(at: backupDir.deletingLastPathComponent(),
-                                                       includingPropertiesForKeys: [.contentModificationDateKey]) {
-            let cutoff = Date().addingTimeInterval(-86400)
-            for dir in contents {
-                if let attrs = try? dir.resourceValues(forKeys: [.contentModificationDateKey]),
-                   let date = attrs.contentModificationDate, date < cutoff {
-                    try? fm.removeItem(at: dir)
-                }
-            }
-        }
+        // operation == .copy: 非磁盘目标（微信/浏览器等），即使配置为 move 也只 copy，不删源文件
+        NSLog("[StageMove] copy to non-disk target, just remove DB")
+        try? StageManager.shared.remove(item.id)
     }
 }
