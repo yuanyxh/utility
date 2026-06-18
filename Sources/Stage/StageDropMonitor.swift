@@ -14,6 +14,7 @@ public final class StageDropMonitor {
     private var eventTap: CFMachPort?
     private var isDragging = false
     private var isInternalClick = false
+    private var lastDragChangeCount: Int = -1
 
     private var isWindowVisible: Bool {
         stageWindow?.window?.alphaValue == 1.0
@@ -68,14 +69,16 @@ public final class StageDropMonitor {
         switch type {
         case .leftMouseDown:
             isDragging = true
-            // 记录是否内部点击（窗口内 mouseDown），防止后续 processDrop 重入
             isInternalClick = isMouseInWindow(NSEvent.mouseLocation)
 
         case .leftMouseUp:
             isDragging = false
             let mouse = NSEvent.mouseLocation
-            // 只有外部拖入 (Finder etc.) 才处理 drop，内部点击跳过
-            if isMouseInWindow(mouse) && !isInternalClick {
+            let inWindow = isMouseInWindow(mouse)
+            let dragPb = NSPasteboard(name: .drag)
+            let cc = dragPb.changeCount
+            if inWindow && !isInternalClick, cc != lastDragChangeCount {
+                lastDragChangeCount = cc
                 processDrop()
             }
             isInternalClick = false
