@@ -152,9 +152,14 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.identifier = .init("StageCell")
 
         // 图标
-        let icon = NSTextField(labelWithString: item.icon)
-        icon.font = NSFont.systemFont(ofSize: 14)
-        icon.translatesAutoresizingMaskIntoConstraints = false
+        let iconView = NSImageView()
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        if let img = item.iconImage {
+            iconView.image = img
+        } else {
+            iconView.isHidden = true
+        }
 
         // 文本
         let label = NSTextField(labelWithString: item.displayText)
@@ -178,16 +183,17 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         del.isBordered = false
         del.translatesAutoresizingMaskIntoConstraints = false
 
-        cell.addSubview(icon)
+        cell.addSubview(iconView)
         cell.addSubview(label)
         cell.addSubview(del)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
-            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 20),
+            iconView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
+            iconView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
 
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             label.heightAnchor.constraint(equalToConstant: 16),
@@ -228,8 +234,10 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             if urls.count == 1 {
                 pboard.setString(urls[0].absoluteString, forType: .fileURL)
             }
-        case "image":
-            pboard.setData(item.content, forType: .tiff)
+        case "html":
+            if let str = String(data: item.content, encoding: .utf8) {
+                pboard.setString(str, forType: .html)
+            }
         case "url":
             if let str = String(data: item.content, encoding: .utf8) {
                 pboard.setString(str, forType: .string)

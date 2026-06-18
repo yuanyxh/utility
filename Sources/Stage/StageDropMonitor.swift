@@ -147,22 +147,37 @@ public final class StageDropMonitor {
             }
         }
 
-        // 文本
-        if let text = dragPb.string(forType: .string), !text.isEmpty {
-            try? StageManager.shared.add(text: text)
+        // 图片（浏览器/截图 — 无文件 URL，只有原始数据）→ 写临时文件 → 统一为 fileURL
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png,
+            .init("public.jpeg"), .init("public.heic")]
+        for type in imageTypes {
+            if let data = dragPb.data(forType: type) {
+                let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".cache/utility/stage")
+                try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+                let filename = "stage_\(Int(Date().timeIntervalSince1970)).png"
+                let fileURL = cacheDir.appendingPathComponent(filename)
+                try? data.write(to: fileURL)
+                try? StageManager.shared.add(fileURL: fileURL)
+                stageWindow?.reload()
+                return
+            }
+        }
+
+        // 富文本 HTML（网页拖入）
+        if let html = dragPb.string(forType: .html) {
+            let id = UUID().uuidString
+            let item = StageItem(type: "html", content: html.data(using: .utf8) ?? Data())
+            try? AppDatabase.shared.dbQueue.write { db in try item.insert(db) }
             stageWindow?.reload()
             return
         }
 
-        // 图片
-        for type in [NSPasteboard.PasteboardType.tiff, .png,
-                     NSPasteboard.PasteboardType("public.jpeg"),
-                     NSPasteboard.PasteboardType("public.heic")] {
-            if let data = dragPb.data(forType: type) {
-                try? StageManager.shared.add(imageData: data)
-                stageWindow?.reload()
-                return
-            }
+        // 纯文本
+        if let text = dragPb.string(forType: .string), !text.isEmpty {
+            try? StageManager.shared.add(text: text)
+            stageWindow?.reload()
+            return
         }
     }
 }

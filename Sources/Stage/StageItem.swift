@@ -1,3 +1,4 @@
+import Cocoa
 import Foundation
 import GRDB
 
@@ -5,9 +6,9 @@ import GRDB
 public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
     public var id: String
     public var timestamp: Date
-    /// text / fileURL / image / url / fileGroup
+    /// text / fileURL / fileGroup / html / url
     public var type: String
-    /// 文本内容 UTF-8 / 文件 bookmark / 图片 Data / URL UTF-8 / fileGroup JSON paths
+    /// 文本内容 UTF-8 / 文件 bookmark / fileGroup JSON paths / html / URL UTF-8
     public var content: Data
 
     public static let databaseTableName = "stage_item"
@@ -53,8 +54,12 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         case "fileGroup":
             let count = resolveFileGroup().count
             return "\(count) 个文件"
-        case "image":
-            return "图片"
+        case "html":
+            let str = String(data: content, encoding: .utf8) ?? ""
+            // 取纯文本摘要（去标签）
+            let stripped = str.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return stripped.prefix(60) + (stripped.count > 60 ? "…" : "")
         case "url":
             let str = String(data: content, encoding: .utf8) ?? ""
             return String(str.prefix(60))
@@ -63,15 +68,24 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         }
     }
 
-    /// 显示用图标字符
-    public var icon: String {
+    /// 显示用图标（NSImage）
+    public var iconImage: NSImage? {
         switch type {
-        case "text": return "📄"
-        case "fileURL": return "📁"
-        case "fileGroup": return "📁"
-        case "image": return "🖼"
-        case "url": return "🔗"
-        default: return "📄"
+        case "text":
+            return nil
+        case "fileURL":
+            if let url = resolveFileURL() {
+                return NSWorkspace.shared.icon(forFile: url.path)
+            }
+            return NSWorkspace.shared.icon(forFileType: "public.data")
+        case "fileGroup":
+            return NSWorkspace.shared.icon(forFileType: "public.folder")
+        case "html":
+            return NSWorkspace.shared.icon(forFileType: "public.html")
+        case "url":
+            return NSWorkspace.shared.icon(forFileType: "public.url")
+        default:
+            return nil
         }
     }
 }
