@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 /// 剪切板快速粘贴面板
 /// NSPanel + NSTableView
@@ -337,8 +338,8 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         if let icon = cell.subviews.first(where: { $0 is NSImageView }) as? NSImageView {
             switch item.type {
             case "file":      icon.image = Self.fileIcon(for: item.content)
-            case "file_batch": icon.image = NSWorkspace.shared.icon(forFileType: "public.folder")
-            case "html":      icon.image = NSWorkspace.shared.icon(forFileType: "public.html")
+            case "file_batch": icon.image = NSWorkspace.shared.icon(for: .folder)
+            case "html":      icon.image = NSWorkspace.shared.icon(for: .html)
             default: break
             }
         }

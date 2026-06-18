@@ -1,5 +1,6 @@
 import Cocoa
 import GRDB
+import UniformTypeIdentifiers
 
 /// 暂存条目（GRDB Record）
 public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
@@ -76,13 +77,13 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             if let url = resolveFileURL() {
                 return NSWorkspace.shared.icon(forFile: url.path)
             }
-            return NSWorkspace.shared.icon(forFileType: "public.data")
+            return NSWorkspace.shared.icon(for: .data)
         case "fileGroup":
-            return NSWorkspace.shared.icon(forFileType: "public.folder")
+            return NSWorkspace.shared.icon(for: .folder)
         case "html":
-            return NSWorkspace.shared.icon(forFileType: "public.html")
+            return NSWorkspace.shared.icon(for: .html)
         case "url":
-            return NSWorkspace.shared.icon(forFileType: "public.url")
+            return NSWorkspace.shared.icon(for: .url)
         default:
             return nil
         }
