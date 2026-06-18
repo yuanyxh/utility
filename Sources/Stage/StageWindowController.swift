@@ -21,15 +21,14 @@ public final class StageWindowController: NSWindowController {
         panel.titleVisibility = .hidden
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
         panel.collectionBehavior = [.transient, .ignoresCycle]
-        panel.alphaValue = 0.01   // 始终在线，拖拽目标可被系统扫描到
 
         super.init(window: panel)
         setupUI()
         addVisualEffectView()
-        // 预显示，确保系统已将其纳入拖拽目标列表
+        // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
         panel.orderFront(nil)
+        panel.orderOut(nil)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -101,12 +100,12 @@ public final class StageWindowController: NSWindowController {
         positionAtBottomLeft()
         window?.alphaValue = 1.0
         window?.hasShadow = true
+        window?.ignoresMouseEvents = false
         window?.orderFront(nil)
     }
 
     public override func close() {
-        window?.alphaValue = 0.01
-        window?.hasShadow = false
+        window?.orderOut(nil)
     }
 
     private func addVisualEffectView() {

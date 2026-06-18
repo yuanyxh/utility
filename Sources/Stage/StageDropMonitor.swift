@@ -17,7 +17,7 @@ public final class StageDropMonitor {
     private var lastDragChangeCount: Int = -1
 
     private var isWindowVisible: Bool {
-        stageWindow?.window?.alphaValue == 1.0
+        stageWindow?.window?.isVisible ?? false
     }
 
     private init() {}
@@ -90,6 +90,7 @@ public final class StageDropMonitor {
 
         case .leftMouseDragged:
             guard isDragging else { break }
+            guard !isInternalClick else { break }
             let mouse = NSEvent.mouseLocation
             let items = (try? StageManager.shared.count()) ?? 0
 
