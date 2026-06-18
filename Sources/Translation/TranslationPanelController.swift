@@ -359,6 +359,12 @@ public final class TranslationPanelController: NSWindowController {
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { notification in
+            // defer 确保无论哪个分支退出都移除 observer
+            defer {
+                if let token = notifToken {
+                    NSWorkspace.shared.notificationCenter.removeObserver(token)
+                }
+            }
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
                 debugLog("[utility] didActivate: no app in notification")
                 return
@@ -368,7 +374,6 @@ public final class TranslationPanelController: NSWindowController {
                 debugLog("[utility] didActivate: PID mismatch, skipping")
                 return
             }
-            if let token = notifToken { NSWorkspace.shared.notificationCenter.removeObserver(token); notifToken = nil }
             debugLog("[utility] didActivate: MATCH, pasting...")
             schedulePaste(to: target, logPrefix: "translation")
         }
