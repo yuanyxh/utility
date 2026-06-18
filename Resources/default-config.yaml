@@ -1,33 +1,30 @@
-# ~/.config/utility/config.yaml
-# Utility 全局配置
-# 修改后通过菜单栏「重载配置」生效（无需重启）
+# Utility 配置文件
+# 存放路径: ~/.config/utility/config.yaml
+# 修改后通过菜单栏「重载配置」或重启生效
 
 ai:
-  baseURL: "https://api.deepseek.com"
-  apiKey: ""
-  model: "deepseek-v4-flash"
-
+  baseURL: https://api.deepseek.com
+  apiKey: ''
+  model: deepseek-v4-flash
 clipboard:
   maxDays: 3
   excludeApps:
-    - "SecurityAgent"
-    - "KeychainAccess"
-  hotkey: "cmd+shift+c"
+  - SecurityAgent
+  - KeychainAccess
+  hotkey: cmd+shift+c
   pollInterval: 0.3
-
 translation:
-  hotkey: "option+d"
-  hotkeyOCR: "option+s"
-  sourceLang: "auto"
-  targetLang: "auto"
-  secondLang: "en"
-  prompt: ""
-
+  hotkey: option+d
+  hotkeyOCR: option+s
+  sourceLang: auto
+  targetLang: auto
+  firstLang: zh
+  secondLang: en
+  prompt: ''
+stage:
+  moveOnDragOut: false
 rss:
   feeds: []
   updateInterval: 30
-
 prompts:
-  templates:
-    summarize: "请用中文总结以下内容的要点，保持简洁"
-    rewrite: "请用更专业的语气重写以下文本"
+  templates: {}
