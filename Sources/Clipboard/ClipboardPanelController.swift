@@ -481,9 +481,5 @@ private final class NumberCircleView: NSView {
         ])
     }
 
-    override func layout() {
-        super.layout()
-    }
-
     required init?(coder: NSCoder) { nil }
 }

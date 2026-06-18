@@ -253,9 +253,9 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil; draggingItem = nil }
-        NSLog("[StageMove] endedAt operation=%lu", operation.rawValue)
-        guard operation != [] else { NSLog("[StageMove] operation empty, skip"); return }
-        guard let item = draggingItem else { NSLog("[StageMove] no draggingItem"); return }
+        debugLog("[StageMove] endedAt operation=\(operation.rawValue)")
+        guard operation != [] else { debugLog("[StageMove] operation empty, skip"); return }
+        guard let item = draggingItem else { debugLog("[StageMove] no draggingItem"); return }
         tryMoveOrRemove(item: item, operation: operation)
         reload()
         if items.isEmpty { close() }
@@ -271,12 +271,12 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         }
         // Finder 已执行移动（cmd+opt+v）→ 只删 DB
         if operation == .move {
-            NSLog("[StageMove] Finder moved, just remove DB")
+            debugLog("[StageMove] Finder moved, just remove DB")
             try? StageManager.shared.remove(item.id)
             return
         }
         // operation == .copy: 非磁盘目标（微信/浏览器等），即使配置为 move 也只 copy，不删源文件
-        NSLog("[StageMove] copy to non-disk target, just remove DB")
+        debugLog("[StageMove] copy to non-disk target, just remove DB")
         try? StageManager.shared.remove(item.id)
     }
 }
