@@ -57,6 +57,7 @@ public final class ClipboardPanelController: NSWindowController {
         tableView.backgroundColor = NSColor.controlBackgroundColor
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.style = .plain
+        tableView.selectionHighlightStyle = .none
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = false
@@ -276,16 +277,18 @@ public final class ClipboardPanelController: NSWindowController {
 extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
     public func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
-    public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let view = LighterSelectionRowView()
-        view.identifier = NSUserInterfaceItemIdentifier("ClipboardRow")
-        return view
-    }
-
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
         let cell = NSTableCellView()
         cell.identifier = NSUserInterfaceItemIdentifier("ClipboardCell")
+
+        // 选中背景（cell 层绘制，替代 LighterSelectionRowView）
+        let isSelected = tableView.isRowSelected(row)
+        cell.wantsLayer = true
+        cell.layer?.cornerRadius = 4
+        cell.layer?.backgroundColor = isSelected
+            ? NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).cgColor
+            : NSColor.clear.cgColor
 
         // 序号圆圈
         let circleView = NumberCircleView()
@@ -360,9 +363,25 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             ])
         }
 
-        circleView.isHighlighted = tableView.isRowSelected(row)
+        circleView.isHighlighted = isSelected
 
         return cell
+    }
+
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let tv = notification.object as? NSTableView else { return }
+        tv.enumerateAvailableRowViews { rowView, row in
+            guard let cell = rowView.view(atColumn: 0) as? NSTableCellView else { return }
+            let selected = tv.isRowSelected(row)
+            cell.layer?.backgroundColor = selected
+                ? NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).cgColor
+                : NSColor.clear.cgColor
+            for sub in cell.subviews {
+                if let circle = sub as? NumberCircleView {
+                    circle.isHighlighted = selected
+                }
+            }
+        }
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 32 }
@@ -400,44 +419,6 @@ private extension ClipboardPanelController {
         guard let dict = try? JSONDecoder().decode([String: String].self, from: content),
               let path = dict["path"] else { return nil }
         return NSWorkspace.shared.icon(forFile: path)
-    }
-}
-
-// MARK: - Lighter Selection Row View
-
-private final class LighterSelectionRowView: NSTableRowView {
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override var isSelected: Bool {
-        didSet {
-            enumerateCircleViews(in: self) { $0.isHighlighted = isSelected }
-        }
-    }
-
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard isSelected else { return }
-        NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).setFill()
-        bounds.fill()
-    }
-
-    override var selectionHighlightStyle: NSTableView.SelectionHighlightStyle {
-        get { .regular }
-        set {}
-    }
-
-    private func enumerateCircleViews(in view: NSView, handler: (NumberCircleView) -> Void) {
-        for subview in view.subviews {
-            if let circle = subview as? NumberCircleView {
-                handler(circle)
-            }
-            enumerateCircleViews(in: subview, handler: handler)
-        }
     }
 }
 
