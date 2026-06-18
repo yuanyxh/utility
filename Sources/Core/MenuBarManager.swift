@@ -20,11 +20,17 @@ public final class MenuBarManager: NSObject {
     private func buildMenu() {
         let menu = NSMenu()
 
-        menu.addItem(NSMenuItem(title: "重载配置", action: #selector(reloadConfig), keyEquivalent: "r"))
+        let reloadItem = NSMenuItem(title: "重载配置", action: #selector(reloadConfig), keyEquivalent: "r")
+        reloadItem.target = self
+        menu.addItem(reloadItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "清空剪切板", action: #selector(clearClipboard), keyEquivalent: ""))
+        let clearItem = NSMenuItem(title: "清空剪切板", action: #selector(clearClipboard), keyEquivalent: "")
+        clearItem.target = self
+        menu.addItem(clearItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
+        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
 
         statusItem.menu = menu
     }
