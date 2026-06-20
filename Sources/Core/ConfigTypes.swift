@@ -86,13 +86,13 @@ public struct StageConfig: Codable {
 
 public struct RSSConfig: Codable {
     var feeds: [RSSFeedConfig] = []
-    var updateInterval: Int = 30
+    var updateInterval: Int = 60
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         feeds = try c.decodeIfPresent([RSSFeedConfig].self, forKey: .feeds) ?? []
-        updateInterval = try c.decodeIfPresent(Int.self, forKey: .updateInterval) ?? 30
+        updateInterval = try c.decodeIfPresent(Int.self, forKey: .updateInterval) ?? 60
     }
 }
 

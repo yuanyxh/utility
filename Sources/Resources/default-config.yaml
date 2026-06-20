@@ -27,7 +27,7 @@ stage:
   moveOnDragOut: true
 rss:
   feeds: []
-  updateInterval: 30
+  updateInterval: 60
 prompts:
   templates: {}
 # ------------------------------------------------------------------

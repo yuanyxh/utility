@@ -1,9 +1,12 @@
 import Cocoa
 import ServiceManagement
 
-public final class MenuBarManager: NSObject {
+public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var launchAtLoginItem: NSMenuItem!
+    private var rssMenuItem: NSMenuItem!
+    private var tasksMenuItem: NSMenuItem!
+    private var rssFetchTask: Task<Void, Never>?
 
     public override init() {
         super.init()
@@ -27,6 +30,7 @@ public final class MenuBarManager: NSObject {
 
     private func buildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
 
         let reloadItem = NSMenuItem(title: "重载配置", action: #selector(reloadConfig), keyEquivalent: "r")
         reloadItem.target = self
@@ -38,6 +42,20 @@ public final class MenuBarManager: NSObject {
         launchAtLoginItem.target = self
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launchAtLoginItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // ── RSS ──
+        rssMenuItem = NSMenuItem(title: "RSS", action: nil, keyEquivalent: "")
+        rssMenuItem.submenu = NSMenu()
+        menu.addItem(rssMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // ── Tasks ──
+        tasksMenuItem = NSMenuItem(title: "任务", action: nil, keyEquivalent: "")
+        tasksMenuItem.submenu = NSMenu()
+        menu.addItem(tasksMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -54,6 +72,49 @@ public final class MenuBarManager: NSObject {
         statusItem.menu = menu
     }
 
+    // MARK: - NSMenuDelegate
+
+    public func menuWillOpen(_ menu: NSMenu) {
+        refreshRSSItem()
+        refreshTasksItem()
+    }
+
+    private func refreshRSSItem() {
+        let count = (try? RSSManager.shared.unreadCount()) ?? 0
+        let sub = NSMenu()
+
+        let fetchItem = NSMenuItem(title: "抓取 RSS", action: #selector(rssFetch), keyEquivalent: "")
+        fetchItem.target = self
+        sub.addItem(fetchItem)
+
+        let markReadItem = NSMenuItem(title: "全部已读", action: #selector(rssMarkAllRead), keyEquivalent: "")
+        markReadItem.target = self
+        sub.addItem(markReadItem)
+
+        rssMenuItem.title = count > 0 ? "RSS (\(count) 未读)" : "RSS"
+        rssMenuItem.submenu = sub
+    }
+
+    private func refreshTasksItem() {
+        let tasks = ConfigManager.shared.config.tasks
+        let sub = NSMenu()
+
+        for task in tasks {
+            let item = NSMenuItem(
+                title: task.name,
+                action: task.enabled ? #selector(taskTrigger(_:)) : nil,
+                keyEquivalent: ""
+            )
+            item.target = task.enabled ? self : nil
+            item.isEnabled = task.enabled
+            item.representedObject = task.name
+            sub.addItem(item)
+        }
+
+        tasksMenuItem.title = tasks.isEmpty ? "任务" : "任务 (\(tasks.count))"
+        tasksMenuItem.submenu = sub
+    }
+
     // MARK: - Network
 
     private func startNetworkMonitor() {
@@ -63,6 +124,53 @@ public final class MenuBarManager: NSObject {
             view.update(up: up, down: down)
         }
         monitor.start()
+    }
+
+    // MARK: - RSS Actions
+
+    @objc private func rssFetch() {
+        rssFetchTask?.cancel()
+        rssFetchTask = Task {
+            do {
+                let new = try await RSSManager.shared.fetchAll()
+                guard !Task.isCancelled else { return }
+                debugLog("[MenuBar] RSS fetch: \(new.count) new items")
+            } catch {
+                guard !Task.isCancelled else { return }
+                debugLog("[MenuBar] RSS fetch failed: \(error)")
+                NotificationManager.shared.error("RSS 抓取失败", error.localizedDescription)
+            }
+        }
+    }
+
+    @objc private func rssMarkAllRead() {
+        do {
+            try RSSManager.shared.markAllAsRead()
+            debugLog("[MenuBar] RSS marked all read")
+        } catch {
+            debugLog("[MenuBar] RSS mark all read failed: \(error)")
+        }
+    }
+
+    // MARK: - Task Actions
+
+    @objc private func taskTrigger(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let task = ConfigManager.shared.config.tasks.first(where: { $0.name == name && $0.enabled })
+        else { return }
+
+        DispatchQueue.global(qos: .utility).async {
+            let result = TaskExecutor.execute(task.exec)
+            if result.success {
+                debugLog("[MenuBar] Task '\(name)' triggered OK")
+            } else {
+                let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
+                debugLog("[MenuBar] Task '\(name)' FAILED: \(errMsg)")
+                DispatchQueue.main.async {
+                    NotificationManager.shared.error("任务失败: \(name)", errMsg)
+                }
+            }
+        }
     }
 
     // MARK: - Actions
@@ -87,6 +195,8 @@ public final class MenuBarManager: NSObject {
     @objc private func reloadConfig() {
         do {
             try ConfigManager.shared.reload()
+            refreshRSSItem()
+            refreshTasksItem()
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
             NotificationManager.shared.error("配置重载失败", error.localizedDescription)
@@ -168,8 +278,6 @@ private final class NetworkSpeedView: NSView {
 
     // MARK: - Padding
 
-    /// 整数部分等宽补 0，添加箭头，空格分隔。输入始终有 2 位小数。
-    /// 如 ("001.23M", "456.78K") → ("↑ 001.23M", "↓ 456.78K")
     private func pad(up: String, down: String) -> (String, String) {
         let upInt   = String(up.prefix(while: { $0 != "." }))
         let downInt = String(down.prefix(while: { $0 != "." }))

@@ -85,7 +85,7 @@ rss:
   feeds:
     - name: "MDN Blog"
       url: "https://developer.mozilla.org/en-US/blog/rss.xml"
-  updateInterval: 30
+  updateInterval: 60
 
 # ---------- 定时任务 ----------
 tasks:
@@ -257,7 +257,11 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 
 ### RSS 订阅
 
-无界面 RSS 引擎，数据存入 SQLite。通过 CLI 管理（抓取、查看、标记已读）。
+无界面 RSS 引擎，数据存入 SQLite。通过菜单栏或 CLI 手动触发抓取。
+
+- **菜单栏**：显示未读数，可「抓取 RSS」或「全部已读」
+- **CLI**：`utility rss --fetch` / `--unread` / `--mark-all-read`
+- **存储**：SQLite（`rss_item` 表）
 
 配合 Hermes Agent 可实现每日自动筛选总结（见下方定时任务）。
 
@@ -300,6 +304,8 @@ tasks:
 ```
 
 **Cron 表达式格式：** `分 时 日 月 周`（5 字段，标准 cron）
+
+- **菜单栏**：`任务 (N)` 列出所有任务，点击即可立即触发；禁用项置灰不可点击
 
 ---
 
@@ -358,13 +364,21 @@ utility rss --mark-all-read
 ─────────
 开机自启
 ─────────
+RSS (3 未读)  ▸ 抓取 RSS
+                 全部已读
+─────────
+任务 (2)     ▸ RSS 日报
+                清理临时文件（灰色，已禁用）
+─────────
 清空剪切板
 ─────────
 退出 ⌘Q
 ```
 
-- **重载配置**：热加载 `~/.config/utility/config.yaml`，同时清理已移除任务的 DB 记录
+- **重载配置**：热加载 `~/.config/utility/config.yaml`，同时刷新 RSS 未读数、任务列表和定时抓取间隔
 - **开机自启**：通过系统登录项（SMAppService）自动启动
+- **RSS**：显示未读数量，子菜单可手动触发抓取或全部已读
+- **任务**：列出所有定时任务，点击立即执行一次；禁用的任务置灰不可点击
 - **清空剪切板**：删除所有剪切板记录
 - **退出**：完全退出 app
 
