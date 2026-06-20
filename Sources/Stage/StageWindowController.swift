@@ -21,15 +21,14 @@ public final class StageWindowController: NSWindowController {
         panel.titleVisibility = .hidden
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = false
         panel.collectionBehavior = [.transient, .ignoresCycle]
-        panel.alphaValue = 0.01   // 始终在线，拖拽目标可被系统扫描到
 
         super.init(window: panel)
         setupUI()
         addVisualEffectView()
-        // 预显示，确保系统已将其纳入拖拽目标列表
+        // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
         panel.orderFront(nil)
+        panel.orderOut(nil)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -90,7 +89,6 @@ public final class StageWindowController: NSWindowController {
     public func positionAtBottomLeft() {
         guard let screen = window?.screen ?? NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
-        let panelSize = window?.frame.size ?? NSSize(width: 200, height: 320)
         let x = screenFrame.minX
         let y = screenFrame.minY
         window?.setFrameOrigin(NSPoint(x: x, y: y))
@@ -101,12 +99,12 @@ public final class StageWindowController: NSWindowController {
         positionAtBottomLeft()
         window?.alphaValue = 1.0
         window?.hasShadow = true
+        window?.ignoresMouseEvents = false
         window?.orderFront(nil)
     }
 
     public override func close() {
-        window?.alphaValue = 0.01
-        window?.hasShadow = false
+        window?.orderOut(nil)
     }
 
     private func addVisualEffectView() {
@@ -152,9 +150,14 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         cell.identifier = .init("StageCell")
 
         // 图标
-        let icon = NSTextField(labelWithString: item.icon)
-        icon.font = NSFont.systemFont(ofSize: 14)
-        icon.translatesAutoresizingMaskIntoConstraints = false
+        let iconView = NSImageView()
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        if let img = item.iconImage {
+            iconView.image = img
+        } else {
+            iconView.isHidden = true
+        }
 
         // 文本
         let label = NSTextField(labelWithString: item.displayText)
@@ -178,16 +181,17 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         del.isBordered = false
         del.translatesAutoresizingMaskIntoConstraints = false
 
-        cell.addSubview(icon)
+        cell.addSubview(iconView)
         cell.addSubview(label)
         cell.addSubview(del)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
-            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 20),
+            iconView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 0),
+            iconView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
 
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             label.trailingAnchor.constraint(equalTo: del.leadingAnchor, constant: -2),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             label.heightAnchor.constraint(equalToConstant: 16),
@@ -228,8 +232,10 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             if urls.count == 1 {
                 pboard.setString(urls[0].absoluteString, forType: .fileURL)
             }
-        case "image":
-            pboard.setData(item.content, forType: .tiff)
+        case "html":
+            if let str = String(data: item.content, encoding: .utf8) {
+                pboard.setString(str, forType: .html)
+            }
         case "url":
             if let str = String(data: item.content, encoding: .utf8) {
                 pboard.setString(str, forType: .string)
@@ -246,9 +252,9 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil; draggingItem = nil }
-        NSLog("[StageMove] endedAt operation=%lu", operation.rawValue)
-        guard operation != [] else { NSLog("[StageMove] operation empty, skip"); return }
-        guard let item = draggingItem else { NSLog("[StageMove] no draggingItem"); return }
+        debugLog("[StageMove] endedAt operation=\(operation.rawValue)")
+        guard operation != [] else { debugLog("[StageMove] operation empty, skip"); return }
+        guard let item = draggingItem else { debugLog("[StageMove] no draggingItem"); return }
         tryMoveOrRemove(item: item, operation: operation)
         reload()
         if items.isEmpty { close() }
@@ -262,83 +268,14 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             try? StageManager.shared.remove(item.id)
             return
         }
-        // Finder 已执行移动（cmd+option+v），无需备份/删除，只移除 DB
+        // Finder 已执行移动（cmd+opt+v）→ 只删 DB
         if operation == .move {
-            NSLog("[StageMove] Finder moved, just remove DB")
+            debugLog("[StageMove] Finder moved, just remove DB")
             try? StageManager.shared.remove(item.id)
             return
         }
-        // 获取文件 URL 列表
-        let fileURLs: [URL]
-        switch item.type {
-        case "fileURL":
-            if let url = item.resolveFileURL() { fileURLs = [url] } else { return }
-        case "fileGroup":
-            fileURLs = item.resolveFileGroup()
-        default:
-            try? StageManager.shared.remove(item.id)
-            return
-        }
-        print("[StageMove] type=\(item.type), fileURLs.count=\(fileURLs.count)")
-        NSLog("[StageMove] type=%@ fileURLs=%lu", item.type, fileURLs.count)
-        guard !fileURLs.isEmpty else { return }
-
-        // 备份目录
-        let fm = FileManager.default
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let backupDir = fm.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/utility/stage/\(formatter.string(from: Date()))")
-        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
-
-        // 逐文件备份验证 → 移到废纸篓
-        var backupOK = true
-        for url in fileURLs {
-            var dest = backupDir.appendingPathComponent(url.lastPathComponent)
-            // 避免同名冲突
-            var counter = 1
-            while fm.fileExists(atPath: dest.path) {
-                let name = url.deletingPathExtension().lastPathComponent
-                let ext = url.pathExtension
-                let suffix = ext.isEmpty ? "_\(counter)" : "_\(counter).\(ext)"
-                dest = backupDir.appendingPathComponent("\(name)\(suffix)")
-                counter += 1
-            }
-            do {
-                try fm.copyItem(at: url, to: dest)
-                let srcSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                let dstSize = (try? dest.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                guard srcSize == dstSize else { backupOK = false; break }
-            } catch {
-                backupOK = false; break
-            }
-        }
-
-        guard backupOK else { NSLog("[StageMove] backup FAILED, abort"); return }  // 备份失败，不删
-
-        // 移入废纸篓 — 延迟 0.5s，等 Finder 完成粘贴再删源文件
-        let urlsToTrash = fileURLs
-        let itemId = item.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            for url in urlsToTrash {
-                try? fm.trashItem(at: url, resultingItemURL: nil)
-            }
-            NSLog("[StageMove] trashed %lu files", urlsToTrash.count)
-            try? StageManager.shared.remove(itemId)
-            self?.reload()
-            if self?.items.isEmpty == true { self?.close() }
-        }
-
-        // 日清过期备份（>1天）
-        if let contents = try? fm.contentsOfDirectory(at: backupDir.deletingLastPathComponent(),
-                                                       includingPropertiesForKeys: [.contentModificationDateKey]) {
-            let cutoff = Date().addingTimeInterval(-86400)
-            for dir in contents {
-                if let attrs = try? dir.resourceValues(forKeys: [.contentModificationDateKey]),
-                   let date = attrs.contentModificationDate, date < cutoff {
-                    try? fm.removeItem(at: dir)
-                }
-            }
-        }
+        // operation == .copy: 非磁盘目标（微信/浏览器等），即使配置为 move 也只 copy，不删源文件
+        debugLog("[StageMove] copy to non-disk target, just remove DB")
+        try? StageManager.shared.remove(item.id)
     }
 }

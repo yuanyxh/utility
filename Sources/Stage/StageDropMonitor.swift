@@ -14,9 +14,10 @@ public final class StageDropMonitor {
     private var eventTap: CFMachPort?
     private var isDragging = false
     private var isInternalClick = false
+    private var lastDragChangeCount: Int = -1
 
     private var isWindowVisible: Bool {
-        stageWindow?.window?.alphaValue == 1.0
+        stageWindow?.window?.isVisible ?? false
     }
 
     private init() {}
@@ -68,14 +69,16 @@ public final class StageDropMonitor {
         switch type {
         case .leftMouseDown:
             isDragging = true
-            // 记录是否内部点击（窗口内 mouseDown），防止后续 processDrop 重入
             isInternalClick = isMouseInWindow(NSEvent.mouseLocation)
 
         case .leftMouseUp:
             isDragging = false
             let mouse = NSEvent.mouseLocation
-            // 只有外部拖入 (Finder etc.) 才处理 drop，内部点击跳过
-            if isMouseInWindow(mouse) && !isInternalClick {
+            let inWindow = isMouseInWindow(mouse)
+            let dragPb = NSPasteboard(name: .drag)
+            let cc = dragPb.changeCount
+            if inWindow && !isInternalClick, cc != lastDragChangeCount {
+                lastDragChangeCount = cc
                 processDrop()
             }
             isInternalClick = false
@@ -87,6 +90,7 @@ public final class StageDropMonitor {
 
         case .leftMouseDragged:
             guard isDragging else { break }
+            guard !isInternalClick else { break }
             let mouse = NSEvent.mouseLocation
             let items = (try? StageManager.shared.count()) ?? 0
 
@@ -147,22 +151,34 @@ public final class StageDropMonitor {
             }
         }
 
-        // 文本
-        if let text = dragPb.string(forType: .string), !text.isEmpty {
-            try? StageManager.shared.add(text: text)
+        // 图片（浏览器/截图 — 无文件 URL，只有原始数据）→ 写临时文件 → 统一为 fileURL
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png,
+            .init("public.jpeg"), .init("public.heic")]
+        for type in imageTypes {
+            if let data = dragPb.data(forType: type) {
+                let cacheDir = AppPaths.stageCacheDir
+                let filename = "stage_\(Int(Date().timeIntervalSince1970)).png"
+                let fileURL = cacheDir.appendingPathComponent(filename)
+                try? data.write(to: fileURL)
+                try? StageManager.shared.add(fileURL: fileURL)
+                stageWindow?.reload()
+                return
+            }
+        }
+
+        // 富文本 HTML（网页拖入）
+        if let html = dragPb.string(forType: .html) {
+            let item = StageItem(type: "html", content: html.data(using: .utf8) ?? Data())
+            try? AppDatabase.shared.dbQueue.write { db in try item.insert(db) }
             stageWindow?.reload()
             return
         }
 
-        // 图片
-        for type in [NSPasteboard.PasteboardType.tiff, .png,
-                     NSPasteboard.PasteboardType("public.jpeg"),
-                     NSPasteboard.PasteboardType("public.heic")] {
-            if let data = dragPb.data(forType: type) {
-                try? StageManager.shared.add(imageData: data)
-                stageWindow?.reload()
-                return
-            }
+        // 纯文本
+        if let text = dragPb.string(forType: .string), !text.isEmpty {
+            try? StageManager.shared.add(text: text)
+            stageWindow?.reload()
+            return
         }
     }
 }

@@ -25,10 +25,6 @@ public final class PromptManager {
             return "你是一个翻译助手。请将以下文本从{source}翻译到{target}。只返回翻译结果，不要添加任何解释、引号或额外内容。"
         case "translate_auto":
             return "你是一个翻译助手。请检测以下文本的语言。如果原文是{first}则翻译成{second}；如果原文是{second}则翻译成{first}；如果原文是其他语言则翻译成{first}。只返回翻译结果，不要添加任何解释、引号或额外内容。"
-        case "summarize":
-            return "请用中文总结以下内容的要点，保持简洁。"
-        case "rewrite":
-            return "请用更专业的语气重写以下文本。"
         default:
             return ""
         }

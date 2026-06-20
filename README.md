@@ -1,7 +1,7 @@
 # Utility — macOS 桌面工具集
 
-菜单栏常驻、快捷键驱动的 macOS 工具集，包含剪切板管理、翻译（含 OCR 区域截图）、
-拖拽暂存和 RSS 订阅四个核心功能，预留 AI 自定义扩展架构。
+菜单栏常驻、快捷键驱动的 macOS 工具集，包含剪切板管理、AI 翻译（含 OCR 区域截图）、
+拖拽暂存和 RSS 订阅四个核心功能。
 
 ---
 
@@ -18,7 +18,6 @@
   - [RSS 订阅（CLI）](#rss-订阅cli)
 - [命令行接口](#命令行接口)
 - [菜单栏](#菜单栏)
-- [扩展架构（远期预留）](#扩展架构远期预留)
 - [技术栈](#技术栈)
 - [日志与调试](#日志与调试)
 
@@ -43,7 +42,7 @@ cd ~/Documents/it/project/utility && swift build -c release
 
 配置文件：**`~/.config/utility/config.yaml`**
 
-修改后通过菜单栏「重载配置」立即生效，无需重启 app。
+首次启动自动生成默认配置。修改后通过菜单栏「重载配置」立即生效，无需重启 app。
 
 ### 完整配置项
 
@@ -82,18 +81,19 @@ translation:
   sourceLang: "auto"
   # 默认目标语言（"auto" = 根据 firstLang/secondLang 自动判断翻译方向）
   targetLang: "auto"
-  # 第二语言（用于自动判断翻译方向）
+  # 第一语言（targetLang=auto 时，检测到 firstLang 则译到 secondLang）
+  firstLang: "zh"
+  # 第二语言（targetLang=auto 时，检测到 secondLang 则译到 firstLang）
   secondLang: "en"
   # 自定义翻译提示词（选填）
   # 为空则使用内置默认提示词
   # 支持 {source} 和 {target} 变量替换
-  # 示例: "你是一个专业的技术文档翻译，保留代码和专有名词不翻译"
   prompt: ""
 
 # ---------- 暂存 ----------
 stage:
-  # 拖出到有效目标时，文件是否为「移动」(默认 false，复制)
-  # true: 拖出成功 → 备份到 ~/.cache/utility/stage/ → 移源文件入废纸篓
+  # 拖出到 Finder/桌面时是否移动源文件（默认 false，仅从暂存区移除）
+  # true: Finder 执行移动后从暂存移除
   # false: 仅从暂存区移除条目，源文件保留
   moveOnDragOut: false
 
@@ -110,12 +110,9 @@ rss:
 # ---------- AI 提示词模板 ----------
 prompts:
   # 自定义提示词模板，键为功能名，值为提示词内容
-  # 内置翻译、总结、重写三个模板，此处可覆盖
-  templates:
-    # 翻译默认提示词
-    translate: ""
-    summarize: "请用中文总结以下内容的要点，保持简洁"
-    rewrite: "请用更专业的语气重写以下文本"
+  # 内置 translate、translate_auto、summarize、rewrite 四个默认模板
+  # 此处可覆盖
+  templates: {}
 ```
 
 ### 配置示例：接入不同 AI 服务
@@ -148,7 +145,7 @@ ai:
 ```yaml
 ai:
   baseURL: "http://localhost:11434"
-  apiKey: "ollama"  # Ollama 不需要真实 key，但不能为空
+  apiKey: "ollama"
   model: "llama3.2"
 ```
 </details>
@@ -162,6 +159,19 @@ translation:
 ```
 </details>
 
+<details>
+<summary>自定义提示词模板</summary>
+
+内置模板名：`translate`（固定源→目标）、`translate_auto`（自动判断方向）、`summarize`、`rewrite`。
+
+```yaml
+prompts:
+  templates:
+    summarize: "请用中文总结以下内容的要点，保持简洁，标注关键数字"
+    rewrite: "请用更专业的语气重写以下文本"
+```
+</details>
+
 ---
 
 ## 快捷键一览
@@ -171,13 +181,13 @@ translation:
 | `cmd+shift+c` | 弹出剪切板面板 | `clipboard.hotkey` |
 | `option+d` | 弹出翻译面板 | `translation.hotkey` |
 | `option+s` | OCR 区域截图翻译 | `translation.hotkeyOCR` |
-| **拖拽文件/文本到菜单栏** | 自动暂存 | 无快捷键，拖拽即用 |
+| **拖拽文件/文本到屏幕左下角** | 自动暂存 | 全局拖拽监听，无需快捷键 |
 
 ### 翻译面板内快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
-| `Enter` | 粘贴译文到原焦点应用并关闭（翻译中静默忽略） |
+| `Enter` | 粘贴译文到原焦点应用并关闭 |
 | `cmd+Enter` | 翻译原文 |
 | `shift+Enter` | 换行 |
 | `Esc` | 关闭面板 |
@@ -205,29 +215,35 @@ translation:
 
 ### 剪切板管理
 
-复制任意内容后自动记录，快捷键弹出面板浏览/搜索/粘贴。
+复制任意内容后自动记录，快捷键弹出面板浏览/粘贴。
 
-- **记录内容**：文本、文件、图片
-- **排除应用**：可配置不记录密码、钥匙串等敏感 app 的复制
-- **自动清理**：按天数和数量上限自动清理旧条目
+- **记录内容**：文本、文件（含多文件）、图片、网页 HTML
+- **排除应用**：可配置不记录指定 app 的复制
+- **自动去重**：相同内容复制只更新时间戳，不重复存储
+- **自动清理**：按 `maxDays` 定期清理过期条目
 - **存储**：SQLite，约 1000 条不到 1MB
 
 **面板操作：**
 
 | 操作 | 效果 |
 |------|------|
-| `cmd+shift+c` | 打开面板 |
+| `cmd+shift+c` | 打开面板，显示所有历史条目 |
 | `↑` / `↓` | 选择条目 |
-| `Enter` | 粘贴选中条目并关闭 |
-| `cmd+f` | 聚焦搜索框 |
-| 输入文字 | 实时过滤 |
+| `Enter` | 粘贴选中条目到原焦点应用并关闭 |
 | `Esc` | 关闭面板 |
+
+面板特性：
+- 智能定位：根据鼠标位置选择最佳弹出位置（右下→左下→右上→左上）
+- 条目编号圆圈：选中高亮蓝色，超过 99 条显示白点
+- 文件/HTML 条目显示图标，文本条目仅显示编号和内容
+- 翻译面板打开时粘贴到剪切板面板会插入原文区而非目标应用
+- 粘贴后自动恢复原焦点应用
 
 ---
 
 ### 翻译
 
-AI 驱动的文本翻译面板。
+AI 驱动的文本翻译面板，带原文/译文双区布局。
 
 **两种触发方式：**
 
@@ -242,9 +258,10 @@ AI 驱动的文本翻译面板。
 3. `shift+Enter` 换行，`Esc` 关闭
 
 **特性：**
-- **取消重翻**：翻译中修改内容后按 `Enter` → 旧翻译静默取消，新翻译立即开始
-- **语言切换自动翻译**：切换源语种或目标语种时，有内容则自动重新翻译
-- **翻译中保护**：翻译进行中按 `cmd+Enter`、关闭面板等操作静默取消，不中断用户操作
+- **翻译中保护**：翻译过程中 `Enter`、`Esc` 等操作静默取消旧任务再执行新操作
+- **序列号防竞态**：快速切换语言产生的旧翻译回调自动丢弃
+- **语言切换自动翻译**：切换语种时有内容则自动重新翻译
+- **翻译遮罩**：译文区显示半透明加载动画 / 错误信息
 
 **面板布局：**
 
@@ -253,7 +270,7 @@ AI 驱动的文本翻译面板。
 │ (可编辑输入框)                        │
 ├─ ─────────────────────────────────── ┤
 │ 译文 ───────────────┬─ [中文 ▾] ─────│
-│ (只读显示框)                          │
+│ (只读显示框，翻译中显示加载动画)       │
 └──────────────────────────────────────┘
 ```
 
@@ -264,6 +281,11 @@ AI 驱动的文本翻译面板。
 泰米尔文、乌尔都文、越南文、意大利文、泰文、马来文、土耳其文、荷兰文、
 波兰文、乌克兰文
 
+**翻译方向自动判定（`targetLang: "auto"`）：**
+- 检测到原文是 `firstLang` → 翻译到 `secondLang`
+- 检测到原文是 `secondLang` → 翻译到 `firstLang`
+- 检测到原文是其他语言 → 翻译到 `firstLang`
+
 ---
 
 ### OCR 区域截图翻译
@@ -273,20 +295,42 @@ AI 驱动的文本翻译面板。
 1. 按 `option+s`
 2. 屏幕变成半透明遮罩层
 3. **鼠标拖拽框选**要识别的区域
-4. 松开鼠标 → 自动 OCR 识别 → 文字填入翻译面板
-5. 按 `Enter` 翻译
-6. 按 `Esc` 取消框选
+4. 松开鼠标 → Vision OCR 识别 → 文字填入翻译面板并触发翻译
+5. 按 `Esc` 取消框选
+
+**实现细节：**
+- 使用 Vision `VNRecognizeTextRequest`（accurate 模式）
+- 识别语言：中文简体 + 英文
+- 遮罩层 `.nonactivatingPanel` + CGEventTap 拦截 ESC
+- `CGDisplayCreateImage` 在后台线程执行
+- 选区渲染：暗灰 0.5pt 边框 + 半透明高亮 + 尺寸标注
+- ESC 释放：`CGEventTap` passRetained + `perform:afterDelay:0`
 
 ---
 
 ### 拖拽暂存
 
-类似 Yoink，但触发方式不同——**拖拽到菜单栏图标**即可自动暂存文件或文本。
+类似 Yoink 的临时暂存功能，通过屏幕左下角浮动窗口收纳文件、文本和网页片段。
 
-取用方式：
-- 菜单栏 → 「查看暂存」→ 列表显示所有暂存项目
-- 双击项目：文件在 Finder 中定位，文本复制到剪切板
-- 菜单栏 → 「清空暂存」删除所有条目
+**存入方式：**
+- 从任意应用拖拽内容到屏幕左下角的暂存窗口（自动显示）
+
+**窗口行为：**
+- 有暂存数据时窗口常驻显示
+- 无数据时窗口自动隐藏，拖拽靠近屏幕左下角区域（窗口 + 40px 容差）时自动显示
+- 左上角「清空」按钮删除所有暂存条目
+- 每条目有「×」按钮可单独删除
+
+**取用方式：**
+- 拖出条目到任意目标（Finder / 浏览器 / 微信等）
+- 拖出后条目自动从暂存区移除
+
+**支持内容类型：**
+- 文件（单个 / 多个）
+- 纯文本
+- 网页 HTML（富文本）
+- URL 链接
+- 图片（写临时文件后统一为 fileURL）
 
 ---
 
@@ -355,44 +399,16 @@ utility rss --fetch --unread | llm -s "筛选出 AI/LLM 相关文章，输出摘
 点击菜单栏图标（方形网格图标）显示菜单：
 
 ```
-AI: deepseek-v4-flash | 剪切板: 3天 | 翻译: auto→zh
-──────────────────────────────
-暂存: 5                          ← 当前暂存数
-剪切板管理 ✓                     ← 状态提示
-──────────────────────────────
-查看暂存                          ← 打开暂存面板
-清空暂存                          ← 清空所有暂存
-──────────────────────────────
-重载配置 ⌘R                      ← 热加载 config.yaml
+重载配置 ⌘R
+─────────
+清空剪切板
+─────────
 退出 ⌘Q
 ```
 
----
-
-## 扩展架构（远期预留）
-
-项目定义了 `AppModule` 协议，后续 AI 扩展功能（如：划词调用 AI 脚本、
-自定义快捷键触发 AI 操作、定时后台服务）通过该协议插拔。
-
-```swift
-public protocol AppModule {
-    var name: String { get }
-    func setup() throws
-    func registerHotkeys(using manager: HotkeyManager) throws
-    func onConfigReload() throws
-    func teardown()
-}
-```
-
-远期 `config.yaml` 扩展示例（**当前未实现**）：
-
-```yaml
-scripts:
-  - name: "总结选中文本"
-    hotkey: "cmd+shift+s"
-    prompt_template: "summarize"
-    action: "replace_selection"
-```
+- **重载配置**：热加载 `~/.config/utility/config.yaml`，无需重启
+- **清空剪切板**：删除 SQLite 中所有剪切板记录
+- **退出**：完全退出 app
 
 ---
 
@@ -407,27 +423,29 @@ scripts:
 | 热键 | Carbon EventHotKey |
 | 翻译 API | OpenAI 兼容格式 |
 | OCR | Vision（VNRecognizeTextRequest） |
-| 构建 | SPM |
+| 暂存拖拽 | CGEventTap 全局监听 |
+| CLI | swift-argument-parser |
 | 依赖 | GRDB.swift, Yams, swift-argument-parser |
 
 ---
 
 ## 日志与调试
 
-启动时的日志输出到 stdout，可以在终端看到 `[Utility]`、`[Config]`、`[Clipboard]` 等标记的消息。
+Debug 模式下日志输出到 stdout。运行时追踪日志写入 `~/.cache/utility/debug.log`。
 
 ```bash
-# 前台运行查看日志
-cd ~/Documents/it/project/utility && .build/release/utility
+# 查看运行时日志
+tail -f ~/.cache/utility/debug.log
 
 # 数据文件位置
 ~/.config/utility/config.yaml     # 配置文件
 ~/.config/utility/data.sqlite     # SQLite 数据库（剪切板+暂存+RSS）
+~/.cache/utility/clip/            # 剪切板图片临时缓存
+~/.cache/utility/stage/           # 暂存图片临时缓存
 ```
 
-如需修改数据库内容，可以使用：
-
 ```bash
+# 查看数据库
 sqlite3 ~/.config/utility/data.sqlite
 .tables
 # clipboard_item  stage_item  rss_item

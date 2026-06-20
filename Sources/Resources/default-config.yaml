@@ -1,0 +1,32 @@
+# Utility 配置文件
+# 修改后通过菜单栏「重载配置」或重启生效
+
+ai:
+  # OpenAI 兼容 API 地址（只需 host，客户端自动追加 /chat/completions）
+  baseURL: ''
+  # API 密钥
+  apiKey: ''
+  # 模型名，例如 deepseek-v4-flash / gpt-4o-mini
+  model: ''
+clipboard:
+  maxDays: 3
+  excludeApps:
+  - SecurityAgent
+  - KeychainAccess
+  hotkey: cmd+shift+c
+  pollInterval: 0.3
+translation:
+  hotkey: option+d
+  hotkeyOCR: option+s
+  sourceLang: auto
+  targetLang: auto
+  firstLang: zh
+  secondLang: en
+  prompt: ''
+stage:
+  moveOnDragOut: true
+rss:
+  feeds: []
+  updateInterval: 30
+prompts:
+  templates: {}

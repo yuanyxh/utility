@@ -2,3 +2,6 @@
 .DS_Store
 *.xcworkspace
 *.xcodeproj
+*.app
+*.dmg
+.swiftpm/

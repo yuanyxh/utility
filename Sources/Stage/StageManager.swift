@@ -37,16 +37,12 @@ public final class StageManager {
         try add(type: "fileGroup", content: json)
     }
 
-    public func add(imageData: Data) throws {
-        try add(type: "image", content: imageData)
-    }
-
     public func add(url: URL) throws {
         try add(type: "url", content: url.absoluteString.data(using: .utf8) ?? Data())
     }
 
     public func remove(_ id: String) throws {
-        try db.write { db in
+        _ = try db.write { db in
             try StageItem.deleteOne(db, key: id)
         }
     }

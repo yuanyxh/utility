@@ -8,11 +8,8 @@ public final class AppDatabase {
     private init() {}
 
     public func setup() throws {
-        let dir = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/utility")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dbPath = dir.appendingPathComponent("data.sqlite").path
+        try FileManager.default.createDirectory(at: AppPaths.configDir, withIntermediateDirectories: true)
+        let dbPath = AppPaths.database.path
         dbQueue = try DatabaseQueue(path: dbPath)
         try migrator.migrate(dbQueue)
         Log.debug("[Database] Opened at \(dbPath)")

@@ -7,6 +7,9 @@ import Cocoa
 private final class TranslationTextView: NSTextView {
     weak var controller: TranslationPanelController?
 
+    private let _undoManager = UndoManager()
+    override var undoManager: UndoManager? { _undoManager }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -26,10 +29,9 @@ private final class TranslationTextView: NSTextView {
                 return true
             }
             if !flags.contains(.command) && !flags.contains(.control) {
-                // 纯 Enter → 粘贴并关闭（翻译中忽略）
+                // 纯 Enter → 粘贴并关闭（pasteTranslation 已处理隐藏，翻译中忽略）
                 if controller?.isTranslating == true { return true }
                 controller?.pasteTranslation()
-                controller?.close()
                 return true
             }
             return false
@@ -41,11 +43,18 @@ private final class TranslationTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let flags = event.modifierFlags
+
+        // cmd+z — undo（仅 cmd，不含 shift）
+        if flags.contains(.command), !flags.contains(.shift), event.keyCode == 6 {
+            undoManager?.undo()
+            return
+        }
+
+        // Enter 变体
         if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control), !flags.contains(.shift) {
             if controller?.isTranslating == true { return }
             controller?.pasteTranslation()
-            controller?.close()
             return
         }
         super.keyDown(with: event)
@@ -80,11 +89,8 @@ private final class TranslationPanel: NSPanel {
                     textView.selectAll(nil)
                     return true
                 }
-            case 6:  // z
-                if let textView = firstResponder as? NSTextView, textView.isEditable {
-                    textView.undoManager?.undo()
-                    return true
-                }
+            case 6:  // z — 留给 TranslationTextView 自行处理
+                break
             default:
                 break
             }
@@ -268,7 +274,7 @@ public final class TranslationPanelController: NSWindowController {
 
     @objc private func savePosition() {
         guard let origin = window?.frame.origin else { return }
-        UserDefaults.standard.set(NSStringFromPoint(origin), forKey: "translation_panel_origin")
+        UserDefaults.standard.set(NSStringFromPoint(origin), forKey: UDKey.translationPanelOrigin)
     }
 
     /// 失焦自动关闭
@@ -326,49 +332,59 @@ public final class TranslationPanelController: NSWindowController {
 
     fileprivate func pasteTranslation() {
         let text = targetTextView.string
-        guard !text.isEmpty else { return }
-        guard !overlay.isVisible || overlay.mode == .error else { return }
+        guard !text.isEmpty else { debugLog("[utility] pasteTranslation: empty text"); return }
+        guard !overlay.isVisible || overlay.mode == .error else {
+            debugLog("[utility] pasteTranslation: overlay blocking (mode=\(overlay.mode))"); return
+        }
+
+        debugLog("[utility] pasteTranslation: text=\(text.prefix(50))... targetLen=\(text.utf16.count)")
 
         // 先把译文写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
 
+        // 标记 watcher 跳过这次自触发变化
+        if let delegate = NSApp.delegate as? AppDelegate {
+            delegate.clipboardWatcher.skipCurrentChange()
+        }
+
         // 记录目标 app（面板打开前的前台 app，而非当前自己）
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
+            debugLog("[utility] pasteTranslation: no target app")
             window?.orderOut(nil)
-            NSApplication.shared.hide(nil)
             return
         }
+        debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
 
-        // 隐藏面板，触发 app 切换
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
-
-        // 轮询目标 app 的焦点元素，就绪后发 cmd+v（最多 100 次 ≈ 800ms）
-        var attempts = 0
-        func pollFocus(for app: NSRunningApplication) {
-            attempts += 1
-            guard attempts < 100 else { return } // 超时放弃
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            var focused: CFTypeRef?
-            let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
-            if result == .success, focused != nil {
-                // 焦点就绪，发 cmd+v
-                let source = CGEventSource(stateID: .combinedSessionState)
-                guard let kd = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                      let ku = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
-                kd.flags = .maskCommand
-                ku.flags = .maskCommand
-                kd.post(tap: .cghidEventTap)
-                ku.post(tap: .cghidEventTap)
+        // didActivate observer — 必须在 hide(nil) 之前注册（hide 可能同步触发激活通知）
+        var notifToken: NSObjectProtocol?
+        notifToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { notification in
+            // defer 确保无论哪个分支退出都移除 observer
+            defer {
+                if let token = notifToken {
+                    NSWorkspace.shared.notificationCenter.removeObserver(token)
+                }
+            }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                debugLog("[utility] didActivate: no app in notification")
                 return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) {
-                pollFocus(for: app)
+            debugLog("[utility] didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
+            guard app.processIdentifier == target.processIdentifier else {
+                debugLog("[utility] didActivate: PID mismatch, skipping")
+                return
             }
+            schedulePaste(to: target, logPrefix: "translation")
         }
-        pollFocus(for: target)
+
+        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
+        // （didActivate 通知此时可能同步触发）
+        window?.orderOut(nil)
+        NSApplication.shared.hide(nil)
     }
 
     // MARK: - Show / Close
@@ -473,7 +489,7 @@ public final class TranslationPanelController: NSWindowController {
         }
 
         // 定位：记忆位置优先，否则鼠标位置
-        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+        if let saved = UserDefaults.standard.string(forKey: UDKey.translationPanelOrigin) {
             let savedPoint = NSPointFromString(saved)
             if !NSEqualPoints(savedPoint, .zero) {
                 window?.setFrameOrigin(savedPoint)
@@ -506,8 +522,7 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderOut(nil)
         // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
         DispatchQueue.main.async {
-            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)
-                .flatMap { ($0.value(forKey: "clipboardPanel") as? ClipboardPanelController)?.window?.isVisible } ?? false
+            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)?.clipboardPanel.window?.isVisible ?? false
             if !clipVisible {
                 NSApplication.shared.hide(nil)
             }
@@ -533,7 +548,7 @@ public final class TranslationPanelController: NSWindowController {
         resetState()
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         // 定位
-        if let saved = UserDefaults.standard.string(forKey: "translation_panel_origin") {
+        if let saved = UserDefaults.standard.string(forKey: UDKey.translationPanelOrigin) {
             let savedPoint = NSPointFromString(saved)
             if !NSEqualPoints(savedPoint, .zero) {
                 window?.setFrameOrigin(savedPoint)

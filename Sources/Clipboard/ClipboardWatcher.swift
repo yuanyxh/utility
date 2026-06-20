@@ -1,11 +1,5 @@
 import Cocoa
 
-/// 图片裁剪数据（用于 batch 存储）
-public struct ImageClip: Codable {
-    public let format: String  // UTI, e.g. "public.png"
-    public let data: Data
-}
-
 /// 剪切板监视器
 /// 以 config 中配置的间隔（默认 0.3s）轮询 NSPasteboard changeCount
 public final class ClipboardWatcher {
@@ -15,17 +9,12 @@ public final class ClipboardWatcher {
     private let storage: ClipboardStorage
 
     private static let imageUTIs: [NSPasteboard.PasteboardType] = [
-        .tiff,
-        .png,
+        .tiff, .png,
         .init("public.jpeg"),
         .init("public.heic"),
         .init("com.compuserve.gif"),
         .init("public.webp"),
         .init("public.bmp"),
-    ]
-
-    private static let imageExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "tiff", "tif", "heic", "heif", "gif", "webp", "bmp"
     ]
 
     public init(storage: ClipboardStorage) {
@@ -50,12 +39,17 @@ public final class ClipboardWatcher {
 
     // MARK: - Check
 
+    /// 标记当前 pasteboard 变化为"已处理"，让下次 check() 跳过
+    /// 用于面板自己写入 pasteboard 后避免 watcher 重复处理
+    public func skipCurrentChange() {
+        lastChangeCount = pasteboard.changeCount
+    }
+
     private func check() {
         let current = pasteboard.changeCount
         guard current != lastChangeCount else { return }
         lastChangeCount = current
 
-        // 排除应用
         if let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName,
            ConfigManager.shared.config.clipboard.excludeApps.contains(frontApp) {
             return
@@ -63,71 +57,96 @@ public final class ClipboardWatcher {
 
         guard let pbItems = pasteboard.pasteboardItems, !pbItems.isEmpty else { return }
 
-        // 1. 从 pasteboard 直接获取图片（浏览器、截图工具等）
-        // 2. 从文件 URL 读取（Finder 复制）
-        var allImages: [(clip: ImageClip, source: String)] = pbItems.compactMap { item in
-            for type in Self.imageUTIs {
-                if let data = item.data(forType: type) {
-                    return (ImageClip(format: type.rawValue, data: data),
-                            pasteboardOwner() ?? "")
-                }
-            }
-            if let urlStr = item.string(forType: .fileURL),
-               let url = URL(string: urlStr),
-               Self.imageExtensions.contains(url.pathExtension.lowercased()),
-               let data = try? Data(contentsOf: url) {
-                let uti = Self.utiForExtension(url.pathExtension)
-                return (ImageClip(format: uti, data: data),
-                        url.lastPathComponent)
-            }
-            return nil
+        // ── 1. 文件 URL（Finder 复制，含图片/文件夹/任意文件）──
+        let allFileURLs: [URL] = pbItems.compactMap { item in
+            guard let urlStr = item.string(forType: .fileURL),
+                  let url = URL(string: urlStr) else { return nil }
+            return url
         }
 
-        if allImages.count > 1 {
-            // 多张图片 → batch（先转 [[String: Any]] 适配 NSKeyedArchiver）
-            let dicts: [[String: Any]] = allImages.map {
-                ["format": $0.clip.format, "data": $0.clip.data]
-            }
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: dicts, requiringSecureCoding: false) {
-                let appName = allImages.first?.source ?? pasteboardOwner()
-                let clip = ClipboardItem(type: "image_batch", content: data, application: appName)
-                try? storage.add(clip)
-            }
-        } else if allImages.count == 1 {
-            // 单张图片 — 编码格式信息供 paste 时还原原始类型
-            let dict: [String: Any] = [
-                "format": allImages[0].clip.format,
-                "data": allImages[0].clip.data,
-            ]
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: dict, requiringSecureCoding: false) {
-                let clip = ClipboardItem(type: "image", content: data,
-                                          application: allImages[0].source)
-                try? storage.add(clip)
-            }
-        } else if let firstText = pbItems.first(where: { $0.types.contains(.string) }),
-                  let str = firstText.string(forType: .string) {
-            // 文本
+        if !allFileURLs.isEmpty {
+            storeFiles(allFileURLs)
+            return
+        }
+
+        // ── 2. 无文件 URL，有图片数据（浏览器右键复制图片、截图）──
+        if let imageData = extractImageData(from: pbItems) {
+            storeImageFromData(imageData)
+            return
+        }
+
+        // ── 3. 富文本 HTML（网页复制）──
+        if let htmlItem = pbItems.first(where: { $0.types.contains(.html) }),
+           let html = htmlItem.string(forType: .html) {
+            let plainText = htmlItem.string(forType: .string)
+            let clip = ClipboardItem(type: "html", content: html.data(using: .utf8) ?? Data(),
+                                      application: plainText ?? pasteboardOwner())
+            try? storage.add(clip)
+            return
+        }
+
+        // ── 4. 纯文本 ──
+        if let textItem = pbItems.first(where: { $0.types.contains(.string) }),
+           let str = textItem.string(forType: .string) {
             let clip = ClipboardItem(type: "text",
                                       content: str.data(using: .utf8) ?? Data(),
                                       application: pasteboardOwner())
             try? storage.add(clip)
+            return
         }
+
+        // 无匹配类型，静默忽略
+    }
+
+    // MARK: - File storage
+
+    /// 统一存储文件：1 个 → file，多个 → file_batch
+    private func storeFiles(_ urls: [URL]) {
+        if urls.count == 1 {
+            if let data = try? JSONEncoder().encode(["path": urls[0].path]) {
+                let clip = ClipboardItem(type: "file", content: data,
+                                          application: urls[0].lastPathComponent)
+                try? storage.add(clip)
+            }
+        } else {
+            let paths = urls.map { $0.path }
+            if let data = try? JSONEncoder().encode(["paths": paths]) {
+                let clip = ClipboardItem(type: "file_batch", content: data,
+                                          application: "\(urls.count) 个文件")
+                try? storage.add(clip)
+            }
+        }
+    }
+
+    /// 浏览器图片数据 → 写临时文件 → 存为 file
+    private func storeImageFromData(_ imageData: Data) {
+        let filename = "clip_\(Int(Date().timeIntervalSince1970)).png"
+        let fileURL = AppPaths.clipCacheDir.appendingPathComponent(filename)
+        do {
+            try imageData.write(to: fileURL)
+            if let data = try? JSONEncoder().encode(["path": fileURL.path]) {
+                let clip = ClipboardItem(type: "file", content: data,
+                                          application: filename)
+                try? storage.add(clip)
+            }
+        } catch {
+            debugLog("[Clipboard] image write failed: \(error)")
+        }
+    }
+
+    /// 从 pasteboard items 提取第一张图片的原始数据
+    private func extractImageData(from items: [NSPasteboardItem]) -> Data? {
+        for item in items {
+            for type in Self.imageUTIs {
+                if let data = item.data(forType: type) {
+                    return data
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Helpers
-
-    private static func utiForExtension(_ ext: String) -> String {
-        switch ext.lowercased() {
-        case "png": return "public.png"
-        case "jpg", "jpeg": return "public.jpeg"
-        case "tiff", "tif": return "public.tiff"
-        case "heic", "heif": return "public.heic"
-        case "gif": return "com.compuserve.gif"
-        case "webp": return "public.webp"
-        case "bmp": return "public.bmp"
-        default: return "public.png"
-        }
-    }
 
     private func pasteboardOwner() -> String? {
         if let source = pasteboard.string(forType: .init("org.nspasteboard.source")) {
