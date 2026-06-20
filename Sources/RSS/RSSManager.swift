@@ -18,7 +18,7 @@ public final class RSSManager {
     public func fetchAll() async throws -> [RSSItem] {
         let feeds = ConfigManager.shared.config.rss.feeds
         guard !feeds.isEmpty else {
-            Log.debug("[RSS] No feeds configured")
+            debugLog("[RSS] No feeds configured")
             return []
         }
 
@@ -26,7 +26,7 @@ public final class RSSManager {
 
         for feed in feeds {
             guard let url = URL(string: feed.url) else {
-                Log.debug("[RSS] Invalid URL: \(feed.url)")
+                debugLog("[RSS] Invalid URL: \(feed.url)")
                 continue
             }
             do {
@@ -35,9 +35,9 @@ public final class RSSManager {
                 let newItems = parser.parse(data: data, feedName: feed.name)
                 let inserted = try addIfNew(newItems)
                 allNew.append(contentsOf: inserted)
-                Log.debug("[RSS] \(feed.name): \(inserted.count) new / \(newItems.count) total")
+                debugLog("[RSS] \(feed.name): \(inserted.count) new / \(newItems.count) total")
             } catch {
-                Log.debug("[RSS] Failed to fetch \(feed.name): \(error)")
+                debugLog("[RSS] Failed to fetch \(feed.name): \(error)")
             }
         }
 

@@ -12,7 +12,7 @@ struct RSSCommand: ParsableCommand {
     @Flag(name: .shortAndLong, help: "抓取并更新所有订阅")
     var fetch = false
 
-    @Flag(name: .shortAndLong, help: "列出未读条目")
+    @Flag(name: .shortAndLong, help: "列出未读条目（JSON）")
     var unread = false
 
     @Option(name: .shortAndLong, help: "标记已读（按 ID）")
@@ -33,17 +33,11 @@ struct RSSCommand: ParsableCommand {
 
         if unread {
             let items = try RSSManager.shared.unread()
-            if items.isEmpty {
-                print("📭 没有未读条目")
-            }
-            for item in items {
-                let date = item.pubDate.formatted(date: .numeric, time: .shortened)
-                print("[\(item.feedName)] \(item.title)")
-                print("  \(item.link)")
-                print("  \(date)")
-                print()
-            }
-            print("共 \(items.count) 条未读")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(items)
+            print(String(data: data, encoding: .utf8)!)
         }
 
         if let id = markRead {

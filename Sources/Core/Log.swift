@@ -1,16 +1,5 @@
 import Foundation
 
-/// 日志工具 — debug 模式打印，release 模式静默
-public enum Log {
-    /// 仅在 DEBUG 编译条件下输出
-    @inlinable
-    public static func debug(_ message: @autoclosure () -> String) {
-        #if DEBUG
-        print(message())
-        #endif
-    }
-}
-
 /// 运行时调试日志 — 写入 ~/.cache/utility/debug.log
 /// 用于记录 APP 运行时的操作追踪信息
 public func debugLog(_ msg: String) {

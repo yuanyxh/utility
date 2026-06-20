@@ -12,7 +12,7 @@ public final class AppDatabase {
         let dbPath = AppPaths.database.path
         dbQueue = try DatabaseQueue(path: dbPath)
         try migrator.migrate(dbQueue)
-        Log.debug("[Database] Opened at \(dbPath)")
+        debugLog("[Database] Opened at \(dbPath)")
     }
 
     // MARK: - Migrations
@@ -61,6 +61,13 @@ public final class AppDatabase {
                 CREATE INDEX IF NOT EXISTS idx_rss_pubdate
                 ON rss_item(pub_date DESC)
             """)
+        }
+
+        migrator.registerMigration("v2") { db in
+            try db.create(table: "task_state", ifNotExists: true) { t in
+                t.column("task_name", .text).primaryKey()
+                t.column("last_fire", .double).notNull()
+            }
         }
 
         return migrator

@@ -8,6 +8,7 @@ public struct AppConfig: Codable {
     var translation: TranslationConfig = .init()
     var stage: StageConfig = .init()
     var rss: RSSConfig = .init()
+    var tasks: [TaskConfig] = []
     var prompts: PromptConfig = .init()
 }
 
@@ -123,5 +124,73 @@ public struct PromptConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         templates = try c.decodeIfPresent([String: String].self, forKey: .templates) ?? [:]
+    }
+}
+
+// MARK: - Task
+
+public struct TaskConfig: Codable {
+    var name: String = ""
+    var trigger: String = ""   // cron 表达式 或 事件名
+    var exec: TaskExecConfig = .sh("")
+    var enabled: Bool = true
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name    = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        trigger = try c.decodeIfPresent(String.self, forKey: .trigger) ?? ""
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        // exec 可能是字符串（自动推断）或字典（显式声明）
+        if let str = try? c.decode(String.self, forKey: .exec) {
+            exec = TaskExecConfig.infer(from: str)
+        } else if let dict = try? c.decode(TaskExecConfig.self, forKey: .exec) {
+            exec = dict
+        } else {
+            exec = .sh("")
+        }
+    }
+}
+
+public enum TaskExecConfig: Codable {
+    case sh(String)
+    case js(String)
+    case shortcuts(String)
+    case py(String)
+
+    enum CodingKeys: String, CodingKey { case type, command }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try c.decode(String.self, forKey: .type)
+        let cmd  = try c.decode(String.self, forKey: .command)
+        switch type {
+        case "sh":        self = .sh(cmd)
+        case "js":        self = .js(cmd)
+        case "shortcuts": self = .shortcuts(cmd)
+        case "py":        self = .py(cmd)
+        default: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .sh(let v):        try c.encode("sh",        forKey: .type); try c.encode(v, forKey: .command)
+        case .js(let v):        try c.encode("js",        forKey: .type); try c.encode(v, forKey: .command)
+        case .shortcuts(let v): try c.encode("shortcuts", forKey: .type); try c.encode(v, forKey: .command)
+        case .py(let v):        try c.encode("py",        forKey: .type); try c.encode(v, forKey: .command)
+        }
+    }
+
+    /// 从字符串自动推断执行类型
+    static func infer(from raw: String) -> TaskExecConfig {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasSuffix(".sh") { return .sh(t) }
+        if t.hasSuffix(".js") || t.contains("Application(") { return .js(t) }
+        if t.hasSuffix(".py") || t.contains("def ") || t.contains("import ") { return .py(t) }
+        if t.contains("\n") { return .sh(t) }  // 多行默认 shell
+        return .shortcuts(t)                    // 单行默认快捷指令名
     }
 }

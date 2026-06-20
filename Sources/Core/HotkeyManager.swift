@@ -12,7 +12,10 @@ public final class HotkeyManager {
     @discardableResult
     public func register(hotkey: String, id: String, handler: @escaping () -> Void) -> Bool {
         guard let (keyCode, flags) = parse(hotkey: hotkey) else {
-            fputs("[Hotkey] Failed to parse: \(hotkey)\n", stderr)
+            let msg = "[Hotkey] Failed to parse: \(hotkey)"
+            fputs("\(msg)\n", stderr)
+            debugLog(msg)
+            NotificationManager.shared.error("热键解析失败", "\(id): \(hotkey)")
             return false
         }
 
@@ -23,7 +26,10 @@ public final class HotkeyManager {
         let status = RegisterEventHotKey(UInt32(keyCode), flags, hotkeyID,
                                           GetEventDispatcherTarget(), 0, &hotkeyRef)
         guard status == noErr else {
-            fputs("[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)\n", stderr)
+            let msg = "[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)"
+            fputs("\(msg)\n", stderr)
+            debugLog(msg)
+            NotificationManager.shared.error("热键注册失败", "\(id): \(hotkey) — 可能被其他应用占用")
             return false
         }
 

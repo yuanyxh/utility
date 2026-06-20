@@ -21,11 +21,23 @@ public final class ConfigManager {
         let data = try Data(contentsOf: configFile)
         let decoder = YAMLDecoder()
         config = try decoder.decode(AppConfig.self, from: data)
-        Log.debug("[Config] Loaded from \(configFile.path)")
+        debugLog("[Config] Loaded from \(configFile.path)")
     }
 
     public func reload() throws {
         try load()
+        cleanupStaleTaskStates()
+        TaskScheduler.shared.reschedule()
+    }
+
+    private func cleanupStaleTaskStates() {
+        let configuredNames = Set(config.tasks.map { $0.name })
+        let dbNames = TaskStateDB.shared.allTaskNames()
+        let stale = dbNames.filter { !configuredNames.contains($0) }
+        for name in stale {
+            TaskStateDB.shared.remove(taskName: name)
+            debugLog("[Config] Removed stale task state: \(name)")
+        }
     }
 
     private func writeDefault() throws {

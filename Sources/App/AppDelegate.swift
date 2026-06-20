@@ -12,19 +12,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private lazy var stageMonitor = StageDropMonitor.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Log.debug("[Utility] Starting up...")
+        debugLog("[Utility] Starting up...")
 
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        do { try ConfigManager.shared.load() } catch { Log.debug("[Utility] Config load failed: \(error)") }
-        do { try AppDatabase.shared.setup() } catch { Log.debug("[Utility] Database setup failed: \(error)") }
+        do {
+            try ConfigManager.shared.load()
+        } catch {
+            debugLog("[Utility] Config load failed: \(error)")
+            NotificationManager.shared.error("配置加载失败", "\(error.localizedDescription)")
+        }
+        do {
+            try AppDatabase.shared.setup()
+        } catch {
+            debugLog("[Utility] Database setup failed: \(error)")
+            NotificationManager.shared.error("数据库初始化失败", "\(error.localizedDescription)")
+        }
 
         clipboardWatcher.start()
         registerAllHotkeys()
         installEventHandler()
         stageMonitor.start(with: stageWindow)
 
-        Log.debug("[Utility] Ready")
+        NotificationManager.shared.requestAuthorization()
+        TaskScheduler.shared.installWakeObserver()
+        TaskScheduler.shared.start()
+        
+        debugLog("[Utility] Ready")
     }
 
     // MARK: - Hotkeys

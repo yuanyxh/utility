@@ -144,23 +144,28 @@ private final class ScreenSelector: NSObject {
     }
 
     @objc private func _handleEsc() {
-        guard let tap = eventTap else { return }
-        CFMachPortInvalidate(tap)
-        eventTap = nil
-        Unmanaged<ScreenSelector>.fromOpaque(Unmanaged.passUnretained(self).toOpaque()).release()
+        releaseTap()
         cleanup()
         completion?(nil)
         OCRService.activeSelector = nil
     }
 
+    /// 清理 eventTap + 释放 retained self
+    private func releaseTap() {
+        guard let tap = eventTap else { return }
+        CFMachPortInvalidate(tap)
+        eventTap = nil
+        Unmanaged<ScreenSelector>.fromOpaque(Unmanaged.passUnretained(self).toOpaque()).release()
+    }
+
     private func captureAndReturn(rect: CGRect, screen: NSScreen) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-                DispatchQueue.main.async { self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
+                DispatchQueue.main.async { self?.releaseTap(); self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
                 return
             }
             guard let fullImage = CGDisplayCreateImage(displayID) else {
-                DispatchQueue.main.async { self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
+                DispatchQueue.main.async { self?.releaseTap(); self?.cleanup(); self?.completion?(nil); OCRService.activeSelector = nil }
                 return
             }
             let scale = screen.backingScaleFactor
@@ -174,6 +179,7 @@ private final class ScreenSelector: NSObject {
             let cropped = fullImage.cropping(to: cropRect)
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.releaseTap()
                 self.cleanup()
                 self.completion?(cropped)
                 OCRService.activeSelector = nil

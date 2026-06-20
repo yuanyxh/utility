@@ -61,7 +61,7 @@ public final class StageDropMonitor {
             let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetMain(), rls, .commonModes)
         } else {
-            Log.debug("[StageDrop] EventTap FAILED — need Accessibility permission")
+            debugLog("[StageDrop] EventTap FAILED — need Accessibility permission")
         }
     }
 

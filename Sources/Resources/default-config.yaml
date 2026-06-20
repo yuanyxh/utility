@@ -30,3 +30,15 @@ rss:
   updateInterval: 30
 prompts:
   templates: {}
+# ------------------------------------------------------------------
+# 定时任务
+tasks: []
+  # - name: 日报提醒
+  #   trigger: '0 18 * * *'
+  #   exec: shortcuts://日报汇总
+  #   enabled: true
+  # - name: 清理临时文件
+  #   trigger: '0 3 * * 1'
+  #   exec:
+  #     type: sh
+  #     command: rm -rf /tmp/myapp-*

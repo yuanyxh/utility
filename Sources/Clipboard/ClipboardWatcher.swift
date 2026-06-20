@@ -28,13 +28,13 @@ public final class ClipboardWatcher {
             [weak self] _ in
             self?.check()
         }
-        Log.debug("[Clipboard] Watcher started (poll: \(ConfigManager.shared.config.clipboard.pollInterval)s)")
+        debugLog("[Clipboard] Watcher started (poll: \(ConfigManager.shared.config.clipboard.pollInterval)s)")
     }
 
     public func stop() {
         timer?.invalidate()
         timer = nil
-        Log.debug("[Clipboard] Watcher stopped")
+        debugLog("[Clipboard] Watcher stopped")
     }
 
     // MARK: - Check
