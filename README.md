@@ -1,7 +1,7 @@
 # Utility — macOS 桌面工具集
 
 菜单栏常驻、快捷键驱动的 macOS 工具集，包含剪切板管理、AI 翻译（含 OCR 区域截图）、
-拖拽暂存、RSS 订阅和定时任务调度五个核心功能。
+拖拽暂存、RSS 订阅、定时任务调度和实时网速监控六个核心功能。
 
 ---
 
@@ -17,6 +17,7 @@
   - [拖拽暂存](#拖拽暂存)
   - [RSS 订阅](#rss-订阅)
   - [定时任务调度](#定时任务调度)
+  - [网速监控](#网速监控)
 - [命令行接口](#命令行接口)
 - [菜单栏](#菜单栏)
 - [错误通知](#错误通知)
@@ -302,6 +303,24 @@ tasks:
 
 ---
 
+### 网速监控
+
+菜单栏直接显示主网卡实时上行/下行速度，无需点击。每 2 秒刷新。
+
+```
+菜单栏：  ↑ 01.23M
+          ↓ 00.08M
+```
+
+- **单位**：MB / GB，2 位小数
+- **接口**：自动汇总所有 enX 网卡（WiFi + 以太网 + 雷电网桥）
+- **布局**：上下两行，等宽数字右对齐，整数位自动补 0 保证宽度一致不跳
+- **位置**：启动后 Cmd+拖拽到菜单栏左侧，`autosaveName` 固定位置
+- **无网络时**：显示 `0.00M`，不会异常
+- **内存占用**：增量 < 1MB（仅一个 Timer + getifaddrs 临时分配）
+
+---
+
 ## 命令行接口
 
 ```bash
@@ -331,6 +350,8 @@ utility rss --mark-all-read
 ---
 
 ## 菜单栏
+
+菜单栏直接显示网速监控，点击弹出功能菜单：
 
 ```
 重载配置 ⌘R
@@ -377,6 +398,7 @@ utility rss --mark-all-read
 | 暂存拖拽 | CGEventTap 全局监听 |
 | 定时调度 | Timer + CronExpression |
 | 通知 | UNUserNotificationCenter / NSUserNotificationCenter |
+| 网速 | getifaddrs（POSIX 网卡字节计数） |
 | 登录项 | SMAppService |
 | CLI | swift-argument-parser |
 | 依赖 | GRDB.swift, Yams, swift-argument-parser |

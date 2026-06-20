@@ -1,8 +1,6 @@
 import Cocoa
 import ServiceManagement
 
-// MARK: - MenuBarManager
-
 public final class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem!
     private var launchAtLoginItem: NSMenuItem!
@@ -11,13 +9,20 @@ public final class MenuBarManager: NSObject {
         super.init()
         setupStatusItem()
         buildMenu()
+        startNetworkMonitor()
     }
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let icon = Bundle.module.image(forResource: "menubar-icon")
-        icon?.isTemplate = true
-        statusItem.button?.image = icon
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "utility-network-speed"
+
+        let view = NetworkSpeedView()
+        view.onClick = { [weak self] event in
+            guard let self, let menu = self.statusItem.menu,
+                  let v = self.statusItem.value(forKey: "view") as? NSView else { return }
+            NSMenu.popUpContextMenu(menu, with: event, for: v)
+        }
+        statusItem.setValue(view, forKey: "view")
     }
 
     private func buildMenu() {
@@ -47,6 +52,17 @@ public final class MenuBarManager: NSObject {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    // MARK: - Network
+
+    private func startNetworkMonitor() {
+        let monitor = NetworkSpeedMonitor.shared
+        monitor.onUpdate = { [weak self] up, down in
+            guard let view = self?.statusItem.value(forKey: "view") as? NetworkSpeedView else { return }
+            view.update(up: up, down: down)
+        }
+        monitor.start()
     }
 
     // MARK: - Actions
@@ -87,5 +103,83 @@ public final class MenuBarManager: NSObject {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+}
+
+// MARK: - NetworkSpeedView
+
+private final class NetworkSpeedView: NSView {
+    private let upLabel   = NSTextField(labelWithString: "")
+    private let downLabel = NSTextField(labelWithString: "")
+
+    var onClick: ((NSEvent) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: .zero)
+        setup()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setup() {
+        upLabel.font   = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        downLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        upLabel.alignment   = .right
+        downLabel.alignment = .right
+
+        let stack = NSStackView(views: [upLabel, downLabel])
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.alignment = .trailing
+        stack.distribution = .fillEqually
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        update(up: "--", down: "--")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?(event)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let upSz   = upLabel.intrinsicContentSize
+        let downSz = downLabel.intrinsicContentSize
+        return NSSize(
+            width: max(upSz.width, downSz.width),
+            height: upSz.height + downSz.height
+        )
+    }
+
+    func update(up: String, down: String) {
+        let (paddedUp, paddedDown) = pad(up: up, down: down)
+        upLabel.stringValue   = paddedUp
+        downLabel.stringValue = paddedDown
+        invalidateIntrinsicContentSize()
+        superview?.layoutSubtreeIfNeeded()
+    }
+
+    // MARK: - Padding
+
+    /// 整数部分等宽补 0，添加箭头，空格分隔。输入始终有 2 位小数。
+    /// 如 ("001.23M", "456.78K") → ("↑ 001.23M", "↓ 456.78K")
+    private func pad(up: String, down: String) -> (String, String) {
+        let upInt   = String(up.prefix(while: { $0 != "." }))
+        let downInt = String(down.prefix(while: { $0 != "." }))
+        let upRest  = String(up.dropFirst(upInt.count))
+        let downRest = String(down.dropFirst(downInt.count))
+
+        let maxLen = max(upInt.count, downInt.count)
+        let padUp   = String(repeating: "0", count: maxLen - upInt.count) + upInt
+        let padDown = String(repeating: "0", count: maxLen - downInt.count) + downInt
+
+        return ("↑ " + padUp + upRest, "↓ " + padDown + downRest)
     }
 }
