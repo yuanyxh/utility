@@ -6,7 +6,7 @@ if CommandLine.arguments.count > 1 {
     // 初始化必要的基础设施
     try? ConfigManager.shared.load()
     try? AppDatabase.shared.setup()
-    
+
     RSSCommand.main([String](CommandLine.arguments.dropFirst(2)))
 } else {
     // 正常 GUI 启动

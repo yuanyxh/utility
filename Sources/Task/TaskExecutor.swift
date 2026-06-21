@@ -1,6 +1,6 @@
 import Foundation
 
-public final class TaskExecutor {
+public enum TaskExecutor {
     public struct Result {
         let success: Bool
         let output: String
@@ -10,10 +10,10 @@ public final class TaskExecutor {
     /// 同步执行（调用方负责放到后台线程）
     public static func execute(_ config: TaskExecConfig) -> Result {
         switch config {
-        case .sh(let cmd):        return runShell(cmd)
-        case .js(let cmd):        return runJS(cmd)
-        case .shortcuts(let cmd): return runShortcuts(cmd)
-        case .py(let cmd):        return runPython(cmd)
+        case let .sh(cmd): return runShell(cmd)
+        case let .js(cmd): return runJS(cmd)
+        case let .shortcuts(cmd): return runShortcuts(cmd)
+        case let .py(cmd): return runPython(cmd)
         }
     }
 
@@ -68,7 +68,7 @@ public final class TaskExecutor {
             let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: outData, encoding: .utf8) ?? ""
-            let error  = String(data: errData, encoding: .utf8) ?? ""
+            let error = String(data: errData, encoding: .utf8) ?? ""
 
             return Result(success: task.terminationStatus == 0, output: output, error: error)
         } catch {

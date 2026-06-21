@@ -3,7 +3,7 @@ import GRDB
 
 /// RSS 条目模型（GRDB Record）
 public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
-    public var id: String       // guid
+    public var id: String // guid
     public var title: String
     public var link: String
     public var itemDescription: String
@@ -23,7 +23,8 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
 
     public init(id: String, title: String, link: String,
                 itemDescription: String, pubDate: Date,
-                feedName: String, isRead: Bool = false) {
+                feedName: String, isRead: Bool = false)
+    {
         self.id = id
         self.title = title
         self.link = link

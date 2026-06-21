@@ -1,5 +1,5 @@
-import Cocoa
 import Carbon
+import Cocoa
 
 final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let menuBar = MenuBarManager()
@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     lazy var translationPanel = TranslationPanelController()
     private let stageWindow = StageWindowController()
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         debugLog("[Utility] Starting up...")
 
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -17,13 +17,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             try ConfigManager.shared.load()
         } catch {
             debugLog("[Utility] Config load failed: \(error)")
-            NotificationManager.shared.error(L10n.Menu.configLoadFailed, "\(error.localizedDescription)")
+            EventBus.shared.publish(AppEvent.configLoadFailed, payload: error.localizedDescription)
         }
         do {
             try AppDatabase.shared.setup()
         } catch {
             debugLog("[Utility] Database setup failed: \(error)")
-            NotificationManager.shared.error(L10n.Menu.dbInitFailed, "\(error.localizedDescription)")
+            EventBus.shared.publish(AppEvent.databaseInitFailed, payload: error.localizedDescription)
         }
 
         // L10n.setup() 已通过 NotificationCenter 通知所有组件刷新标题
@@ -33,9 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         installEventHandler()
 
         NotificationManager.shared.requestAuthorization()
-        TaskScheduler.shared.installWakeObserver()
         TaskScheduler.shared.start()
-        
+
         debugLog("[Utility] Ready")
     }
 
@@ -103,11 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private func installEventHandler() {
         let eventSpec = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                          eventKind: UInt32(kEventHotKeyPressed))
+                          eventKind: UInt32(kEventHotKeyPressed)),
         ]
         InstallEventHandler(
             GetEventDispatcherTarget(),
-            { (_, event, _) -> OSStatus in
+            { _, event, _ -> OSStatus in
                 let handled = HotkeyManager.shared.handleEvent(event: event)
                 return handled ? OSStatus(noErr) : OSStatus(eventNotHandledErr)
             },

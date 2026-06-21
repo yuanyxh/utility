@@ -11,7 +11,39 @@ public final class RSSManager {
         return AppDatabase.shared.dbQueue
     }
 
-    private init() {}
+    private init() {
+        EventBus.shared.subscribe(AppEvent.configDidLoad) { [weak self] _ in
+            self?.cleanupStaleFeeds()
+        }
+    }
+
+    // MARK: - Stale cleanup
+
+    /// 删除配置中已不存在的 feed 的历史条目
+    private func cleanupStaleFeeds() {
+        let configuredNames = Set(ConfigManager.shared.config.rss.feeds.map { $0.name })
+        let dbFeedNames: Set<String>
+        do {
+            dbFeedNames = try db.read { db in
+                let rows = try Row.fetchAll(db, sql: "SELECT DISTINCT feed_name FROM rss_item")
+                return Set(rows.compactMap { $0["feed_name"] as String? })
+            }
+        } catch {
+            debugLog("[RSS] cleanupStaleFeeds read failed: \(error)")
+            return
+        }
+        let stale = dbFeedNames.filter { !configuredNames.contains($0) }
+        for name in stale {
+            do {
+                try db.write { db in
+                    try db.execute(literal: "DELETE FROM rss_item WHERE feed_name = \(name)")
+                }
+                debugLog("[RSS] Removed stale feed: \(name)")
+            } catch {
+                debugLog("[RSS] cleanupStaleFeeds delete '\(name)' failed: \(error)")
+            }
+        }
+    }
 
     /// 抓取所有订阅源，合并新条目到数据库
     @discardableResult

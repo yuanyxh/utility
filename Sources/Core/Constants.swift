@@ -1,4 +1,4 @@
-import Foundation
+import Cocoa
 
 // MARK: - App Paths
 
@@ -12,14 +12,10 @@ enum AppPaths {
     }()
 
     /// ~/.config/utility/config.yaml
-    static let configFile: URL = {
-        configDir.appendingPathComponent("config.yaml")
-    }()
+    static let configFile: URL = configDir.appendingPathComponent("config.yaml")
 
     /// ~/.config/utility/data.sqlite
-    static let database: URL = {
-        configDir.appendingPathComponent("data.sqlite")
-    }()
+    static let database: URL = configDir.appendingPathComponent("data.sqlite")
 
     /// ~/.cache/utility/clip/
     static let clipCacheDir: URL = {
@@ -50,4 +46,18 @@ enum AppPaths {
 
 enum UDKey {
     static let translationPanelOrigin = "translation_panel_origin"
+}
+
+// MARK: - Shared Pasteboard Types
+
+/// 图片类型统一集合（剪切板 + 暂存拖入共用）
+enum PasteboardImageTypes {
+    static let all: [NSPasteboard.PasteboardType] = [
+        .tiff, .png,
+        .init("public.jpeg"),
+        .init("public.heic"),
+        .init("com.compuserve.gif"),
+        .init("public.webp"),
+        .init("public.bmp"),
+    ]
 }

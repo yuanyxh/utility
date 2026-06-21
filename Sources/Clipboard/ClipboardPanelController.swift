@@ -15,8 +15,8 @@ public final class ClipboardPanelController: NSWindowController {
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
-                             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
-                             backing: .buffered, defer: false)
+                            styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
+                            backing: .buffered, defer: false)
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -28,8 +28,16 @@ public final class ClipboardPanelController: NSWindowController {
         setupUI()
         setupDeactivateObserver()
         clipboardWatcher.start()
+
+        EventBus.shared.subscribe(AppEvent.configDidLoad) { [weak self] _ in
+            self?.clipboardWatcher.stop()
+            self?.clipboardWatcher.start()
+        }
     }
-    required init?(coder: NSCoder) { nil }
+
+    required init?(coder _: NSCoder) {
+        nil
+    }
 
     deinit {
         if let monitor = eventMonitor {
@@ -111,7 +119,8 @@ public final class ClipboardPanelController: NSWindowController {
         // 翻译面板打开 → 仅文本插入原文区
         if let trans = translationPanelIfVisible(),
            item.type == "text",
-           let text = String(data: item.content, encoding: .utf8) {
+           let text = String(data: item.content, encoding: .utf8)
+        {
             trans.insertText(text)
             close()
             return
@@ -231,7 +240,7 @@ public final class ClipboardPanelController: NSWindowController {
             (mouse.x - panelSize.width - padding, mouse.y + padding),
         ]
 
-        var origin: NSPoint = NSPoint(x: mouse.x + padding, y: mouse.y - panelSize.height - padding)
+        var origin = NSPoint(x: mouse.x + padding, y: mouse.y - panelSize.height - padding)
         for candidate in candidates {
             let rect = NSRect(origin: NSPoint(x: candidate.x, y: candidate.y),
                               size: panelSize)
@@ -249,7 +258,8 @@ public final class ClipboardPanelController: NSWindowController {
             let cutoff = Date().addingTimeInterval(-86400)
             for url in files {
                 if let attrs = try? url.resourceValues(forKeys: [.creationDateKey]),
-                   let date = attrs.creationDate, date < cutoff {
+                   let date = attrs.creationDate, date < cutoff
+                {
                     try? FileManager.default.removeItem(at: url)
                 }
             }
@@ -264,7 +274,7 @@ public final class ClipboardPanelController: NSWindowController {
         }
     }
 
-    public override func close() {
+    override public func close() {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
         items = []
@@ -275,9 +285,11 @@ public final class ClipboardPanelController: NSWindowController {
 // MARK: - NSTableViewDataSource / Delegate
 
 extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
-    public func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+    public func numberOfRows(in _: NSTableView) -> Int {
+        items.count
+    }
 
-    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    public func tableView(_ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
         let showIcon = item.type == "file" || item.type == "file_batch" || item.type == "html"
         let identifier = NSUserInterfaceItemIdentifier(showIcon ? "ClipboardIcon" : "ClipboardText")
@@ -314,7 +326,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         label.cell?.usesSingleLineMode = true
         label.maximumNumberOfLines = 1
         label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = NSColor(red: 0x33/255, green: 0x33/255, blue: 0x33/255, alpha: 1.0)
+        label.textColor = NSColor(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255, alpha: 1.0)
         cell.textField = label
         cell.addSubview(label)
 
@@ -331,9 +343,9 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         // 图标
         if let icon = cell.subviews.first(where: { $0 is NSImageView }) as? NSImageView {
             switch item.type {
-            case "file":      icon.image = Self.fileIcon(for: item.content)
+            case "file": icon.image = Self.fileIcon(for: item.content)
             case "file_batch": icon.image = NSWorkspace.shared.icon(for: .folder)
-            case "html":      icon.image = NSWorkspace.shared.icon(for: .html)
+            case "html": icon.image = NSWorkspace.shared.icon(for: .html)
             default: break
             }
         }
@@ -355,7 +367,9 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 32 }
+    public func tableView(_: NSTableView, heightOfRow _: Int) -> CGFloat {
+        32
+    }
 
     private func displayText(for item: ClipboardItem) -> String {
         switch item.type {
@@ -365,7 +379,8 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             return item.application ?? L10n.Clipboard.file
         case "file_batch":
             if let json = try? JSONDecoder().decode([String: [String]].self, from: item.content),
-               let paths = json["paths"] {
+               let paths = json["paths"]
+            {
                 return L10n.Clipboard.fileCount(paths.count)
             }
             return L10n.Clipboard.file
@@ -381,7 +396,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     // 缓存颜色，避免每帧创建 NSColor
-    private static let selBG = NSColor(red: 0xCB/255, green: 0xCC/255, blue: 0xCC/255, alpha: 0.36).cgColor
+    private static let selBG = NSColor(red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36).cgColor
     private static let clearBG = NSColor.clear.cgColor
 }
 
@@ -429,14 +444,15 @@ private final class NumberCircleView: NSView {
             if !over99 { numberLabel.stringValue = "\(number)" }
         }
     }
+
     var isHighlighted = false {
         didSet {
             layer?.backgroundColor = isHighlighted ? Self.hlColor : Self.noColor
         }
     }
 
-    private static let hlColor = NSColor(red: 0x34/255, green: 0x78/255, blue: 0xF6/255, alpha: 1.0).cgColor
-    private static let noColor = NSColor(red: 0xA4/255, green: 0xA4/255, blue: 0xA4/255, alpha: 1.0).cgColor
+    private static let hlColor = NSColor(red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0).cgColor
+    private static let noColor = NSColor(red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0).cgColor
 
     private let numberLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
@@ -476,5 +492,7 @@ private final class NumberCircleView: NSView {
         ])
     }
 
-    required init?(coder: NSCoder) { nil }
+    required init?(coder _: NSCoder) {
+        nil
+    }
 }

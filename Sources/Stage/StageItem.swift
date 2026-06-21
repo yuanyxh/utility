@@ -16,7 +16,8 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
     public init(id: String = UUID().uuidString,
                 timestamp: Date = Date(),
                 type: String,
-                content: Data) {
+                content: Data)
+    {
         self.id = id
         self.timestamp = timestamp
         self.type = type
@@ -27,9 +28,9 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         guard type == "fileURL" else { return nil }
         var isStale = false
         return try? URL(resolvingBookmarkData: content,
-                         options: [],
-                         relativeTo: nil,
-                         bookmarkDataIsStale: &isStale)
+                        options: [],
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale)
     }
 
     public func resolveFileGroup() -> [URL] {

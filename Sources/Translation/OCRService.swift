@@ -2,7 +2,7 @@ import Cocoa
 import Vision
 
 /// OCR 区域截图服务
-public final class OCRService {
+public enum OCRService {
     fileprivate static var activeSelector: ScreenSelector?
 
     public static func selectAndRecognize(completion: @escaping (String?) -> Void) {
@@ -92,8 +92,8 @@ private final class ScreenSelector: NSObject {
         guard let screen = NSScreen.main else { completion(nil); return }
 
         let panel = NSPanel(contentRect: screen.frame,
-                             styleMask: [.borderless, .nonactivatingPanel],
-                             backing: .buffered, defer: false)
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
         panel.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
         panel.isOpaque = false
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.2)
@@ -114,14 +114,15 @@ private final class ScreenSelector: NSObject {
             OCRService.activeSelector = nil
         }
         panel.contentView = overlay
-        self.selectionView = overlay
-        self.window = panel
+        selectionView = overlay
+        window = panel
         panel.makeKeyAndOrderFront(nil)
 
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard type == .keyDown,
                   event.getIntegerValueField(.keyboardEventKeycode) == 53,
-                  let refcon = refcon else {
+                  let refcon = refcon
+            else {
                 return Unmanaged.passUnretained(event)
             }
             let selector = Unmanaged<ScreenSelector>.fromOpaque(refcon).takeUnretainedValue()
@@ -203,7 +204,9 @@ private final class SelectionOverlay: NSView {
     private var startPoint: NSPoint?
     private var currentRect: NSRect?
 
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool {
+        true
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
@@ -254,7 +257,7 @@ private final class SelectionOverlay: NSView {
         let sizeText = "\(Int(rect.width)) × \(Int(rect.height))"
         let sizeAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.darkGray
+            .foregroundColor: NSColor.darkGray,
         ]
         sizeText.draw(at: NSPoint(x: rect.maxX + 8, y: rect.minY), withAttributes: sizeAttrs)
     }

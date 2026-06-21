@@ -25,10 +25,10 @@ public final class AppDatabase {
             try db.create(table: "clipboard_item", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("timestamp", .datetime).notNull()
-                t.column("type", .text).notNull()   // text / file / image
+                t.column("type", .text).notNull() // text / file / image
                 t.column("content", .blob).notNull()
                 t.column("application", .text)
-                t.column("search_text", .text)      // 文本纯内容索引
+                t.column("search_text", .text) // 文本纯内容索引
             }
             try db.execute(literal: """
                 CREATE INDEX IF NOT EXISTS idx_clipboard_timestamp
@@ -39,7 +39,7 @@ public final class AppDatabase {
             try db.create(table: "stage_item", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("timestamp", .datetime).notNull()
-                t.column("type", .text).notNull()   // text / fileURL
+                t.column("type", .text).notNull() // text / fileURL
                 t.column("content", .blob).notNull()
             }
             try db.execute(literal: """

@@ -11,8 +11,8 @@ public final class StageWindowController: NSWindowController {
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
-                             styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
-                             backing: .buffered, defer: false)
+                            styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
+                            backing: .buffered, defer: false)
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -35,12 +35,11 @@ public final class StageWindowController: NSWindowController {
         panel.orderOut(nil)
 
         StageDropMonitor.shared.start(with: self)
-        if (try? StageManager.shared.count()) ?? 0 > 0 {
-            show()
-        }
     }
 
-    required init?(coder: NSCoder) { nil }
+    required init?(coder _: NSCoder) {
+        nil
+    }
 
     private func setupUI() {
         guard let panel = window else { return }
@@ -120,7 +119,7 @@ public final class StageWindowController: NSWindowController {
         window?.orderFront(nil)
     }
 
-    public override func close() {
+    override public func close() {
         window?.orderOut(nil)
     }
 
@@ -159,9 +158,11 @@ public final class StageWindowController: NSWindowController {
 // MARK: - TableView
 
 extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
-    public func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+    public func numberOfRows(in _: NSTableView) -> Int {
+        items.count
+    }
 
-    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    public func tableView(_: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
         let cell = NSTableCellView()
         cell.identifier = .init("StageCell")
@@ -267,7 +268,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         return true
     }
 
-    public func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+    public func tableView(_: NSTableView, draggingSession _: NSDraggingSession, endedAt _: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil; draggingItem = nil }
         debugLog("[StageMove] endedAt operation=\(operation.rawValue)")
         guard operation != [] else { debugLog("[StageMove] operation empty, skip"); return }

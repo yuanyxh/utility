@@ -1,5 +1,5 @@
-import Cocoa
 import Carbon
+import Cocoa
 
 /// 全局热键管理器（基于 Carbon，正确消耗事件）
 public final class HotkeyManager {
@@ -15,7 +15,7 @@ public final class HotkeyManager {
             let msg = "[Hotkey] Failed to parse: \(hotkey)"
             fputs("\(msg)\n", stderr)
             debugLog(msg)
-            NotificationManager.shared.error("热键解析失败", "\(id): \(hotkey)")
+            EventBus.shared.publish(AppEvent.hotkeyParseFailed, payload: (id, hotkey))
             return false
         }
 
@@ -24,12 +24,12 @@ public final class HotkeyManager {
 
         var hotkeyRef: EventHotKeyRef?
         let status = RegisterEventHotKey(UInt32(keyCode), flags, hotkeyID,
-                                          GetEventDispatcherTarget(), 0, &hotkeyRef)
+                                         GetEventDispatcherTarget(), 0, &hotkeyRef)
         guard status == noErr else {
             let msg = "[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)"
             fputs("\(msg)\n", stderr)
             debugLog(msg)
-            NotificationManager.shared.error("热键注册失败", "\(id): \(hotkey) — 可能被其他应用占用")
+            EventBus.shared.publish(AppEvent.hotkeyRegistrationFailed, payload: (id, hotkey))
             return false
         }
 
@@ -41,8 +41,8 @@ public final class HotkeyManager {
     public func handleEvent(event: EventRef?) -> Bool {
         var hkID = EventHotKeyID()
         let err = GetEventParameter(event, EventParamName(kEventParamDirectObject),
-                                     EventParamType(typeEventHotKeyID), nil,
-                                     MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+                                    EventParamType(typeEventHotKeyID), nil,
+                                    MemoryLayout<EventHotKeyID>.size, nil, &hkID)
         guard err == noErr else { return false }
         if let handler = handlers[hkID.signature] {
             handler()
@@ -66,9 +66,9 @@ public final class HotkeyManager {
 
         for part in parts {
             switch part {
-            case "cmd", "command":  flags |= UInt32(cmdKey)
-            case "option", "alt":   flags |= UInt32(optionKey)
-            case "shift":           flags |= UInt32(shiftKey)
+            case "cmd", "command": flags |= UInt32(cmdKey)
+            case "option", "alt": flags |= UInt32(optionKey)
+            case "shift": flags |= UInt32(shiftKey)
             case "ctrl", "control": flags |= UInt32(controlKey)
             default:
                 guard let code = keyCodeMap[part] else { return nil }

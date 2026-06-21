@@ -8,7 +8,6 @@ import Cocoa
 ///
 /// ⚠️ AX API 和 NSPasteboard 都必须在主线程调用（Carbon 回调等同步路径可直接调用）
 public enum SelectedTextService {
-
     /// 异步获取指定 app 的当前选中文本
     /// - Parameter targetApp: 目标 app（通常为面板打开前记录的前台 app）
     /// - Returns: 选中文本，获取失败或为空时返回 nil
@@ -88,5 +87,4 @@ public enum SelectedTextService {
             continuation.resume(returning: nil)
         }
     }
-
 }

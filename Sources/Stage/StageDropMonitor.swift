@@ -14,7 +14,7 @@ public final class StageDropMonitor {
     private var eventTap: CFMachPort?
     private var isDragging = false
     private var isInternalClick = false
-    private var lastDragChangeCount: Int = -1
+    private var dragCCAtMouseDown: Int = -1
 
     private var isWindowVisible: Bool {
         stageWindow?.window?.isVisible ?? false
@@ -24,11 +24,6 @@ public final class StageDropMonitor {
 
     public func start(with window: StageWindowController) {
         stageWindow = window
-        // 已有数据 → 窗口常驻显示
-        let items = (try? StageManager.shared.count()) ?? 0
-        if items > 0 {
-            window.show()
-        }
         installEventTap()
     }
 
@@ -47,8 +42,8 @@ public final class StageDropMonitor {
         }
         let ptr = Unmanaged.passUnretained(self).toOpaque()
         let mask = (1 << CGEventType.leftMouseDown.rawValue)
-                 | (1 << CGEventType.leftMouseUp.rawValue)
-                 | (1 << CGEventType.leftMouseDragged.rawValue)
+            | (1 << CGEventType.leftMouseUp.rawValue)
+            | (1 << CGEventType.leftMouseDragged.rawValue)
         if let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -75,37 +70,32 @@ public final class StageDropMonitor {
             isDragging = false
             let mouse = NSEvent.mouseLocation
             let inWindow = isMouseInWindow(mouse)
-            let dragPb = NSPasteboard(name: .drag)
-            let cc = dragPb.changeCount
-            if inWindow && !isInternalClick, cc != lastDragChangeCount {
-                lastDragChangeCount = cc
-                processDrop()
+            let newChangeCount = NSPasteboard(name: .drag).changeCount
+            let hasContent = newChangeCount != dragCCAtMouseDown && dragPasteboardHasContent()
+
+            dragCCAtMouseDown = newChangeCount
+
+            if (isInternalClick && inWindow) || (inWindow && !hasContent) || !inWindow {
+                break
             }
-            isInternalClick = false
-            // 无内容且鼠标不在窗口内 → 淡出
-            let items = (try? StageManager.shared.count()) ?? 0
-            if items == 0 && !isMouseInWindow(mouse) {
-                stageWindow?.close()
-            }
+
+            processDrop()
 
         case .leftMouseDragged:
             guard isDragging else { break }
             guard !isInternalClick else { break }
-            let mouse = NSEvent.mouseLocation
-            let items = (try? StageManager.shared.count()) ?? 0
 
-            if items > 0 {
-                // 有数据：常驻显示，确保可见
-                if !isWindowVisible {
-                    stageWindow?.show()
-                }
-            } else if isMouseInWindow(mouse) {
-                // 无数据但拖拽到窗口区域：显示
+            let items = (try? StageManager.shared.count()) ?? 0
+            let mouse = NSEvent.mouseLocation
+            let inWindow = isMouseInWindow(mouse)
+            let newChangeCount = NSPasteboard(name: .drag).changeCount
+            let hasContent = newChangeCount != dragCCAtMouseDown && dragPasteboardHasContent()
+
+            if items > 0 || (hasContent && inWindow) {
                 if !isWindowVisible {
                     stageWindow?.show()
                 }
             } else {
-                // 无数据且远离：隐藏
                 if isWindowVisible {
                     stageWindow?.close()
                 }
@@ -118,6 +108,35 @@ public final class StageDropMonitor {
     }
 
     // MARK: - Helpers
+
+    /// 与 processDrop 完全对齐的内容类型检测，无副作用
+    private func dragPasteboardHasContent() -> Bool {
+        let pb = NSPasteboard(name: .drag)
+        // URL（与 processDrop 相同的过滤逻辑）
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            let fileURLs = urls.map { $0.standardizedFileURL }.filter { $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }
+            let webURLs = urls.filter { !$0.standardizedFileURL.isFileURL }
+            if !fileURLs.isEmpty || !webURLs.isEmpty {
+                return true
+            }
+        }
+        // 图片
+        for type in PasteboardImageTypes.all {
+            if pb.data(forType: type) != nil {
+                return true
+            }
+        }
+        // HTML
+        if pb.string(forType: .html) != nil {
+            return true
+        }
+        // 纯文本
+        if let text = pb.string(forType: .string), !text.isEmpty {
+            return true
+        }
+
+        return false
+    }
 
     private func isMouseInWindow(_ mouse: NSPoint) -> Bool {
         guard let frame = stageWindow?.window?.frame else { return false }
@@ -152,9 +171,7 @@ public final class StageDropMonitor {
         }
 
         // 图片（浏览器/截图 — 无文件 URL，只有原始数据）→ 写临时文件 → 统一为 fileURL
-        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png,
-            .init("public.jpeg"), .init("public.heic")]
-        for type in imageTypes {
+        for type in PasteboardImageTypes.all {
             if let data = dragPb.data(forType: type) {
                 let cacheDir = AppPaths.stageCacheDir
                 let filename = "stage_\(Int(Date().timeIntervalSince1970)).png"

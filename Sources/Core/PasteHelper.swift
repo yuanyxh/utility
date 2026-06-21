@@ -28,7 +28,8 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
             debugLog("[utility] \(logPrefix) System Events error, CGEventPost fallback: \(err)")
             let src = CGEventSource(stateID: .combinedSessionState)
             if let kd = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
-               let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
+               let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
+            {
                 kd.flags = .maskCommand
                 ku.flags = .maskCommand
                 kd.post(tap: .cghidEventTap)

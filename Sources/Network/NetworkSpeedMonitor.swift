@@ -9,9 +9,6 @@ final class NetworkSpeedMonitor {
     private var previous: (rx: UInt64, tx: UInt64)?
     private let queue = DispatchQueue(label: "utility.network-monitor", qos: .utility)
 
-    /// 回调在主线程，(上行文本, 下行文本)，如 ("256.00K", "1.23M")，不含箭头
-    var onUpdate: ((_ up: String, _ down: String) -> Void)?
-
     private init() {}
 
     // MARK: - Lifecycle
@@ -44,12 +41,12 @@ final class NetworkSpeedMonitor {
         guard let prev = previous else { return }
 
         let down = current.rx > prev.rx ? current.rx - prev.rx : 0
-        let up   = current.tx > prev.tx ? current.tx - prev.tx : 0
+        let up = current.tx > prev.tx ? current.tx - prev.tx : 0
 
-        let upText   = format(up)
+        let upText = format(up)
         let downText = format(down)
-        DispatchQueue.main.async { [weak self] in
-            self?.onUpdate?(upText, downText)
+        DispatchQueue.main.async {
+            EventBus.shared.publish(AppEvent.networkSpeedUpdated, payload: (upText, downText))
         }
     }
 

@@ -26,18 +26,19 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
                 timestamp: Date = Date(),
                 type: String,
                 content: Data,
-                application: String? = nil) {
+                application: String? = nil)
+    {
         self.id = id
         self.timestamp = timestamp
         self.type = type
         self.content = content
         self.application = application
         if type == "text", let str = String(data: content, encoding: .utf8) {
-            self.plainText = str
+            plainText = str
         }
     }
 
-    // GRDB 列映射
+    /// GRDB 列映射
     public enum Columns {
         static let id = Column("id")
         static let timestamp = Column("timestamp")

@@ -16,14 +16,14 @@ public struct AppConfig: Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        general     = (try? c.decode(GeneralConfig.self, forKey: .general)) ?? .init()
-        ai          = (try? c.decode(AIConfig.self, forKey: .ai)) ?? .init()
-        clipboard   = (try? c.decode(ClipboardConfig.self, forKey: .clipboard)) ?? .init()
+        general = (try? c.decode(GeneralConfig.self, forKey: .general)) ?? .init()
+        ai = (try? c.decode(AIConfig.self, forKey: .ai)) ?? .init()
+        clipboard = (try? c.decode(ClipboardConfig.self, forKey: .clipboard)) ?? .init()
         translation = (try? c.decode(TranslationConfig.self, forKey: .translation)) ?? .init()
-        stage       = (try? c.decode(StageConfig.self, forKey: .stage)) ?? .init()
-        rss         = (try? c.decode(RSSConfig.self, forKey: .rss)) ?? .init()
-        tasks       = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
-        prompts     = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
+        stage = (try? c.decode(StageConfig.self, forKey: .stage)) ?? .init()
+        rss = (try? c.decode(RSSConfig.self, forKey: .rss)) ?? .init()
+        tasks = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
+        prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
     }
 }
 
@@ -158,7 +158,7 @@ public struct PromptConfig: Codable {
 
 public struct TaskConfig: Codable {
     var name: String = ""
-    var trigger: String = ""   // cron 表达式 或 事件名
+    var trigger: String = "" // cron 表达式 或 事件名
     var exec: TaskExecConfig = .sh("")
     var enabled: Bool = true
 
@@ -166,7 +166,7 @@ public struct TaskConfig: Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name    = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         trigger = try c.decodeIfPresent(String.self, forKey: .trigger) ?? ""
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         // exec 可能是字符串（自动推断）或字典（显式声明）
@@ -191,12 +191,12 @@ public enum TaskExecConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let type = try c.decode(String.self, forKey: .type)
-        let cmd  = try c.decode(String.self, forKey: .command)
+        let cmd = try c.decode(String.self, forKey: .command)
         switch type {
-        case "sh":        self = .sh(cmd)
-        case "js":        self = .js(cmd)
+        case "sh": self = .sh(cmd)
+        case "js": self = .js(cmd)
         case "shortcuts": self = .shortcuts(cmd)
-        case "py":        self = .py(cmd)
+        case "py": self = .py(cmd)
         default: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)")
         }
     }
@@ -204,10 +204,10 @@ public enum TaskExecConfig: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .sh(let v):        try c.encode("sh",        forKey: .type); try c.encode(v, forKey: .command)
-        case .js(let v):        try c.encode("js",        forKey: .type); try c.encode(v, forKey: .command)
-        case .shortcuts(let v): try c.encode("shortcuts", forKey: .type); try c.encode(v, forKey: .command)
-        case .py(let v):        try c.encode("py",        forKey: .type); try c.encode(v, forKey: .command)
+        case let .sh(v): try c.encode("sh", forKey: .type); try c.encode(v, forKey: .command)
+        case let .js(v): try c.encode("js", forKey: .type); try c.encode(v, forKey: .command)
+        case let .shortcuts(v): try c.encode("shortcuts", forKey: .type); try c.encode(v, forKey: .command)
+        case let .py(v): try c.encode("py", forKey: .type); try c.encode(v, forKey: .command)
         }
     }
 
@@ -217,7 +217,7 @@ public enum TaskExecConfig: Codable {
         if t.hasSuffix(".sh") { return .sh(t) }
         if t.hasSuffix(".js") || t.contains("Application(") { return .js(t) }
         if t.hasSuffix(".py") || t.contains("def ") || t.contains("import ") { return .py(t) }
-        if t.contains("\n") { return .sh(t) }  // 多行默认 shell
-        return .shortcuts(t)                    // 单行默认快捷指令名
+        if t.contains("\n") { return .sh(t) } // 多行默认 shell
+        return .shortcuts(t) // 单行默认快捷指令名
     }
 }

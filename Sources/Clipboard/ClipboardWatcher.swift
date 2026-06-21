@@ -8,18 +8,9 @@ public final class ClipboardWatcher {
     private var timer: Timer?
     private let storage: ClipboardStorage
 
-    private static let imageUTIs: [NSPasteboard.PasteboardType] = [
-        .tiff, .png,
-        .init("public.jpeg"),
-        .init("public.heic"),
-        .init("com.compuserve.gif"),
-        .init("public.webp"),
-        .init("public.bmp"),
-    ]
-
     public init(storage: ClipboardStorage) {
         self.storage = storage
-        self.lastChangeCount = pasteboard.changeCount
+        lastChangeCount = pasteboard.changeCount
     }
 
     public func start() {
@@ -51,7 +42,8 @@ public final class ClipboardWatcher {
         lastChangeCount = current
 
         if let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName,
-           ConfigManager.shared.config.clipboard.excludeApps.contains(frontApp) {
+           ConfigManager.shared.config.clipboard.excludeApps.contains(frontApp)
+        {
             return
         }
 
@@ -77,20 +69,22 @@ public final class ClipboardWatcher {
 
         // ── 3. 富文本 HTML（网页复制）──
         if let htmlItem = pbItems.first(where: { $0.types.contains(.html) }),
-           let html = htmlItem.string(forType: .html) {
+           let html = htmlItem.string(forType: .html)
+        {
             let plainText = htmlItem.string(forType: .string)
             let clip = ClipboardItem(type: "html", content: html.data(using: .utf8) ?? Data(),
-                                      application: plainText ?? pasteboardOwner())
+                                     application: plainText ?? pasteboardOwner())
             try? storage.add(clip)
             return
         }
 
         // ── 4. 纯文本 ──
         if let textItem = pbItems.first(where: { $0.types.contains(.string) }),
-           let str = textItem.string(forType: .string) {
+           let str = textItem.string(forType: .string)
+        {
             let clip = ClipboardItem(type: "text",
-                                      content: str.data(using: .utf8) ?? Data(),
-                                      application: pasteboardOwner())
+                                     content: str.data(using: .utf8) ?? Data(),
+                                     application: pasteboardOwner())
             try? storage.add(clip)
             return
         }
@@ -105,14 +99,14 @@ public final class ClipboardWatcher {
         if urls.count == 1 {
             if let data = try? JSONEncoder().encode(["path": urls[0].path]) {
                 let clip = ClipboardItem(type: "file", content: data,
-                                          application: urls[0].lastPathComponent)
+                                         application: urls[0].lastPathComponent)
                 try? storage.add(clip)
             }
         } else {
             let paths = urls.map { $0.path }
             if let data = try? JSONEncoder().encode(["paths": paths]) {
                 let clip = ClipboardItem(type: "file_batch", content: data,
-                                          application: "\(urls.count) 个文件")
+                                         application: L10n.Clipboard.fileCount(urls.count))
                 try? storage.add(clip)
             }
         }
@@ -126,7 +120,7 @@ public final class ClipboardWatcher {
             try imageData.write(to: fileURL)
             if let data = try? JSONEncoder().encode(["path": fileURL.path]) {
                 let clip = ClipboardItem(type: "file", content: data,
-                                          application: filename)
+                                         application: filename)
                 try? storage.add(clip)
             }
         } catch {
@@ -137,7 +131,7 @@ public final class ClipboardWatcher {
     /// 从 pasteboard items 提取第一张图片的原始数据
     private func extractImageData(from items: [NSPasteboardItem]) -> Data? {
         for item in items {
-            for type in Self.imageUTIs {
+            for type in PasteboardImageTypes.all {
                 if let data = item.data(forType: type) {
                     return data
                 }

@@ -123,7 +123,7 @@ public final class OpenAIClient {
 
         let encoder = JSONEncoder()
         #if DEBUG
-        encoder.outputFormatting = .sortedKeys
+            encoder.outputFormatting = .sortedKeys
         #endif
         urlRequest.httpBody = try encoder.encode(req)
         return urlRequest
@@ -146,18 +146,18 @@ public final class OpenAIClient {
         }
 
         #if DEBUG
-        let startTime = CFAbsoluteTimeGetCurrent()
-        let model = req.model
-        let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let model = req.model
+            let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
         #endif
 
         let task = session.dataTask(with: urlRequest) { data, response, error in
             #if DEBUG
-            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+                let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
             #endif
             if let error = error {
                 #if DEBUG
-                debugLog("[OpenAI] \(endpoint) \(model) failed \(String(format: "%.0f", elapsed))ms: \(error.localizedDescription)")
+                    debugLog("[OpenAI] \(endpoint) \(model) failed \(String(format: "%.0f", elapsed))ms: \(error.localizedDescription)")
                 #endif
                 completion(.failure(error))
                 return
@@ -169,7 +169,7 @@ public final class OpenAIClient {
             guard httpResponse.statusCode == 200 else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 #if DEBUG
-                debugLog("[OpenAI] \(endpoint) \(model) HTTP \(httpResponse.statusCode) \(String(format: "%.0f", elapsed))ms")
+                    debugLog("[OpenAI] \(endpoint) \(model) HTTP \(httpResponse.statusCode) \(String(format: "%.0f", elapsed))ms")
                 #endif
                 completion(.failure(OpenAIError.httpError(httpResponse.statusCode, body)))
                 return
@@ -181,13 +181,13 @@ public final class OpenAIClient {
             do {
                 let result = try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
                 #if DEBUG
-                let contentLen = result.choices.first?.message.content?.count ?? 0
-                debugLog("[OpenAI] \(endpoint) \(model) OK \(String(format: "%.0f", elapsed))ms content=\(contentLen)")
+                    let contentLen = result.choices.first?.message.content?.count ?? 0
+                    debugLog("[OpenAI] \(endpoint) \(model) OK \(String(format: "%.0f", elapsed))ms content=\(contentLen)")
                 #endif
                 completion(.success(result))
             } catch {
                 #if DEBUG
-                debugLog("[OpenAI] \(model) decode failed after \(String(format: "%.0f", elapsed))ms")
+                    debugLog("[OpenAI] \(model) decode failed after \(String(format: "%.0f", elapsed))ms")
                 #endif
                 completion(.failure(OpenAIError.decodeFailed(error, data)))
             }
@@ -200,13 +200,13 @@ public final class OpenAIClient {
 
     public func chat(request req: OpenAIChatRequest, baseURL: String) async throws -> OpenAIChatResponse {
         #if DEBUG
-        let startTime = CFAbsoluteTimeGetCurrent()
-        let model = req.model
-        let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
-        defer {
-            let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
-            debugLog("[OpenAI] \(endpoint) \(model) done \(String(format: "%.0f", elapsed))ms")
-        }
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let model = req.model
+            let endpoint = URL(string: baseURL)?.appendingPathComponent("chat/completions").absoluteString ?? baseURL
+            defer {
+                let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+                debugLog("[OpenAI] \(endpoint) \(model) done \(String(format: "%.0f", elapsed))ms")
+            }
         #endif
 
         let urlRequest = try makeURLRequest(req, baseURL: baseURL)
@@ -237,18 +237,18 @@ public enum OpenAIError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "无效的 API 地址"
+            return L10n.Translation.invalidURL
         case .invalidResponse:
-            return "无效的服务器响应"
+            return L10n.Translation.invalidResponse
         case .emptyData:
-            return "服务器返回空数据"
-        case .httpError(let code, let body):
+            return L10n.Translation.emptyResponse
+        case let .httpError(code, body):
             return "HTTP \(code): \(body.prefix(200))"
-        case .encodeFailed(let error):
-            return "请求编码失败: \(error.localizedDescription)"
-        case .decodeFailed(let error, let data):
+        case let .encodeFailed(error):
+            return L10n.Translation.encodeFailed(error.localizedDescription)
+        case let .decodeFailed(error, data):
             let preview = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            return "响应解析失败: \(error.localizedDescription)\n\(preview)"
+            return L10n.Translation.parseFailed("\(error.localizedDescription)\n\(preview)")
         }
     }
 }

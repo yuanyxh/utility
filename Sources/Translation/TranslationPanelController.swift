@@ -8,7 +8,9 @@ private final class TranslationTextView: NSTextView {
     weak var controller: TranslationPanelController?
 
     private let _undoManager = UndoManager()
-    override var undoManager: UndoManager? { _undoManager }
+    override var undoManager: UndoManager? {
+        _undoManager
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -69,27 +71,27 @@ private final class TranslationPanel: NSPanel {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags == .command {
             switch event.keyCode {
-            case 8:  // c
+            case 8: // c
                 if let textView = firstResponder as? NSTextView {
                     textView.copy(nil)
                     return true
                 }
-            case 7:  // x
+            case 7: // x
                 if let textView = firstResponder as? NSTextView, textView.isEditable {
                     textView.cut(nil)
                     return true
                 }
-            case 9:  // v
+            case 9: // v
                 if let textView = firstResponder as? NSTextView, textView.isEditable {
                     textView.paste(nil)
                     return true
                 }
-            case 0:  // a
+            case 0: // a
                 if let textView = firstResponder as? NSTextView {
                     textView.selectAll(nil)
                     return true
                 }
-            case 6:  // z — 留给 TranslationTextView 自行处理
+            case 6: // z — 留给 TranslationTextView 自行处理
                 break
             default:
                 break
@@ -115,7 +117,10 @@ public final class TranslationPanelController: NSWindowController {
     /// 当前翻译任务（用于取消）
     var currentTask: URLSessionTask?
     /// 是否有正在运行的翻译
-    var isTranslating: Bool { currentTask != nil }
+    var isTranslating: Bool {
+        currentTask != nil
+    }
+
     /// 翻译序列号（用于判断任务是否已过期）
     private var translationSeq: UInt = 0
 
@@ -174,7 +179,9 @@ public final class TranslationPanelController: NSWindowController {
         )
     }
 
-    required init?(coder: NSCoder) { nil }
+    required init?(coder _: NSCoder) {
+        nil
+    }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -336,12 +343,12 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Language Change
 
-    @objc private func sourceLangChanged(_ sender: Any) {
+    @objc private func sourceLangChanged(_: Any) {
         guard !sourceTextView.string.isEmpty else { return }
         startTranslation(text: sourceTextView.string)
     }
 
-    @objc private func targetLangChanged(_ sender: Any) {
+    @objc private func targetLangChanged(_: Any) {
         guard !sourceTextView.string.isEmpty else { return }
         startTranslation(text: sourceTextView.string)
     }
@@ -442,7 +449,8 @@ public final class TranslationPanelController: NSWindowController {
         window?.setFrame(frame, display: true)
     }
 
-// MARK: - Show / Close
+    // MARK: - Show / Close
+
     /// 回调方式触发翻译
     func startTranslation(text: String) {
         // 取消旧任务，序列号防止旧回调干扰
@@ -539,7 +547,7 @@ public final class TranslationPanelController: NSWindowController {
         }
     }
 
-    public override func close() {
+    override public func close() {
         cancelTranslation()
         window?.orderOut(nil)
         // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
@@ -599,7 +607,6 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
-
 }
 
 // MARK: - Target Overlay View
@@ -616,18 +623,22 @@ extension TranslationPanelController {
         private let messageLabel = NSTextField(labelWithString: "")
 
         private(set) var mode: OverlayMode = .loading
-        var isVisible: Bool { !isHidden }
+        var isVisible: Bool {
+            !isHidden
+        }
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
             setup()
         }
 
-        required init?(coder: NSCoder) { nil }
+        required init?(coder _: NSCoder) {
+            nil
+        }
 
         private func setup() {
             wantsLayer = true
-            layer?.backgroundColor = CGColor(red: 0xF5/0xFF, green: 0xF5/0xFF, blue: 0xF5/0xFF, alpha: 0.72)
+            layer?.backgroundColor = CGColor(red: 0xF5 / 0xFF, green: 0xF5 / 0xFF, blue: 0xF5 / 0xFF, alpha: 0.72)
             layer?.cornerRadius = 4
 
             spinner.style = .spinning

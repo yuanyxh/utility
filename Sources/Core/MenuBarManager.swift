@@ -11,7 +11,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var quitItem: NSMenuItem!
     private var rssFetchTask: Task<Void, Never>?
 
-    public override init() {
+    override public init() {
         super.init()
         setupStatusItem()
         buildMenu()
@@ -85,7 +85,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - NSMenuDelegate
 
-    public func menuWillOpen(_ menu: NSMenu) {
+    public func menuWillOpen(_: NSMenu) {
         refreshRSSItem()
         refreshTasksItem()
     }
@@ -129,12 +129,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     // MARK: - Network
 
     private func startNetworkMonitor() {
-        let monitor = NetworkSpeedMonitor.shared
-        monitor.onUpdate = { [weak self] up, down in
+        EventBus.shared.subscribe(AppEvent.networkSpeedUpdated) { [weak self] payload in
+            guard let (up, down) = payload as? (String, String) else { return }
             guard let view = self?.statusItem.value(forKey: "view") as? NetworkSpeedView else { return }
             view.update(up: up, down: down)
         }
-        monitor.start()
+        NetworkSpeedMonitor.shared.start()
     }
 
     // MARK: - RSS Actions
@@ -149,7 +149,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             } catch {
                 guard !Task.isCancelled else { return }
                 debugLog("[MenuBar] RSS fetch failed: \(error)")
-                NotificationManager.shared.error(L10n.Menu.rssFetchFailed, error.localizedDescription)
+                EventBus.shared.publish(AppEvent.rssFetchFailed, payload: error.localizedDescription)
             }
         }
     }
@@ -178,7 +178,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
                 debugLog("[MenuBar] Task '\(name)' FAILED: \(errMsg)")
                 DispatchQueue.main.async {
-                    NotificationManager.shared.error(L10n.Menu.taskFailed(name), errMsg)
+                    EventBus.shared.publish(AppEvent.taskDidFail, payload: (name, errMsg))
                 }
             }
         }
@@ -199,7 +199,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             }
         } catch {
             debugLog("[LoginItem] Failed: \(error)")
-            NotificationManager.shared.error(L10n.Menu.launchAtLoginFailed, error.localizedDescription)
+            EventBus.shared.publish(AppEvent.launchAtLoginFailed, payload: error.localizedDescription)
         }
     }
 
@@ -222,7 +222,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             refreshTasksItem()
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
-            NotificationManager.shared.error(L10n.Menu.configReloadFailed, error.localizedDescription)
+            EventBus.shared.publish(AppEvent.configReloadFailed, payload: error.localizedDescription)
         }
     }
 
@@ -242,22 +242,25 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 // MARK: - NetworkSpeedView
 
 private final class NetworkSpeedView: NSView {
-    private let upLabel   = NSTextField(labelWithString: "")
+    private let upLabel = NSTextField(labelWithString: "")
     private let downLabel = NSTextField(labelWithString: "")
 
     var onClick: ((NSEvent) -> Void)?
 
-    override init(frame: NSRect) {
+    override init(frame _: NSRect) {
         super.init(frame: .zero)
         setup()
     }
 
-    required init?(coder: NSCoder) { fatalError() }
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
 
     private func setup() {
-        upLabel.font   = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        upLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
         downLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-        upLabel.alignment   = .right
+        upLabel.alignment = .right
         downLabel.alignment = .right
 
         let stack = NSStackView(views: [upLabel, downLabel])
@@ -283,7 +286,7 @@ private final class NetworkSpeedView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        let upSz   = upLabel.intrinsicContentSize
+        let upSz = upLabel.intrinsicContentSize
         let downSz = downLabel.intrinsicContentSize
         return NSSize(
             width: max(upSz.width, downSz.width),
@@ -293,7 +296,7 @@ private final class NetworkSpeedView: NSView {
 
     func update(up: String, down: String) {
         let (paddedUp, paddedDown) = pad(up: up, down: down)
-        upLabel.stringValue   = paddedUp
+        upLabel.stringValue = paddedUp
         downLabel.stringValue = paddedDown
         invalidateIntrinsicContentSize()
         superview?.layoutSubtreeIfNeeded()
@@ -302,13 +305,13 @@ private final class NetworkSpeedView: NSView {
     // MARK: - Padding
 
     private func pad(up: String, down: String) -> (String, String) {
-        let upInt   = String(up.prefix(while: { $0 != "." }))
+        let upInt = String(up.prefix(while: { $0 != "." }))
         let downInt = String(down.prefix(while: { $0 != "." }))
-        let upRest  = String(up.dropFirst(upInt.count))
+        let upRest = String(up.dropFirst(upInt.count))
         let downRest = String(down.dropFirst(downInt.count))
 
         let maxLen = max(upInt.count, downInt.count)
-        let padUp   = String(repeating: "0", count: maxLen - upInt.count) + upInt
+        let padUp = String(repeating: "0", count: maxLen - upInt.count) + upInt
         let padDown = String(repeating: "0", count: maxLen - downInt.count) + downInt
 
         return ("↑ " + padUp + upRest, "↓ " + padDown + downRest)

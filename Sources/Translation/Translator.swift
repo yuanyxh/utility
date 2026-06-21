@@ -21,18 +21,19 @@ public final class Translator {
         }
         if target == "auto" {
             return PromptManager.shared.prompt(for: "translate_auto",
-                variables: ["first": config.translation.firstLang,
-                            "second": config.translation.secondLang])
+                                               variables: ["first": config.translation.firstLang,
+                                                           "second": config.translation.secondLang])
         }
         return PromptManager.shared.prompt(for: "translate",
-            variables: ["source": source, "target": target])
+                                           variables: ["source": source, "target": target])
     }
 
     // MARK: - Callback
 
     @discardableResult
     public func translate(text: String, source: String = "auto", target: String = "zh",
-                          completion: @escaping (String?, Error?) -> Void) -> URLSessionTask? {
+                          completion: @escaping (String?, Error?) -> Void) -> URLSessionTask?
+    {
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {
             completion(nil, TranslationError.missingAPIKey)
@@ -44,7 +45,7 @@ public final class Translator {
             model: config.ai.model,
             messages: [
                 .init(role: "system", content: buildSystemPrompt(source: source, target: target)),
-                .init(role: "user", content: text)
+                .init(role: "user", content: text),
             ],
             temperature: 0.1,
             thinking: .init(type: "disabled")
@@ -52,9 +53,9 @@ public final class Translator {
 
         client.chat(request: request, baseURL: config.ai.baseURL) { result in
             switch result {
-            case .success(let response):
+            case let .success(response):
                 completion(response.choices.first?.message.content ?? "", nil)
-            case .failure(let error):
+            case let .failure(error):
                 completion(nil, error)
             }
         }
@@ -74,7 +75,7 @@ public final class Translator {
             model: config.ai.model,
             messages: [
                 .init(role: "system", content: buildSystemPrompt(source: source, target: target)),
-                .init(role: "user", content: text)
+                .init(role: "user", content: text),
             ],
             temperature: 0.1,
             thinking: .init(type: "disabled")

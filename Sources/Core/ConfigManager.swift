@@ -6,8 +6,13 @@ public final class ConfigManager {
     public private(set) var config: AppConfig = .init()
 
     private let fileManager = FileManager.default
-    private var configDir: URL { AppPaths.configDir }
-    private var configFile: URL { AppPaths.configFile }
+    private var configDir: URL {
+        AppPaths.configDir
+    }
+
+    private var configFile: URL {
+        AppPaths.configFile
+    }
 
     private init() {}
 
@@ -22,23 +27,13 @@ public final class ConfigManager {
         let decoder = YAMLDecoder()
         config = try decoder.decode(AppConfig.self, from: data)
         L10n.setup()
+        EventBus.shared.publish(AppEvent.configDidLoad)
+
         debugLog("[Config] Loaded from \(configFile.path)")
     }
 
     public func reload() throws {
         try load()
-        cleanupStaleTaskStates()
-        TaskScheduler.shared.reschedule()
-    }
-
-    private func cleanupStaleTaskStates() {
-        let configuredNames = Set(config.tasks.map { $0.name })
-        let dbNames = TaskStateDB.shared.allTaskNames()
-        let stale = dbNames.filter { !configuredNames.contains($0) }
-        for name in stale {
-            TaskStateDB.shared.remove(taskName: name)
-            debugLog("[Config] Removed stale task state: \(name)")
-        }
     }
 
     private func writeDefault() throws {

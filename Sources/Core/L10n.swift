@@ -7,7 +7,10 @@ enum L10n {
     static let languageDidChange = Notification.Name("L10n.languageDidChange")
 
     private static var dict: [String: String] = [:]
-    static var currentLanguage: String { _lang }
+    static var currentLanguage: String {
+        _lang
+    }
+
     private static var _lang = "zh-Hans"
 
     /// 首次访问任一字符串时自动加载（系统首选语言）
@@ -39,7 +42,8 @@ enum L10n {
             if lang != "zh-Hans",
                let fbURL = Bundle.module.url(forResource: "zh-Hans", withExtension: "json"),
                let fbData = try? Data(contentsOf: fbURL),
-               let fbJSON = try? JSONSerialization.jsonObject(with: fbData) as? [String: String] {
+               let fbJSON = try? JSONSerialization.jsonObject(with: fbData) as? [String: String]
+            {
                 _lang = "zh-Hans"
                 dict = fbJSON
             } else {
@@ -78,23 +82,77 @@ enum L10n {
 
 extension L10n {
     enum Menu {
-        static var reloadConfig: String { string("menu.reload_config") }
-        static var launchAtLogin: String { string("menu.launch_at_login") }
-        static var rss: String { string("menu.rss") }
-        static var tasks: String { string("menu.tasks") }
-        static var clearClipboard: String { string("menu.clear_clipboard") }
-        static var quit: String { string("menu.quit") }
-        static var rssFetch: String { string("menu.rss_fetch") }
-        static var rssMarkAllRead: String { string("menu.rss_mark_all_read") }
-        static func rssUnread(_ n: Int) -> String { format("menu.rss_unread", n) }
-        static func tasksCount(_ n: Int) -> String { format("menu.tasks_count", n) }
+        static var reloadConfig: String {
+            string("menu.reload_config")
+        }
 
-        static var rssFetchFailed: String { string("notify.rss_fetch_failed") }
-        static func taskFailed(_ name: String) -> String { format("notify.task_failed", name) }
-        static var launchAtLoginFailed: String { string("notify.launch_at_login_failed") }
-        static var configReloadFailed: String { string("notify.config_reload_failed") }
-        static var configLoadFailed: String { string("notify.config_load_failed") }
-        static var dbInitFailed: String { string("notify.db_init_failed") }
+        static var launchAtLogin: String {
+            string("menu.launch_at_login")
+        }
+
+        static var rss: String {
+            string("menu.rss")
+        }
+
+        static var tasks: String {
+            string("menu.tasks")
+        }
+
+        static var clearClipboard: String {
+            string("menu.clear_clipboard")
+        }
+
+        static var quit: String {
+            string("menu.quit")
+        }
+
+        static var rssFetch: String {
+            string("menu.rss_fetch")
+        }
+
+        static var rssMarkAllRead: String {
+            string("menu.rss_mark_all_read")
+        }
+
+        static func rssUnread(_ n: Int) -> String {
+            format("menu.rss_unread", n)
+        }
+
+        static func tasksCount(_ n: Int) -> String {
+            format("menu.tasks_count", n)
+        }
+
+        static var rssFetchFailed: String {
+            string("notify.rss_fetch_failed")
+        }
+
+        static func taskFailed(_ name: String) -> String {
+            format("notify.task_failed", name)
+        }
+
+        static var launchAtLoginFailed: String {
+            string("notify.launch_at_login_failed")
+        }
+
+        static var configReloadFailed: String {
+            string("notify.config_reload_failed")
+        }
+
+        static var configLoadFailed: String {
+            string("notify.config_load_failed")
+        }
+
+        static var dbInitFailed: String {
+            string("notify.db_init_failed")
+        }
+
+        static var hotkeyParseFailed: String {
+            string("notify.hotkey_parse_failed")
+        }
+
+        static var hotkeyRegisterFailed: String {
+            string("notify.hotkey_register_failed")
+        }
     }
 }
 
@@ -102,11 +160,25 @@ extension L10n {
 
 extension L10n {
     enum Clipboard {
-        static var unreadable: String { string("clipboard.unreadable") }
-        static var file: String { string("clipboard.file") }
-        static func fileCount(_ n: Int) -> String { format("clipboard.file_count", n) }
-        static var webContent: String { string("clipboard.web_content") }
-        static var unknown: String { string("clipboard.unknown") }
+        static var unreadable: String {
+            string("clipboard.unreadable")
+        }
+
+        static var file: String {
+            string("clipboard.file")
+        }
+
+        static func fileCount(_ n: Int) -> String {
+            format("clipboard.file_count", n)
+        }
+
+        static var webContent: String {
+            string("clipboard.web_content")
+        }
+
+        static var unknown: String {
+            string("clipboard.unknown")
+        }
     }
 }
 
@@ -114,11 +186,45 @@ extension L10n {
 
 extension L10n {
     enum Translation {
-        static var source: String { string("translation.source") }
-        static var target: String { string("translation.target") }
-        static var noApiKey: String { string("translation.no_api_key") }
-        static var missingApiKey: String { string("error.missing_api_key") }
-        static var apiFailed: String { string("error.api_failed") }
+        static var source: String {
+            string("translation.source")
+        }
+
+        static var target: String {
+            string("translation.target")
+        }
+
+        static var noApiKey: String {
+            string("translation.no_api_key")
+        }
+
+        static var missingApiKey: String {
+            string("error.missing_api_key")
+        }
+
+        static var apiFailed: String {
+            string("error.api_failed")
+        }
+
+        static var invalidURL: String {
+            string("error.invalid_url")
+        }
+
+        static var invalidResponse: String {
+            string("error.invalid_response")
+        }
+
+        static var emptyResponse: String {
+            string("error.empty_response")
+        }
+
+        static func encodeFailed(_ msg: String) -> String {
+            format("error.encode_failed", msg)
+        }
+
+        static func parseFailed(_ msg: String) -> String {
+            format("error.parse_failed", msg)
+        }
     }
 }
 
@@ -126,10 +232,21 @@ extension L10n {
 
 extension L10n {
     enum Stage {
-        static var clear: String { string("stage.clear") }
-        static var file: String { string("stage.file") }
-        static func fileCount(_ n: Int) -> String { format("stage.file_count", n) }
-        static var unknown: String { string("stage.unknown") }
+        static var clear: String {
+            string("stage.clear")
+        }
+
+        static var file: String {
+            string("stage.file")
+        }
+
+        static func fileCount(_ n: Int) -> String {
+            format("stage.file_count", n)
+        }
+
+        static var unknown: String {
+            string("stage.unknown")
+        }
     }
 }
 
@@ -137,7 +254,9 @@ extension L10n {
 
 extension L10n {
     enum Config {
-        static var headerComment: String { string("config.header_comment") }
+        static var headerComment: String {
+            string("config.header_comment")
+        }
     }
 }
 
@@ -145,7 +264,50 @@ extension L10n {
 
 extension L10n {
     enum Prompt {
-        static var translate: String { string("prompt.translate") }
-        static var translateAuto: String { string("prompt.translate_auto") }
+        static var translate: String {
+            string("prompt.translate")
+        }
+
+        static var translateAuto: String {
+            string("prompt.translate_auto")
+        }
+    }
+}
+
+// MARK: - RSS Strings
+
+extension L10n {
+    enum RSS {
+        static var helpHeader: String {
+            string("rss.help_header")
+        }
+
+        static var helpFetch: String {
+            string("rss.help_fetch")
+        }
+
+        static var helpList: String {
+            string("rss.help_list")
+        }
+
+        static var helpMarkRead: String {
+            string("rss.help_mark_read")
+        }
+
+        static var helpMarkAllRead: String {
+            string("rss.help_mark_all_read")
+        }
+
+        static func fetchDone(_ n: Int) -> String {
+            format("rss.fetch_done", n)
+        }
+
+        static func markReadDone(_ id: String) -> String {
+            format("rss.mark_read_done", id)
+        }
+
+        static var markAllReadDone: String {
+            string("rss.mark_all_read_done")
+        }
     }
 }

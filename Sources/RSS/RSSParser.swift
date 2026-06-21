@@ -14,7 +14,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
     public func parse(data: Data, feedName: String) -> [RSSItem] {
         self.feedName = feedName
-        self.items = []
+        items = []
         let parser = XMLParser(data: data)
         parser.delegate = self
         parser.parse()
@@ -23,9 +23,10 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
     // MARK: - XMLParserDelegate
 
-    public func parser(_ parser: XMLParser, didStartElement elementName: String,
-                        namespaceURI: String?, qualifiedName qName: String?,
-                        attributes attributeDict: [String: String] = [:]) {
+    public func parser(_: XMLParser, didStartElement elementName: String,
+                       namespaceURI _: String?, qualifiedName _: String?,
+                       attributes attributeDict: [String: String] = [:])
+    {
         currentElement = elementName
 
         if elementName == "item" || elementName == "entry" {
@@ -36,12 +37,13 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
         // Atom: <link href="..." /> 从属性中取
         if isItem, elementName == "link", let href = attributeDict["href"],
-           !href.isEmpty, currentLink.isEmpty {
+           !href.isEmpty, currentLink.isEmpty
+        {
             currentLink = href
         }
     }
 
-    public func parser(_ parser: XMLParser, foundCharacters string: String) {
+    public func parser(_: XMLParser, foundCharacters string: String) {
         guard isItem else { return }
         switch currentElement {
         case "title": currentTitle += string
@@ -57,9 +59,10 @@ public final class RSSParser: NSObject, XMLParserDelegate {
         }
     }
 
-    public func parser(_ parser: XMLParser, didEndElement elementName: String,
-                        namespaceURI: String?, qualifiedName qName: String?) {
-        guard isItem, (elementName == "item" || elementName == "entry") else { return }
+    public func parser(_: XMLParser, didEndElement elementName: String,
+                       namespaceURI _: String?, qualifiedName _: String?)
+    {
+        guard isItem, elementName == "item" || elementName == "entry" else { return }
 
         let date = parseDate(currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines))
         let guid = currentGUID.isEmpty ? currentLink : currentGUID

@@ -10,7 +10,9 @@ public final class StageManager {
         return AppDatabase.shared.dbQueue
     }
 
-    private init() {}
+    private init() {
+        try? clearAll()
+    }
 
     // MARK: - CRUD
 
@@ -25,8 +27,8 @@ public final class StageManager {
 
     public func add(fileURL url: URL) throws {
         let bookmark = try url.bookmarkData(options: [],
-                                             includingResourceValuesForKeys: nil,
-                                             relativeTo: nil)
+                                            includingResourceValuesForKeys: nil,
+                                            relativeTo: nil)
         try add(type: "fileURL", content: bookmark)
     }
 
