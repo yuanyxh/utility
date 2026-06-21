@@ -7,13 +7,13 @@ public final class ClipboardPanelController: NSWindowController {
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private var items: [ClipboardItem] = []
-    private let storage: ClipboardStorage
+    private let clipboardStorage = ClipboardStorage()
+    private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
     private var eventMonitor: Any?
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
     private var previousFrontmostApp: NSRunningApplication?
 
-    public init(storage: ClipboardStorage) {
-        self.storage = storage
+    public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
                              styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
                              backing: .buffered, defer: false)
@@ -27,6 +27,7 @@ public final class ClipboardPanelController: NSWindowController {
         super.init(window: panel)
         setupUI()
         setupDeactivateObserver()
+        clipboardWatcher.start()
     }
     required init?(coder: NSCoder) { nil }
 
@@ -105,7 +106,7 @@ public final class ClipboardPanelController: NSWindowController {
     @objc private func selectItem() {
         guard tableView.selectedRow >= 0, tableView.selectedRow < items.count else { return }
         let item = items[tableView.selectedRow]
-        try? storage.moveToTop(item.id)
+        try? clipboardStorage.moveToTop(item.id)
 
         // 翻译面板打开 → 仅文本插入原文区
         if let trans = translationPanelIfVisible(),
@@ -166,9 +167,7 @@ public final class ClipboardPanelController: NSWindowController {
         debugLog("[utility] clipboard paste: pasteboard written")
 
         // 标记 watcher 跳过这次自触发变化
-        if let delegate = NSApp.delegate as? AppDelegate {
-            delegate.clipboardWatcher.skipCurrentChange()
-        }
+        clipboardWatcher.skipCurrentChange()
 
         guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
             debugLog("[utility] clipboard paste: no target app")
@@ -214,7 +213,7 @@ public final class ClipboardPanelController: NSWindowController {
     // MARK: - Show / Close
 
     public func show() {
-        items = (try? storage.all()) ?? []
+        items = (try? clipboardStorage.all()) ?? []
         tableView.reloadData()
 
         // 智能定位：根据鼠标位置选择最佳角落

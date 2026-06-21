@@ -33,6 +33,11 @@ public final class StageWindowController: NSWindowController {
         // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
         panel.orderFront(nil)
         panel.orderOut(nil)
+
+        StageDropMonitor.shared.start(with: self)
+        if (try? StageManager.shared.count()) ?? 0 > 0 {
+            show()
+        }
     }
 
     required init?(coder: NSCoder) { nil }

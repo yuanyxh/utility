@@ -4,12 +4,9 @@ import Carbon
 final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let menuBar = MenuBarManager()
     private let hotkeyManager = HotkeyManager.shared
-    private let clipboardStorage = ClipboardStorage()
-    private(set) lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
-    lazy var clipboardPanel = ClipboardPanelController(storage: clipboardStorage)
+    let clipboardPanel = ClipboardPanelController()
     lazy var translationPanel = TranslationPanelController()
-    private lazy var stageWindow = StageWindowController()
-    private lazy var stageMonitor = StageDropMonitor.shared
+    private let stageWindow = StageWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         debugLog("[Utility] Starting up...")
@@ -32,10 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // L10n.setup() 已通过 NotificationCenter 通知所有组件刷新标题
         // 各组件自行 observe L10n.languageDidChange
 
-        clipboardWatcher.start()
         registerAllHotkeys()
         installEventHandler()
-        stageMonitor.start(with: stageWindow)
 
         NotificationManager.shared.requestAuthorization()
         TaskScheduler.shared.installWakeObserver()
