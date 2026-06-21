@@ -57,24 +57,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             guard let self = self else { return }
 
             if self.translationPanel.isPanelVisible {
-                let selected = self.translationPanel.getSelectedText()
-                if let text = selected {
-                    self.translationPanel.fillAndTranslate(text)
+                guard let app = self.translationPanel.previousFrontmostApp else { return }
+                Task { @MainActor in
+                    if let text = await SelectedTextService.getSelectedText(from: app) {
+                        self.translationPanel.fillAndTranslate(text)
+                    }
                 }
-                
                 return
             }
-            
-            self.translationPanel.previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-            if let text = self.translationPanel.tryAXSelectedText(), !text.isEmpty {
+
+            let preApp = NSWorkspace.shared.frontmostApplication
+            self.translationPanel.previousFrontmostApp = preApp
+
+            if let app = preApp, let text = SelectedTextService.tryAXSelectedText(from: app), !text.isEmpty {
                 self.translationPanel.show(with: text)
-                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                    self.translationPanel.startTranslation(text: text)
-                }
+                self.translationPanel.startTranslation(text: text)
             } else {
                 self.translationPanel.showEmpty()
-                Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                    if let text = self.translationPanel.clipboardFallbackSelectedText(), !text.isEmpty {
+                guard let app = preApp else { return }
+                Task { @MainActor in
+                    if let text = await SelectedTextService.getSelectedText(from: app), !text.isEmpty {
                         self.translationPanel.activateForInput()
                         self.translationPanel.fillAndTranslate(text)
                     } else {
