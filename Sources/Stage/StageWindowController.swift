@@ -26,6 +26,10 @@ public final class StageWindowController: NSWindowController {
         super.init(window: panel)
         setupUI()
         addVisualEffectView()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onLanguageChanged),
+            name: L10n.languageDidChange, object: nil
+        )
         // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
         panel.orderFront(nil)
         panel.orderOut(nil)
@@ -37,7 +41,7 @@ public final class StageWindowController: NSWindowController {
         guard let panel = window else { return }
 
         // 清空按钮（右上角）
-        clearButton.title = "清空"
+        clearButton.title = L10n.Stage.clear
         clearButton.bezelStyle = .rounded
         clearButton.controlSize = .small
         clearButton.font = NSFont.systemFont(ofSize: 11)
@@ -79,6 +83,14 @@ public final class StageWindowController: NSWindowController {
     }
 
     // MARK: - Public
+
+    public func refreshTitles() {
+        clearButton.title = L10n.Stage.clear
+    }
+
+    @objc private func onLanguageChanged() {
+        refreshTitles()
+    }
 
     public func reload() {
         items = (try? StageManager.shared.all()) ?? []

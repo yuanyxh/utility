@@ -3,6 +3,7 @@ import Foundation
 // MARK: - Root Config
 
 public struct AppConfig: Codable {
+    var general: GeneralConfig = .init()
     var ai: AIConfig = .init()
     var clipboard: ClipboardConfig = .init()
     var translation: TranslationConfig = .init()
@@ -10,6 +11,32 @@ public struct AppConfig: Codable {
     var rss: RSSConfig = .init()
     var tasks: [TaskConfig] = []
     var prompts: PromptConfig = .init()
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        general     = (try? c.decode(GeneralConfig.self, forKey: .general)) ?? .init()
+        ai          = (try? c.decode(AIConfig.self, forKey: .ai)) ?? .init()
+        clipboard   = (try? c.decode(ClipboardConfig.self, forKey: .clipboard)) ?? .init()
+        translation = (try? c.decode(TranslationConfig.self, forKey: .translation)) ?? .init()
+        stage       = (try? c.decode(StageConfig.self, forKey: .stage)) ?? .init()
+        rss         = (try? c.decode(RSSConfig.self, forKey: .rss)) ?? .init()
+        tasks       = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
+        prompts     = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
+    }
+}
+
+// MARK: - General
+
+public struct GeneralConfig: Codable {
+    var language: String = ""
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
+    }
 }
 
 // MARK: - AI

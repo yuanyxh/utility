@@ -21,6 +21,7 @@ public final class ConfigManager {
         let data = try Data(contentsOf: configFile)
         let decoder = YAMLDecoder()
         config = try decoder.decode(AppConfig.self, from: data)
+        L10n.setup()
         debugLog("[Config] Loaded from \(configFile.path)")
     }
 
@@ -44,8 +45,7 @@ public final class ConfigManager {
         let encoder = YAMLEncoder()
         let yaml = try encoder.encode(AppConfig())
         let commented = """
-        # Utility 配置文件
-        # 修改后通过菜单栏「重载配置」或重启生效
+        \(L10n.Config.headerComment)
         \(yaml)
         """
         try commented.write(to: configFile, atomically: true, encoding: .utf8)

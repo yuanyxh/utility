@@ -1,6 +1,12 @@
 # Utility 配置文件
 # 修改后通过菜单栏「重载配置」或重启生效
 
+# ---------- 通用 ----------
+general:
+  # 界面语言。留空跟随系统，可选值: zh / en
+  language: ''
+
+# ---------- AI ----------
 ai:
   # OpenAI 兼容 API 地址（只需 host，客户端自动追加 /chat/completions）
   baseURL: ''

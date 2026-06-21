@@ -93,8 +93,8 @@ public enum TranslationError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingAPIKey: return "请在配置文件中设置 AI API Key (ai.apiKey)"
-        case .apiError: return "翻译 API 请求失败，请检查网络和 API 配置"
+        case .missingAPIKey: return L10n.Translation.missingApiKey
+        case .apiError: return L10n.Translation.apiFailed
         }
     }
 }

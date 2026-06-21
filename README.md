@@ -46,10 +46,17 @@ cd ~/Documents/it/project/utility && swift build -c release
 
 首次启动自动生成默认配置。修改后通过菜单栏「重载配置」立即生效，无需重启 app。
 
+语言切换：设置 `general.language` 为 `zh` 或 `en`，留空跟随系统语言。翻译面板的语种选择器以各语种母语显示，不受此设置影响。
+
 ### 完整配置项
 
 ```yaml
 # ~/.config/utility/config.yaml
+
+# ---------- 通用 ----------
+general:
+  # 界面语言。留空跟随系统，可选: zh / en
+  language: ""
 
 # ---------- AI ----------
 ai:

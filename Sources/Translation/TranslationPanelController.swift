@@ -106,6 +106,8 @@ public final class TranslationPanelController: NSWindowController {
     private let targetLangPopup = NSPopUpButton()
     private let scrollViewSource = NSScrollView()
     private let scrollViewTarget = NSScrollView()
+    private let sourceLabel = NSTextField(labelWithString: "")
+    private let targetLabel = NSTextField(labelWithString: "")
 
     /// 下面板遮罩层
     private let overlay = TargetOverlayView()
@@ -120,16 +122,35 @@ public final class TranslationPanelController: NSWindowController {
     /// 面板打开前的前台 app（粘贴时恢复到该 app）
     var previousFrontmostApp: NSRunningApplication?
 
-    /// 26 种语言（按使用量排序）
+    /// 27 种语言（按使用量排序），名称用各语种母语显示
     private let languages: [(code: String, name: String)] = [
-        ("auto", "自动检测"),
-        ("zh", "中文"), ("en", "英文"), ("es", "西班牙文"), ("hi", "印地文"),
-        ("ar", "阿拉伯文"), ("bn", "孟加拉文"), ("pt", "葡萄牙文"), ("ru", "俄文"),
-        ("ja", "日文"), ("pa", "旁遮普文"), ("de", "德文"), ("jv", "爪哇文"),
-        ("ko", "韩文"), ("fr", "法文"), ("te", "泰卢固文"), ("mr", "马拉地文"),
-        ("ta", "泰米尔文"), ("ur", "乌尔都文"), ("vi", "越南文"), ("it", "意大利文"),
-        ("th", "泰文"), ("ms", "马来文"), ("tr", "土耳其文"),
-        ("nl", "荷兰文"), ("pl", "波兰文"), ("uk", "乌克兰文"),
+        ("auto", "Auto"),
+        ("zh", "中文"),
+        ("en", "English"),
+        ("es", "Español"),
+        ("hi", "हिन्दी"),
+        ("ar", "العربية"),
+        ("bn", "বাংলা"),
+        ("pt", "Português"),
+        ("ru", "Русский"),
+        ("ja", "日本語"),
+        ("pa", "ਪੰਜਾਬੀ"),
+        ("de", "Deutsch"),
+        ("jv", "Basa Jawa"),
+        ("ko", "한국어"),
+        ("fr", "Français"),
+        ("te", "తెలుగు"),
+        ("mr", "मराठी"),
+        ("ta", "தமிழ்"),
+        ("ur", "اردو"),
+        ("vi", "Tiếng Việt"),
+        ("it", "Italiano"),
+        ("th", "ไทย"),
+        ("ms", "Bahasa Melayu"),
+        ("tr", "Türkçe"),
+        ("nl", "Nederlands"),
+        ("pl", "Polski"),
+        ("uk", "Українська"),
     ]
 
     public init() {
@@ -147,6 +168,10 @@ public final class TranslationPanelController: NSWindowController {
         sourceTextView.controller = self
         setupUI()
         setupDeactivateObserver()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onLanguageChanged),
+            name: L10n.languageDidChange, object: nil
+        )
     }
 
     required init?(coder: NSCoder) { nil }
@@ -162,7 +187,8 @@ public final class TranslationPanelController: NSWindowController {
         let content = panel.contentView!
 
         // ---- 原文区 ----
-        let sourceLabel = NSTextField(labelWithString: "原文")
+        let sourceLabel = self.sourceLabel
+        sourceLabel.stringValue = L10n.Translation.source
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
         sourceLangPopup.target = self
@@ -199,7 +225,8 @@ public final class TranslationPanelController: NSWindowController {
         sourceSection.translatesAutoresizingMaskIntoConstraints = false
 
         // ---- 译文区 ----
-        let targetLabel = NSTextField(labelWithString: "译文")
+        let targetLabel = self.targetLabel
+        targetLabel.stringValue = L10n.Translation.target
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
         targetLangPopup.target = self
@@ -432,7 +459,7 @@ public final class TranslationPanelController: NSWindowController {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {
-            overlay.showError("未配置 AI API Key")
+            overlay.showError(L10n.Translation.noApiKey)
             return
         }
 
@@ -533,6 +560,15 @@ public final class TranslationPanelController: NSWindowController {
     func cancelTranslation() {
         currentTask?.cancel()
         currentTask = nil
+    }
+
+    func refreshTitles() {
+        sourceLabel.stringValue = L10n.Translation.source
+        targetLabel.stringValue = L10n.Translation.target
+    }
+
+    @objc private func onLanguageChanged() {
+        refreshTitles()
     }
 
     /// NSScrollView 扩展：滚动到底部

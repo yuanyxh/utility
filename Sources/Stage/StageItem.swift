@@ -50,10 +50,10 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             if let url = resolveFileURL() {
                 return url.lastPathComponent
             }
-            return "文件"
+            return L10n.Stage.file
         case "fileGroup":
             let count = resolveFileGroup().count
-            return "\(count) 个文件"
+            return L10n.Stage.fileCount(count)
         case "html":
             let str = String(data: content, encoding: .utf8) ?? ""
             // 取纯文本摘要（去标签）
@@ -64,7 +64,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             let str = String(data: content, encoding: .utf8) ?? ""
             return String(str.prefix(60))
         default:
-            return "(未知)"
+            return L10n.Stage.unknown
         }
     }
 

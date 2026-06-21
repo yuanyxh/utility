@@ -20,14 +20,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             try ConfigManager.shared.load()
         } catch {
             debugLog("[Utility] Config load failed: \(error)")
-            NotificationManager.shared.error("配置加载失败", "\(error.localizedDescription)")
+            NotificationManager.shared.error(L10n.Menu.configLoadFailed, "\(error.localizedDescription)")
         }
         do {
             try AppDatabase.shared.setup()
         } catch {
             debugLog("[Utility] Database setup failed: \(error)")
-            NotificationManager.shared.error("数据库初始化失败", "\(error.localizedDescription)")
+            NotificationManager.shared.error(L10n.Menu.dbInitFailed, "\(error.localizedDescription)")
         }
+
+        // L10n.setup() 已通过 NotificationCenter 通知所有组件刷新标题
+        // 各组件自行 observe L10n.languageDidChange
 
         clipboardWatcher.start()
         registerAllHotkeys()

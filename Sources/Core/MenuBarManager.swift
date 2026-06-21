@@ -3,9 +3,12 @@ import ServiceManagement
 
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var reloadItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
     private var tasksMenuItem: NSMenuItem!
+    private var clearItem: NSMenuItem!
+    private var quitItem: NSMenuItem!
     private var rssFetchTask: Task<Void, Never>?
 
     public override init() {
@@ -13,6 +16,14 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         setupStatusItem()
         buildMenu()
         startNetworkMonitor()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onLanguageChanged),
+            name: L10n.languageDidChange, object: nil
+        )
+    }
+
+    @objc private func onLanguageChanged() {
+        refreshAllTitles()
     }
 
     private func setupStatusItem() {
@@ -32,13 +43,13 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        let reloadItem = NSMenuItem(title: "重载配置", action: #selector(reloadConfig), keyEquivalent: "r")
+        reloadItem = NSMenuItem(title: L10n.Menu.reloadConfig, action: #selector(reloadConfig), keyEquivalent: "r")
         reloadItem.target = self
         menu.addItem(reloadItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        launchAtLoginItem = NSMenuItem(title: "开机自启", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginItem = NSMenuItem(title: L10n.Menu.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.target = self
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launchAtLoginItem)
@@ -46,26 +57,26 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // ── RSS ──
-        rssMenuItem = NSMenuItem(title: "RSS", action: nil, keyEquivalent: "")
+        rssMenuItem = NSMenuItem(title: L10n.Menu.rss, action: nil, keyEquivalent: "")
         rssMenuItem.submenu = NSMenu()
         menu.addItem(rssMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
         // ── Tasks ──
-        tasksMenuItem = NSMenuItem(title: "任务", action: nil, keyEquivalent: "")
+        tasksMenuItem = NSMenuItem(title: L10n.Menu.tasks, action: nil, keyEquivalent: "")
         tasksMenuItem.submenu = NSMenu()
         menu.addItem(tasksMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let clearItem = NSMenuItem(title: "清空剪切板", action: #selector(clearClipboard), keyEquivalent: "")
+        clearItem = NSMenuItem(title: L10n.Menu.clearClipboard, action: #selector(clearClipboard), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
+        quitItem = NSMenuItem(title: L10n.Menu.quit, action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -83,15 +94,15 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         let count = (try? RSSManager.shared.unreadCount()) ?? 0
         let sub = NSMenu()
 
-        let fetchItem = NSMenuItem(title: "抓取 RSS", action: #selector(rssFetch), keyEquivalent: "")
+        let fetchItem = NSMenuItem(title: L10n.Menu.rssFetch, action: #selector(rssFetch), keyEquivalent: "")
         fetchItem.target = self
         sub.addItem(fetchItem)
 
-        let markReadItem = NSMenuItem(title: "全部已读", action: #selector(rssMarkAllRead), keyEquivalent: "")
+        let markReadItem = NSMenuItem(title: L10n.Menu.rssMarkAllRead, action: #selector(rssMarkAllRead), keyEquivalent: "")
         markReadItem.target = self
         sub.addItem(markReadItem)
 
-        rssMenuItem.title = count > 0 ? "RSS (\(count) 未读)" : "RSS"
+        rssMenuItem.title = count > 0 ? L10n.Menu.rssUnread(count) : L10n.Menu.rss
         rssMenuItem.submenu = sub
     }
 
@@ -111,7 +122,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             sub.addItem(item)
         }
 
-        tasksMenuItem.title = tasks.isEmpty ? "任务" : "任务 (\(tasks.count))"
+        tasksMenuItem.title = tasks.isEmpty ? L10n.Menu.tasks : L10n.Menu.tasksCount(tasks.count)
         tasksMenuItem.submenu = sub
     }
 
@@ -138,7 +149,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             } catch {
                 guard !Task.isCancelled else { return }
                 debugLog("[MenuBar] RSS fetch failed: \(error)")
-                NotificationManager.shared.error("RSS 抓取失败", error.localizedDescription)
+                NotificationManager.shared.error(L10n.Menu.rssFetchFailed, error.localizedDescription)
             }
         }
     }
@@ -167,7 +178,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
                 debugLog("[MenuBar] Task '\(name)' FAILED: \(errMsg)")
                 DispatchQueue.main.async {
-                    NotificationManager.shared.error("任务失败: \(name)", errMsg)
+                    NotificationManager.shared.error(L10n.Menu.taskFailed(name), errMsg)
                 }
             }
         }
@@ -188,18 +199,30 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             }
         } catch {
             debugLog("[LoginItem] Failed: \(error)")
-            NotificationManager.shared.error("开机自启设置失败", error.localizedDescription)
+            NotificationManager.shared.error(L10n.Menu.launchAtLoginFailed, error.localizedDescription)
         }
+    }
+
+    // MARK: - Title Refresh
+
+    func refreshAllTitles() {
+        reloadItem.title = L10n.Menu.reloadConfig
+        launchAtLoginItem.title = L10n.Menu.launchAtLogin
+        rssMenuItem.title = L10n.Menu.rss
+        tasksMenuItem.title = L10n.Menu.tasks
+        clearItem.title = L10n.Menu.clearClipboard
+        quitItem.title = L10n.Menu.quit
     }
 
     @objc private func reloadConfig() {
         do {
             try ConfigManager.shared.reload()
+            refreshAllTitles()
             refreshRSSItem()
             refreshTasksItem()
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
-            NotificationManager.shared.error("配置重载失败", error.localizedDescription)
+            NotificationManager.shared.error(L10n.Menu.configReloadFailed, error.localizedDescription)
         }
     }
 

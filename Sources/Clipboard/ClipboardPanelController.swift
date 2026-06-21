@@ -361,23 +361,23 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
     private func displayText(for item: ClipboardItem) -> String {
         switch item.type {
         case "text":
-            return String(data: item.content, encoding: .utf8) ?? "(不可读)"
+            return String(data: item.content, encoding: .utf8) ?? L10n.Clipboard.unreadable
         case "file":
-            return item.application ?? "文件"
+            return item.application ?? L10n.Clipboard.file
         case "file_batch":
             if let json = try? JSONDecoder().decode([String: [String]].self, from: item.content),
                let paths = json["paths"] {
-                return "\(paths.count) 个文件"
+                return L10n.Clipboard.fileCount(paths.count)
             }
-            return "文件"
+            return L10n.Clipboard.file
         case "html":
             if let text = item.application, !text.isEmpty {
                 let line = text.prefix(80).replacingOccurrences(of: "\n", with: " ")
                 return String(line)
             }
-            return "网页内容"
+            return L10n.Clipboard.webContent
         default:
-            return "(未知)"
+            return L10n.Clipboard.unknown
         }
     }
 
