@@ -12,20 +12,23 @@ private let browserBundleIDs: Set<String> = [
 ]
 
 /// 为目标 app 调度 Cmd+V 粘贴。
-/// 浏览器：120ms 单次（等渲染进程焦点就位），叠加 System Events + CGEventPost 双路。
-/// 原生 app：50ms 单次。
-func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
+/// 浏览器：120ms（等渲染进程焦点就位），通过 osascript 子进程执行 keystroke。
+/// 原生 app：50ms。
+func schedulePaste(to target: NSRunningApplication) {
     let isBrowser = browserBundleIDs.contains(target.bundleIdentifier ?? "")
     let delay: TimeInterval = isBrowser ? 0.12 : 0.05
 
     DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-        // System Events keystroke 优先（对网页 input 有效）
-        let script = NSAppleScript(source:
-            "tell application \"System Events\" to keystroke \"v\" using command down")
-        var error: NSDictionary?
-        script?.executeAndReturnError(&error)
-        if let err = error {
-            debugLog("[utility] \(logPrefix) System Events error, CGEventPost fallback: \(err)")
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e",
+            "tell application \"System Events\" to keystroke \"v\" using command down"]
+        let errorPipe = Pipe()
+        task.standardError = errorPipe
+        task.launch()
+        task.waitUntilExit()
+
+        if task.terminationStatus != 0 {
             let src = CGEventSource(stateID: .combinedSessionState)
             if let kd = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
                let ku = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
@@ -34,7 +37,6 @@ func schedulePaste(to target: NSRunningApplication, logPrefix: String) {
                 ku.flags = .maskCommand
                 kd.post(tap: .cghidEventTap)
                 ku.post(tap: .cghidEventTap)
-                debugLog("[utility] \(logPrefix) CGEventPost fallback sent")
             }
         }
     }

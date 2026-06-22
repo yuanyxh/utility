@@ -407,7 +407,7 @@ public final class TranslationPanelController: NSWindowController {
                 debugLog("[utility] didActivate: PID mismatch, skipping")
                 return
             }
-            schedulePaste(to: target, logPrefix: "translation")
+            schedulePaste(to: target)
         }
 
         // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app

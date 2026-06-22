@@ -188,7 +188,7 @@ public final class ClipboardPanelController: NSWindowController {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
 
-        schedulePaste(to: target, logPrefix: "clipboard")
+        schedulePaste(to: target)
     }
 
     // MARK: - Keyboard
