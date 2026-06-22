@@ -6,3 +6,4 @@
 *.dmg
 .swiftpm/
 .hermes/plans/*
+scripts/package-utility.sh
