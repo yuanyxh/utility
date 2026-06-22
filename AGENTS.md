@@ -26,6 +26,8 @@
    - 如需更新，更新后等用户确认，不继续提交动作
 2. **排查策略**：2-3 轮对话后仍无法解决问题，搜索网络相关资料。
 3. **Bug 修复**：依赖现实调试信息，禁止靠猜测修改。先给出明确的调试方案——如何获取必要信息。
+   - **禁止猜测代码用途**：看不懂某段代码为什么那样写时，先查 git log 看提交记录和 commit message
+   - git 记录看不出来时，问用户，不要自己假设
 4. **大改动审批**：代码改动过大时，先询问，确认后再修改。
 
 ---
@@ -71,6 +73,9 @@
 | `ConfigManager` | YAML 配置加载/热重载 |
 | `MenuBarManager` | NSStatusItem + NSMenu |
 | `HotkeyManager` | Carbon RegisterEventHotKey |
+| `ChatPanelController` | AI 对话面板：SSE 流式显示、选中文本预填、粘贴 |
+| `AIChatService` | 对话服务：消息构建、system prompt 注入、流式请求生命周期 |
+| `SSEParser` | SSE 帧解析器：`data:` 行 → content delta 回调 |
 | `ClipboardPanelController` | 剪贴板面板 + clipboardStorage + clipboardWatcher（自管生命周期） |
 | `TranslationPanelController` | 翻译面板 + 选中文本获取 |
 | `StageWindowController` | Stage 暂存窗口 + StageDropMonitor（自管注册） |
@@ -100,7 +105,7 @@
 
 ### 并发
 - `Task?.cancel()` + `guard isCancelled` 模式
-- 翻译用序列计数器拒绝 stale 回调
+- 翻译/对话用序列计数器（`chatSeq`/`translationSeq`）拒绝 stale 回调
 
 ### NSTableView
 - `selectionHighlightStyle = .none` + manual frame + cell 子类 layout
@@ -143,7 +148,7 @@
 
 ## 版本
 
-当前：**1.0.1**
+当前：**1.0.2**
 
 ---
 

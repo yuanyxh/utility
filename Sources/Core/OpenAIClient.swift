@@ -13,6 +13,7 @@ public struct OpenAIChatRequest: Codable {
     public let reasoningEffort: String?
     public let presencePenalty: Double?
     public let frequencyPenalty: Double?
+    public let stream: Bool
 
     public struct Message: Codable {
         public let role: String
@@ -42,7 +43,8 @@ public struct OpenAIChatRequest: Codable {
         thinking: ThinkingConfig? = nil,
         reasoningEffort: String? = nil,
         presencePenalty: Double? = nil,
-        frequencyPenalty: Double? = nil
+        frequencyPenalty: Double? = nil,
+        stream: Bool = false
     ) {
         self.model = model
         self.messages = messages
@@ -54,10 +56,11 @@ public struct OpenAIChatRequest: Codable {
         self.reasoningEffort = reasoningEffort
         self.presencePenalty = presencePenalty
         self.frequencyPenalty = frequencyPenalty
+        self.stream = stream
     }
 
     enum CodingKeys: String, CodingKey {
-        case model, messages, temperature, stop, thinking
+        case model, messages, temperature, stop, thinking, stream
         case topP = "top_p"
         case maxTokens = "max_tokens"
         case reasoningEffort = "reasoning_effort"
@@ -221,6 +224,98 @@ public final class OpenAIClient {
         }
 
         return try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
+    }
+
+    // MARK: - Stream
+
+    /// SSE 流式对话 — 每收到一个 content delta 调用 onToken
+    @discardableResult
+    public func stream(
+        request req: OpenAIChatRequest,
+        baseURL: String,
+        onToken: @escaping (String) -> Void,
+        onComplete: @escaping (Result<Void, Error>) -> Void
+    ) -> URLSessionDataTask? {
+        let urlRequest: URLRequest
+        do {
+            urlRequest = try makeURLRequest(req, baseURL: baseURL)
+        } catch {
+            onComplete(.failure(error))
+            return nil
+        }
+
+        let parser = SSEParser()
+        let delegate = StreamDelegate(parser: parser, onToken: onToken, onComplete: onComplete)
+        let streamSession = URLSession(
+            configuration: .default,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+        let task = streamSession.dataTask(with: urlRequest)
+        // 保持 session 引用，防止 task 未 retain 时 session 被提前释放
+        delegate.session = streamSession
+        task.resume()
+        return task
+    }
+
+    // MARK: - Stream Delegate
+
+    private final class StreamDelegate: NSObject, URLSessionDataDelegate {
+        private let parser: SSEParser
+        private let onToken: (String) -> Void
+        private let onComplete: (Result<Void, Error>) -> Void
+        private var hasCompleted = false
+        /// 保持 streamSession 引用，防止在 task 运行中被释放
+        var session: URLSession?
+
+        init(
+            parser: SSEParser,
+            onToken: @escaping (String) -> Void,
+            onComplete: @escaping (Result<Void, Error>) -> Void
+        ) {
+            self.parser = parser
+            self.onToken = onToken
+            self.onComplete = onComplete
+        }
+
+        func urlSession(
+            _: URLSession,
+            dataTask _: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            guard let httpResponse = response as? HTTPURLResponse else {
+                complete(.failure(OpenAIError.invalidResponse))
+                completionHandler(.cancel)
+                return
+            }
+            guard httpResponse.statusCode == 200 else {
+                complete(.failure(OpenAIError.httpError(httpResponse.statusCode, "")))
+                completionHandler(.cancel)
+                return
+            }
+            completionHandler(.allow)
+        }
+
+        func urlSession(_: URLSession, dataTask _: URLSessionDataTask, didReceive data: Data) {
+            parser.feed(data, onToken: onToken, onComplete: { [weak self] in
+                self?.complete(.success(()))
+            })
+        }
+
+        func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: Error?) {
+            if let error = error {
+                complete(.failure(error))
+            }
+        }
+
+        private func complete(_ result: Result<Void, Error>) {
+            guard !hasCompleted else { return }
+            hasCompleted = true
+            onComplete(result)
+            session?.invalidateAndCancel()
+            session = nil
+        }
     }
 }
 

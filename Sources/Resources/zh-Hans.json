@@ -39,6 +39,7 @@
     "config.header_comment": "# Utility 配置文件\n# 修改后通过菜单栏「重载配置」或重启生效",
     "prompt.translate": "你是一个翻译助手。请将以下文本从{source}翻译到{target}。保留原文中的所有格式，包括 Markdown 语法、特殊字符、换行和代码块。如果内容无法翻译（如专有名词、纯数字、代码、URL），请原样返回。只返回翻译结果，不要添加任何解释、引号或额外内容。",
     "prompt.translate_auto": "你是一个翻译助手。请检测以下文本的语言。如果原文是{first}则翻译成{second}；如果原文是{second}则翻译成{first}；如果原文是其他语言则翻译成{first}。保留原文中的所有格式，包括 Markdown 语法、特殊字符、换行和代码块。如果内容无法翻译（如专有名词、纯数字、代码、URL），请原样返回。只返回翻译结果，不要添加任何解释、引号或额外内容。",
+    "prompt.chat": "你是一个简洁高效的 AI 助手，根据用户的语言习惯回复，直接给出答案。",
     "rss.help_header": "RSS 订阅管理（Headless）",
     "rss.help_fetch": "抓取并更新所有订阅",
     "rss.help_list": "列出未读条目（JSON）",

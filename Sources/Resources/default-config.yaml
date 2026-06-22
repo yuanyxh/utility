@@ -29,6 +29,8 @@ translation:
   firstLang: zh
   secondLang: en
   prompt: ''
+chat:
+  hotkey: option+space
 stage:
   moveOnDragOut: true
 rss:

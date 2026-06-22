@@ -25,6 +25,8 @@ public final class PromptManager {
             return L10n.Prompt.translate
         case "translate_auto":
             return L10n.Prompt.translateAuto
+        case "chat":
+            return L10n.Prompt.chat
         default:
             return ""
         }

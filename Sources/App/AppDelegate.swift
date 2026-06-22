@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let hotkeyManager = HotkeyManager.shared
     let clipboardPanel = ClipboardPanelController()
     lazy var translationPanel = TranslationPanelController()
+    lazy var chatPanel = ChatPanelController()
     private let stageWindow = StageWindowController()
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -25,9 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             debugLog("[Utility] Database setup failed: \(error)")
             EventBus.shared.publish(AppEvent.databaseInitFailed, payload: error.localizedDescription)
         }
-
-        // L10n.setup() 已通过 NotificationCenter 通知所有组件刷新标题
-        // 各组件自行 observe L10n.languageDidChange
 
         registerAllHotkeys()
         installEventHandler()
@@ -95,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                         }
                     }
                 }
+            }
+        }
+
+        hotkeyManager.register(hotkey: config.chat.hotkey, id: "chat") { [weak self] in
+            guard let self = self else { return }
+            if self.chatPanel.isPanelVisible {
+                self.chatPanel.close()
+            } else {
+                self.chatPanel.show()
             }
         }
     }

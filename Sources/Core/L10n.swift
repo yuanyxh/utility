@@ -271,6 +271,10 @@ extension L10n {
         static var translateAuto: String {
             string("prompt.translate_auto")
         }
+
+        static var chat: String {
+            string("prompt.chat")
+        }
     }
 }
 
