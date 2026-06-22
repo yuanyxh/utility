@@ -22,14 +22,12 @@ final class NetworkSpeedMonitor {
         }
         t.resume()
         timer = t
-        debugLog("[Network] Monitoring started")
     }
 
     func stop() {
         timer?.cancel()
         timer = nil
         previous = nil
-        debugLog("[Network] Monitoring stopped")
     }
 
     // MARK: - Poll

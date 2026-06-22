@@ -9,9 +9,6 @@ public final class ClipboardPanelController: NSWindowController {
     private var items: [ClipboardItem] = []
     private let clipboardStorage = ClipboardStorage()
     private lazy var clipboardWatcher = ClipboardWatcher(storage: clipboardStorage)
-    private var eventMonitor: Any?
-    /// 面板打开前的前台 app（粘贴时恢复到该 app）
-    private var previousFrontmostApp: NSRunningApplication?
 
     public init() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
@@ -26,7 +23,6 @@ public final class ClipboardPanelController: NSWindowController {
 
         super.init(window: panel)
         setupUI()
-        setupDeactivateObserver()
         clipboardWatcher.start()
 
         EventBus.shared.subscribe(AppEvent.configDidLoad) { [weak self] _ in
@@ -40,9 +36,6 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     deinit {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -83,30 +76,12 @@ public final class ClipboardPanelController: NSWindowController {
         stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
-        // 键盘事件
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self, self.window?.isVisible == true else {
-                return event
-            }
-            switch event.keyCode {
-            case 36 where !event.modifierFlags.contains(.command): // return
-                self.selectItem()
-                return nil
-            case 53: // esc
-                self.close()
-                return nil
-            default:
-                return event
-            }
-        }
+        // 键盘事件 — 统一由 KeyDispatcher → handleKeyEvent 派发
     }
 
-    /// 失焦自动关闭
-    private func setupDeactivateObserver() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(close),
-            name: NSWindow.didResignKeyNotification, object: window
-        )
+    /// 面板是否可见
+    var isPanelVisible: Bool {
+        window?.isVisible ?? false
     }
 
     // MARK: - Actions
@@ -116,25 +91,11 @@ public final class ClipboardPanelController: NSWindowController {
         let item = items[tableView.selectedRow]
         try? clipboardStorage.moveToTop(item.id)
 
-        // 翻译面板打开 → 仅文本插入原文区
-        if let trans = translationPanelIfVisible(),
-           item.type == "text",
-           let text = String(data: item.content, encoding: .utf8)
-        {
-            trans.insertText(text)
-            close()
-            return
-        }
-
         paste(item: item)
-        close()
+        EventBus.shared.publish(PanelEvent.requestPaste, payload: self)
     }
 
-    private func translationPanelIfVisible() -> TranslationPanelController? {
-        guard let delegate = NSApplication.shared.delegate as? AppDelegate else { return nil }
-        let panel = delegate.translationPanel
-        return panel.isPanelVisible ? panel : nil
-    }
+    // MARK: - Paste
 
     private func paste(item: ClipboardItem) {
         let pb = NSPasteboard.general
@@ -165,7 +126,6 @@ public final class ClipboardPanelController: NSWindowController {
         case "html":
             guard let html = String(data: item.content, encoding: .utf8) else { return }
             pb.setString(html, forType: .html)
-            // 同时写纯文本，让不支持富文本的目标也能粘贴
             if let plainText = item.application {
                 pb.setString(plainText, forType: .string)
             }
@@ -173,50 +133,7 @@ public final class ClipboardPanelController: NSWindowController {
             return
         }
 
-        debugLog("[utility] clipboard paste: pasteboard written")
-
-        // 标记 watcher 跳过这次自触发变化
         clipboardWatcher.skipCurrentChange()
-
-        guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
-            debugLog("[utility] clipboard paste: no target app")
-            window?.orderOut(nil)
-            NSApplication.shared.hide(nil)
-            return
-        }
-
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
-
-        schedulePaste(to: target)
-    }
-
-    // MARK: - Keyboard
-
-    private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
-        switch event.keyCode {
-        case 53: // esc — 关闭
-            close()
-            return nil
-        case 36: // return — 粘贴选中
-            if !event.modifierFlags.contains(.command) {
-                selectItem()
-                return nil
-            }
-        case 125: // down — 下移选择
-            let next = min(tableView.selectedRow + 1, items.count - 1)
-            tableView.selectRowIndexes(.init(integer: max(next, 0)), byExtendingSelection: false)
-            tableView.scrollRowToVisible(max(next, 0))
-            return nil
-        case 126: // up — 上移选择
-            let prev = tableView.selectedRow - 1
-            tableView.selectRowIndexes(.init(integer: max(prev, 0)), byExtendingSelection: false)
-            tableView.scrollRowToVisible(max(prev, 0))
-            return nil
-        default:
-            break
-        }
-        return event
     }
 
     // MARK: - Show / Close
@@ -265,9 +182,6 @@ public final class ClipboardPanelController: NSWindowController {
             }
         }
 
-        // 记录当前前台 app，粘贴时恢复到它
-        previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-
         window?.makeKeyAndOrderFront(nil)
         if !items.isEmpty {
             tableView.selectRowIndexes(.init(integer: 0), byExtendingSelection: false)
@@ -275,10 +189,9 @@ public final class ClipboardPanelController: NSWindowController {
     }
 
     override public func close() {
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
         items = []
         tableView.reloadData()
+        EventBus.shared.publish(PanelEvent.requestClose, payload: self)
     }
 }
 
@@ -494,5 +407,32 @@ private final class NumberCircleView: NSView {
 
     required init?(coder _: NSCoder) {
         nil
+    }
+}
+
+// MARK: - PanelProtocol
+
+extension ClipboardPanelController: PanelProtocol {
+    var panelID: String { "clipboard" }
+    var panelWindow: NSWindow? { window }
+
+    func showPanel(context: [String: Any]?) { show() }
+
+    func closePanel() {
+        window?.orderOut(nil)
+        items = []
+        tableView.reloadData()
+    }
+
+    func handleKeyEvent(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53 {
+            EventBus.shared.publish(PanelEvent.requestClose, payload: self)
+            return true
+        }
+        if event.keyCode == 36, !event.modifierFlags.contains(.command) {
+            selectItem()
+            return true
+        }
+        return false
     }
 }

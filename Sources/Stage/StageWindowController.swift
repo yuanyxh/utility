@@ -120,7 +120,9 @@ public final class StageWindowController: NSWindowController {
     }
 
     override public func close() {
-        window?.orderOut(nil)
+        if items.isEmpty { 
+            window?.orderOut(nil)   
+        }
     }
 
     private func addVisualEffectView() {
@@ -142,7 +144,7 @@ public final class StageWindowController: NSWindowController {
     @objc private func clearAll() {
         try? StageManager.shared.clearAll()
         reload()
-        if items.isEmpty { close() }
+        close()
     }
 
     @objc private func deleteItem(_ sender: NSButton) {
@@ -151,7 +153,7 @@ public final class StageWindowController: NSWindowController {
         let item = items[row]
         try? StageManager.shared.remove(item.id)
         reload()
-        if items.isEmpty { close() }
+        close()
     }
 }
 
@@ -270,12 +272,11 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(_: NSTableView, draggingSession _: NSDraggingSession, endedAt _: NSPoint, operation: NSDragOperation) {
         defer { draggingItemId = nil; draggingItem = nil }
-        debugLog("[StageMove] endedAt operation=\(operation.rawValue)")
-        guard operation != [] else { debugLog("[StageMove] operation empty, skip"); return }
-        guard let item = draggingItem else { debugLog("[StageMove] no draggingItem"); return }
+        guard operation != [] else { return }
+        guard let item = draggingItem else { return }
         tryMoveOrRemove(item: item, operation: operation)
         reload()
-        if items.isEmpty { close() }
+        close()
     }
 
     // MARK: - Move on drag out
@@ -288,12 +289,10 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         }
         // Finder 已执行移动（cmd+opt+v）→ 只删 DB
         if operation == .move {
-            debugLog("[StageMove] Finder moved, just remove DB")
             try? StageManager.shared.remove(item.id)
             return
         }
         // operation == .copy: 非磁盘目标（微信/浏览器等），即使配置为 move 也只 copy，不删源文件
-        debugLog("[StageMove] copy to non-disk target, just remove DB")
         try? StageManager.shared.remove(item.id)
     }
 }

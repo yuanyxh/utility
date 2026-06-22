@@ -17,6 +17,7 @@
     "notify.db_init_failed": "数据库初始化失败",
     "notify.hotkey_parse_failed": "热键解析失败",
     "notify.hotkey_register_failed": "热键注册失败",
+    "notify.hotkey_register_failed_body": "%@: %@ — 可能被其他应用占用",
     "clipboard.unreadable": "(不可读)",
     "clipboard.file": "文件",
     "clipboard.file_count": "%ld 个文件",

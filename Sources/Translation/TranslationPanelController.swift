@@ -16,8 +16,8 @@ private final class TranslationTextView: NSTextView {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         switch event.keyCode {
-        case 53: // esc
-            controller?.close()
+        case 53:
+            EventBus.shared.publish(PanelEvent.requestClose, payload: controller)
             return true
         case 36: // return / enter
             if flags == .command {
@@ -172,7 +172,6 @@ public final class TranslationPanelController: NSWindowController {
         panel.controller = self
         sourceTextView.controller = self
         setupUI()
-        setupDeactivateObserver()
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil
@@ -311,14 +310,6 @@ public final class TranslationPanelController: NSWindowController {
         UserDefaults.standard.set(NSStringFromPoint(origin), forKey: UDKey.translationPanelOrigin)
     }
 
-    /// 失焦自动关闭
-    private func setupDeactivateObserver() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(close),
-            name: NSWindow.didResignKeyNotification, object: window
-        )
-    }
-
     // MARK: - Languages
 
     private func setupLanguagePopups() {
@@ -366,54 +357,14 @@ public final class TranslationPanelController: NSWindowController {
 
     fileprivate func pasteTranslation() {
         let text = targetTextView.string
-        guard !text.isEmpty else { debugLog("[utility] pasteTranslation: empty text"); return }
-        guard !overlay.isVisible || overlay.mode == .error else {
-            debugLog("[utility] pasteTranslation: overlay blocking (mode=\(overlay.mode))"); return
-        }
+        guard !text.isEmpty else { return }
+        guard !overlay.isVisible || overlay.mode == .error else { return }
 
-        debugLog("[utility] pasteTranslation: text=\(text.prefix(50))... targetLen=\(text.utf16.count)")
-
-        // 先把译文写入粘贴板
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // 记录目标 app（面板打开前的前台 app，而非当前自己）
-        guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
-            debugLog("[utility] pasteTranslation: no target app")
-            window?.orderOut(nil)
-            return
-        }
-        debugLog("[utility] pasteTranslation: target PID=\(target.processIdentifier) bundle=\(target.bundleIdentifier ?? "nil")")
-
-        // didActivate observer — 必须在 hide(nil) 之前注册（hide 可能同步触发激活通知）
-        var notifToken: NSObjectProtocol?
-        notifToken = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { notification in
-            // defer 确保无论哪个分支退出都移除 observer
-            defer {
-                if let token = notifToken {
-                    NSWorkspace.shared.notificationCenter.removeObserver(token)
-                }
-            }
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-                debugLog("[utility] didActivate: no app in notification")
-                return
-            }
-            debugLog("[utility] didActivate: app PID=\(app.processIdentifier) bundle=\(app.bundleIdentifier ?? "nil") expected=\(target.processIdentifier)")
-            guard app.processIdentifier == target.processIdentifier else {
-                debugLog("[utility] didActivate: PID mismatch, skipping")
-                return
-            }
-            schedulePaste(to: target)
-        }
-
-        // 隐藏面板，利用 hide(nil) 反激活自己、激活原目标 app
-        // （didActivate 通知此时可能同步触发）
-        window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
+        EventBus.shared.publish(PanelEvent.requestPaste, payload: self)
     }
 
     // MARK: - Show / Close
@@ -423,7 +374,6 @@ public final class TranslationPanelController: NSWindowController {
         window?.isVisible ?? false
     }
 
-    /// 由粘贴面板插入文本到原文区
     func insertText(_ text: String) {
         sourceTextView.string = text
         sourceTextView.scrollToEndOfDocument(nil)
@@ -549,14 +499,7 @@ public final class TranslationPanelController: NSWindowController {
 
     override public func close() {
         cancelTranslation()
-        window?.orderOut(nil)
-        // 延迟判断——close 被 clipboard.show() 的 makeKeyAndOrderFront 同步触发时 isVisible 未就绪
-        DispatchQueue.main.async {
-            let clipVisible = (NSApplication.shared.delegate as? AppDelegate)?.clipboardPanel.window?.isVisible ?? false
-            if !clipVisible {
-                NSApplication.shared.hide(nil)
-            }
-        }
+        EventBus.shared.publish(PanelEvent.requestClose, payload: self)
     }
 
     /// 取消当前翻译任务
@@ -693,5 +636,76 @@ extension TranslationPanelController {
             messageLabel.stringValue = ""
             isHidden = true
         }
+    }
+}
+
+// MARK: - PanelProtocol
+
+extension TranslationPanelController: PanelProtocol {
+    var panelID: String { "translation" }
+    var panelWindow: NSWindow? { window }
+
+    func showPanel(context: [String: Any]?) {
+        if let text = context?["text"] as? String, !text.isEmpty {
+            show(with: text)
+            startTranslation(text: text)
+            return
+        }
+
+        if isPanelVisible {
+            window?.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            guard let app = previousFrontmostApp else { return }
+            Task { @MainActor in
+                if let text = await SelectedTextService.getSelectedText(from: app) {
+                    fillAndTranslate(text)
+                }
+            }
+            return
+        }
+
+        let preApp = NSWorkspace.shared.frontmostApplication
+        previousFrontmostApp = preApp
+
+        showEmpty()
+        guard let app = preApp else { return }
+        Task { @MainActor in
+            if let text = await SelectedTextService.getSelectedText(from: app), !text.isEmpty {
+                activateForInput()
+                fillAndTranslate(text)
+            } else {
+                activateForInput()
+            }
+        }
+    }
+
+    func closePanel() {
+        cancelTranslation()
+        window?.orderOut(nil)
+    }
+
+    func handleKeyEvent(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53 {
+            EventBus.shared.publish(PanelEvent.requestClose, payload: self)
+            return true
+        }
+        if event.keyCode == 36 {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command {
+                performTranslation()
+                return true
+            }
+            if flags == .shift {
+                sourceTextView.insertNewline(nil)
+                return true
+            }
+            if !flags.contains(.command), !flags.contains(.control) {
+                if isTranslating { return true }
+                pasteTranslation()
+                return true
+            }
+            return false
+        }
+        return false
     }
 }

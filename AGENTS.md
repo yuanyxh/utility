@@ -73,6 +73,9 @@
 | `ConfigManager` | YAML 配置加载/热重载 |
 | `MenuBarManager` | NSStatusItem + NSMenu |
 | `HotkeyManager` | Carbon RegisterEventHotKey |
+| `PanelManager` | 栈结构面板生命周期：注册/弹出/关闭/焦点追踪 |
+| `KeyDispatcher` | 责任链键盘事件派发：栈顶→栈底→系统 |
+| `PanelProtocol` | 面板统一协议：panelID / showPanel / closePanel / handleKeyEvent |
 | `ChatPanelController` | AI 对话面板：SSE 流式显示、选中文本预填、粘贴 |
 | `AIChatService` | 对话服务：消息构建、system prompt 注入、流式请求生命周期 |
 | `SSEParser` | SSE 帧解析器：`data:` 行 → content delta 回调 |
@@ -106,6 +109,12 @@
 ### 并发
 - `Task?.cancel()` + `guard isCancelled` 模式
 - 翻译/对话用序列计数器（`chatSeq`/`translationSeq`）拒绝 stale 回调
+
+### 面板管理
+- `PanelManager.shared.show/close` 统一管理面板生命周期（不直接调 panel.show/close）
+- 失焦关闭走 `panelDidResignKey` → `PanelManager.shared.close(self)`
+- 面板间互调用 `PanelManager.shared.panel(id:)`，不走 AppDelegate
+- `hide(nil)` 由 PanelManager 在栈空时统一调用
 
 ### NSTableView
 - `selectionHighlightStyle = .none` + manual frame + cell 子类 layout
@@ -148,7 +157,7 @@
 
 ## 版本
 
-当前：**1.0.2**
+当前：**1.1.0**
 
 ---
 

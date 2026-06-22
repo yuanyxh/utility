@@ -28,8 +28,6 @@ public final class ConfigManager {
         config = try decoder.decode(AppConfig.self, from: data)
         L10n.setup()
         EventBus.shared.publish(AppEvent.configDidLoad)
-
-        debugLog("[Config] Loaded from \(configFile.path)")
     }
 
     public func reload() throws {

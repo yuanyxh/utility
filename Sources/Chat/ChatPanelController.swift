@@ -5,10 +5,17 @@ import Cocoa
 private final class ChatInputTextView: NSTextView {
     weak var controller: ChatPanelController?
 
+    private let _undoManager = UndoManager()
+    override var undoManager: UndoManager? { _undoManager }
+
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if event.keyCode == 36, flags == .shift {
             insertNewline(nil)
+            return
+        }
+        if flags.contains(.command), !flags.contains(.shift), event.keyCode == 6 {
+            undoManager?.undo()
             return
         }
         super.keyDown(with: event)
@@ -26,28 +33,31 @@ private final class ChatPanel: NSPanel {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
+        // 编辑修饰键 — 显式派发给第一响应者
+        if flags == .command {
+            switch event.keyCode {
+            case 8: // c
+                if let tv = firstResponder as? NSTextView { tv.copy(nil); return true }
+            case 7: // x
+                if let tv = firstResponder as? NSTextView, tv.isEditable { tv.cut(nil); return true }
+            case 9: // v
+                if let tv = firstResponder as? NSTextView, tv.isEditable { tv.paste(nil); return true }
+            case 0: // a
+                if let tv = firstResponder as? NSTextView { tv.selectAll(nil); return true }
+            default: break
+            }
+        }
+
         switch event.keyCode {
-        case 53: // esc
-            controller?.close()
+        case 53:
+            EventBus.shared.publish(PanelEvent.requestClose, payload: controller)
             return true
         case 36: // return/enter
-            if flags == .command {
-                controller?.triggerChat()
-                return true
-            }
-            if !flags.contains(.command), !flags.contains(.shift), !flags.contains(.control) {
-                if controller?.hasOutput == true {
-                    controller?.pasteAndClose()
-                    return true
-                }
-            }
+            if flags == .command { controller?.triggerChat(); return true }
+            if !flags.contains(.command), !flags.contains(.shift), !flags.contains(.control),
+               controller?.hasOutput == true { controller?.pasteAndClose(); return true }
             return false
-        default:
-            break
-        }
-        // cmd+c/x/v/a/z → NSTextView 原生处理
-        if flags == .command, [0, 6, 7, 8, 9].contains(event.keyCode) {
-            return false
+        default: break
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -157,7 +167,6 @@ public final class ChatPanelController: NSWindowController {
         inputTextView.controller = self
 
         setupUI()
-        setupDeactivateObserver()
     }
 
     @available(*, unavailable)
@@ -215,13 +224,6 @@ public final class ChatPanelController: NSWindowController {
         window.setContentSize(NSSize(width: panelW, height: panelH))
     }
 
-    private func setupDeactivateObserver() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(panelDidResignKey),
-            name: NSWindow.didResignKeyNotification, object: window
-        )
-    }
-
     // MARK: - Property
 
     public var isPanelVisible: Bool {
@@ -269,21 +271,7 @@ public final class ChatPanelController: NSWindowController {
         accumulatedOutput = ""
         hideOutput()
 
-        window?.orderOut(nil)
-
-        // 其他面板都没显示时返回原焦点
-        DispatchQueue.main.async {
-            let delegate = NSApplication.shared.delegate as? AppDelegate
-            let clipVisible = delegate?.clipboardPanel.window?.isVisible ?? false
-            let tranVisible = delegate?.translationPanel.window?.isVisible ?? false
-            if !clipVisible, !tranVisible {
-                NSApplication.shared.hide(nil)
-            }
-        }
-    }
-
-    @objc private func panelDidResignKey() {
-        close()
+        EventBus.shared.publish(PanelEvent.requestClose, payload: self)
     }
 
     private func positionPanel() {
@@ -404,27 +392,47 @@ public final class ChatPanelController: NSWindowController {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        guard let target = previousFrontmostApp ?? NSWorkspace.shared.frontmostApplication else {
-            window?.orderOut(nil)
-            return
-        }
+        EventBus.shared.publish(PanelEvent.requestPaste, payload: self)
+    }
+}
 
-        var notifToken: NSObjectProtocol?
-        notifToken = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { notification in
-            defer {
-                if let token = notifToken {
-                    NSWorkspace.shared.notificationCenter.removeObserver(token)
-                }
-            }
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            guard app.processIdentifier == target.processIdentifier else { return }
-            schedulePaste(to: target)
-        }
+// MARK: - PanelProtocol
 
+extension ChatPanelController: PanelProtocol {
+    var panelID: String { "chat" }
+    var panelWindow: NSWindow? { window }
+
+    func showPanel(context: [String: Any]?) {
+        if isPanelVisible {
+            EventBus.shared.publish(PanelEvent.requestClose, payload: self)
+        } else {
+            show()
+        }
+    }
+
+    func closePanel() {
+        AIChatService.shared.cancel()
+        isStreaming = false
+        chatSeq += 1
+        loadingIndicator.stopAnimation(nil)
+        inputTextView.string = ""
+        outputTextView.string = ""
+        accumulatedOutput = ""
+        hideOutput()
         window?.orderOut(nil)
-        NSApplication.shared.hide(nil)
+    }
+
+    func handleKeyEvent(_ event: NSEvent) -> Bool {
+        if event.keyCode == 53 {
+            EventBus.shared.publish(PanelEvent.requestClose, payload: self)
+            return true
+        }
+        if event.keyCode == 36 {
+            if event.modifierFlags.contains(.command) { triggerChat(); return true }
+            if hasOutput { pasteAndClose(); return true }
+            inputTextView.insertNewline(nil)
+            return true
+        }
+        return false
     }
 }

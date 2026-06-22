@@ -143,9 +143,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         rssFetchTask?.cancel()
         rssFetchTask = Task {
             do {
-                let new = try await RSSManager.shared.fetchAll()
+                _ = try await RSSManager.shared.fetchAll()
                 guard !Task.isCancelled else { return }
-                debugLog("[MenuBar] RSS fetch: \(new.count) new items")
             } catch {
                 guard !Task.isCancelled else { return }
                 debugLog("[MenuBar] RSS fetch failed: \(error)")
@@ -157,7 +156,6 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     @objc private func rssMarkAllRead() {
         do {
             try RSSManager.shared.markAllAsRead()
-            debugLog("[MenuBar] RSS marked all read")
         } catch {
             debugLog("[MenuBar] RSS mark all read failed: \(error)")
         }
@@ -172,11 +170,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         DispatchQueue.global(qos: .utility).async {
             let result = TaskExecutor.execute(task.exec)
-            if result.success {
-                debugLog("[MenuBar] Task '\(name)' triggered OK")
-            } else {
+            if !result.success {
                 let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
-                debugLog("[MenuBar] Task '\(name)' FAILED: \(errMsg)")
                 DispatchQueue.main.async {
                     EventBus.shared.publish(AppEvent.taskDidFail, payload: (name, errMsg))
                 }
@@ -191,11 +186,9 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
                 launchAtLoginItem.state = .off
-                debugLog("[LoginItem] Unregistered")
             } else {
                 try SMAppService.mainApp.register()
                 launchAtLoginItem.state = .on
-                debugLog("[LoginItem] Registered")
             }
         } catch {
             debugLog("[LoginItem] Failed: \(error)")
@@ -231,7 +224,6 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         try? db?.write { db in
             try db.execute(literal: "DELETE FROM clipboard_item")
         }
-        debugLog("[MenuBar] Clipboard cleared")
     }
 
     @objc private func quit() {

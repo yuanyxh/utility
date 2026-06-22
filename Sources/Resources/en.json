@@ -17,6 +17,7 @@
     "notify.db_init_failed": "DB Init Failed",
     "notify.hotkey_parse_failed": "Hotkey Parse Failed",
     "notify.hotkey_register_failed": "Hotkey Register Failed",
+    "notify.hotkey_register_failed_body": "%@: %@ — may be used by another app",
     "clipboard.unreadable": "(N/A)",
     "clipboard.file": "File",
     "clipboard.file_count": "%ld files",

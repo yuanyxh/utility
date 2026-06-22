@@ -38,7 +38,6 @@ public final class RSSManager {
                 try db.write { db in
                     try db.execute(literal: "DELETE FROM rss_item WHERE feed_name = \(name)")
                 }
-                debugLog("[RSS] Removed stale feed: \(name)")
             } catch {
                 debugLog("[RSS] cleanupStaleFeeds delete '\(name)' failed: \(error)")
             }
@@ -50,7 +49,6 @@ public final class RSSManager {
     public func fetchAll() async throws -> [RSSItem] {
         let feeds = ConfigManager.shared.config.rss.feeds
         guard !feeds.isEmpty else {
-            debugLog("[RSS] No feeds configured")
             return []
         }
 
@@ -58,7 +56,6 @@ public final class RSSManager {
 
         for feed in feeds {
             guard let url = URL(string: feed.url) else {
-                debugLog("[RSS] Invalid URL: \(feed.url)")
                 continue
             }
             do {
@@ -67,7 +64,6 @@ public final class RSSManager {
                 let newItems = parser.parse(data: data, feedName: feed.name)
                 let inserted = try addIfNew(newItems)
                 allNew.append(contentsOf: inserted)
-                debugLog("[RSS] \(feed.name): \(inserted.count) new / \(newItems.count) total")
             } catch {
                 debugLog("[RSS] Failed to fetch \(feed.name): \(error)")
             }

@@ -41,7 +41,6 @@ public final class TaskScheduler {
         let stale = dbNames.filter { !configuredNames.contains($0) }
         for name in stale {
             stateDB.remove(taskName: name)
-            debugLog("[Scheduler] Removed stale task state: \(name)")
         }
     }
 
@@ -59,11 +58,9 @@ public final class TaskScheduler {
             let nextFire = nextCronDate(after: lastFire, expr: expr)
             guard let next = nextFire, next <= now else { continue }
 
-            debugLog("[Scheduler] Catch-up fire: \(task.name)")
             fireTask(task)
             stateDB.setLastFire(now, for: task.name)
         }
-        debugLog("[Scheduler] Missed catch-up done")
     }
 
     // MARK: - Schedule next
@@ -88,13 +85,9 @@ public final class TaskScheduler {
 
         timer?.invalidate()
 
-        guard let fireAt = earliest else {
-            debugLog("[Scheduler] No upcoming tasks")
-            return
-        }
+        guard let fireAt = earliest else { return }
 
         let interval = fireAt.timeIntervalSince(now)
-        debugLog("[Scheduler] Next fire at \(fireAt) (in \(Int(interval))s)")
 
         timer = Timer.scheduledTimer(withTimeInterval: max(interval, 0.1), repeats: false) { [weak self] _ in
             self?.onTimerFired()
@@ -114,7 +107,6 @@ public final class TaskScheduler {
             if let next = nextCronDate(after: lastFire ?? now.addingTimeInterval(-60), expr: expr),
                next <= now
             {
-                debugLog("[Scheduler] Fire: \(task.name)")
                 fireTask(task)
                 stateDB.setLastFire(now, for: task.name)
             }
@@ -129,11 +121,8 @@ public final class TaskScheduler {
         DispatchQueue.global(qos: .utility).async { [task] in
             let result = TaskExecutor.execute(task.exec)
 
-            if result.success {
-                debugLog("[Scheduler] \(task.name) OK")
-            } else {
+            if !result.success {
                 let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
-                debugLog("[Scheduler] \(task.name) FAILED: \(errMsg)")
                 EventBus.shared.publish(AppEvent.taskDidFail, payload: (task.name, errMsg))
             }
         }
@@ -144,11 +133,9 @@ public final class TaskScheduler {
     private func installWakeObserver() {
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            debugLog("[Scheduler] System going to sleep — invalidating timer")
             self?.timer?.invalidate()
         }
         nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            debugLog("[Scheduler] System woke up — rescheduling")
             self?.handleMissed()
             self?.scheduleNext()
         }

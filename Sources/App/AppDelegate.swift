@@ -14,68 +14,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        do {
-            try ConfigManager.shared.load()
-        } catch {
-            debugLog("[Utility] Config load failed: \(error)")
-            EventBus.shared.publish(AppEvent.configLoadFailed, payload: error.localizedDescription)
-        }
-        do {
-            try AppDatabase.shared.setup()
-        } catch {
-            debugLog("[Utility] Database setup failed: \(error)")
-            EventBus.shared.publish(AppEvent.databaseInitFailed, payload: error.localizedDescription)
-        }
+        do { try ConfigManager.shared.load() }
+        catch { EventBus.shared.publish(AppEvent.configLoadFailed, payload: error.localizedDescription) }
+        do { try AppDatabase.shared.setup() }
+        catch { EventBus.shared.publish(AppEvent.databaseInitFailed, payload: error.localizedDescription) }
+        
+        NotificationManager.shared.requestAuthorization()
+
+        // 强制初始化 PanelManager（注册 EventBus 订阅）
+        _ = PanelManager.shared
+        KeyDispatcher.shared.start()
+        TaskScheduler.shared.start()
 
         registerAllHotkeys()
         installEventHandler()
-
-        NotificationManager.shared.requestAuthorization()
-        TaskScheduler.shared.start()
-
+        
         debugLog("[Utility] Ready")
     }
-
-    // MARK: - Hotkeys
 
     private func registerAllHotkeys() {
         let config = ConfigManager.shared.config
 
         hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") { [weak self] in
-            self?.clipboardPanel.show()
+            guard let self = self else { return }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: self.clipboardPanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
             guard let self = self else { return }
-
-            if self.translationPanel.isPanelVisible {
-                guard let app = self.translationPanel.previousFrontmostApp else { return }
-                Task { @MainActor in
-                    if let text = await SelectedTextService.getSelectedText(from: app) {
-                        self.translationPanel.fillAndTranslate(text)
-                    }
-                }
-                return
-            }
-
-            let preApp = NSWorkspace.shared.frontmostApplication
-            self.translationPanel.previousFrontmostApp = preApp
-
-            if let app = preApp, let text = SelectedTextService.tryAXSelectedText(from: app), !text.isEmpty {
-                self.translationPanel.show(with: text)
-                self.translationPanel.startTranslation(text: text)
-            } else {
-                self.translationPanel.showEmpty()
-                guard let app = preApp else { return }
-                Task { @MainActor in
-                    if let text = await SelectedTextService.getSelectedText(from: app), !text.isEmpty {
-                        self.translationPanel.activateForInput()
-                        self.translationPanel.fillAndTranslate(text)
-                    } else {
-                        self.translationPanel.activateForInput()
-                    }
-                }
-            }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: self.translationPanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
@@ -83,14 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             Task {
                 if let text = await OCRService.selectAndRecognize() {
                     await MainActor.run {
-                        if self.translationPanel.isPanelVisible {
-                            self.translationPanel.fillAndTranslate(text)
-                        } else {
-                            self.translationPanel.show(with: text)
-                            Timer.scheduledTimer(withTimeInterval: 0, repeats: false) { _ in
-                                self.translationPanel.startTranslation(text: text)
-                            }
-                        }
+                        EventBus.shared.publish(PanelEvent.requestShow, payload: [
+                            "panel": self.translationPanel,
+                            "text": text,
+                        ])
                     }
                 }
             }
@@ -98,11 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         hotkeyManager.register(hotkey: config.chat.hotkey, id: "chat") { [weak self] in
             guard let self = self else { return }
-            if self.chatPanel.isPanelVisible {
-                self.chatPanel.close()
-            } else {
-                self.chatPanel.show()
-            }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: self.chatPanel)
         }
     }
 

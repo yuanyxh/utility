@@ -27,13 +27,11 @@ public final class NotificationManager: NSObject {
             let center = NSUserNotificationCenter.default
             center.delegate = self
             enabled = true
-            debugLog("[Notify] Ready (NSUserNotification, DEBUG)")
         #else
             let center = UNUserNotificationCenter.current()
             center.delegate = self
             center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                 self.granted = granted
-                debugLog("[Notify] Auth \(granted ? "granted" : "denied")")
             }
         #endif
 
@@ -63,7 +61,7 @@ public final class NotificationManager: NSObject {
         }
         bus.subscribe(AppEvent.hotkeyRegistrationFailed) { payload in
             guard let (id, hotkey) = payload as? (String, String) else { return }
-            self.post(title: L10n.Menu.hotkeyRegisterFailed, body: "\(id): \(hotkey) — 可能被其他应用占用")
+            self.post(title: L10n.Menu.hotkeyRegisterFailed, body: L10n.format("notify.hotkey_register_failed_body", id, hotkey))
         }
         bus.subscribe(AppEvent.taskDidFail) { payload in
             guard let (name, error) = payload as? (String, String) else { return }
@@ -90,7 +88,6 @@ public final class NotificationManager: NSObject {
             note.soundName = NSUserNotificationDefaultSoundName
             note.deliveryDate = Date()
             NSUserNotificationCenter.default.scheduleNotification(note)
-            debugLog("[Notify] Posted: \(title)")
         #else
             guard granted else { return }
             let content = UNMutableNotificationContent()
