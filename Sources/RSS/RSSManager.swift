@@ -59,7 +59,9 @@ public final class RSSManager {
                 continue
             }
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                var req = URLRequest(url: url)
+                req.setValue("utility-rss/1.0 (macOS; +https://github.com/nousresearch/hermes-agent)", forHTTPHeaderField: "User-Agent")
+                let (data, _) = try await URLSession.shared.data(for: req)
                 let parser = RSSParser()
                 let newItems = parser.parse(data: data, feedName: feed.name)
                 let inserted = try addIfNew(newItems)

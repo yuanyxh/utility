@@ -81,14 +81,15 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     // MARK: - Date Parsing
 
     private func parseDate(_ str: String) -> Date {
+        let posix = Locale(identifier: "en_US_POSIX")
         let formatters: [DateFormatter] = [
-            { let f = DateFormatter(); f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"; return f }(),
-            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"; return f }(),
-            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"; return f }(),
-            { let f = DateFormatter(); f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"; return f }(),
             // Atom: "2026-06-17T00:58:31Z" (Z literal = UTC)
-            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssX"; return f }(),
-            { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSX"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssX"; return f }(),
+            { let f = DateFormatter(); f.locale = posix; f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSX"; return f }(),
         ]
         for f in formatters {
             if let date = f.date(from: str) { return date }
