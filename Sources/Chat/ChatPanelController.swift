@@ -287,6 +287,7 @@ public final class ChatPanelController: NSWindowController {
 
     // 关闭时重置状态（避免打开时闪烁）
     inputTextView.string = ""
+    inputTextView.undoManager?.removeAllActions()
     outputTextView.string = ""
     accumulatedOutput = ""
     hideOutput()
@@ -321,6 +322,12 @@ public final class ChatPanelController: NSWindowController {
     let text = inputTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
 
+    // 检查 @ 规则匹配
+    if let (rule, content) = matchAtRule(text: text) {
+      executeAtRule(rule: rule, content: content)
+      return
+    }
+
     chatSeq += 1
     let seq = chatSeq
     isStreaming = true
@@ -335,6 +342,7 @@ public final class ChatPanelController: NSWindowController {
           }
           self.accumulatedOutput += token
           self.outputTextView.string = self.accumulatedOutput
+          self.updateOutputHeight()
           self.outputTextView.scrollToEndOfDocument(nil)
         }
       },
@@ -364,6 +372,67 @@ public final class ChatPanelController: NSWindowController {
     )
   }
 
+  // MARK: - @ Rule
+
+  /// 解析 @name content 格式，返回匹配的规则和内容，未匹配返回 nil
+  private func matchAtRule(text: String) -> (rule: ChatAtRuleConfig, content: String)? {
+    guard text.hasPrefix("@") else { return nil }
+
+    // 找到 name 结束位置（第一个空白字符）
+    let afterAt = text.index(after: text.startIndex)
+    guard let spaceIdx = text[afterAt...].firstIndex(of: " ") else {
+      // 只有 @name 没有 content，content 为空
+      let name = String(text[afterAt...])
+      guard let rule = ConfigManager.shared.config.chat.atRules.first(where: { $0.name == name })
+      else { return nil }
+      return (rule, "")
+    }
+
+    let name = String(text[afterAt..<spaceIdx])
+    let content = String(text[text.index(after: spaceIdx)...])
+      .trimmingCharacters(in: .whitespaces)
+
+    guard let rule = ConfigManager.shared.config.chat.atRules.first(where: { $0.name == name })
+    else { return nil }
+    return (rule, content)
+  }
+
+  /// 执行 @ 规则命令并展示输出
+  private func executeAtRule(rule: ChatAtRuleConfig, content: String) {
+    let command = rule.command.replacingOccurrences(of: "{content}", with: content)
+
+    chatSeq += 1
+    let seq = chatSeq
+    isStreaming = true
+    outputTextView.string = ""
+    accumulatedOutput = ""
+    loadingIndicator.startAnimation(nil)
+    showOutput()
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let result = TaskExecutor.execute(.sh(command))
+
+      DispatchQueue.main.async {
+        guard let self = self, seq == self.chatSeq else { return }
+        self.isStreaming = false
+        self.loadingIndicator.stopAnimation(nil)
+
+        // 拼接 stdout + stderr
+        var displayText = result.output
+        if !result.error.isEmpty {
+          if !displayText.isEmpty {
+            displayText += "\n"
+          }
+          displayText += result.error
+        }
+
+        self.accumulatedOutput = displayText
+        self.outputTextView.string = displayText
+        self.outputTextView.scrollToEndOfDocument(nil)
+      }
+    }
+  }
+
   // MARK: - Output visibility
 
   private func showOutput() {
@@ -371,22 +440,63 @@ public final class ChatPanelController: NSWindowController {
     outputScrollView.isHidden = false
     outputHeightConstraint?.isActive = false
 
-    guard let screen = window?.screen ?? NSScreen.main else { return }
-    let maxH = screen.visibleFrame.height * 0.4
-    let contentH = outputScrollView.documentView?.frame.height ?? 120
-    let outputH: CGFloat = min(max(120, contentH), maxH)
+    let outputH = clampOutputHeight()
     outputHeightConstraint = outputScrollView.heightAnchor.constraint(equalToConstant: outputH)
     outputHeightConstraint?.isActive = true
 
-    // 动态展开面板
-    let currentSize = window?.frame.size ?? NSSize(width: 560, height: panelBaseHeight)
-    let newH = min(currentSize.height + outputH + 20, screen.visibleFrame.height * 0.6)
-    if let window = window {
-      var frame = window.frame
-      frame.size.height = newH
-      frame.origin.y -= (newH - currentSize.height)
-      window.setFrame(frame, display: true, animate: true)
+    applyPanelHeight(outputH: outputH)
+  }
+
+  /// 流式输出时随内容动态增长，上限到 dock 栏
+  private func updateOutputHeight() {
+    let outputH = clampOutputHeight()
+    if let old = outputHeightConstraint, abs(old.constant - outputH) > 2 {
+      old.constant = outputH
+      applyPanelHeight(outputH: outputH)
     }
+  }
+
+  // MARK: - Panel sizing helpers
+
+  /// 可用空间：面板顶部 → dock 栏上方 100pt
+  private func availableHeight() -> CGFloat {
+    guard let window = window, let screen = window.screen ?? NSScreen.main else { return 0 }
+    let panelTop = window.frame.maxY
+    let dockTop = screen.visibleFrame.minY
+    return panelTop - dockTop - 100
+  }
+
+  /// 计算输出区高度 — 基于文本内容，至少 120pt，最多到 dock 栏
+  private func clampOutputHeight() -> CGFloat {
+    let extraSpacing: CGFloat = 20  // divider + spacing
+    let textContentH = textContentHeight()
+    let desiredH = max(120, textContentH)
+    let maxOutputH = max(120, availableHeight() - panelBaseHeight - extraSpacing)
+    return min(desiredH, maxOutputH)
+  }
+
+  /// 输出文本的实际内容高度
+  private func textContentHeight() -> CGFloat {
+    guard let lm = outputTextView.layoutManager,
+      let tc = outputTextView.textContainer
+    else { return 120 }
+    lm.ensureLayout(for: tc)
+    let used = lm.usedRect(for: tc)
+    return used.height + outputTextView.textContainerInset.height * 2 + 8
+  }
+
+  /// 应用面板高度，向下展开（面板顶部位置不变）
+  private func applyPanelHeight(outputH: CGFloat) {
+    guard let window = window, let screen = window.screen ?? NSScreen.main else { return }
+    let extraSpacing: CGFloat = 20
+    let maxPanelH = availableHeight()
+    let newH = min(panelBaseHeight + outputH + extraSpacing, maxPanelH)
+    let currentH = window.frame.size.height
+    if abs(newH - currentH) < 1 { return }
+    var frame = window.frame
+    frame.size.height = newH
+    frame.origin.y -= (newH - currentH)
+    window.setFrame(frame, display: true, animate: false)
   }
 
   private func hideOutput() {
@@ -438,6 +548,7 @@ extension ChatPanelController: PanelProtocol {
     chatSeq += 1
     loadingIndicator.stopAnimation(nil)
     inputTextView.string = ""
+    inputTextView.undoManager?.removeAllActions()
     outputTextView.string = ""
     accumulatedOutput = ""
     hideOutput()

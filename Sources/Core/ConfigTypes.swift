@@ -104,13 +104,31 @@ public struct TranslationConfig: Codable {
 
 // MARK: - Chat
 
+public struct ChatAtRuleConfig: Codable {
+  var name: String
+  var command: String
+
+  public init(name: String, command: String) {
+    self.name = name
+    self.command = command
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    name = try c.decode(String.self, forKey: .name)
+    command = try c.decode(String.self, forKey: .command)
+  }
+}
+
 public struct ChatConfig: Codable {
   var hotkey: String = "option+space"
+  var atRules: [ChatAtRuleConfig] = []
 
   public init() {}
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+space"
+    atRules = try c.decodeIfPresent([ChatAtRuleConfig].self, forKey: .atRules) ?? []
   }
 }
 

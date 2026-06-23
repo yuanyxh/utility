@@ -489,6 +489,7 @@ public final class TranslationPanelController: NSWindowController {
 
   override public func close() {
     cancelTranslation()
+    sourceTextView.undoManager?.removeAllActions()
     EventBus.shared.publish(PanelEvent.requestClose, payload: self)
   }
 
@@ -668,6 +669,7 @@ extension TranslationPanelController: PanelProtocol {
 
   func closePanel() {
     cancelTranslation()
+    sourceTextView.undoManager?.removeAllActions()
     window?.orderOut(nil)
   }
 

@@ -119,6 +119,7 @@ private final class ScreenSelector: NSObject {
     }
     overlay.onCancel = { [weak self] in
       guard let self = self else { return }
+      self.releaseTap()
       self.cleanup()
       self.completion?(nil)
       OCRService.activeSelector = nil
