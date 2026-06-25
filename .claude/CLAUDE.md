@@ -1,5 +1,7 @@
 # Utility 项目
 
+**必须基于事实而不是猜测**
+
 ## 项目概述
 macOS 菜单栏工具，Swift + AppKit + SPM。
 - LSUIElement（无 Dock 图标）

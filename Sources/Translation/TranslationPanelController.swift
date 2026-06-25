@@ -1,70 +1,5 @@
 import Cocoa
 
-/// 翻译面板 — 26 语种支持
-/// 上方原文 + 左侧语言选择，下方译文 + 右侧语言选择
-/// enter 翻译，cmd+enter 换行，esc 关闭，ctrl+enter 粘贴译文
-/// 自定义面板 — 用 performKeyEquivalent 处理快捷键
-private final class TranslationTextView: NSTextView {
-  weak var controller: TranslationPanelController?
-
-  private let _undoManager = UndoManager()
-  override var undoManager: UndoManager? {
-    _undoManager
-  }
-
-  override func performKeyEquivalent(with event: NSEvent) -> Bool {
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-    switch event.keyCode {
-    case 53:
-      EventBus.shared.publish(PanelEvent.requestClose, payload: controller)
-      return true
-    case 36:  // return / enter
-      if flags == .command {
-        // cmd+enter → 翻译（允许取消旧翻译重新开始）
-        controller?.performTranslation()
-        return true
-      }
-      if flags == .shift {
-        // shift+enter → 换行
-        insertNewline(nil)
-        return true
-      }
-      if !flags.contains(.command) && !flags.contains(.control) {
-        // 纯 Enter → 粘贴并关闭（pasteTranslation 已处理隐藏，翻译中忽略）
-        if controller?.isTranslating == true { return true }
-        controller?.pasteTranslation()
-        return true
-      }
-      return false
-    default:
-      break
-    }
-    // cmd+c/x/v/a/z 交给 NSTextView 原生处理
-    return false
-  }
-
-  override func keyDown(with event: NSEvent) {
-    let flags = event.modifierFlags
-
-    // cmd+z — undo（仅 cmd，不含 shift）
-    if flags.contains(.command), !flags.contains(.shift), event.keyCode == 6 {
-      undoManager?.undo()
-      return
-    }
-
-    // Enter 变体
-    if event.keyCode == 36, !flags.contains(.command), !flags.contains(.control),
-      !flags.contains(.shift)
-    {
-      if controller?.isTranslating == true { return }
-      controller?.pasteTranslation()
-      return
-    }
-    super.keyDown(with: event)
-  }
-}
-
 /// 自定义 NSPanel：拦截 cmd+c/x/v/a/z 等编辑快捷键交给第一响应者
 private final class TranslationPanel: NSPanel {
   weak var controller: TranslationPanelController?
@@ -93,7 +28,7 @@ private final class TranslationPanel: NSPanel {
           textView.selectAll(nil)
           return true
         }
-      case 6:  // z — 留给 TranslationTextView 自行处理
+      case 6:  // z — 留给 keyDown 处理
         break
       default:
         break
@@ -104,17 +39,33 @@ private final class TranslationPanel: NSPanel {
 }
 
 public final class TranslationPanelController: NSWindowController {
-  private let sourceTextView = TranslationTextView()
-  private let targetTextView = NSTextView()
+  private let sourceInputView: ScrolledInputTextView = {
+    let style = InputViewStyle(
+      font: .systemFont(ofSize: 13),
+      textContainerInset: NSSize(width: 6, height: 6),
+      showsVerticalScroller: true,
+      border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4)
+    )
+    let v = ScrolledInputTextView(style: style)
+    v.translatesAutoresizingMaskIntoConstraints = false
+    return v
+  }()
+
   private let sourceLangPopup = NSPopUpButton()
   private let targetLangPopup = NSPopUpButton()
-  private let scrollViewSource = NSScrollView()
-  private let scrollViewTarget = NSScrollView()
   private let sourceLabel = NSTextField(labelWithString: "")
   private let targetLabel = NSTextField(labelWithString: "")
 
+  private let targetOutput = ScrolledInputTextView(style: InputViewStyle(
+    font: .systemFont(ofSize: 13),
+    textContainerInset: NSSize(width: 6, height: 6),
+    isEditable: false,
+    showsVerticalScroller: true,
+    border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4)
+  ))
+
   /// 下面板遮罩层
-  private let overlay = TargetOverlayView()
+  private let overlay = OverlayView()
 
   /// 当前翻译任务（用于取消）
   var currentTask: URLSessionTask?
@@ -173,7 +124,6 @@ public final class TranslationPanelController: NSWindowController {
 
     super.init(window: panel)
     panel.controller = self
-    sourceTextView.controller = self
     setupUI()
     NotificationCenter.default.addObserver(
       self, selector: #selector(onLanguageChanged),
@@ -210,25 +160,7 @@ public final class TranslationPanelController: NSWindowController {
     sourceTopRow.orientation = .horizontal
     sourceTopRow.alignment = .firstBaseline
 
-    sourceTextView.isEditable = true
-    sourceTextView.isRichText = false
-    sourceTextView.font = NSFont.systemFont(ofSize: 13)
-    sourceTextView.textContainerInset = NSSize(width: 6, height: 6)
-
-    scrollViewSource.wantsLayer = true
-    scrollViewSource.canDrawSubviewsIntoLayer = true
-    scrollViewSource.layer?.borderWidth = 0.5
-    scrollViewSource.layer?.borderColor = NSColor.separatorColor.cgColor
-    scrollViewSource.layer?.cornerRadius = 4
-    scrollViewSource.documentView = sourceTextView
-    scrollViewSource.hasVerticalScroller = true
-    scrollViewSource.borderType = .noBorder
-    scrollViewSource.scrollerStyle = .overlay
-    scrollViewSource.autohidesScrollers = true
-    scrollViewSource.verticalScroller?.controlSize = .small
-    scrollViewSource.translatesAutoresizingMaskIntoConstraints = false
-
-    let sourceSection = NSStackView(views: [sourceTopRow, scrollViewSource])
+    let sourceSection = NSStackView(views: [sourceTopRow, sourceInputView])
     sourceSection.orientation = .vertical
     sourceSection.spacing = 4
     sourceSection.translatesAutoresizingMaskIntoConstraints = false
@@ -247,25 +179,9 @@ public final class TranslationPanelController: NSWindowController {
     targetTopRow.orientation = .horizontal
     targetTopRow.alignment = .firstBaseline
 
-    targetTextView.isEditable = false
-    targetTextView.isRichText = false
-    targetTextView.font = NSFont.systemFont(ofSize: 13)
-    targetTextView.textContainerInset = NSSize(width: 6, height: 6)
+    targetOutput.translatesAutoresizingMaskIntoConstraints = false
 
-    scrollViewTarget.wantsLayer = true
-    scrollViewTarget.canDrawSubviewsIntoLayer = true
-    scrollViewTarget.layer?.borderWidth = 0.5
-    scrollViewTarget.layer?.borderColor = NSColor.separatorColor.cgColor
-    scrollViewTarget.layer?.cornerRadius = 4
-    scrollViewTarget.documentView = targetTextView
-    scrollViewTarget.hasVerticalScroller = true
-    scrollViewTarget.borderType = .noBorder
-    scrollViewTarget.scrollerStyle = .overlay
-    scrollViewTarget.autohidesScrollers = true
-    scrollViewTarget.verticalScroller?.controlSize = .small
-    scrollViewTarget.translatesAutoresizingMaskIntoConstraints = false
-
-    let targetSection = NSStackView(views: [targetTopRow, scrollViewTarget])
+    let targetSection = NSStackView(views: [targetTopRow, targetOutput])
     targetSection.orientation = .vertical
     targetSection.spacing = 4
     targetSection.translatesAutoresizingMaskIntoConstraints = false
@@ -292,13 +208,13 @@ public final class TranslationPanelController: NSWindowController {
       targetSection.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
       targetSection.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -padding),
 
-      scrollViewSource.heightAnchor.constraint(equalTo: scrollViewTarget.heightAnchor),
+      sourceInputView.heightAnchor.constraint(equalTo: targetOutput.heightAnchor),
 
       // 遮罩覆盖下面板区域（缩进 1pt 不挡住边框）
-      overlay.topAnchor.constraint(equalTo: scrollViewTarget.topAnchor, constant: 1),
-      overlay.leadingAnchor.constraint(equalTo: scrollViewTarget.leadingAnchor),
-      overlay.trailingAnchor.constraint(equalTo: scrollViewTarget.trailingAnchor),
-      overlay.bottomAnchor.constraint(equalTo: scrollViewTarget.bottomAnchor, constant: -1),
+      overlay.topAnchor.constraint(equalTo: targetOutput.topAnchor, constant: 1),
+      overlay.leadingAnchor.constraint(equalTo: targetOutput.leadingAnchor),
+      overlay.trailingAnchor.constraint(equalTo: targetOutput.trailingAnchor),
+      overlay.bottomAnchor.constraint(equalTo: targetOutput.bottomAnchor, constant: -1),
     ])
 
     // 拖动停止时记忆位置
@@ -338,28 +254,26 @@ public final class TranslationPanelController: NSWindowController {
   // MARK: - Language Change
 
   @objc private func sourceLangChanged(_: Any) {
-    guard !sourceTextView.string.isEmpty else { return }
-    startTranslation(text: sourceTextView.string)
+    guard !sourceInputView.string.isEmpty else { return }
+    startTranslation(text: sourceInputView.string)
   }
 
   @objc private func targetLangChanged(_: Any) {
-    guard !sourceTextView.string.isEmpty else { return }
-    startTranslation(text: sourceTextView.string)
+    guard !sourceInputView.string.isEmpty else { return }
+    startTranslation(text: sourceInputView.string)
   }
-
-  // MARK: - Key Events
 
   // MARK: - Translation
 
   fileprivate func performTranslation() {
-    let text = sourceTextView.string
+    let text = sourceInputView.string
     startTranslation(text: text)
   }
 
   // MARK: - Paste Translation
 
   fileprivate func pasteTranslation() {
-    let text = targetTextView.string
+    let text = targetOutput.string
     guard !text.isEmpty else { return }
     guard !overlay.isVisible || overlay.mode == .error else { return }
 
@@ -377,23 +291,16 @@ public final class TranslationPanelController: NSWindowController {
     window?.isVisible ?? false
   }
 
-  func insertText(_ text: String) {
-    sourceTextView.string = text
-    sourceTextView.scrollToEndOfDocument(nil)
-  }
-
   /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
   func fillAndTranslate(_ text: String) {
     guard !text.isEmpty else { return }
-    sourceTextView.string = text
-    targetTextView.string = ""
+    sourceInputView.string = text
+    targetOutput.clear()
     overlay.hide()
     resetLanguageSelection()
-    sourceTextView.scrollToEndOfDocument(nil)
+    sourceInputView.scroll(to: .bottom)
     startTranslation(text: text)
   }
-
-  // MARK: - Show / Close
 
   /// 回调方式触发翻译
   func startTranslation(text: String) {
@@ -410,7 +317,7 @@ public final class TranslationPanelController: NSWindowController {
       return
     }
 
-    targetTextView.string = ""
+    targetOutput.clear()
     overlay.showLoading()
     let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String ?? "auto"
     let targetCode = targetLangPopup.selectedItem?.representedObject as? String ?? "zh"
@@ -422,9 +329,9 @@ public final class TranslationPanelController: NSWindowController {
           guard seq == self.translationSeq else { return }
           self.currentTask = nil
           if let result = result {
-            self.targetTextView.string = result
+            self.targetOutput.string = result
             self.overlay.hide()
-            self.targetTextView.scrollToEndOfDocument(nil)
+            self.targetOutput.scroll(to: .bottom)
           } else if let error = error {
             if (error as NSError).code == NSURLErrorCancelled { return }
             self.overlay.showError(error.localizedDescription)
@@ -434,19 +341,10 @@ public final class TranslationPanelController: NSWindowController {
     )
   }
 
-  func showTranslationResult(_ result: String) {
-    targetTextView.string = result
-    overlay.hide()
-  }
-
-  func showTranslationError(_ message: String) {
-    overlay.showError(message)
-  }
-
   /// 重置面板状态
   private func resetState() {
-    sourceTextView.string = ""
-    targetTextView.string = ""
+    sourceInputView.string = ""
+    targetOutput.clear()
     overlay.hide()
     resetLanguageSelection()
   }
@@ -456,7 +354,7 @@ public final class TranslationPanelController: NSWindowController {
 
     let pendingText: String
     if let text = text, !text.isEmpty {
-      sourceTextView.string = text
+      sourceInputView.string = text
       pendingText = text
     } else {
       pendingText = ""
@@ -476,20 +374,19 @@ public final class TranslationPanelController: NSWindowController {
 
     if !pendingText.isEmpty {
       // 延迟设焦点 + 滚动到底部
-      let pos = pendingText.utf16.count
       Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
         guard let self = self else { return }
         self.window?.makeKey()
-        self.window?.makeFirstResponder(self.sourceTextView)
-        self.sourceTextView.setSelectedRange(NSRange(location: pos, length: 0))
-        self.sourceTextView.scrollToEndOfDocument(nil)
+        self.window?.makeFirstResponder(self.sourceInputView.textView)
+        self.sourceInputView.setCursor(to: .end)
+        self.sourceInputView.scroll(to: .bottom)
       }
     }
   }
 
   override public func close() {
     cancelTranslation()
-    sourceTextView.undoManager?.removeAllActions()
+    sourceInputView.clear()
     EventBus.shared.publish(PanelEvent.requestClose, payload: self)
   }
 
@@ -506,14 +403,6 @@ public final class TranslationPanelController: NSWindowController {
 
   @objc private func onLanguageChanged() {
     refreshTitles()
-  }
-
-  /// NSScrollView 扩展：滚动到底部
-  private func scrollToBottom(_ scrollView: NSScrollView) {
-    guard let docView = scrollView.documentView else { return }
-    let maxY = max(docView.bounds.height - scrollView.contentSize.height, 0)
-    scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
-    scrollView.reflectScrolledClipView(scrollView.contentView)
   }
 
   /// 空面板弹出（不激活，保留源 app 前台便于后续获取选中文本）
@@ -533,97 +422,9 @@ public final class TranslationPanelController: NSWindowController {
   /// 激活面板接收键盘输入
   func activateForInput() {
     window?.makeKey()
-    window?.makeFirstResponder(sourceTextView)
+    window?.makeFirstResponder(sourceInputView.textView)
     window?.orderFront(nil)
     NSApplication.shared.activate(ignoringOtherApps: true)
-  }
-}
-
-// MARK: - Target Overlay View
-
-extension TranslationPanelController {
-  enum OverlayMode {
-    case loading
-    case error
-  }
-
-  /// 下面板遮罩：半透明背景 + 居中内容
-  final class TargetOverlayView: NSView {
-    private let spinner = NSProgressIndicator()
-    private let messageLabel = NSTextField(labelWithString: "")
-
-    private(set) var mode: OverlayMode = .loading
-    var isVisible: Bool {
-      !isHidden
-    }
-
-    override init(frame frameRect: NSRect) {
-      super.init(frame: frameRect)
-      setup()
-    }
-
-    required init?(coder _: NSCoder) {
-      nil
-    }
-
-    private func setup() {
-      wantsLayer = true
-      layer?.backgroundColor = CGColor(
-        red: 0xF5 / 0xFF, green: 0xF5 / 0xFF, blue: 0xF5 / 0xFF, alpha: 0.72)
-      layer?.cornerRadius = 4
-
-      spinner.style = .spinning
-      spinner.controlSize = .regular
-      spinner.translatesAutoresizingMaskIntoConstraints = false
-      spinner.isDisplayedWhenStopped = false
-
-      messageLabel.font = NSFont.systemFont(ofSize: 14)
-      messageLabel.textColor = NSColor.systemRed
-      messageLabel.alignment = .center
-      messageLabel.lineBreakMode = .byWordWrapping
-      messageLabel.translatesAutoresizingMaskIntoConstraints = false
-
-      // 用垂直 stack 包裹 spinner + label，整体居中
-      let stack = NSStackView(views: [spinner, messageLabel])
-      stack.orientation = .vertical
-      stack.spacing = 16
-      stack.alignment = .centerX
-      stack.translatesAutoresizingMaskIntoConstraints = false
-
-      addSubview(stack)
-
-      NSLayoutConstraint.activate([
-        stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-        stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-        stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
-        stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
-      ])
-    }
-
-    func showLoading() {
-      mode = .loading
-      messageLabel.stringValue = ""
-      messageLabel.isHidden = true
-      spinner.isHidden = false
-      spinner.startAnimation(nil)
-      isHidden = false
-    }
-
-    func showError(_ message: String) {
-      mode = .error
-      spinner.isHidden = true
-      spinner.stopAnimation(nil)
-      messageLabel.stringValue = message
-      messageLabel.isHidden = false
-      isHidden = false
-    }
-
-    func hide() {
-      spinner.stopAnimation(nil)
-      spinner.isHidden = true
-      messageLabel.stringValue = ""
-      isHidden = true
-    }
   }
 }
 
@@ -669,7 +470,7 @@ extension TranslationPanelController: PanelProtocol {
 
   func closePanel() {
     cancelTranslation()
-    sourceTextView.undoManager?.removeAllActions()
+    sourceInputView.clear()
     window?.orderOut(nil)
   }
 
@@ -678,14 +479,14 @@ extension TranslationPanelController: PanelProtocol {
       EventBus.shared.publish(PanelEvent.requestClose, payload: self)
       return true
     }
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     if event.keyCode == 36 {
-      let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
       if flags == .command {
         performTranslation()
         return true
       }
       if flags == .shift {
-        sourceTextView.insertNewline(nil)
+        sourceInputView.insertNewline()
         return true
       }
       if !flags.contains(.command), !flags.contains(.control) {
@@ -694,6 +495,13 @@ extension TranslationPanelController: PanelProtocol {
         return true
       }
       return false
+    }
+    if event.keyCode == 6 {  // z
+        if flags.contains(.command), !flags.contains(.shift) {
+          sourceInputView.undo()
+          return true
+        }
+        return false
     }
     return false
   }
