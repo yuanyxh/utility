@@ -44,8 +44,6 @@ private final class ChatPanel: NSPanel {
 // MARK: - Panel Controller
 
 public final class ChatPanelController: NSWindowController {
-  private var previousFrontmostApp: NSRunningApplication?
-
   private let inputView = ScrolledInputTextView(style: InputViewStyle(
     font: .monospacedSystemFont(ofSize: 13, weight: .regular),
     textContainerInset: NSSize(width: 6, height: 8),
@@ -77,6 +75,7 @@ public final class ChatPanelController: NSWindowController {
   private var accumulatedOutput = ""
   private var isStreaming = false
   private var chatSeq: UInt = 0
+  private var currentRuleProcess: Process?
   private let inputHeight: CGFloat = 3 * 16 + 16 + 2
   private let panelBaseHeight: CGFloat = 12 + (3 * 16 + 16 + 2) + 12
   private let extraSpacing: CGFloat = 20  // divider + spacing
@@ -173,33 +172,18 @@ public final class ChatPanelController: NSWindowController {
   // MARK: - Show / Close
 
   public func show() {
-    previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-    positionPanel()
-    window?.orderFront(nil)
-
-    guard let app = previousFrontmostApp else {
-      window?.makeKeyAndOrderFront(nil)
-      NSApplication.shared.activate(ignoringOtherApps: true)
-      return
+    
+    if hasOutput {
+      output.maxHeight = availableOutputHeight()
+      growPanelIfNeeded()
+    } else {
+      positionPanel()
     }
-    Task { @MainActor in
-      if let text = await SelectedTextService.getSelectedText(from: app), !text.isEmpty {
-        self.inputView.string = text
-      }
-      self.window?.makeKeyAndOrderFront(nil)
-      NSApplication.shared.activate(ignoringOtherApps: true)
-    }
+    window?.makeKeyAndOrderFront(nil)
+    NSApplication.shared.activate(ignoringOtherApps: true)
   }
 
   public override func close() {
-    AIChatService.shared.cancel()
-    isStreaming = false
-    chatSeq += 1
-    loadingIndicator.stopAnimation(nil)
-    inputView.clear()
-    output.clear()
-    accumulatedOutput = ""
-    hideOutput()
     EventBus.shared.publish(PanelEvent.requestClose, payload: self)
   }
 
@@ -215,7 +199,11 @@ public final class ChatPanelController: NSWindowController {
   // MARK: - Chat
 
   fileprivate func triggerChat() {
-    if isStreaming { AIChatService.shared.cancel() }
+    if isStreaming {
+      AIChatService.shared.cancel()
+      currentRuleProcess?.terminate()
+      currentRuleProcess = nil
+    }
     output.clear()
     accumulatedOutput = ""
     hideOutput()
@@ -297,24 +285,41 @@ public final class ChatPanelController: NSWindowController {
     output.clear()
     accumulatedOutput = ""
     loadingIndicator.startAnimation(nil)
-    showOutput()
 
-    DispatchQueue.global(qos: .utility).async { [weak self] in
-      let result = TaskExecutor.execute(.sh(command))
-      DispatchQueue.main.async {
+    currentRuleProcess = TaskExecutor.execute(.sh(command),
+      onOutput: { [weak self] chunk in
         guard let self = self, seq == self.chatSeq else { return }
+        if self.accumulatedOutput.isEmpty { self.showOutput() }
+        self.accumulatedOutput += chunk
+        self.output.string = self.accumulatedOutput
+        self.output.scroll(to: .bottom)
+        self.growPanelIfNeeded()
+      },
+      onComplete: { [weak self] result in
+        guard let self = self, seq == self.chatSeq else { return }
+        self.currentRuleProcess = nil
         self.isStreaming = false
         self.loadingIndicator.stopAnimation(nil)
-        var displayText = result.output
-        if !result.error.isEmpty {
-          if !displayText.isEmpty { displayText += "\n" }
-          displayText += result.error
+        if self.accumulatedOutput.isEmpty { self.showOutput() }
+        if !result.success {
+          let errorMsg: String
+          if !result.error.isEmpty {
+            errorMsg = result.output.isEmpty
+              ? result.error
+              : "\n\n⚠️ \(result.error)"
+          } else {
+            errorMsg = "\n\n⚠️ exit code != 0"
+          }
+          let attrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.systemRed,
+            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+          ]
+          self.output.append(errorMsg, attributes: attrs)
+          self.output.scroll(to: .bottom)
+          self.growPanelIfNeeded()
         }
-        self.accumulatedOutput = displayText
-        self.output.string = displayText
-        self.output.scroll(to: .bottom)
       }
-    }
+    )
   }
 
   // MARK: - Output & Panel sizing
@@ -333,6 +338,7 @@ public final class ChatPanelController: NSWindowController {
 
   private func growPanelIfNeeded() {
     guard let window = window, output.maxHeight != nil else { return }
+    output.layoutSubtreeIfNeeded()
     let outputH = output.frame.height
     let newH = min(panelBaseHeight + outputH + extraSpacing, availableHeight())
     let currentH = window.frame.size.height
@@ -390,14 +396,6 @@ extension ChatPanelController: PanelProtocol {
   }
 
   func closePanel() {
-    AIChatService.shared.cancel()
-    isStreaming = false
-    chatSeq += 1
-    loadingIndicator.stopAnimation(nil)
-    inputView.clear()
-    output.clear()
-    accumulatedOutput = ""
-    hideOutput()
     window?.orderOut(nil)
   }
 
