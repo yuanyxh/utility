@@ -1,12 +1,15 @@
 import Foundation
 
+/// 通知 payload——发布者自行构建 title/body
+struct NotificationPayload {
+  let title: String
+  let body: String
+}
+
 /// 应用级事件枚举
 enum AppEvent: String, Hashable, CaseIterable {
-  case configDidLoad, configLoadFailed, configReloadFailed
-  case databaseInitFailed
-  case hotkeyParseFailed, hotkeyRegistrationFailed
-  case taskDidFail, launchAtLoginFailed
-  case rssFetchFailed
+  case configDidLoad
+  case notify  // payload: NotificationPayload
   case networkSpeedUpdated
 }
 

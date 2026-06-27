@@ -58,6 +58,10 @@ general:
   # 界面语言。留空跟随系统，可选: zh / en
   language: ""
 
+# ---------- 通知 ----------
+notifications:
+  enabled: true   # false 关闭所有通知
+
 # ---------- AI ----------
 ai:
   baseURL: "https://api.deepseek.com"
@@ -278,6 +282,13 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 
 基于 cron 表达式的 one-shot Timer 调度器，支持补触发和睡眠唤醒。
 
+**触发模式：**
+
+| mode | 说明 |
+|------|------|
+| `cron`（默认） | cron 定时调度，支持补触发 |
+| `manual` | 仅手动触发，不参与 cron 调度。运行中菜单打 ✓，再点击终止进程 |
+
 **触发方式：** 每天 60s 轮询改为精确到秒的 one-shot Timer。
 **补触发：** 启动/重载/唤醒时检查上次触发时间，错过则补执行一次。
 **并发：** 每个任务在后台队列独立执行，不阻塞调度循环。
@@ -300,6 +311,14 @@ tasks:
     exec:
       type: sh
       command: ~/.hermes/scripts/utility-rss-daily.sh
+    enabled: true
+    mode: cron     # cron（默认）或 manual
+
+  - name: Alist 服务
+    mode: manual   # 手动触发，菜单点击启动/终止
+    exec:
+      type: sh
+      command: cd ~/Documents/alist && ./alist server
     enabled: true
 
   - name: 清理临时文件
@@ -385,15 +404,15 @@ RSS (3 未读)  ▸ 抓取 RSS
 - **重载配置**：热加载 `~/.config/utility/config.yaml`，同时刷新 RSS 未读数、任务列表和定时抓取间隔
 - **开机自启**：通过系统登录项（SMAppService）自动启动
 - **RSS**：显示未读数量，子菜单可手动触发抓取或全部已读
-- **任务**：列出所有定时任务，点击立即执行一次；禁用的任务置灰不可点击
+- **任务**：列出所有任务，点击立即执行一次；运行中打 ✓，再点击终止进程；禁用的任务置灰不可点击
 - **清空剪切板**：删除所有剪切板记录
 - **退出**：完全退出 app
 
 ---
 
-## 错误通知
+## 通知
 
-以下关键失败路径会推送 macOS 系统通知（正式打包时生效）：
+> 配置 `notifications.enabled: false` 可全局关闭所有通知。
 
 | 场景 | 通知 |
 |------|------|
@@ -402,6 +421,8 @@ RSS (3 未读)  ▸ 抓取 RSS
 | 菜单栏重载配置失败 | 「配置重载失败」 |
 | 热键注册失败（格式错误/被占用） | 「热键注册/解析失败」 |
 | 定时任务执行失败 | 「任务失败: \<name\>」 |
+| 任务执行成功 | 「任务完成: \<name\>」 |
+| Chat 后台完成（面板不可见时） | 「Chat 完成」 |
 
 ---
 

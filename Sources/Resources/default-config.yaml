@@ -1,6 +1,10 @@
 # Utility 配置文件
 # 修改后通过菜单栏「重载配置」或重启生效
 
+# ---------- 通知 ----------
+notifications:
+  enabled: true
+
 # ---------- 通用 ----------
 general:
   # 界面语言。留空跟随系统，可选值: zh / en
@@ -50,6 +54,7 @@ tasks: []
   #   trigger: '0 18 * * *'
   #   exec: shortcuts://日报汇总
   #   enabled: true
+  #   mode: cron     # cron (默认) 或 manual
   # - name: 清理临时文件
   #   trigger: '0 3 * * 1'
   #   exec:

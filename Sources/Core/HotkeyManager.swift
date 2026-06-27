@@ -15,7 +15,8 @@ public final class HotkeyManager {
       let msg = "[Hotkey] Failed to parse: \(hotkey)"
       fputs("\(msg)\n", stderr)
       debugLog(msg)
-      EventBus.shared.publish(AppEvent.hotkeyParseFailed, payload: (id, hotkey))
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.hotkeyParseFailed, body: "\(id): \(hotkey)"))
       return false
     }
 
@@ -30,7 +31,9 @@ public final class HotkeyManager {
       let msg = "[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)"
       fputs("\(msg)\n", stderr)
       debugLog(msg)
-      EventBus.shared.publish(AppEvent.hotkeyRegistrationFailed, payload: (id, hotkey))
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.hotkeyRegisterFailed,
+        body: L10n.format("notify.hotkey_register_failed_body", id, hotkey)))
       return false
     }
 

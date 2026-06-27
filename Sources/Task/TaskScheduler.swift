@@ -48,7 +48,7 @@ public final class TaskScheduler {
 
   private func handleMissed() {
     let now = Date()
-    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty }
+    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty && $0.mode != .manual }
 
     for task in configs {
       guard let expr = CronExpression(task.trigger) else { continue }
@@ -67,7 +67,7 @@ public final class TaskScheduler {
 
   private func scheduleNext() {
     let now = Date()
-    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty }
+    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty && $0.mode != .manual }
     var earliest: Date?
 
     for task in configs {
@@ -99,7 +99,7 @@ public final class TaskScheduler {
 
   private func onTimerFired() {
     let now = Date()
-    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty }
+    let configs = ConfigManager.shared.config.tasks.filter { $0.enabled && !$0.name.isEmpty && $0.mode != .manual }
 
     for task in configs {
       guard let expr = CronExpression(task.trigger) else { continue }
@@ -124,7 +124,11 @@ public final class TaskScheduler {
 
       if !result.success {
         let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
-        EventBus.shared.publish(AppEvent.taskDidFail, payload: (task.name, errMsg))
+        EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+          title: L10n.Menu.taskFailed(task.name), body: errMsg))
+      } else {
+        EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+          title: L10n.Menu.taskCompleted(task.name), body: ""))
       }
     }
   }

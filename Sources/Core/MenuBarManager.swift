@@ -10,6 +10,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
   private var clearItem: NSMenuItem!
   private var quitItem: NSMenuItem!
   private var rssFetchTask: Task<Void, Never>?
+  private var runningProcesses: [String: Process] = [:]
 
   override public init() {
     super.init()
@@ -125,6 +126,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
       item.target = task.enabled ? self : nil
       item.isEnabled = task.enabled
       item.representedObject = task.name
+      item.state = (runningProcesses[task.name] != nil) ? .on : .off
       sub.addItem(item)
     }
 
@@ -154,7 +156,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
       } catch {
         guard !Task.isCancelled else { return }
         debugLog("[MenuBar] RSS fetch failed: \(error)")
-        EventBus.shared.publish(AppEvent.rssFetchFailed, payload: error.localizedDescription)
+        EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+          title: L10n.Menu.rssFetchFailed, body: error.localizedDescription))
       }
     }
   }
@@ -167,6 +170,27 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     }
   }
 
+  // MARK: - Task lifecycle
+
+  /// 终止所有正在运行的任务进程（应用退出时调用）
+  func terminateAllTasks() {
+    for (name, process) in runningProcesses {
+      process.terminate()
+      debugLog("[MenuBar] Terminated task on exit: \(name)")
+    }
+    runningProcesses.removeAll()
+  }
+
+  /// 清理配置中已不存在的任务的运行进程
+  private func cleanupOrphanProcesses() {
+    let configuredNames = Set(ConfigManager.shared.config.tasks.map { $0.name })
+    for name in runningProcesses.keys where !configuredNames.contains(name) {
+      runningProcesses[name]?.terminate()
+      runningProcesses.removeValue(forKey: name)
+      debugLog("[MenuBar] Terminated orphan task: \(name)")
+    }
+  }
+
   // MARK: - Task Actions
 
   @objc private func taskTrigger(_ sender: NSMenuItem) {
@@ -174,15 +198,34 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
       let task = ConfigManager.shared.config.tasks.first(where: { $0.name == name && $0.enabled })
     else { return }
 
-    DispatchQueue.global(qos: .utility).async {
-      let result = TaskExecutor.execute(task.exec)
-      if !result.success {
-        let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
+    // 已在运行 → 终止
+    if let process = runningProcesses[name] {
+      process.terminate()
+      runningProcesses.removeValue(forKey: name)
+      sender.state = .off
+      return
+    }
+
+    // 启动执行（流式 API，获取 Process 句柄以支持终止）
+    sender.state = .on
+    let process = TaskExecutor.execute(
+      task.exec,
+      onOutput: nil,
+      onComplete: { [weak self] result in
         DispatchQueue.main.async {
-          EventBus.shared.publish(AppEvent.taskDidFail, payload: (name, errMsg))
+          self?.runningProcesses.removeValue(forKey: name)
+          if result.success {
+            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+              title: L10n.Menu.taskCompleted(name), body: ""))
+          } else {
+            let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
+            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+              title: L10n.Menu.taskFailed(name), body: errMsg))
+          }
         }
       }
-    }
+    )
+    runningProcesses[name] = process
   }
 
   // MARK: - Actions
@@ -198,7 +241,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
       }
     } catch {
       debugLog("[LoginItem] Failed: \(error)")
-      EventBus.shared.publish(AppEvent.launchAtLoginFailed, payload: error.localizedDescription)
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.launchAtLoginFailed, body: error.localizedDescription))
     }
   }
 
@@ -216,12 +260,14 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
   @objc private func reloadConfig() {
     do {
       try ConfigManager.shared.reload()
+      cleanupOrphanProcesses()
       refreshAllTitles()
       refreshRSSItem()
       refreshTasksItem()
     } catch {
       debugLog("[MenuBar] Reload failed: \(error)")
-      EventBus.shared.publish(AppEvent.configReloadFailed, payload: error.localizedDescription)
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.configReloadFailed, body: error.localizedDescription))
     }
   }
 

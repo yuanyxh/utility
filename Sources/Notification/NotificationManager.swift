@@ -42,47 +42,16 @@ public final class NotificationManager: NSObject {
   // MARK: - Event subscriptions
 
   private func subscribeToEvents() {
-    let bus = EventBus.shared
-
-    bus.subscribe(AppEvent.configLoadFailed) { payload in
-      guard let msg = payload as? String else { return }
-      self.post(title: L10n.Menu.configLoadFailed, body: msg)
-    }
-    bus.subscribe(AppEvent.configReloadFailed) { payload in
-      guard let msg = payload as? String else { return }
-      self.post(title: L10n.Menu.configReloadFailed, body: msg)
-    }
-    bus.subscribe(AppEvent.databaseInitFailed) { payload in
-      guard let msg = payload as? String else { return }
-      self.post(title: L10n.Menu.dbInitFailed, body: msg)
-    }
-    bus.subscribe(AppEvent.hotkeyParseFailed) { payload in
-      guard let (id, hotkey) = payload as? (String, String) else { return }
-      self.post(title: L10n.Menu.hotkeyParseFailed, body: "\(id): \(hotkey)")
-    }
-    bus.subscribe(AppEvent.hotkeyRegistrationFailed) { payload in
-      guard let (id, hotkey) = payload as? (String, String) else { return }
-      self.post(
-        title: L10n.Menu.hotkeyRegisterFailed,
-        body: L10n.format("notify.hotkey_register_failed_body", id, hotkey))
-    }
-    bus.subscribe(AppEvent.taskDidFail) { payload in
-      guard let (name, error) = payload as? (String, String) else { return }
-      self.post(title: L10n.Menu.taskFailed(name), body: error)
-    }
-    bus.subscribe(AppEvent.launchAtLoginFailed) { payload in
-      guard let msg = payload as? String else { return }
-      self.post(title: L10n.Menu.launchAtLoginFailed, body: msg)
-    }
-    bus.subscribe(AppEvent.rssFetchFailed) { payload in
-      guard let msg = payload as? String else { return }
-      self.post(title: L10n.Menu.rssFetchFailed, body: msg)
+    EventBus.shared.subscribe(AppEvent.notify) { [weak self] payload in
+      guard let self, let note = payload as? NotificationPayload else { return }
+      self.post(title: note.title, body: note.body)
     }
   }
 
   // MARK: - Post (private)
 
   private func post(title: String, body: String) {
+    guard ConfigManager.shared.config.notifications.enabled else { return }
     #if DEBUG
       guard enabled else { return }
       let note = NSUserNotification()

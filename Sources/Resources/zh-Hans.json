@@ -11,6 +11,8 @@
     "menu.tasks_count": "任务（%ld）",
     "notify.rss_fetch_failed": "RSS 抓取失败",
     "notify.task_failed": "任务失败: %@",
+    "notify.task_completed": "任务完成: %@",
+    "notify.chat_completed": "Chat 完成",
     "notify.launch_at_login_failed": "开机自启设置失败",
     "notify.config_reload_failed": "配置重载失败",
     "notify.config_load_failed": "配置加载失败",

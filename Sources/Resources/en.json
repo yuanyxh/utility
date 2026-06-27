@@ -11,6 +11,8 @@
     "menu.tasks_count": "Tasks (%ld)",
     "notify.rss_fetch_failed": "RSS Fetch Failed",
     "notify.task_failed": "Task Failed: %@",
+    "notify.task_completed": "Task Completed: %@",
+    "notify.chat_completed": "Chat Completed",
     "notify.launch_at_login_failed": "Auto-start Failed",
     "notify.config_reload_failed": "Reload Failed",
     "notify.config_load_failed": "Load Failed",

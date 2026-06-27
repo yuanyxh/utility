@@ -253,6 +253,9 @@ public final class ChatPanelController: NSWindowController {
               self.showOutput()
               self.accumulatedOutput = errorMsg
             }
+          } else if !self.isPanelVisible {
+            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+              title: L10n.Menu.chatCompleted, body: ""))
           }
         }
       }
@@ -317,6 +320,9 @@ public final class ChatPanelController: NSWindowController {
           self.output.append(errorMsg, attributes: attrs)
           self.output.scroll(to: .bottom)
           self.growPanelIfNeeded()
+        } else if !self.isPanelVisible {
+          EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+              title: L10n.Menu.chatCompleted, body: ""))
         }
       }
     )

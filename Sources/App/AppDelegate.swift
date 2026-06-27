@@ -15,10 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     NSApplication.shared.setActivationPolicy(.accessory)
 
     do { try ConfigManager.shared.load() } catch {
-      EventBus.shared.publish(AppEvent.configLoadFailed, payload: error.localizedDescription)
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.configLoadFailed, body: error.localizedDescription))
     }
     do { try AppDatabase.shared.setup() } catch {
-      EventBus.shared.publish(AppEvent.databaseInitFailed, payload: error.localizedDescription)
+      EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+        title: L10n.Menu.dbInitFailed, body: error.localizedDescription))
     }
 
     NotificationManager.shared.requestAuthorization()
@@ -32,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     installEventHandler()
 
     debugLog("[Utility] Ready")
+  }
+
+  func applicationWillTerminate(_: Notification) {
+    menuBar.terminateAllTasks()
   }
 
   private func registerAllHotkeys() {

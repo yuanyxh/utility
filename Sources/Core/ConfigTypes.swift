@@ -12,6 +12,7 @@ public struct AppConfig: Codable {
   var rss: RSSConfig = .init()
   var tasks: [TaskConfig] = []
   var prompts: PromptConfig = .init()
+  var notifications: NotificationConfig = .init()
 
   public init() {}
 
@@ -26,6 +27,7 @@ public struct AppConfig: Codable {
     rss = (try? c.decode(RSSConfig.self, forKey: .rss)) ?? .init()
     tasks = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
     prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
+    notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
   }
 }
 
@@ -189,13 +191,31 @@ public struct PromptConfig: Codable {
   }
 }
 
+// MARK: - Notification
+
+public struct NotificationConfig: Codable {
+  var enabled: Bool = true
+
+  public init() {}
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+  }
+}
+
 // MARK: - Task
+
+public enum TaskTriggerMode: String, Codable {
+  case cron
+  case manual
+}
 
 public struct TaskConfig: Codable {
   var name: String = ""
   var trigger: String = ""  // cron 表达式 或 事件名
   var exec: TaskExecConfig = .sh("")
   var enabled: Bool = true
+  var mode: TaskTriggerMode = .cron
 
   public init() {}
 
@@ -204,6 +224,7 @@ public struct TaskConfig: Codable {
     name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
     trigger = try c.decodeIfPresent(String.self, forKey: .trigger) ?? ""
     enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    mode = (try? c.decode(TaskTriggerMode.self, forKey: .mode)) ?? .cron
     // exec 可能是字符串（自动推断）或字典（显式声明）
     if let str = try? c.decode(String.self, forKey: .exec) {
       exec = TaskExecConfig.infer(from: str)

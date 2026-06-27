@@ -130,6 +130,14 @@ extension L10n {
       format("notify.task_failed", name)
     }
 
+    static func taskCompleted(_ name: String) -> String {
+      format("notify.task_completed", name)
+    }
+
+    static var chatCompleted: String {
+      string("notify.chat_completed")
+    }
+
     static var launchAtLoginFailed: String {
       string("notify.launch_at_login_failed")
     }
