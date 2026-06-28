@@ -53,9 +53,10 @@ public final class TaskScheduler {
     for task in configs {
       guard let expr = CronExpression(task.trigger) else { continue }
 
-      // 只补触发已有记录的（未运行过的不存在"错过"）
-      guard let lastFire = stateDB.lastFire(for: task.name) else { continue }
-      let nextFire = nextCronDate(after: lastFire, expr: expr)
+      // 无历史记录时，用今天 00:00 作为基准（防止 DB 重建后错过今日触发）
+      let lastFire = stateDB.lastFire(for: task.name)
+      let reference = lastFire ?? Calendar.current.startOfDay(for: now)
+      let nextFire = nextCronDate(after: reference, expr: expr)
       guard let next = nextFire, next <= now else { continue }
 
       fireTask(task)
@@ -104,7 +105,6 @@ public final class TaskScheduler {
     for task in configs {
       guard let expr = CronExpression(task.trigger) else { continue }
       let lastFire = stateDB.lastFire(for: task.name)
-      // nil 时从当前分钟开始搜（nextCronDate 内部 +60s 会跳过当前分钟）
       if let next = nextCronDate(after: lastFire ?? now.addingTimeInterval(-60), expr: expr),
         next <= now
       {
