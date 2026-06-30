@@ -15,6 +15,9 @@ public final class StageDropMonitor {
   private var isDragging = false
   private var isInternalClick = false
   private var dragCCAtMouseDown: Int = -1
+  /// pasteboard 读取节流 — 100ms 内返回上次缓存结果，避免阻塞系统事件管道
+  private var lastPasteboardCheck: TimeInterval = 0
+  private var lastPasteboardResult: Bool = false
 
   private var isWindowVisible: Bool {
     stageWindow?.window?.isVisible ?? false
@@ -80,6 +83,8 @@ public final class StageDropMonitor {
 
       processDrop()
 
+    isInternalClick = false
+
     case .leftMouseDragged:
       guard isDragging else { break }
       guard !isInternalClick else { break }
@@ -110,6 +115,9 @@ public final class StageDropMonitor {
 
   /// 与 processDrop 完全对齐的内容类型检测，无副作用
   private func dragPasteboardHasContent() -> Bool {
+    let now = ProcessInfo.processInfo.systemUptime
+    guard now - lastPasteboardCheck > 0.1 else { return lastPasteboardResult }
+    lastPasteboardCheck = now
     let pb = NSPasteboard(name: .drag)
     // URL（与 processDrop 相同的过滤逻辑）
     if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
@@ -118,24 +126,29 @@ public final class StageDropMonitor {
       }
       let webURLs = urls.filter { !$0.standardizedFileURL.isFileURL }
       if !fileURLs.isEmpty || !webURLs.isEmpty {
+        lastPasteboardResult = true
         return true
       }
     }
     // 图片
     for type in PasteboardImageTypes.all {
       if pb.data(forType: type) != nil {
+        lastPasteboardResult = true
         return true
       }
     }
     // HTML
     if pb.string(forType: .html) != nil {
+      lastPasteboardResult = true
       return true
     }
     // 纯文本
     if let text = pb.string(forType: .string), !text.isEmpty {
+      lastPasteboardResult = true
       return true
     }
 
+    lastPasteboardResult = false
     return false
   }
 

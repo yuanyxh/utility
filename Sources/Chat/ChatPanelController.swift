@@ -181,6 +181,8 @@ public final class ChatPanelController: NSWindowController {
     }
     window?.makeKeyAndOrderFront(nil)
     NSApplication.shared.activate(ignoringOtherApps: true)
+    // 聚焦输入框
+    window?.makeFirstResponder(inputView.textView)
   }
 
   public override func close() {
