@@ -1,7 +1,7 @@
 # Utility — macOS 桌面工具集
 
 菜单栏常驻、快捷键驱动的 macOS 工具集，包含剪切板管理、AI 翻译（含 OCR 区域截图）、
-拖拽暂存、RSS 订阅、定时任务调度和实时网速监控六个核心功能。
+拖拽暂存、RSS 订阅、MCP 记忆服务、定时任务调度和实时网速监控七个核心功能。
 
 ---
 
@@ -17,6 +17,7 @@
   - [拖拽暂存](#拖拽暂存)
   - [RSS 订阅](#rss-订阅)
   - [定时任务调度](#定时任务调度)
+  - [MCP 记忆服务](#mcp-记忆服务)
   - [网速监控](#网速监控)
 - [命令行接口](#命令行接口)
 - [菜单栏](#菜单栏)
@@ -169,6 +170,29 @@ prompts:
 ```
 </details>
 
+<details>
+<summary>MCP 记忆服务</summary>
+
+```yaml
+mcp:
+  # 是否启用 MCP 记忆服务（需先安装 Python 依赖）
+  enabled: false
+  # MCP 服务端口
+  port: 9001
+  # Qdrant 向量数据库路径
+  qdrantPath: "~/Documents/selfdata/qdrant_data"
+  # 知识库路径（笔记目录）
+  knowledgeBasePath: "~/Documents/selfdata/notes"
+  # fastembed 模型缓存目录
+  fastembedCacheDir: "~/.cache/fastembed_cache"
+  # 嵌入模型
+  embedderModel: "sentence-transformers/all-MiniLM-L6-v2"
+  # 每日记忆总结
+  summaryEnabled: true
+  summaryHour: 17
+```
+</details>
+
 ---
 
 ## 快捷键一览
@@ -275,6 +299,39 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 - **存储**：SQLite（`rss_item` 表）
 
 配合 Hermes Agent 可实现每日自动筛选总结（见下方定时任务）。
+
+---
+
+### MCP 记忆服务
+
+基于 Mem0 + Qdrant 双层的个人知识记忆服务，通过后台 Python 子进程提供 MCP Tools。
+
+**架构：**
+- **热层**（Mem0 → Qdrant）：原始碎片记忆，自动提取/去重/冲突解决
+- **冷层**（Qdrant 独立集合）：已归档知识索引，定期衰减热度
+- **笔记搜索**：`grep` 兜底全文搜索本地 Markdown/TXT
+- **项目依赖图**：SQLite FTS5 索引 Swift/JS/Python 符号定义
+
+**MCP Tools（通过 HTTP SSE 通道）：**
+| Tool | 功能 |
+|------|------|
+| `house_rules` | 获取系统指南和项目目录下的提示词 |
+| `remember` | 写入单条事实到热层 |
+| `remember_batch` | 批量写入多条记忆 |
+| `recall` | 搜索记忆库（热层 + 冷层 + 笔记全文） |
+| `catch_up` | 获取最近记忆列表 |
+| `forget` | 删除指定记忆 |
+| `project_search/structure/packages/exports` | 项目符号/结构/依赖/导出查询 |
+
+**每日总结流水线：** 定时（默认每日 17 点）从热层拉取 3 天记忆 → LLM 去重/分类 → 写入 `Extracts/` 目录 + 同步冷层。
+
+**菜单栏：** 显示 MCP 运行状态（● 运行中 / ◐ 初始化 / ○ 已停止 / ✕ 崩溃），可重启服务。
+
+**前置条件：**
+```bash
+# 安装 Python 依赖
+cd Sources/MCPScripts && pip3 install -r requirements.txt
+```
 
 ---
 
@@ -393,6 +450,11 @@ utility rss --mark-all-read
 RSS (3 未读)  ▸ 抓取 RSS
                  全部已读
 ─────────
+● MCP        ▸ 运行中
+                 重启服务
+                 Qdrant: ~/Documents/selfdata/qdrant_data
+                 知识库: ~/Documents/selfdata/notes
+─────────
 任务 (2)     ▸ RSS 日报
                 清理临时文件（灰色，已禁用）
 ─────────
@@ -404,6 +466,7 @@ RSS (3 未读)  ▸ 抓取 RSS
 - **重载配置**：热加载 `~/.config/utility/config.yaml`，同时刷新 RSS 未读数、任务列表和定时抓取间隔
 - **开机自启**：通过系统登录项（SMAppService）自动启动
 - **RSS**：显示未读数量，子菜单可手动触发抓取或全部已读
+- **MCP**：显示服务运行状态，子菜单可重启服务、查看数据路径。未启用时显示「○ MCP（未启用）」
 - **任务**：列出所有任务，点击立即执行一次；运行中打 ✓，再点击终止进程；禁用的任务置灰不可点击
 - **清空剪切板**：删除所有剪切板记录
 - **退出**：完全退出 app
@@ -423,6 +486,7 @@ RSS (3 未读)  ▸ 抓取 RSS
 | 定时任务执行失败 | 「任务失败: \<name\>」 |
 | 任务执行成功 | 「任务完成: \<name\>」 |
 | Chat 后台完成（面板不可见时） | 「Chat 完成」 |
+| MCP 进程崩溃超过重试阈值 | 「MCP 服务 — 连续崩溃 N 次，已停止」 |
 
 ---
 
@@ -430,20 +494,23 @@ RSS (3 未读)  ▸ 抓取 RSS
 
 | 层面 | 选型 |
 |------|------|
-| 语言 | Swift 5.9+ |
+| 语言 | Swift 5.9+ / Python 3 |
 | UI 框架 | AppKit（菜单栏 + NSPanel） |
-| 存储 | GRDB（SQLite） |
+| 存储 | GRDB（SQLite）+ Qdrant（向量数据库） |
 | 配置 | Yams（YAML） |
 | 热键 | Carbon EventHotKey |
 | 翻译 API | OpenAI 兼容格式 |
 | OCR | Vision（VNRecognizeTextRequest） |
 | 暂存拖拽 | CGEventTap 全局监听 |
 | 定时调度 | Timer + CronExpression |
+| MCP 协议 | mcp.server + StreamableHTTPServerTransport |
+| 记忆引擎 | Mem0（热层）+ fastembed + Qdrant（冷层） |
+| 项目扫描 | 正则 + FTS5 多语言符号提取（Swift/JS/Python/Java/Kotlin） |
 | 通知 | UNUserNotificationCenter / NSUserNotificationCenter |
 | 网速 | getifaddrs（POSIX 网卡字节计数） |
 | 登录项 | SMAppService |
 | CLI | swift-argument-parser |
-| 依赖 | GRDB.swift, Yams, swift-argument-parser |
+| 依赖 | GRDB.swift, Yams, swift-argument-parser, mcp, qdrant-client, fastembed, mem0ai |
 
 ---
 
@@ -459,6 +526,11 @@ tail -f ~/.cache/utility/debug.log
 ~/.config/utility/task_state.yaml # 任务状态（已废弃，现在用 task_state 表）
 ~/.cache/utility/clip/            # 剪切板图片缓存
 ~/.cache/utility/stage/           # 暂存图片缓存
+
+# MCP 服务日志
+tail -f ~/Documents/selfdata/notes/logs/server.log      # MCP 服务
+tail -f ~/Documents/selfdata/notes/logs/summarize.log   # 每日总结流水线
+~/Documents/selfdata/notes/流水线错误日志.jsonl            # 总结流水线异常记录
 
 # 查看数据库
 sqlite3 ~/.config/utility/data.sqlite ".tables"

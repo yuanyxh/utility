@@ -5,5 +5,6 @@
 *.app
 *.dmg
 .swiftpm/
-.hermes/plans/*
 scripts/package-utility.sh
+__pycache__
+node_modules

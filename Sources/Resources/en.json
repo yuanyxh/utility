@@ -50,5 +50,17 @@
     "rss.help_mark_all_read": "Mark all read",
     "rss.fetch_done": "Fetch done: %ld new",
     "rss.mark_read_done": "Marked as read: %@",
-    "rss.mark_all_read_done": "All marked as read"
+    "rss.mark_all_read_done": "All marked as read",
+    "menu.mcp_restart": "Restart Service",
+    "menu.mcp_disabled": "○ MCP (Disabled)",
+    "menu.mcp_qdrant_path": "Qdrant: %@",
+    "menu.mcp_knowledge_base": "Notes: %@",
+    "menu.mcp_model_cache": "Model Cache: %@",
+    "menu.mcp_state_running": "● Running",
+    "menu.mcp_state_initializing": "◐ Initializing…",
+    "menu.mcp_state_restarting": "◐ Restarting…",
+    "menu.mcp_state_stopped": "○ Stopped",
+    "menu.mcp_state_crashed": "✕ Crashed",
+    "notify.mcp_crashed_title": "MCP Service",
+    "notify.mcp_crashed": "Crashed %ld times, stopped"
 }

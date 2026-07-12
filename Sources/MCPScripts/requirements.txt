@@ -1,0 +1,8 @@
+mem0ai>=2.0,<3.0
+mcp>=1.6.0
+fastembed>=0.8.0
+httpx>=0.28.0
+qdrant-client>=1.13.0
+uvicorn>=0.34.0
+starlette>=0.46.0
+anyio>=4.0

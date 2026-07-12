@@ -13,18 +13,17 @@ import Cocoa
 /// spinner.startAnimation(nil)
 /// ```
 public final class LoadingSpinner: NSProgressIndicator {
+    override public init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        style = .spinning
+        controlSize = .regular
+        isDisplayedWhenStopped = false
+    }
 
-  override public init(frame frameRect: NSRect) {
-    super.init(frame: frameRect)
-    style = .spinning
-    controlSize = .regular
-    isDisplayedWhenStopped = false
-  }
-
-  required init?(coder: NSCoder) {
-    super.init(coder: coder)
-    style = .spinning
-    controlSize = .regular
-    isDisplayedWhenStopped = false
-  }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        style = .spinning
+        controlSize = .regular
+        isDisplayedWhenStopped = false
+    }
 }

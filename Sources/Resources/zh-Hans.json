@@ -50,5 +50,17 @@
     "rss.help_mark_all_read": "标记全部已读",
     "rss.fetch_done": "✅ 抓取完成: %ld 条新内容",
     "rss.mark_read_done": "✅ 已标记为已读: %@",
-    "rss.mark_all_read_done": "✅ 全部标记为已读"
+    "rss.mark_all_read_done": "✅ 全部标记为已读",
+    "menu.mcp_restart": "重启服务",
+    "menu.mcp_disabled": "○ MCP（未启用）",
+    "menu.mcp_qdrant_path": "Qdrant: %@",
+    "menu.mcp_knowledge_base": "知识库: %@",
+    "menu.mcp_model_cache": "模型缓存: %@",
+    "menu.mcp_state_running": "● 运行中",
+    "menu.mcp_state_initializing": "◐ 初始化…",
+    "menu.mcp_state_restarting": "◐ 重启中…",
+    "menu.mcp_state_stopped": "○ 已停止",
+    "menu.mcp_state_crashed": "✕ 崩溃",
+    "notify.mcp_crashed_title": "MCP 服务",
+    "notify.mcp_crashed": "连续崩溃 %ld 次，已停止"
 }

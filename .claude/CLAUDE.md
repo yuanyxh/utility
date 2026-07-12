@@ -52,6 +52,24 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 仅检查 pasteboard 内容（hasContent）会因残留数据误判
 - 图片类型统一定义在 `PasteboardImageTypes.all`
 
+### 符号提取（Scanner）
+- `ProjectScanner` 全量扫描 + `FileWatcher` 增量扫描，结果写入 `.utility/deps.sqlite`
+- 多语言提取器通过 `SymbolExtractor` 协议注册，以扩展名为 key
+- **提取优先级**：AST 脚本优先 → regex 提取器兜底 → 都失败则计数
+- AST 连续 3 次失败后跳过（`failed_files` 表计数），文件修改后自动重置
+- 支持的提取器：
+  - `SwiftExtractor` — 正则 + brace-depth，class/struct/enum/protocol/extension/func/var/let
+  - `JSTSExtractor` — 正则，JS/TS/JSX/TSX 的 export function/class/const/interface/type
+  - `PythonExtractor` — 正则，def/class/async def/UPPER_CASE 常量/装饰器
+  - `VueExtractor` — 正则提取 `<script>` 块后委托 JSTSExtractor
+  - `JavaExtractor` — 正则 + brace-depth，class/interface/enum/@interface/method/field + 注解追踪
+  - `KotlinExtractor` — 正则 + brace-depth，fun/suspend fun/class/object/companion/val/var/typealias
+- AST 脚本目录：`Sources/MCPScripts/ast_extractor.py`（Python 分发） + `ast-js/parse.mjs`（@babel/parser）
+- `.js` 文件始终启用 `jsx` plugin 以支持 React Native/Expo
+- Java/Kotlin 用 regex 提取（无 AST 脚本），共享 `RegexMatch` 辅助结构（`ExtractorProtocol.swift`）
+- RegexMatch 原为 SwiftExtractor fileprivate，后提升至 ExtractorProtocol.swift internal 供所有提取器复用
+- 注意：macOS NSRegularExpression 使用 ICU 语法，不支持嵌套字符类（如 `[\], ]` 非法）
+
 ### OCR overlay
 - 无文案提示
 - 暗灰 0.5pt 边框

@@ -60,3 +60,28 @@ tasks: []
   #   exec:
   #     type: sh
   #     command: rm -rf /tmp/myapp-*
+
+# ---------- MCP 记忆服务 ----------
+mcp:
+  enabled: true
+  port: 9001
+
+  # 数据存储路径
+  qdrantPath: "~/Documents/selfdata/qdrant_data"
+  knowledgeBasePath: "~/Documents/selfdata/notes"
+
+  # fastembed 模型缓存
+  fastembedCacheDir: "~/.cache/fastembed_cache"
+  embedderModel: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # 记忆生命周期
+  hotRetentionDays: 180
+  archiveDays: 90
+
+  # 每日总结（由 TaskScheduler 触发 summarize.py）
+  summaryEnabled: true
+  summaryHour: 17
+
+  # 进程守护
+  maxRestarts: 3
+  restartDelayMs: 2000

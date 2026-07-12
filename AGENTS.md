@@ -8,13 +8,15 @@
 
 ## 项目概述
 
-**utility** — macOS 菜单栏工具，Swift + AppKit + SPM。
+**utility** — macOS 菜单栏工具，Swift + AppKit + SPM，Python 子进程扩展。
 - LSUIElement（无 Dock 图标）
 - NSStatusItem 菜单栏入口
 - NSPanel floating 面板：剪贴板管理、翻译、Stage 暂存
 - Carbon EventHotKey 全局快捷键
 - GRDB 本地 SQLite 存储
 - Vision OCR 屏幕区域识别
+- **MCP 记忆服务**：Mem0 + Qdrant 冷热双层记忆，通过 Python 子进程提供 MCP Tools
+- **项目符号扫描**：Swift/JS-TS/Python 正则提取 + FTS5 索引 + 文件监控
 
 ---
 
@@ -84,9 +86,15 @@
 | `ClipboardPanelController` | 剪贴板面板 + clipboardStorage + clipboardWatcher（自管生命周期） |
 | `TranslationPanelController` | 翻译面板 + 选中文本获取 |
 | `StageWindowController` | Stage 暂存窗口 + StageDropMonitor（自管注册） |
-| `TaskScheduler` | Timer + cron + 系统唤醒检测 |
+| `TaskScheduler` | Timer + cron + 系统唤醒检测（含内部任务注册） |
 | `TaskExecutor` | 外部脚本执行（sh/js/py） |
 | `TaskStateDB` | GRDB 任务状态持久化 |
+| `MCPProcessManager` | Python server.py 子进程生命周期管理 + 健康检查 + 自动重启 + EventBus 状态广播 |
+| `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
+| `ProjectScanner` | 多语言符号提取器注册 + 目录扫描 + SQLite + FTS5 索引 |
+| `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 |
+| `ManifestParser` | Package.swift / package.json / pyproject.toml 依赖解析 |
+| `FileWatcher` | FSEvents 文件监控 + 3s 防抖增量更新 |
 | `NotificationManager` | 本地通知 |
 | `Translator` | OpenAI 兼容 API 翻译 |
 | `OCRService` | Vision 帧捕获 + 文本识别 |
@@ -136,6 +144,24 @@
 ### Config YAML
 - 所有字段 `decodeIfPresent`（避免缺少 key 导致 crash）
 - YAML key 必须与 struct property 名完全相同
+
+### MCP 服务
+- server.py / summarize.py 在 `Sources/MCPScripts/` 目录，通过 `MCPProcessManager` 以子进程方式启动
+- server.py 所有配置从环境变量读取（MCPProcessManager.buildEnv() 实时构建），不解析 sys.argv
+- 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
+- summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入
+- MEMORY_SERVER_URL 从配置 mcp.port 动态计算，确保总结流水线连对端口
+
+### 项目扫描
+- 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册
+- 提取优先级：AST 脚本优先（Python AST + @babel/parser）→ 正则提取器兜底 → 都失败则计数
+- AST 连续 3 次失败后跳过（`failed_files` 表跨扫描计数），文件修改后自动重置
+- `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` / `VueExtractor` / `JavaExtractor` / `KotlinExtractor` 用正则 + brace-depth tracking
+- `.js` 文件始终启用 `@babel/parser` 的 `jsx` plugin 以支持 React Native/Expo
+- `JavaExtractor` 提取 class/interface/enum/@interface + method + field，带关键字过滤（避免 return/null 误匹配为类型）
+- `KotlinExtractor` 提取 fun/suspend fun + class/object/companion + val/var + typealias
+- FTS5 + 同义词扩展：中文搜索先转同义词再 MATCH，降级到 LIKE
+- MCP `project_search` 三状态响应：`exact`（自动选中）、`ambiguous`（同名多文件引导）、`no_match`（无结果）
 
 ### 文件删除
 - 重要文件：`osascript Finder delete` 移废纸篓

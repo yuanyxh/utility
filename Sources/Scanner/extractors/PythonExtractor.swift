@@ -1,0 +1,199 @@
+import Foundation
+
+/// Python symbol extractor using regex.
+///
+/// Extracts:
+///   - `def function_name(...)` — at any depth
+///   - `class ClassName` — at any depth
+///   - `NAME = value` — UPPER_CASE module-level constants
+///   - `async def function_name(...)` — at any depth
+///   - Decorated definitions (captures `@decorator` as context)
+struct PythonExtractor: SymbolExtractor {
+    let language = "python"
+    let supportedExtensions: Set<String> = ["py"]
+
+    func extract(from content: String, filePath: String) -> [SymbolRecord] {
+        let lines = content.components(separatedBy: .newlines)
+        var symbols: [SymbolRecord] = []
+        var lastDecorator: String?
+        var inTripleString = false
+        var tripleChar = "\"\"\""
+
+        for rawLine in lines {
+            // stripped: whitespace-trimmed for content inspection
+            let stripped = rawLine.trimmingCharacters(in: .whitespaces)
+
+            // ── skip triple-quoted strings (docstrings / multi-line strings) ──
+            if inTripleString {
+                if stripped.contains(tripleChar) { inTripleString = false }
+                continue
+            }
+            if let tripleMatch = Self.matchTripleQuote(stripped) {
+                if !tripleMatch.closed {
+                    inTripleString = true
+                    tripleChar = tripleMatch.quote
+                    continue
+                }
+            }
+
+            // ── skip comment-only lines ──
+            let noComment = Self.stripInlineComment(stripped)
+            guard let beforeComment = noComment, !beforeComment.isEmpty else {
+                continue
+            }
+
+            // ── decorator tracking ──
+            if beforeComment.hasPrefix("@") {
+                lastDecorator = beforeComment
+                continue
+            }
+
+            // ── match def / class ──
+            let nsRange = NSRange(beforeComment.startIndex..., in: beforeComment)
+            if let match = Self.declRegex.firstMatch(in: beforeComment, range: nsRange) {
+                let kind = (beforeComment as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                let name = (beforeComment as NSString).substring(with: match.range(at: 2))
+
+                let docComment: String?
+                if let d = lastDecorator {
+                    // Find the docstring immediately after this def for real doc comments
+                    // For now just store the decorator as context
+                    docComment = d
+                } else {
+                    docComment = nil
+                }
+
+                let sig: String?
+                if kind == "def" || kind == "cdef" || kind == "async def" {
+                    sig = Self.trimTrailingColon(beforeComment)
+                } else {
+                    sig = nil
+                }
+
+                symbols.append(SymbolRecord(
+                    filePath: filePath,
+                    name: name,
+                    kind: kind,
+                    signature: sig,
+                    docComment: docComment,
+                    visibility: nil
+                ))
+
+                lastDecorator = nil
+                continue
+            }
+
+            // ── match module-level constants (UPPER_CASE) ──
+            if Self.isModuleLevel(rawLine),
+               let match = Self.constRegex.firstMatch(in: beforeComment, range: nsRange)
+            {
+                let name = (beforeComment as NSString).substring(with: match.range(at: 1))
+                symbols.append(SymbolRecord(
+                    filePath: filePath,
+                    name: name,
+                    kind: "const",
+                    signature: nil,
+                    docComment: nil,
+                    visibility: nil
+                ))
+                lastDecorator = nil
+                continue
+            }
+
+            lastDecorator = nil
+        }
+
+        return symbols
+    }
+
+    // MARK: - Regex
+
+    /// Matches def / class / async def / cdef declarations.
+    /// Group 1: kind (def, class, async, cdef)
+    /// Group 2: name
+    private static let declRegex: NSRegularExpression = {
+        // Handles: def, async def, class, cdef (Cython)
+        let raw = #"^\s*((?:async\s+)?def|cdef|class)\s+([a-zA-Z_][a-zA-Z0-9_]*)"#
+        return try! NSRegularExpression(pattern: raw)
+    }()
+
+    /// Matches UPPER_CASE module-level constants: NAME = ...
+    private static let constRegex: NSRegularExpression = {
+        let raw = #"^\s*([A-Z][A-Z0-9_]*)\s*="#
+        return try! NSRegularExpression(pattern: raw)
+    }()
+
+    // MARK: - Helpers
+
+    /// Check if a line is at module level (no leading whitespace or minimal indentation).
+    private static func isModuleLevel(_ line: String) -> Bool {
+        let indent = line.prefix(while: { $0 == " " || $0 == "\t" })
+        return indent.count == 0
+    }
+
+    /// Strip inline `#` comments from a line.
+    /// Returns nil if the line is entirely a comment AFTER stripping strings.
+    private static func stripInlineComment(_ line: String) -> String? {
+        var result = ""
+        var i = line.startIndex
+        let end = line.endIndex
+        var inString = false
+        var quoteChar: Character = "\""
+        var hashIdx: String.Index?
+
+        while i < end {
+            let c = line[i]
+            let next = line.index(after: i)
+
+            if inString {
+                if c == "\\", next < end {
+                    i = line.index(after: next)
+                    continue
+                }
+                if c == quoteChar { inString = false }
+                i = next
+                continue
+            }
+
+            if c == "\"" || c == "'" {
+                inString = true
+                quoteChar = c
+                i = next
+                continue
+            }
+
+            if c == "#" {
+                hashIdx = i
+                break
+            }
+
+            result.append(c)
+            i = next
+        }
+
+        if hashIdx != nil { /* comment started */ }
+        let cleaned = result.trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private static func trimTrailingColon(_ s: String) -> String {
+        var r = s.trimmingCharacters(in: .whitespaces)
+        if r.hasSuffix(":") { r = String(r.dropLast()) }
+        return r.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Detect triple-quoted strings on a line.
+    private struct TripleResult { let quote: String; let closed: Bool }
+
+    private static func matchTripleQuote(_ line: String) -> TripleResult? {
+        if line.hasPrefix("\"\"\"") {
+            let rest = String(line.dropFirst(3))
+            return TripleResult(quote: "\"\"\"", closed: rest.contains("\"\"\""))
+        }
+        if line.hasPrefix("'''") {
+            let rest = String(line.dropFirst(3))
+            return TripleResult(quote: "'''", closed: rest.contains("'''"))
+        }
+        return nil
+    }
+}

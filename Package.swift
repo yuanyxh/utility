@@ -18,7 +18,8 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             resources: [
-                .process("Resources")
+                .process("Resources"),
+                .copy("MCPScripts"),
             ]
         )
     ]
