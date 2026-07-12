@@ -119,10 +119,16 @@ def _cleanup_qdrant_locks() -> None:
 
 _cleanup_qdrant_locks()
 COLD_COLLECTION = "knowledge_base"
-EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDER_MODEL = os.environ.get(
+    "EMBEDDER_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+)
 EMBEDDER_DIMS = 384
 FASTEMBED_CACHE_DIR = os.environ.get(
-    "FASTEMBED_CACHE_DIR", os.path.expanduser("~/.cache/fastembed_cache")
+    "FASTEMBED_CACHE_PATH", os.path.expanduser("~/.cache/fastembed_cache")
+)
+os.environ.setdefault("FASTEMBED_CACHE_PATH", FASTEMBED_CACHE_DIR)
+logging.info(
+    f"ENV CHECK: FASTEMBED_CACHE_PATH={FASTEMBED_CACHE_DIR}, MCP_PORT={os.environ.get('MCP_PORT')}, QDRANT_PATH={os.environ.get('QDRANT_PATH')}"
 )
 NOTES_DIR = os.environ.get(
     "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
@@ -211,6 +217,13 @@ _hot_last_init_attempt = 0.0
 
 def _init_hot_memory() -> bool:
     global hot_memory
+    # mem0 内置 PostHog 遥测会阻塞初始化，强制禁用
+    try:
+        import posthog
+
+        posthog.disabled = True
+    except ImportError:
+        pass
     for attempt in range(HOT_INIT_MAX_RETRIES):
         try:
             hot_memory = Memory.from_config(MEM0_CONFIG)
@@ -226,7 +239,7 @@ def _init_hot_memory() -> bool:
     return False
 
 
-_init_hot_memory()
+# 热层改为惰性初始化（_ensure_hot_memory()），不阻塞服务启动
 
 # ============================================================
 # 冷层：Qdrant 直接客户端

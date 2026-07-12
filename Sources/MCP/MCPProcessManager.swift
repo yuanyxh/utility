@@ -31,6 +31,8 @@ final class MCPProcessManager {
     private var process: Process?
     private var healthCheckTimer: Timer?
     private var crashCount = 0
+    /// stop() 主动关闭时不触发重启
+    private var isStopping = false
 
     // Pre-flight cache（config 层不缓存，但 python 检查结果缓存——python 版本不会动态变）
     private var cachedServerPath: String?
@@ -73,7 +75,7 @@ final class MCPProcessManager {
         if let mcp = mcpConfig {
             env["QDRANT_PATH"] = (mcp.qdrantPath as NSString).expandingTildeInPath
             env["NOTES_DIR"] = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-            env["FASTEMBED_CACHE_DIR"] = (mcp.fastembedCacheDir as NSString).expandingTildeInPath
+            env["FASTEMBED_CACHE_PATH"] = (mcp.fastembedCacheDir as NSString).expandingTildeInPath
             env["EMBEDDER_MODEL"] = mcp.embedderModel
         }
         return env
@@ -126,6 +128,7 @@ final class MCPProcessManager {
     }
 
     func stop() {
+        isStopping = true
         healthCheckTimer?.invalidate()
         healthCheckTimer = nil
         guard let proc = process else {
@@ -261,6 +264,7 @@ final class MCPProcessManager {
     // MARK: - Process lifecycle
 
     private func launchProcess(serverPath: String) {
+        isStopping = false
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: Self.pythonVenvPath)
         proc.arguments = [serverPath] // port via MCP_PORT env in buildEnv()
@@ -271,8 +275,8 @@ final class MCPProcessManager {
         // Handle process exit
         proc.terminationHandler = { [weak self] p in
             guard let self = self else { return }
-            // Don't restart if we're being stopped intentionally
-            if self.state == .stopped || self.state == .initializing { return }
+            // stop() 主动关闭时不触发重启
+            if self.isStopping { return }
 
             let reason = p.terminationReason
             if reason == .uncaughtSignal {
@@ -294,16 +298,50 @@ final class MCPProcessManager {
         }
 
         do {
+            // Capture stderr 以检测 Uvicorn 启动完成信号
+            let stderrPipe = Pipe()
+            proc.standardError = stderrPipe
+
             try proc.run()
             process = proc
             log("[MCP] Started (PID \(proc.processIdentifier))")
 
-            // Begin health check polling
-            startHealthCheck()
+            // 等待服务器输出启动完成信号后再健康检查
+            waitForReady(pipe: stderrPipe)
         } catch {
             log("[MCP] Failed to launch: \(error.localizedDescription)")
             state = .crashed
         }
+    }
+
+    // MARK: - Startup readiness detection
+
+    /// Monitors process stderr for the server startup signal ("Application startup complete"
+    /// or "Uvicorn running on"), then begins health check polling.
+    /// Falls back to a timeout if the signal never arrives.
+    private func waitForReady(pipe: Pipe) {
+        let handle = pipe.fileHandleForReading
+        var buffer = Data()
+        var ready = false
+
+        handle.readabilityHandler = { [weak self] handle in
+            guard let self = self, !ready else { return }
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            buffer.append(data)
+            guard let output = String(data: buffer, encoding: .utf8) else { return }
+
+            if output.contains("Application startup complete") || output.contains("Uvicorn running on") {
+                ready = true
+                handle.readabilityHandler = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.startHealthCheck()
+                }
+            }
+        }
+
+        // 不加超时杀死进程——服务器可能因网络/模型加载慢但最终会准备好
+        // 如果进程真正崩溃退出, terminationHandler 会处理重启
     }
 
     // MARK: - Health check
@@ -312,7 +350,7 @@ final class MCPProcessManager {
         healthCheckTimer?.invalidate()
         let url = URL(string: "http://127.0.0.1:\(port)/health")!
         var retries = 0
-        let maxRetries = 20 // ~10s total wait
+        let maxRetries = 20 // ~10s total wait (服务器已就绪，应该很快响应)
 
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
             [weak self] timer in
@@ -320,7 +358,7 @@ final class MCPProcessManager {
 
             retries += 1
             if retries > maxRetries {
-                log("[MCP] Health check timed out")
+                log("[MCP] Health check timed out (server unresponsive)")
                 timer.invalidate()
                 self.state = .crashed
                 self.stop()

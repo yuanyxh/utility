@@ -71,6 +71,22 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - RegexMatch 原为 SwiftExtractor fileprivate，后提升至 ExtractorProtocol.swift internal 供所有提取器复用
 - 注意：macOS NSRegularExpression 使用 ICU 语法，不支持嵌套字符类（如 `[\], ]` 非法）
 
+### MCP 进程管理（MCPProcessManager）
+- 通过 Python 子进程运行 server.py，stderr 输出检测 readiness（"Application startup complete"）
+- `waitForReady()`：捕获 stderr，等到就绪信号后再开始 HTTP 健康检查（/health endpoint）
+- 无启动超时杀进程——`terminationHandler` 处理真实崩溃，`isStopping` 标志防止 stop() 误触重启
+- 环境变量由 `buildEnv()` 从 ConfigManager 实时读取，不缓存
+- Python venv 路径 `~/.config/utility/mcp-venv/bin/python3`
+
+### server.py（MCP Python 服务）
+- mem0 热层（`Memory.from_config`）使用 Qdrant 本地存储 + fastembed 嵌入
+- Qdrant 冷层独立集合 `knowledge_base`
+- 热层初始化含 PostHog 遥测 SSL 握手，在 `_init_hot_memory()` 内强制 `posthog.disabled = True` 禁用
+- 热层惰性初始化：不在模块加载阶段执行，由 `_ensure_hot_memory()` 在首次工具调用时触发
+- `FASTEMBED_CACHE_PATH`（注意不是 `FASTEMBED_CACHE_DIR`）是 fastembed 读取的环境变量名，两处设置此变量：server.py 模块级 + Swift MCPProcessManager.buildEnv()
+- `MEM0_CONFIG["embedder"]["config"]` 不支持 `cache_dir` 参数（`BaseEmbedderConfig` 不接受），依靠 `FASTEMBED_CACHE_PATH` 环境变量让 mem0 内部 fastembed 找到已有缓存
+- `pyproject.toml` 未知，依赖见 `requirements.txt`
+
 ### OCR overlay
 - 无文案提示
 - 暗灰 0.5pt 边框
