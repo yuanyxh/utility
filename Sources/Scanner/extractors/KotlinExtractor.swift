@@ -32,7 +32,8 @@ struct KotlinExtractor: SymbolExtractor {
                     .trimmingCharacters(in: .whitespaces)
                     .components(separatedBy: CharacterSet(charactersIn: "(")).first ?? ""
                 lastAnnotation = name
-                continue
+                // Inline annotation: fall through so the declaration regex below can still match
+                guard trimmed.contains(" ") else { continue }
             }
 
             // ── update brace depth ──
@@ -80,9 +81,10 @@ struct KotlinExtractor: SymbolExtractor {
 
             // ── match companion object ──
             if let m = Self.companionRegex.match(trimmed) {
+                let name = m[2].isEmpty ? "companion" : m[2]
                 symbols.append(SymbolRecord(
                     filePath: filePath,
-                    name: "companion",
+                    name: name,
                     kind: "companion object",
                     signature: nil,
                     docComment: lastAnnotation,
@@ -167,32 +169,34 @@ struct KotlinExtractor: SymbolExtractor {
     /// Matches type/object declarations: [visibility] [modifiers] (class/data class/sealed class/...) Name
     /// Groups: 1=visibility, 2=modifiers, 3=kind, 4=name, 5=rest
     private static let typeDeclRegex: NSRegularExpression = {
-        let raw = #"^\s*(public|private|internal|protected)?\s*(open|abstract|final|data|sealed|inner|expect|actual)?\s*"# +
-            #"(class|data\s+class|sealed\s+class|abstract\s+class|enum\s+class|interface|object)\s+"#
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|internal|protected)?\s*(open|abstract|final|data|sealed|inner|expect|actual|value|inline|annotation)?\s*"# +
+            #"(class|data\s+class|sealed\s+class|abstract\s+class|enum\s+class|interface|fun\s+interface|object|data\s+object|annotation\s+class)\s+"#
             + #"([a-zA-Z_][a-zA-Z0-9_]*)(.*)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
-    /// Matches companion object: [visibility] companion object
-    /// Groups: 1=visibility
+    /// Matches companion object: [visibility] companion object [Name]
+    /// Groups: 1=visibility, 2=name (optional)
     private static let companionRegex: NSRegularExpression = {
-        let raw = #"^\s*(public|private|internal|protected)?\s*companion\s+object"#
+        let raw = #"^\s*(public|private|internal|protected)?\s*companion\s+object(?:\s+([a-zA-Z_][a-zA-Z0-9_]*))?"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
     /// Matches function declarations: [visibility] [modifiers] fun [type.] name(params)
     /// Groups: 1=visibility, 2=modifiers, 3=fun keyword, 4=name, 5=params
     private static let funDeclRegex: NSRegularExpression = {
-        let raw = #"^\s*(public|private|internal|protected)?\s*(suspend|operator|infix|tailrec|inline|external|override|open|abstract)?\s*(fun)\s+"#
-            + #"(?:[a-zA-Z_][a-zA-Z0-9_]*\.)?\s*([a-zA-Z_][a-zA-Z0-9_`]*)\s*\(([^)]*)\)"#
+        // Group 2 greedy * matches any number of modifier tokens (override suspend operator, etc.)
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|internal|protected)?\s*((?:[a-zA-Z_@]\w+\s+)*)(fun)\s+"#
+            + #"(?:[a-zA-Z_][a-zA-Z0-9_.]*\.\s*)?([a-zA-Z_][a-zA-Z0-9_`]*)\s*\(([^)]*)\)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
     /// Matches property declarations: [visibility] [modifiers] val/var name[: type]
     /// Groups: 1=visibility, 2=modifiers, 3=val/var, 4=name, 5=type (optional)
     private static let propertyDeclRegex: NSRegularExpression = {
-        let raw = #"^\s*(public|private|internal|protected)?\s*(override|open|abstract|const|lateinit)?\s*(val|var)\s+"#
-            + #"([a-zA-Z_][a-zA-Z0-9_]*)\s*(:\s*[a-zA-Z_][a-zA-Z0-9_<>?., ]*)?"#
+        // Type allows function types (->), nullable (?), generics (<>,)
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|internal|protected)?\s*(override|open|abstract|const|lateinit)?\s*(val|var)\s+"#
+            + #"([a-zA-Z_][a-zA-Z0-9_]*)\s*(:\s*[^=\n{]+)?"#
         return try! NSRegularExpression(pattern: raw)
     }()
 

@@ -1,7 +1,8 @@
 import Foundation
 
 /// Swift symbol extractor using regex + brace-depth tracking.
-/// Extracts class, struct, enum, protocol, extension, func, var, let, typealias, subscript, init.
+/// Extracts class, struct, enum, protocol, extension, func, var, let, typealias, subscript, init,
+/// actor, macro, precedencegroup, operator.
 struct SwiftExtractor: SymbolExtractor {
     let language = "swift"
     let supportedExtensions: Set<String> = ["swift"]
@@ -24,7 +25,11 @@ struct SwiftExtractor: SymbolExtractor {
 
             // ── collect doc comment ──
             if trimmed.hasPrefix("///") {
-                currentDocComment = trimmed
+                if let existing = currentDocComment {
+                    currentDocComment = existing + "\n" + trimmed
+                } else {
+                    currentDocComment = trimmed
+                }
                 continue
             }
 
@@ -109,7 +114,10 @@ struct SwiftExtractor: SymbolExtractor {
     // MARK: - Regex
 
     private static let declRegex: NSRegularExpression = {
-        let raw = #"^\s*(open|public|internal|fileprivate|private)?\s*(static|class|mutating|nonmutating|override|required|convenience|indirect)?\s*(func|var|let|class|struct|enum|protocol|extension|typealias|associatedtype|subscript|init|deinit)\s+([a-zA-Z_][a-zA-Z0-9_]*)"#
+        // Group 2 captures any modifiers (final, @objc, lazy, dynamic, etc.) between visibility and keyword.
+        // Greedy * ensures modifiers consume as much as possible, naturally resolving
+        // ambiguity like `override class func` vs bare `class` keyword.
+        let raw = #"^\s*(open|public|internal|fileprivate|private)?\s*((?:[a-zA-Z_@]\w+\s+)*)(actor|macro|class|struct|enum|protocol|extension|func|var|let|typealias|associatedtype|subscript|init|deinit|precedencegroup|operator)\s+([a-zA-Z_][a-zA-Z0-9_]*)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
@@ -133,7 +141,7 @@ struct SwiftExtractor: SymbolExtractor {
 
     /// Matches `func name(...` — the simpler version for already-known func lines.
     private static let funcSigRegex: NSRegularExpression = {
-        let raw = #"^\s*(open|public|internal|fileprivate|private)?\s*(static|class|mutating|nonmutating|override|required|convenience)?\s*(func)\s+([a-zA-Z_][a-zA-Z0-9_]*)"#
+        let raw = #"^\s*(open|public|internal|fileprivate|private)?\s*((?:[a-zA-Z_@]\w+\s+)*)(func)\s+([a-zA-Z_][a-zA-Z0-9_]*)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
@@ -156,7 +164,6 @@ struct SwiftExtractor: SymbolExtractor {
         var inBlockComment = false
         var inLineComment = false
         var inString = false
-        var inRawString = false
 
         while i < end {
             let c = text[i]
@@ -186,9 +193,8 @@ struct SwiftExtractor: SymbolExtractor {
                     i = text.index(after: next) // skip escaped char
                     continue
                 }
-                if c == "\"" || (inRawString && c == "\"") {
+                if c == "\"" {
                     inString = false
-                    inRawString = false
                 }
                 i = next
                 continue

@@ -4,9 +4,10 @@ import Foundation
 ///
 /// Flow:
 /// 1. Ensure `.utility/deps.sqlite` exists → auto-init if missing
-/// 2. Start FSEvents file watcher (background, 3s debounce)
-/// 3. Spawn agent subprocess with stdin/stdout/stderr passthrough
-/// 4. On agent exit → stop watcher → exit
+/// 2. Full scan → catch changes outside watcher lifetime
+/// 3. Start FSEvents file watcher (background, stack-based coalescing)
+/// 4. Spawn agent subprocess with stdin/stdout/stderr passthrough
+/// 5. On agent exit → stop watcher → exit
 enum AgentRunner {
     /// Entry point called from UtilityCLI.run().
     static func run(agentCommand: String, projectDir: String?) throws {
@@ -14,14 +15,26 @@ enum AgentRunner {
             ?? FileManager.default.currentDirectoryPath
 
         // 1. Ensure deps.sqlite exists
-        let dbPath = try ensureDatabase(projectPath: projectPath)
+        let dbPath = try prepareDatabase(projectPath: projectPath)
+        let isFirstInit = !FileManager.default.fileExists(atPath: dbPath)
 
-        // 2. Start file watcher
+        // 2. Scan (first init or full re-sync)
+        if isFirstInit {
+            print("📦 未发现依赖图，正在扫描项目...")
+            let s = try ProjectScanner.shared.scan(projectPath: projectPath)
+            print("   \(s)")
+        } else {
+            print("📦 全量扫描项目，同步变更...")
+            let s = try ProjectScanner.shared.scan(projectPath: projectPath)
+            print("   发现 \(s)")
+        }
+
+        // 3. Start file watcher
         let watcher = FileWatcher(projectPath: projectPath)
         watcher.start()
         defer { watcher.stop() }
 
-        // 3. Print banner
+        // 4. Print banner
         print("╔══════════════════════════════════════╗")
         print("║   Utility Agent Mode                ║")
         print("╠══════════════════════════════════════╣")
@@ -42,18 +55,14 @@ enum AgentRunner {
 
     // MARK: - Database
 
-    /// Check for `.utility/deps.sqlite`, auto-scan if missing.
+    /// Ensure `.utility` directory exists and return the DB path.
     @discardableResult
-    private static func ensureDatabase(projectPath: String) throws -> String {
-        let dbPath = (projectPath as NSString).appendingPathComponent(".utility/deps.sqlite")
-
-        guard !FileManager.default.fileExists(atPath: dbPath) else {
-            return dbPath
+    private static func prepareDatabase(projectPath: String) throws -> String {
+        let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
+        let dbPath = (utilityDir as NSString).appendingPathComponent("deps.sqlite")
+        if !FileManager.default.fileExists(atPath: utilityDir) {
+            try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
         }
-
-        print("📦 未发现依赖图，正在扫描项目...")
-        let summary = try ProjectScanner.shared.scan(projectPath: projectPath)
-        print("   \(summary)")
         return dbPath
     }
 
@@ -92,7 +101,18 @@ enum AgentRunner {
 
         do {
             try process.run()
+
+            // Process default creates a new process group for the child, which puts it
+            // in the background — reads from stdin get SIGTTIN → stopped (T state).
+            // Move child's process group to the terminal foreground so TUI works.
+            tcsetpgrp(STDIN_FILENO, process.processIdentifier)
+            // Wake child if it was already stopped by SIGTTIN before tcsetpgrp
+            kill(process.processIdentifier, SIGCONT)
+
             process.waitUntilExit()
+
+            // Restore ourselves as the terminal foreground process group
+            tcsetpgrp(STDIN_FILENO, getpgrp())
         } catch {
             print("❌ 启动 Agent 失败: \(error.localizedDescription)")
             return 1

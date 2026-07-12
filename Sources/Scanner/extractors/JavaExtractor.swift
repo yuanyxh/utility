@@ -28,7 +28,9 @@ struct JavaExtractor: SymbolExtractor {
                 // Capture annotation name (skip value args)
                 let parts = trimmed.dropFirst().components(separatedBy: CharacterSet(charactersIn: "("))
                 lastAnnotation = parts[0].trimmingCharacters(in: .whitespaces)
-                continue
+                // If this is an inline annotation (on same line as declaration),
+                // fall through so the declaration regex below can still match
+                guard trimmed.contains(" ") else { continue }
             }
 
             // ── update brace depth ──
@@ -129,19 +131,19 @@ struct JavaExtractor: SymbolExtractor {
 
     // MARK: - Regex
 
-    /// Matches type declarations: [visibility] [modifiers] class/interface/enum/@interface Name [...]
+    /// Matches type declarations: [visibility] [modifiers] class/interface/enum/@interface/record Name [...]
     /// Groups: 1=visibility, 2=modifiers, 3=kind, 4=name, 5=rest (extends/implements)
     private static let typeDeclRegex: NSRegularExpression = {
-        let raw = #"^\s*(public|private|protected)?\s*(static|abstract|final|sealed|non-sealed)?\s*(class|interface|enum|@interface)\s+([a-zA-Z_][a-zA-Z0-9_]*)(.*)"#
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|protected)?\s*(static|abstract|final|sealed|non-sealed|default|strictfp)?\s*(class|interface|enum|@interface|record)\s+([a-zA-Z_][a-zA-Z0-9_]*)(.*)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
     /// Matches method declarations: [visibility] [modifiers] returnType name(params) ...
     /// Groups: 1=visibility, 2=modifiers, 3=returnType, 4=name, 5=params
     private static let methodDeclRegex: NSRegularExpression = {
-        // Type: simple name or qualified (Foo.Bar) or generic (Foo<Bar>)
-        let raw = #"^\s*(public|private|protected)?\s*(static|final|abstract|synchronized|native)?\s*"# +
-            #"([a-zA-Z_][a-zA-Z0-9_.<>?]+)\s+([a-z][a-zA-Z0-9_]*)\s*\(([^)]*)\)"#
+        // Leading annotations (like @Override) are consumed but not captured
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|protected)?\s*(static|final|abstract|synchronized|native|default|sealed)?\s*"# +
+            #"([a-zA-Z_][a-zA-Z0-9_.<>?]+)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)"#
         return try! NSRegularExpression(pattern: raw)
     }()
 
@@ -149,7 +151,7 @@ struct JavaExtractor: SymbolExtractor {
     /// Groups: 1=visibility, 2=modifiers, 3=type, 4=name
     private static let fieldDeclRegex: NSRegularExpression = {
         // Name starts upper or lower (Java constants like TAG, SOME_VAL)
-        let raw = #"^\s*(public|private|protected)?\s*(static|final|volatile|transient)?\s*"# +
+        let raw = #"^\s*(?:(?:@[a-zA-Z_]\w*\s+)*)(public|private|protected)?\s*(static|final|volatile|transient)?\s*"# +
             #"([a-zA-Z_][a-zA-Z0-9_.<>?]+)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:=|;|$)"#
         return try! NSRegularExpression(pattern: raw)
     }()

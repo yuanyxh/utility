@@ -1,28 +1,32 @@
 import CoreServices
 import Foundation
 
-/// FSEvents-based directory watcher with debounce and incremental symbol update.
+/// FSEvents-based directory watcher with stack-based coalescing.
 ///
-/// - Monitors the entire project directory recursively
-/// - 3-second debounce window to batch rapid changes (save-all, git checkout, etc.)
-/// - Only processes files matching ScannerConfig includes
-/// - Re-extracts symbols for changed files and updates deps.sqlite
+/// - All file changes are deduplicated into a pending set
+/// - Timer starts when first item enters an empty set
+/// - After 3 seconds: copy set → clear → scan
+/// - New changes during scan accumulate in the set
+/// - After scan completes, if set is non-empty, start a new timer
 final class FileWatcher {
     private let projectPath: String
     private let scanner: ProjectScanner
     private var stream: FSEventStreamRef?
-    private let queue: DispatchQueue
-    private var debounceItem: DispatchWorkItem?
-    private var pendingPaths = NSMutableSet()
+
+    /// Serial queue for FSEventStream delivery (FSEventStream requires serial).
+    private let eventQueue: DispatchQueue
+
+    /// Thread-safe state for the coalescing stack.
+    private let lock = NSLock()
+    private var pending = Set<String>()
+    private var isScanning = false
+    private var timerScheduled = false
 
     init(projectPath: String) {
         self.projectPath = projectPath
         scanner = ProjectScanner.shared
-        queue = DispatchQueue(
-            label: "com.utility.filewatcher",
-            qos: .utility,
-            attributes: .concurrent
-        )
+        eventQueue = DispatchQueue(label: "com.utility.filewatcher.events", qos: .utility)
+        debugLog("[Watcher] Init: \(projectPath)")
     }
 
     deinit {
@@ -43,7 +47,7 @@ final class FileWatcher {
         )
 
         let paths = [projectPath]
-        let latency: CFTimeInterval = 3.0 // debounce window
+        let latency: CFTimeInterval = 3.0
 
         guard let ref = FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -68,15 +72,12 @@ final class FileWatcher {
         }
 
         stream = ref
-        FSEventStreamSetDispatchQueue(ref, queue)
+        FSEventStreamSetDispatchQueue(ref, eventQueue)
         FSEventStreamStart(ref)
         debugLog("[Watcher] Started: \(projectPath)")
     }
 
     func stop() {
-        debounceItem?.cancel()
-        debounceItem = nil
-
         guard let ref = stream else { return }
         stream = nil
         FSEventStreamStop(ref)
@@ -87,17 +88,18 @@ final class FileWatcher {
 
     // MARK: - Events
 
+    /// Called on `eventQueue` (serial). FSEventStream requires a serial dispatch queue.
     private func onEvent(paths: [String], flags: [FSEventStreamEventFlags]) {
+        debugLog("[Watcher] FSEvent received: \(paths.count) path(s)")
+
         let config = ScannerConfig(projectPath: projectPath)
         var relevant = Set<String>()
 
         for (i, path) in paths.enumerated() {
-            // Skip the project root itself
             guard path != projectPath else { continue }
 
             let flag = i < flags.count ? flags[i] : 0
 
-            // Determine what changed (FSEventStreamEventFlags constants are Int, cast to UInt32)
             let itemIsFile = FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsFile)
             let itemIsDir = FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsDir)
             let itemRemoved = FSEventStreamEventFlags(kFSEventStreamEventFlagItemRemoved)
@@ -109,25 +111,22 @@ final class FileWatcher {
             let isDir = (flag & itemIsDir) != 0
             let isRemoved = (flag & itemRemoved) != 0
             let isRenamed = (flag & itemRenamed) != 0
-            let isModified = (flag & itemModified) != 0 ||
-                (flag & itemCreated) != 0 ||
-                isRemoved || isRenamed
+            let isModified = (flag & itemModified) != 0
+                || (flag & itemCreated) != 0
+                || isRemoved || isRenamed
 
             guard (isFile || isDir) && isModified else { continue }
 
-            // Compute relative path (standardize to avoid /tmp vs /private/tmp mismatch)
             let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
             guard let relRange = standardizedPath.range(of: projectPath + "/") else { continue }
             let relPath = String(standardizedPath[relRange.upperBound...])
 
-            // Skip excluded paths
             if isDir, config.shouldSkipDirectory(URL(fileURLWithPath: path).lastPathComponent) {
                 continue
             }
             if isFile, !config.shouldInclude(relPath) {
                 continue
             }
-            // Skip .utility dir
             if relPath.hasPrefix(".utility/") || relPath == ".utility" {
                 continue
             }
@@ -135,15 +134,71 @@ final class FileWatcher {
             relevant.insert(relPath)
         }
 
-        guard !relevant.isEmpty else { return }
-
-        // Debounce: cancel previous, schedule new in 3s
-        debounceItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            self?.processChanges(relevant)
+        guard !relevant.isEmpty else {
+            debugLog("[Watcher] All \(paths.count) event(s) filtered out")
+            return
         }
-        debounceItem = item
-        queue.asyncAfter(deadline: .now() + 3.0, execute: item)
+
+        debugLog("[Watcher] Relevant: \(relevant.sorted().joined(separator: ", "))")
+
+        // Push to stack (dedup) and schedule timer if needed
+        lock.lock()
+        let wasEmpty = pending.isEmpty
+        pending.formUnion(relevant)
+        debugLog("[Watcher] Pending: \(pending.count) file(s), wasEmpty=\(wasEmpty), isScanning=\(isScanning)")
+
+        if wasEmpty, !isScanning {
+            scheduleTimer()
+        }
+        lock.unlock()
+    }
+
+    // MARK: - Coalescing scan
+
+    /// Called while holding `lock`. Schedules a 3-second scan timer if none is pending.
+    private func scheduleTimer() {
+        guard !timerScheduled else {
+            debugLog("[Watcher] Timer already scheduled, skip")
+            return
+        }
+        timerScheduled = true
+        debugLog("[Watcher] Timer scheduled: scan in 3s")
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.executeScan()
+        }
+    }
+
+    /// Copy pending set, clear, then scan. After scan, check for new items and reschedule.
+    private func executeScan() {
+        lock.lock()
+        timerScheduled = false
+
+        guard !pending.isEmpty else {
+            debugLog("[Watcher] Scan skipped: nothing pending")
+            lock.unlock()
+            return
+        }
+
+        let paths = pending
+        pending.removeAll()
+        isScanning = true
+        lock.unlock()
+
+        debugLog("[Watcher] Scan starting: \(paths.count) file(s)")
+        processChanges(paths)
+        debugLog("[Watcher] Scan done")
+
+        lock.lock()
+        isScanning = false
+        let hasMore = !pending.isEmpty
+        lock.unlock()
+
+        if hasMore {
+            debugLog("[Watcher] More items during scan, rescheduling")
+            lock.lock()
+            scheduleTimer()
+            lock.unlock()
+        }
     }
 
     // MARK: - Incremental update
@@ -162,7 +217,7 @@ final class FileWatcher {
         var updated = 0
         var failed = 0
 
-        for relPath in paths {
+        for relPath in paths.sorted() {
             let fullPath = (projectPath as NSString).appendingPathComponent(relPath)
             let ext = (relPath as NSString).pathExtension.lowercased()
             let parentDir = (relPath as NSString).deletingLastPathComponent
@@ -175,9 +230,9 @@ final class FileWatcher {
                         try db.execute(sql: "DELETE FROM files WHERE path = ?", arguments: [relPath])
                         try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [relPath])
                     }
-                    // Update parent dir file count
                     updateDirFileCount(db: db, dirPath: parentDir)
                     updated += 1
+                    debugLog("[Watcher] Deleted: \(relPath)")
                 } catch {
                     debugLog("[Watcher] Delete failed: \(relPath): \(error.localizedDescription)")
                     failed += 1
@@ -189,7 +244,7 @@ final class FileWatcher {
             guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8),
                   scanner.extractor(for: ext) != nil || ASTExtractorRunner.isSupported(ext)
             else {
-                // Not a processable file type, skip
+                debugLog("[Watcher] Unsupported: \(relPath)")
                 continue
             }
 
@@ -197,11 +252,13 @@ final class FileWatcher {
             var symbols: [SymbolRecord] = []
             let prevFails = (try? db.failedFileCount(path: relPath)) ?? 0
             var extractionError: String?
+            var extractionSource = ""
 
-            // Priority 1: AST pipeline (skip after 3 consecutive failures)
+            // Priority 1: AST pipeline
             if ASTExtractorRunner.isSupported(ext), prevFails < 3 {
                 if let astSymbols = ASTExtractorRunner.extract(from: content, filePath: relPath, ext: ext) {
                     symbols = astSymbols
+                    extractionSource = "ast"
                 } else {
                     extractionError = "AST extraction failed"
                 }
@@ -211,12 +268,12 @@ final class FileWatcher {
             if symbols.isEmpty, let extractor = extractor {
                 symbols = extractor.extract(from: content, filePath: relPath)
                 if !symbols.isEmpty {
-                    extractionError = nil // regex found symbols, clear AST failure
+                    extractionSource = "regex"
+                    extractionError = nil
                 }
             }
 
             do {
-                // Delete old symbols only (keep failed_files to accumulate counter)
                 try db.dbQueue.write { db in
                     try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [relPath])
                 }
@@ -225,7 +282,6 @@ final class FileWatcher {
                     try db.insertSymbols(symbols)
                 }
 
-                // Upsert file record
                 let fileRec = FileRecord(
                     path: relPath,
                     dirPath: parentDir,
@@ -236,7 +292,6 @@ final class FileWatcher {
                 try db.insertFile(fileRec)
 
                 if let err = extractionError {
-                    // AST failed → increment counter via ON CONFLICT
                     try db.dbQueue.write { db in
                         try db.execute(sql: """
                           INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
@@ -248,17 +303,14 @@ final class FileWatcher {
                         """, arguments: [relPath, err, err])
                     }
                 } else {
-                    // AST succeeded (or regex fallback worked) → clear failure counter
                     try db.clearFailedFile(path: relPath)
                 }
 
-                // Update parent dir file count
                 updateDirFileCount(db: db, dirPath: parentDir)
-
                 updated += 1
+                debugLog("[Watcher] Indexed: \(relPath) (\(symbols.count) syms via \(extractionSource))")
             } catch {
                 debugLog("[Watcher] Re-extract failed: \(relPath): \(error.localizedDescription)")
-                // Record failure
                 try? db.dbQueue.write { db in
                     try db.execute(sql: """
                       INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
@@ -278,16 +330,14 @@ final class FileWatcher {
             try db.dbQueue.write { db in
                 try db.execute(sql: "INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
             }
+            debugLog("[Watcher] FTS rebuilt")
         } catch {
             debugLog("[Watcher] FTS rebuild failed: \(error.localizedDescription)")
         }
 
-        if updated > 0 || failed > 0 {
-            debugLog("[Watcher] Updated: \(updated) file(s), failed: \(failed)")
-        }
+        debugLog("[Watcher] Scan result: \(updated) indexed, \(failed) failed, \(paths.count) total")
     }
 
-    /// Recalculate file_count for a directory after file changes.
     private func updateDirFileCount(db: ProjectDatabase, dirPath: String) {
         guard !dirPath.isEmpty else { return }
         do {

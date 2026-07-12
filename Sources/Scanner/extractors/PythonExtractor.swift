@@ -131,7 +131,7 @@ struct PythonExtractor: SymbolExtractor {
         return indent.count == 0
     }
 
-    /// Strip inline `#` comments from a line.
+    /// Strip inline `#` comments from a line, respecting strings and triple-quoted strings.
     /// Returns nil if the line is entirely a comment AFTER stripping strings.
     private static func stripInlineComment(_ line: String) -> String? {
         var result = ""
@@ -139,39 +139,58 @@ struct PythonExtractor: SymbolExtractor {
         let end = line.endIndex
         var inString = false
         var quoteChar: Character = "\""
-        var hashIdx: String.Index?
 
         while i < end {
             let c = line[i]
-            let next = line.index(after: i)
+            let remaining = line[i...]
 
             if inString {
-                if c == "\\", next < end {
-                    i = line.index(after: next)
-                    continue
+                // Handle triple-quote closing
+                if remaining.hasPrefix("\"\"\"") || remaining.hasPrefix("'''") {
+                    let tri = String(remaining.prefix(3))
+                    if tri.allSatisfy({ $0 == quoteChar }) {
+                        i = line.index(i, offsetBy: 3)
+                        inString = false
+                        continue
+                    }
                 }
-                if c == quoteChar { inString = false }
-                i = next
+                if c == "\\" {
+                    let ni = line.index(after: i)
+                    if ni < end {
+                        i = line.index(after: ni)
+                        continue
+                    }
+                }
+                if c == quoteChar {
+                    inString = false
+                }
+                i = line.index(after: i)
+                continue
+            }
+
+            // Handle triple-quote opening (either """ or ''')
+            if remaining.hasPrefix("\"\"\"") || remaining.hasPrefix("'''") {
+                inString = true
+                quoteChar = c
+                i = line.index(i, offsetBy: 3)
                 continue
             }
 
             if c == "\"" || c == "'" {
                 inString = true
                 quoteChar = c
-                i = next
+                i = line.index(after: i)
                 continue
             }
 
             if c == "#" {
-                hashIdx = i
                 break
             }
 
             result.append(c)
-            i = next
+            i = line.index(after: i)
         }
 
-        if hashIdx != nil { /* comment started */ }
         let cleaned = result.trimmingCharacters(in: .whitespaces)
         return cleaned.isEmpty ? nil : cleaned
     }
@@ -182,18 +201,27 @@ struct PythonExtractor: SymbolExtractor {
         return r.trimmingCharacters(in: .whitespaces)
     }
 
-    /// Detect triple-quoted strings on a line.
+    /// Detect triple-quoted strings on a line — anywhere in the line, not just at prefix.
     private struct TripleResult { let quote: String; let closed: Bool }
 
     private static func matchTripleQuote(_ line: String) -> TripleResult? {
-        if line.hasPrefix("\"\"\"") {
-            let rest = String(line.dropFirst(3))
-            return TripleResult(quote: "\"\"\"", closed: rest.contains("\"\"\""))
+        // Check for """ or ''' anywhere in the line
+        guard let tripleRange = line.range(of: #"""""""#) ?? line.range(of: "'''") else {
+            return nil
         }
-        if line.hasPrefix("'''") {
-            let rest = String(line.dropFirst(3))
-            return TripleResult(quote: "'''", closed: rest.contains("'''"))
+        let quote = line[tripleRange]
+        let before = line[..<tripleRange.lowerBound]
+        let after = line[tripleRange.upperBound...]
+
+        // Count odd/even quotes before the triple — odd means we're inside a string
+        let precedingQuotes = before.filter { $0 == quote.first }.count
+        if precedingQuotes % 2 == 1 {
+            return nil // inside a regular string, not a triple-quote start
         }
-        return nil
+
+        if after.contains(quote) {
+            return TripleResult(quote: String(quote), closed: true)
+        }
+        return TripleResult(quote: String(quote), closed: false)
     }
 }
