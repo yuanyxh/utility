@@ -151,7 +151,6 @@ final class FileWatcher {
     private func processChanges(_ paths: Set<String>) {
         guard !paths.isEmpty else { return }
 
-        let projectURL = URL(fileURLWithPath: projectPath)
         let db: ProjectDatabase
         do {
             db = try ProjectDatabase(projectPath: projectPath)

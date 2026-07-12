@@ -9,7 +9,10 @@ MCP MinoBraiN — 冷热双层共享记忆 + 项目依赖图查询
 从 self-service-docker 移植，适配 Utility.app 子进程模式。
 """
 
+# mem0 内置 PostHog 遥测在无网络环境会卡死初始化，必须在任何 import 前禁用
 import os
+os.environ["POSTHOG_DISABLED"] = "1"
+
 import json
 import uuid
 import sys
@@ -92,6 +95,27 @@ QDRANT_PATH = os.environ.get(
     "QDRANT_PATH", os.path.expanduser("~/Documents/selfdata/qdrant_data")
 )
 MEM0_QDRANT_PATH = os.path.join(QDRANT_PATH, "mem0")
+
+
+def _cleanup_qdrant_locks() -> None:
+    """Qdrant Local 模式崩溃后锁文件残留会阻塞下次启动，启动前清理。"""
+    for root_dir in (
+        QDRANT_PATH,
+        MEM0_QDRANT_PATH,
+        os.path.expanduser("~/.mem0/migrations_qdrant"),
+    ):
+        lock = os.path.join(root_dir, ".lock")
+        if os.path.isfile(lock):
+            try:
+                os.remove(lock)
+                logging.info(f"Cleaned stale lock: {lock}")
+            except OSError as e:
+                logging.warning(f"Failed to remove lock {lock}: {e}")
+
+
+
+
+_cleanup_qdrant_locks()
 COLD_COLLECTION = "knowledge_base"
 EMBEDDER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDER_DIMS = 384

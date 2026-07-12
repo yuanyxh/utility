@@ -46,7 +46,6 @@ struct JavaExtractor: SymbolExtractor {
             // ── match type declarations ──
             if let m = Self.typeDeclRegex.match(trimmed) {
                 let visibility = m[1].isEmpty ? nil : m[1]
-                let modifiers = m[2].isEmpty ? nil : m[2]
                 let kind = m[3]
                 let name = m[4]
 
@@ -74,7 +73,6 @@ struct JavaExtractor: SymbolExtractor {
             // ── match method declarations ──
             if let m = Self.methodDeclRegex.match(trimmed) {
                 let visibility = m[1].isEmpty ? nil : m[1]
-                let modifiers = m[2]
                 let returnType = m[3].trimmingCharacters(in: .whitespaces)
                 let name = m[4]
                 let params = m[5]
