@@ -91,7 +91,8 @@
 | `TaskStateDB` | GRDB 任务状态持久化 |
 | `MCPProcessManager` | Python server.py 子进程生命周期管理 + 健康检查 + 自动重启 + EventBus 状态广播 |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
-| `ProjectScanner` | 多语言符号提取器注册 + 目录扫描 + SQLite + FTS5 索引 |
+| `ASTExtractorRunner` | AST 批量提取调度（`ast_extractor.py --batch` + 单文件兜底） |
+| `ProjectScanner` | 多语言符号提取器注册 → 批量 AST → 并发正则 → 批量 SQLite ↔ FTS5 索引 |
 | `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 |
 | `ManifestParser` | Package.swift / package.json / pyproject.toml 依赖解析 |
 | `FileWatcher` | FSEvents 文件监控 + 3s 防抖增量更新 |
@@ -154,12 +155,16 @@
 
 ### 项目扫描
 - 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册
-- 提取优先级：AST 脚本优先（Python AST + @babel/parser）→ 正则提取器兜底 → 都失败则计数
+- **提取流水线（三项优化）**：
+  1. **A — 批量 AST**：扫描前统一调用 `ast_extractor.py --batch`，单次 subprocess 处理所有 AST 文件（Python ast + @babel/parser），避免逐文件启动子进程
+  2. **C — 并发提取**：`DispatchQueue.concurrentPerform` 并行执行正则提取，NSLock 保护结果收集
+  3. **D — 批量写入**：`batchWriteFiles()` 单事务写入所有文件结果（DELETE old → INSERT symbols → UPDATE file → handle failed_files）
+- 提取优先级：AST 脚本优先 → 正则提取器兜底 → 都失败则计数
 - AST 连续 3 次失败后跳过（`failed_files` 表跨扫描计数），文件修改后自动重置
 - `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` / `VueExtractor` / `JavaExtractor` / `KotlinExtractor` 用正则 + brace-depth tracking
 - `.js` 文件始终启用 `@babel/parser` 的 `jsx` plugin 以支持 React Native/Expo
-- `JavaExtractor` 提取 class/interface/enum/@interface + method + field，带关键字过滤（避免 return/null 误匹配为类型）
-- `KotlinExtractor` 提取 fun/suspend fun + class/object/companion + val/var + typealias
+- `JavaExtractor` 提取 class/interface/enum/@interface + record + method + field，带关键字过滤和行内注解消耗
+- `KotlinExtractor` 提取 fun/suspend fun + class/object/companion + val/var + typealias + fun interface/data object/annotation class，修饰符贪心通用匹配
 - FTS5 + 同义词扩展：中文搜索先转同义词再 MATCH，降级到 LIKE
 - MCP `project_search` 三状态响应：`exact`（自动选中）、`ambiguous`（同名多文件引导）、`no_match`（无结果）
 

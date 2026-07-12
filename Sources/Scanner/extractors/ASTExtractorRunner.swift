@@ -17,6 +17,100 @@ enum ASTExtractorRunner {
         supportedExtensions.contains(ext.lowercased())
     }
 
+    /// Input descriptor for batch AST extraction.
+    struct BatchInput: Codable {
+        let content: String
+        let filePath: String
+        let ext: String
+
+        enum CodingKeys: String, CodingKey {
+            case content, ext
+            case filePath = "file_path"
+        }
+    }
+
+    /// Extract symbols from multiple files in a single subprocess call (--batch mode).
+    ///
+    /// - Returns: Dictionary mapping filePath → symbols array if successful, or nil on overall failure.
+    ///            Individual file errors are silently dropped (caller falls back to regex).
+    static func extractBatch(_ files: [BatchInput]) -> [String: [SymbolRecord]] {
+        guard !files.isEmpty else { return [:] }
+        guard let scriptPath = findScript() else {
+            debugLog("[AST] ast_extractor.py not found in bundle")
+            return [:]
+        }
+        guard let pythonPath = findPython() else {
+            debugLog("[AST] No Python available for AST extraction")
+            return [:]
+        }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: pythonPath)
+        proc.arguments = [scriptPath, "--batch"]
+
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        proc.standardInput = inputPipe
+        proc.standardOutput = outputPipe
+        proc.standardError = errorPipe
+
+        do {
+            try proc.run()
+
+            // Write JSON array to stdin, then close
+            let encoder = JSONEncoder()
+            let jsonData = try encoder.encode(files)
+            inputPipe.fileHandleForWriting.write(jsonData)
+            inputPipe.fileHandleForWriting.closeFile()
+
+            // Wait with timeout (30s for batch)
+            let deadline = DispatchTime.now() + 30.0
+            while proc.isRunning, .now() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+                debugLog("[AST] Batch subprocess timed out")
+                return [:]
+            }
+
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            guard !outputData.isEmpty,
+                  let json = try JSONSerialization.jsonObject(with: outputData) as? [String: Any]
+            else {
+                return [:]
+            }
+
+            // Parse per-file results
+            var results: [String: [SymbolRecord]] = [:]
+            for (filePath, value) in json {
+                guard let entry = value as? [String: Any] else { continue }
+                if let symbolsJSON = entry["symbols"] as? [[String: Any]] {
+                    let symbols = symbolsJSON.compactMap { dict -> SymbolRecord? in
+                        guard let name = dict["name"] as? String,
+                              let kind = dict["kind"] as? String else { return nil }
+                        return SymbolRecord(
+                            filePath: filePath,
+                            name: name,
+                            kind: kind,
+                            signature: dict["signature"] as? String,
+                            docComment: dict["doc_comment"] as? String,
+                            visibility: dict["visibility"] as? String
+                        )
+                    }
+                    results[filePath] = symbols
+                }
+                // Error results are silently skipped (caller falls back to regex)
+            }
+
+            return results
+        } catch {
+            debugLog("[AST] Batch subprocess error: \(error.localizedDescription)")
+            return [:]
+        }
+    }
+
     /// Run AST extraction for a file.
     ///
     /// - Returns: `[SymbolRecord]` on success, `nil` on any failure

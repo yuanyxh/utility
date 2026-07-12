@@ -151,6 +151,34 @@ final class ProjectDatabase {
             try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [path])
         }
     }
+
+    // MARK: - Batch writes
+
+    /// Write multiple file results in a single transaction.
+    /// Batches: DELETE old symbols → INSERT symbols → INSERT/UPDATE file record → handle failed_files.
+    func batchWriteFiles(_ fileResults: [(file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)]) throws {
+        try dbQueue.write { db in
+            for (fileRec, symbols, astFailed) in fileResults {
+                try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [fileRec.path])
+                for s in symbols {
+                    try s.insert(db, onConflict: .ignore)
+                }
+                try fileRec.insert(db, onConflict: .replace)
+                if astFailed {
+                    try db.execute(sql: """
+                        INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
+                        VALUES (?, 1, 'AST extraction failed', datetime('now'))
+                        ON CONFLICT(path) DO UPDATE SET
+                            fail_count = fail_count + 1,
+                            last_error = 'AST extraction failed',
+                            last_failed_at = datetime('now')
+                    """, arguments: [fileRec.path])
+                } else {
+                    try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [fileRec.path])
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Records
@@ -181,6 +209,12 @@ struct FileRecord: Codable, FetchableRecord, PersistableRecord {
 
     enum CodingKeys: String, CodingKey {
         case path, dirPath = "dir_path", name, ext, symCount = "sym_count"
+    }
+
+    func withSymCount(_ count: Int) -> FileRecord {
+        var copy = self
+        copy.symCount = count
+        return copy
     }
 }
 

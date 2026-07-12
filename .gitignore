@@ -8,3 +8,4 @@
 scripts/package-utility.sh
 __pycache__
 node_modules
+.utility/

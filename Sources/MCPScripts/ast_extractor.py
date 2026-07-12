@@ -2,14 +2,15 @@
 """
 AST-based symbol extractor — dispatch layer.
 
-Usage:
+Usage (single file):
   echo "content" | python3 ast_extractor.py --ext swift --file-path a.swift
 
-Supported extensions:
-  py       -> Python's built-in ast module (stdlib, no deps)
-  js/ts/jsx/tsx/vue -> node + @babel/parser (deps in ast-js/)
+Usage (batch):
+  echo '[{"content": "...", "file_path": "a.vue", "ext": "vue"}, ...]' \\
+    | python3 ast_extractor.py --batch
 
-Output to stdout: JSON {"symbols": [...]} or {"error": "..."}
+Output (single):  JSON {"symbols": [...]} or {"error": "..."}
+Output (batch):   JSON {"file_path": {"symbols": [...]}, "file_path": {"error": "..."}}
 """
 
 from __future__ import annotations
@@ -113,7 +114,12 @@ def _py_signature(node) -> str | None:
 def _py_docstring(node) -> str | None:
     """Extract the docstring from a function/class/module node."""
     body = getattr(node, "body", [])
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
         return body[0].value.value.strip()
     return None
 
@@ -123,7 +129,11 @@ def _py_decorator_name(decorator) -> str | None:
     if isinstance(decorator, ast.Name):
         return decorator.id
     if isinstance(decorator, ast.Attribute):
-        return _py_decorator_name(decorator.value) + "." + decorator.attr if decorator.value else decorator.attr
+        return (
+            _py_decorator_name(decorator.value) + "." + decorator.attr
+            if decorator.value
+            else decorator.attr
+        )
     if isinstance(decorator, ast.Call):
         return _py_decorator_name(decorator.func)
     return None
@@ -232,7 +242,9 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
                 kind = "constant" if name.isupper() else "variable"
                 entry = {"name": name, "kind": kind}
                 # Get type annotation
-                anno_str = _py_type_annotation(node.annotation) if node.annotation else None
+                anno_str = (
+                    _py_type_annotation(node.annotation) if node.annotation else None
+                )
                 if anno_str:
                     entry["signature"] = f"{name}: {anno_str}"
                 symbols.append(entry)
@@ -247,10 +259,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
 
 # ── Error propagation ──
 
+
 class _ASTError(Exception):
     """Raised when AST parsing fails (syntax error, parse timeout, etc.).
     Caught by main() → outputs {"error": "..."} with exit code 1,
     signalling the Swift side to fall back to regex."""
+
     pass
 
 
@@ -261,6 +275,7 @@ def _raise_if_error(result):
 
 
 # ── JS/TS/Vue extractor via Node.js ──
+
 
 def _find_node() -> str:
     """Find node binary from ast-js/node_modules/.bin or system PATH."""
@@ -283,7 +298,14 @@ def _ensure_js_deps() -> bool:
     # Try to auto-install
     try:
         subprocess.run(
-            ["npm", "install", "--prefix", str(AST_JS_DIR), "--production", "--no-audit"],
+            [
+                "npm",
+                "install",
+                "--prefix",
+                str(AST_JS_DIR),
+                "--production",
+                "--no-audit",
+            ],
             capture_output=True,
             timeout=60,
         )
@@ -331,7 +353,7 @@ def _extract_vue(content: str, file_path: str) -> list[dict]:
     """Extract script block from Vue SFC, then parse as JS/TS."""
     # Match <script> with optional lang="ts" attribute
     m = re.search(
-        r'<script\b([^>]*)>(.*?)</script>',
+        r"<script\b([^>]*)>(.*?)</script>",
         content,
         re.DOTALL,
     )
@@ -369,36 +391,86 @@ def _extract_js_ts(content: str, ext: str) -> list[dict]:
     return result.get("symbols", []) if isinstance(result, dict) else []
 
 
-# ── Main ──
+# ── Batch mode ──
 
-def main():
-    parser = argparse.ArgumentParser(description="AST-based symbol extractor")
-    parser.add_argument("--ext", required=True, help="File extension")
-    parser.add_argument("--file-path", default="", help="Original file path (for context)")
-    args = parser.parse_args()
 
-    content = sys.stdin.read()
-
-    ext = args.ext.lower()
-
+def _extract_one(content: str, file_path: str, ext: str) -> dict:
+    """Dispatch a single file to the correct extractor, return {'symbols': [...]} or {'error': '...'}."""
     try:
         if ext == "py":
-            symbols = _extract_python(content, args.file_path)
+            symbols = _extract_python(content, file_path)
         elif ext in ("vue",):
-            symbols = _extract_vue(content, args.file_path)
+            symbols = _extract_vue(content, file_path)
         elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
             effective_ext = ext
             if ext in ("mjs", "cjs"):
                 effective_ext = "js"
             symbols = _extract_js_ts(content, effective_ext)
         else:
-            print(json.dumps({"error": f"unsupported extension: {ext}"}))
-            sys.exit(1)
+            return {"error": f"unsupported extension: {ext}"}
+        return {"symbols": symbols}
+    except _ASTError as e:
+        return {"error": str(e)}
     except Exception as e:
-        print(json.dumps({"error": str(e)}))
+        return {"error": str(e)}
+
+
+def _run_batch():
+    """Read JSON array of file descriptors from stdin, extract all, write JSON result dict."""
+    try:
+        files = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print(json.dumps({"error": f"invalid batch JSON: {e}"}))
         sys.exit(1)
 
-    print(json.dumps({"symbols": symbols}))
+    if not isinstance(files, list):
+        print(json.dumps({"error": "batch input must be a JSON array"}))
+        sys.exit(1)
+
+    results = {}
+    for f in files:
+        fp = f.get("file_path", "")
+        results[fp] = _extract_one(
+            content=f.get("content", ""),
+            file_path=fp,
+            ext=f.get("ext", "").lower(),
+        )
+
+    print(json.dumps(results))
+
+
+# ── Main ──
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AST-based symbol extractor")
+    parser.add_argument("--ext", help="File extension (required for single mode)")
+    parser.add_argument(
+        "--file-path", default="", help="Original file path (for context)"
+    )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Batch mode: stdin is a JSON array of {content, file_path, ext}",
+    )
+    args = parser.parse_args()
+
+    if args.batch:
+        _run_batch()
+        return
+
+    content = sys.stdin.read()
+
+    if not args.ext:
+        print(json.dumps({"error": "--ext is required in single mode"}))
+        sys.exit(1)
+
+    result = _extract_one(content, args.file_path, args.ext.lower())
+    if "error" in result:
+        print(json.dumps(result))
+        sys.exit(1)
+
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

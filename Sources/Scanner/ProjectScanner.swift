@@ -138,77 +138,78 @@ final class ProjectScanner {
             try db.insertDirectory(dir)
         }
 
-        // ── phase 2: extract symbols ──
-        var allScannedPaths = Set<String>()
+        // ── phase 2: extract symbols concurrently ──
+        let totalFiles = fileResults.count
+
+        // Pre-read failed counts & prepare batch AST inputs
+        var failedCounts: [String: Int] = [:]
+        var astBatchInputs: [ASTExtractorRunner.BatchInput] = []
         for (fileRec, maybeContent) in fileResults {
-            allScannedPaths.insert(fileRec.path)
-            guard let content = maybeContent else { continue }
-            let ext = fileRec.ext
-            let extractor = extractors[ext]
-
-            var symbols: [SymbolRecord] = []
-            var astSkipped = false
-            var astFailed = false
-
-            // Priority 1: AST pipeline (richer extraction)
-            if ASTExtractorRunner.isSupported(ext) {
-                // Skip AST after 3 consecutive failures; file modification resets counter
-                let prevFails = (try? db.failedFileCount(path: fileRec.path)) ?? 0
-                if prevFails >= 3 {
-                    astSkipped = true
-                } else if let astSymbols = ASTExtractorRunner.extract(from: content, filePath: fileRec.path, ext: ext) {
-                    symbols = astSymbols
-                } else {
-                    astFailed = true
-                }
-            }
-
-            // Priority 2: regex extractor as fallback (or primary for unsupported exts)
-            if symbols.isEmpty, let extractor = extractor {
-                symbols = extractor.extract(from: content, filePath: fileRec.path)
-                // Only clear failure flag if regex actually found symbols
-                if !symbols.isEmpty {
-                    astFailed = false
-                }
-            }
-
-            // Write results
-            do {
-                if !symbols.isEmpty {
-                    try db.insertSymbols(symbols)
-                    let updated = FileRecord(path: fileRec.path, dirPath: fileRec.dirPath,
-                                             name: fileRec.name, ext: ext,
-                                             symCount: symbols.count)
-                    try db.insertFile(updated)
-                    symCount += symbols.count
-
-                    // Successful extraction → clear failed_files (both AST and overall)
-                    if astSkipped || !astFailed {
-                        try? db.clearFailedFile(path: fileRec.path)
-                    }
-                } else {
-                    try db.insertFile(fileRec) // no symbols
-                }
-
-                // Track AST failure (only when regex also failed or is unavailable)
-                if astFailed {
-                    try db.dbQueue.write { db in
-                        try db.execute(sql: """
-                          INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
-                          VALUES (?, 1, 'AST extraction failed', datetime('now'))
-                          ON CONFLICT(path) DO UPDATE SET
-                            fail_count = fail_count + 1,
-                            last_error = 'AST extraction failed',
-                            last_failed_at = datetime('now')
-                        """, arguments: [fileRec.path])
-                    }
-                    failCount += 1
-                }
-            } catch {
-                // DB write error — unlikely but guard
-                try? db.insertFile(fileRec)
+            guard let content = maybeContent, ASTExtractorRunner.isSupported(fileRec.ext) else { continue }
+            let fails = (try? db.failedFileCount(path: fileRec.path)) ?? 0
+            failedCounts[fileRec.path] = fails
+            if fails < 3 {
+                astBatchInputs.append(ASTExtractorRunner.BatchInput(
+                    content: content, filePath: fileRec.path, ext: fileRec.ext
+                ))
             }
         }
+
+        // Batch AST extraction (single subprocess call for all files)
+        let batchASTResults = ASTExtractorRunner.extractBatch(astBatchInputs)
+
+        let extractLock = NSLock()
+        var results: [Int: (file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)] = [:]
+
+        if totalFiles > 0 {
+            DispatchQueue.concurrentPerform(iterations: totalFiles) { i in
+                let (fileRec, maybeContent) = fileResults[i]
+                guard let content = maybeContent else {
+                    extractLock.lock()
+                    results[i] = (fileRec, [], false)
+                    extractLock.unlock()
+                    return
+                }
+
+                let ext = fileRec.ext
+                let regexExtractor = extractors[ext]
+                var symbols: [SymbolRecord] = []
+                var astFailed = false
+
+                // Priority 1: AST pipeline (batch results)
+                if ASTExtractorRunner.isSupported(ext) {
+                    let prevFails = failedCounts[fileRec.path] ?? 3
+                    if prevFails < 3 {
+                        if let batchSymbols = batchASTResults[fileRec.path] {
+                            symbols = batchSymbols
+                        } else {
+                            astFailed = true
+                        }
+                    }
+                }
+
+                // Priority 2: regex fallback
+                if symbols.isEmpty, let regexExtractor = regexExtractor {
+                    symbols = regexExtractor.extract(from: content, filePath: fileRec.path)
+                    if !symbols.isEmpty {
+                        astFailed = false
+                    }
+                }
+
+                extractLock.lock()
+                results[i] = (fileRec.withSymCount(symbols.count), symbols, astFailed)
+                extractLock.unlock()
+            }
+        }
+
+        // ── phase 3: batch write ──
+        try db.batchWriteFiles((0..<totalFiles).compactMap { results[$0] })
+
+        symCount = results.values.reduce(0) { $0 + $1.symbols.count }
+        failCount = results.values.filter { $0.astFailed }.count
+
+        // Build scanned paths set for pruneFailedFiles
+        let allScannedPaths = Set(fileResults.map { $0.0.path })
 
         // ── phase 3: parse manifests ──
         let manifests = ManifestParser.parseAll(in: projectPath)

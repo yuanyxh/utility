@@ -25,6 +25,7 @@ import logging.handlers
 import subprocess
 import sqlite3
 import httpx
+import numpy as np
 from datetime import datetime, timedelta
 
 from mem0 import Memory
@@ -52,6 +53,8 @@ from mcp.types import (
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+
+from synonyms import SYNONYM_MAP  # 同义词扩展表
 
 
 def _setup_logging():
@@ -136,8 +139,8 @@ TOOL_DEFAULTS: dict[str, str] = {
     "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。常识性问题无需调用。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
     "forget": "用户要求删除记忆, 或记忆内容有误/过时 → 调用本工具。删除指定 ID 的记忆。",
-    "project_search": "优先使用本工具查找符号(函数、类、变量等)的定义和位置, 衍生查找同理, 避免全量读取文件。支持中文同义词扩展。项目依赖图查找。",
-    "project_structure": "优先使用本工具了解项目目录结构, 替代 ls/find 遍历。",
+    "project_search": "优先使用本工具查找(符号/文件/Package)的定义和位置, 避免全量读取文件。支持中文同义词扩展。项目依赖图查找。",
+    "project_structure": "优先使用本工具了解项目目录结构，替代 ls/find 遍历。指定子路径查看下一级。",
     "project_packages": "列出项目三方依赖。",
     "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
 }
@@ -165,39 +168,8 @@ SERVER_NAME = "mino-brain"
 SERVER_VERSION = "1.0.0"
 MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
 
-# 同义词扩展表 (Layer 2)
-SYNONYM_MAP = {
-    "请求": "request fetch http api network",
-    "网络": "network http request fetch api",
-    "日期": "date time calendar",
-    "时间": "time date calendar",
-    "格式": "format parse stringify",
-    "解析": "parse format stringify",
-    "排序": "sort filter order",
-    "过滤": "filter sort order",
-    "缓存": "cache store persist",
-    "存储": "store cache persist database",
-    "认证": "auth login token",
-    "登录": "auth login token",
-    "错误": "error exception fault",
-    "异常": "error exception fault",
-    "配置": "config setting option",
-    "翻译": "translate translation",
-    "复制": "copy paste clipboard",
-    "粘贴": "paste copy clipboard",
-    "剪贴板": "clipboard paste copy",
-    "搜索": "search query find",
-    "查询": "search query find",
-    "导出": "export",
-    "导入": "import",
-    "创建": "create new make",
-    "删除": "delete remove",
-    "更新": "update modify change",
-    "读取": "read load fetch get",
-    "写入": "write save store set",
-    "文件": "file path",
-    "路径": "path directory file",
-}
+# 同义词扩展表 (Layer 2) — 从 synonyms.py 导入
+# 编辑 Sources/MCPScripts/synonyms.py 添加/修改映射
 
 
 # ============================================================
@@ -296,18 +268,16 @@ def expand_query(query: str) -> str:
     return " OR ".join(f'"{t}"' if " " in t else t for t in expanded)
 
 
-def tool_project_search(
-    db_path: str,
-    query: str,
-    file_path: str = "",
-    kind: str = "",
-) -> dict:
-    if not os.path.isfile(db_path):
-        return {"error": f"Database not found: {db_path}"}
-    expanded = expand_query(query)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+# ── Multi-layer project search ──
+
+
+def _search_symbols_fts(
+    db_path: str, expanded: str, file_path: str, kind: str
+) -> list[dict] | None:
+    """Layer 1a: FTS5 symbol search. Returns None if FTS5 unavailable (degrade to LIKE)."""
     try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
         sql = (
             "SELECT s.name, s.kind, s.signature, s.file_path, s.visibility "
             "FROM symbols s JOIN symbols_fts fts ON s.id = fts.rowid "
@@ -321,8 +291,29 @@ def tool_project_search(
             sql += " AND s.kind = ?"
             params.append(kind)
         sql += " ORDER BY rank LIMIT 30"
-        rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "kind": r["kind"],
+                "signature": r["signature"],
+                "file": r["file_path"],
+                "visibility": r["visibility"],
+            }
+            for r in conn.execute(sql, params).fetchall()
+        ]
     except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+
+
+def _search_symbols_like(
+    db_path: str, query: str, file_path: str, kind: str
+) -> list[dict]:
+    """Layer 1b: LIKE fallback when FTS5 is unavailable."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
         sql = (
             "SELECT name, kind, signature, file_path, visibility "
             "FROM symbols WHERE (name LIKE ? OR signature LIKE ?)"
@@ -335,75 +326,300 @@ def tool_project_search(
             sql += " AND kind = ?"
             params.append(kind)
         sql += " LIMIT 30"
-        rows = conn.execute(sql, params).fetchall()
-    conn.close()
+        return [
+            {
+                "name": r["name"],
+                "kind": r["kind"],
+                "signature": r["signature"],
+                "file": r["file_path"],
+                "visibility": r["visibility"],
+            }
+            for r in conn.execute(sql, params).fetchall()
+        ]
+    finally:
+        conn.close()
 
-    results = [
-        {
-            "name": r["name"],
-            "kind": r["kind"],
-            "signature": r["signature"],
-            "file": r["file_path"],
-            "visibility": r["visibility"],
-        }
-        for r in rows
-    ]
 
-    # ── Confidence-based selection ──
-    total = len(results)
+def _search_files(db_path: str, query: str) -> list[dict]:
+    """Layer 2: Search files table by name or path."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        like = f"%{query}%"
+        rows = conn.execute(
+            "SELECT path, name, ext FROM files "
+            "WHERE name LIKE ? OR path LIKE ? "
+            "ORDER BY CASE WHEN name LIKE ? THEN 0 ELSE 1 END "
+            "LIMIT 10",
+            [like, like, f"{query}%"],
+        ).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "kind": "file",
+                "file": r["path"],
+                "signature": f".{r['ext']}",
+                "visibility": None,
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def _search_packages(db_path: str, query: str) -> list[dict]:
+    """Layer 3: Search packages table by name or description."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        like = f"%{query}%"
+        rows = conn.execute(
+            "SELECT name, version, type, description FROM packages "
+            "WHERE name LIKE ? OR description LIKE ? "
+            "LIMIT 10",
+            [like, like],
+        ).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "kind": "package",
+                "file": None,
+                "signature": f"{r['type']}{'@' + r['version'] if r['version'] else ''}",
+                "visibility": None,
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+# ── Layer 4: Vector search (fastembed + in-memory cache) ──
+
+_symbol_embeddings: dict[str, tuple[list[dict], np.ndarray | None]] = {}
+_project_embedder = None
+
+
+def _get_project_embedder():
+    global _project_embedder
+    if _project_embedder is None:
+        try:
+            _project_embedder = TextEmbedding(model_name=EMBEDDER_MODEL)
+        except Exception:
+            return None
+    return _project_embedder
+
+
+def _search_vectors(db_path: str, query: str) -> list[dict]:
+    """Layer 4: Vector similarity search against all project symbols.
+
+    Lazy-caches symbol embeddings per db_path on first call.
+    Silently falls back to empty list on any error.
+    """
+    embedder = _get_project_embedder()
+    if embedder is None:
+        return []
+
+    try:
+        # Lazy-load and cache symbol embeddings for this project
+        if db_path not in _symbol_embeddings:
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT s.name, s.signature, COALESCE(s.doc_comment, '') AS doc, s.file_path "
+                "FROM symbols s"
+            ).fetchall()
+            conn.close()
+
+            if not rows:
+                _symbol_embeddings[db_path] = ([], None)
+                return []
+
+            symbols = []
+            texts = []
+            for r in rows:
+                text = r["name"]
+                if r["signature"]:
+                    text += " " + r["signature"]
+                if r["doc"]:
+                    text += " " + r["doc"]
+                texts.append(text)
+                symbols.append(
+                    {
+                        "name": r["name"],
+                        "file": r["file_path"],
+                        "signature": r["signature"],
+                    }
+                )
+
+            embeddings = list(embedder.embed(texts))
+            emb_matrix = np.array(embeddings, dtype=np.float32)
+            norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+            norms[norms < 1e-10] = 1
+            emb_matrix = emb_matrix / norms  # pre-normalize → dot = cosine
+            _symbol_embeddings[db_path] = (symbols, emb_matrix)
+
+        symbols, emb_matrix = _symbol_embeddings[db_path]
+        if emb_matrix is None or len(symbols) == 0:
+            return []
+
+        # Encode query + normalize
+        query_emb = list(embedder.embed([query]))[0]
+        qnorm = np.linalg.norm(query_emb)
+        if qnorm < 1e-10:
+            return []
+        query_emb = query_emb / qnorm
+
+        sims = np.dot(emb_matrix, query_emb)
+
+        threshold = 0.35
+        indices = np.argsort(-sims)
+        results = []
+        for idx in indices:
+            if sims[idx] < threshold:
+                break
+            results.append(
+                {
+                    "name": symbols[idx]["name"],
+                    "kind": "symbol",
+                    "file": symbols[idx]["file"],
+                    "signature": symbols[idx]["signature"],
+                    "visibility": None,
+                    "score": round(float(sims[idx]), 4),
+                }
+            )
+            if len(results) >= 5:
+                break
+        return results
+
+    except Exception as e:
+        logging.warning(f"[vector_search] {e}")
+        return []
+
+
+def tool_project_search(
+    db_path: str,
+    query: str,
+    file_path: str = "",
+    kind: str = "",
+) -> dict:
+    """Multi-layer project search.
+
+    Chains: FTS5 symbols → LIKE symbols → files → packages → vector similarity.
+    Always runs all layers, deduplicates results, returns combined output.
+    """
+    if not os.path.isfile(db_path):
+        return {"error": f"Database not found: {db_path}"}
+
+    expanded = expand_query(query)
+    active_layers: list[str] = []
+    all_found: list[dict] = []
+    seen: set[tuple[str, str]] = set()  # (name, file_path) dedup key
+
+    def _add(results: list[dict], layer: str):
+        if not results:
+            return
+        active_layers.append(layer)
+        for r in results:
+            key = (r["name"], r.get("file") or "")
+            if key not in seen:
+                seen.add(key)
+                all_found.append(r)
+
+    # Layer 1a: FTS5 symbol search (primary)
+    fts_results = _search_symbols_fts(db_path, expanded, file_path, kind)
+    if fts_results is not None:
+        _add(fts_results, "fts5")
+    else:
+        # Layer 1b: LIKE fallback when FTS5 unavailable
+        like_results = _search_symbols_like(db_path, query, file_path, kind)
+        _add(like_results, "like")
+
+    # Layer 2: File name / path search
+    _add(_search_files(db_path, query), "file")
+
+    # Layer 3: Package name / description search
+    _add(_search_packages(db_path, query), "package")
+
+    # Layer 4: Vector similarity search (only if few results from above)
+    if len(all_found) < 5:
+        _add(_search_vectors(db_path, query), "vector")
+
+    total = len(all_found)
+
+    # ── Status determination ──
+    # Prioritize symbol-level results for backward-compatible status
+    symbol_found = [r for r in all_found if r["kind"] not in ("file", "package")]
+    file_pkg_found = [r for r in all_found if r["kind"] in ("file", "package")]
+
     if total == 0:
         return {
             "status": "no_match",
             "query": query,
             "expandedQuery": expanded,
+            "layers": active_layers,
             "results": [],
             "total": 0,
         }
-    if total == 1:
+
+    # Determine best single result for "exact" status
+    best = None
+    if len(symbol_found) == 1:
+        best = symbol_found[0]
+    elif len(symbol_found) > 1:
+        s0, s1 = symbol_found[0], symbol_found[1]
+        if s0["name"] != s1["name"] or s0["file"] == s1["file"]:
+            best = symbol_found[0]
+
+    if best is not None and total == 1:
         return {
             "status": "exact",
             "query": query,
             "expandedQuery": expanded,
-            "result": results[0],
-            "results": results,
-            "total": 1,
-        }
-
-    # Multiple results: estimate confidence from top-2 rank gap.
-    # The best match is r[0]; if r[1] shares a name then they are ambiguous.
-    same_name = results[0]["name"] == results[1]["name"]
-    same_file = results[0]["file"] == results[1]["file"]
-    confident = not same_name or same_file
-
-    if confident:
-        return {
-            "status": "exact",
-            "query": query,
-            "expandedQuery": expanded,
-            "result": results[0],
-            "results": results,
+            "layers": active_layers,
+            "result": best,
+            "results": all_found,
             "total": total,
         }
 
-    # Ambiguous: same symbol name in different files — Agent should disambiguate
-    options = []
-    for i, r in enumerate(results[:5], 1):
-        loc = r["file"]
-        sig = f" {r['signature']}" if r.get("signature") else ""
-        options.append(f"  {i}. {r['name']} ({r['kind']}) — {loc}{sig}")
+    if best is not None:
+        return {
+            "status": "exact",
+            "query": query,
+            "expandedQuery": expanded,
+            "layers": active_layers,
+            "result": best,
+            "results": all_found,
+            "total": total,
+        }
 
-    disambiguation = (
-        f"找到 {total} 个匹配, 符号名相同, 位于不同文件：\n"
-        + "\n".join(options)
-        + "\n指定 file_path 或 kind 参数可精确定位。"
-    )
+    # Check for ambiguous symbols (same name, different files)
+    if len(symbol_found) > 1 and symbol_found[0]["name"] == symbol_found[1]["name"]:
+        options = []
+        for i, r in enumerate(symbol_found[:5], 1):
+            loc = r["file"]
+            sig = f" {r['signature']}" if r.get("signature") else ""
+            options.append(f"  {i}. {r['name']} ({r['kind']}) — {loc}{sig}")
+        return {
+            "status": "ambiguous",
+            "query": query,
+            "expandedQuery": expanded,
+            "layers": active_layers,
+            "disambiguation": (
+                f"找到 {len(symbol_found)} 个匹配, 符号名相同, 位于不同文件：\n"
+                + "\n".join(options)
+                + "\n指定 file_path 或 kind 参数可精确定位。"
+            ),
+            "results": all_found[:15],
+            "total": total,
+        }
 
+    # Fallback: non-symbol results only (files, packages, vector)
     return {
-        "status": "ambiguous",
+        "status": "no_match",
         "query": query,
         "expandedQuery": expanded,
-        "disambiguation": disambiguation,
-        "results": results[:10],
+        "layers": active_layers,
+        "results": all_found[:10],
         "total": total,
     }
 
@@ -413,25 +629,35 @@ def tool_project_structure(db_path: str, subpath: str = "") -> dict:
         return {"error": f"Database not found: {db_path}"}
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+
+    MAX_ITEMS = 200
+
     if subpath:
+        prefix = subpath.rstrip("/") + "/"
         dirs = conn.execute(
             "SELECT path, module_name, file_count, has_package_manifest "
-            "FROM directories WHERE path LIKE ? ORDER BY path",
-            (subpath + "%",),
+            "FROM directories WHERE path LIKE ? AND path NOT LIKE ? "
+            "ORDER BY path LIMIT ?",
+            (prefix + "%", prefix + "%/%", MAX_ITEMS + 1),
         ).fetchall()
         files = conn.execute(
-            "SELECT path, ext FROM files WHERE dir_path = ? ORDER BY path", (subpath,)
+            "SELECT path, ext FROM files WHERE dir_path = ? ORDER BY path LIMIT ?",
+            (subpath, MAX_ITEMS + 1),
         ).fetchall()
     else:
         dirs = conn.execute(
             "SELECT path, module_name, file_count, has_package_manifest "
-            "FROM directories ORDER BY path"
+            "FROM directories WHERE path NOT LIKE '%/%' "
+            "ORDER BY path LIMIT ?",
+            (MAX_ITEMS + 1,),
         ).fetchall()
         files = conn.execute(
-            "SELECT path, ext FROM files WHERE dir_path = '' ORDER BY path"
+            "SELECT path, ext FROM files WHERE dir_path = '' ORDER BY path LIMIT ?",
+            (MAX_ITEMS + 1,),
         ).fetchall()
     conn.close()
-    return {
+
+    result = {
         "directories": [
             {
                 "path": r["path"],
@@ -439,11 +665,18 @@ def tool_project_structure(db_path: str, subpath: str = "") -> dict:
                 "fileCount": r["file_count"],
                 "isManifest": bool(r["has_package_manifest"]),
             }
-            for r in dirs
+            for r in dirs[:MAX_ITEMS]
         ],
-        "files": [{"path": f["path"], "ext": f["ext"]} for f in files],
+        "files": [{"path": f["path"], "ext": f["ext"]} for f in files[:MAX_ITEMS]],
         "totalDirs": len(dirs),
+        "totalFiles": len(files),
     }
+
+    if len(dirs) > MAX_ITEMS or len(files) > MAX_ITEMS:
+        result["truncated"] = True
+        result["hint"] = "结果过多已被截断，指定子路径精确定位"
+
+    return result
 
 
 def tool_project_packages(db_path: str, pkg_type: str = "") -> dict:
@@ -1431,7 +1664,12 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
 @_register("project_search")
 async def _handle_project_search(arguments: dict) -> list[TextContent]:
     try:
-        result = tool_project_search(arguments["dbPath"], arguments["query"])
+        result = tool_project_search(
+            arguments["dbPath"],
+            arguments["query"],
+            file_path=arguments.get("file_path", ""),
+            kind=arguments.get("kind", ""),
+        )
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
