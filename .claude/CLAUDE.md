@@ -82,3 +82,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 看不懂某段代码为什么那样写时，先查 git log 看提交记录和 commit message
 - git 记录看不出来时问用户，不要自己假设
 - Bug 修复依赖现实调试信息，禁止靠猜测修改
+
+## 未来规划
+- 详见 `~/Documents/selfdata/notes/plan.md`（Utility & MCP 合并计划）
+- MCP 移植、Agent 寄生模式、项目依赖图三条线
