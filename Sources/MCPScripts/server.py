@@ -13,6 +13,9 @@ MCP MinoBraiN — 冷热双层共享记忆 + 项目依赖图查询
 import os
 
 os.environ["POSTHOG_DISABLED"] = "1"
+# mem0 自带 PostHog 遥测（独立实例，不受 posthog.disabled 影响）
+# 在 import 前设此环境变量让 AnonymousTelemetry 直接跳过初始化
+os.environ["MEM0_TELEMETRY"] = "False"
 
 import json
 import uuid
@@ -128,7 +131,8 @@ FASTEMBED_CACHE_DIR = os.environ.get(
 )
 os.environ.setdefault("FASTEMBED_CACHE_PATH", FASTEMBED_CACHE_DIR)
 logging.info(
-    f"ENV CHECK: FASTEMBED_CACHE_PATH={FASTEMBED_CACHE_DIR}, MCP_PORT={os.environ.get('MCP_PORT')}, QDRANT_PATH={os.environ.get('QDRANT_PATH')}"
+    f"ENV CHECK: FASTEMBED_CACHE_PATH={FASTEMBED_CACHE_DIR}, MCP_PORT={os.environ.get('MCP_PORT')}, "
+    f"QDRANT_PATH={os.environ.get('QDRANT_PATH')}, MEM0_TELEMETRY={os.environ.get('MEM0_TELEMETRY')}"
 )
 NOTES_DIR = os.environ.get(
     "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
@@ -224,6 +228,10 @@ def _init_hot_memory() -> bool:
         posthog.disabled = True
     except ImportError:
         pass
+    logging.info(
+        f"Mem0 telemetry disabled (MEM0_TELEMETRY={os.environ.get('MEM0_TELEMETRY')}), "
+        "PostHog network calls will be skipped"
+    )
     for attempt in range(HOT_INIT_MAX_RETRIES):
         try:
             hot_memory = Memory.from_config(MEM0_CONFIG)

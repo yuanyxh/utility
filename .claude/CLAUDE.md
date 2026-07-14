@@ -81,7 +81,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 ### server.py（MCP Python 服务）
 - mem0 热层（`Memory.from_config`）使用 Qdrant 本地存储 + fastembed 嵌入
 - Qdrant 冷层独立集合 `knowledge_base`
-- 热层初始化含 PostHog 遥测 SSL 握手，在 `_init_hot_memory()` 内强制 `posthog.disabled = True` 禁用
+- 热层初始化含 PostHog 遥测 SSL 握手，双重禁用：模块级 `posthog.disabled = True` + 环境变量 `MEM0_TELEMETRY=False`（后者更关键——mem0 的 `AnonymousTelemetry` 创建独立 PostHog 实例，不受 `posthog.disabled` 影响）
 - 热层惰性初始化：不在模块加载阶段执行，由 `_ensure_hot_memory()` 在首次工具调用时触发
 - `FASTEMBED_CACHE_PATH`（注意不是 `FASTEMBED_CACHE_DIR`）是 fastembed 读取的环境变量名，两处设置此变量：server.py 模块级 + Swift MCPProcessManager.buildEnv()
 - `MEM0_CONFIG["embedder"]["config"]` 不支持 `cache_dir` 参数（`BaseEmbedderConfig` 不接受），依靠 `FASTEMBED_CACHE_PATH` 环境变量让 mem0 内部 fastembed 找到已有缓存

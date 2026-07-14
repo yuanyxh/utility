@@ -64,18 +64,18 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // ── RSS ──
-        rssMenuItem = NSMenuItem(title: L10n.Menu.rss, action: nil, keyEquivalent: "")
-        rssMenuItem.submenu = NSMenu()
-        menu.addItem(rssMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
         // ── MCP ──
         let initialState = MCPProcessManager.shared.state
         mcpMenuItem = NSMenuItem(title: mcpTitleText(initialState), action: nil, keyEquivalent: "")
         mcpMenuItem.submenu = NSMenu()
         menu.addItem(mcpMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // ── RSS ──
+        rssMenuItem = NSMenuItem(title: L10n.Menu.rss, action: nil, keyEquivalent: "")
+        rssMenuItem.submenu = NSMenu()
+        menu.addItem(rssMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
