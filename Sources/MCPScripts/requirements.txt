@@ -7,3 +7,4 @@ qdrant-client>=1.13.0
 uvicorn>=0.34.0
 starlette>=0.46.0
 anyio>=4.0
+pathspec>=0.12.0

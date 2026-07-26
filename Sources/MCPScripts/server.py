@@ -146,18 +146,47 @@ TOOL_DEFAULTS: dict[str, str] = {
     "house_rules": "当对项目规则、编码风格、目录结构或操作约束不确定时 → 调用本工具。获取最高行为准则和系统说明书。",
     "remember": "用户说「记住/记录」、bug 修复完成或有关键发现 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
     "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
-    "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。常识性问题无需调用。",
+    "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
     "forget": "用户要求删除记忆, 或记忆内容有误/过时 → 调用本工具。删除指定 ID 的记忆。",
     "project_search": "优先使用本工具查找(符号/文件/Package)的定义和位置, 避免全量读取文件。支持中文同义词扩展。项目依赖图查找。",
     "project_structure": "优先使用本工具了解项目目录结构，替代 ls/find 遍历。指定子路径查看下一级。",
     "project_packages": "列出项目三方依赖。",
     "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
+    "project_notes": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须并行调用本工具。recall 变体, 搜索项目本地信息",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
 NOTE_EXTENSIONS = (".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml")
 DEFAULT_TIMEOUT = 60.0
+
+# ── project_notes 配置 ──
+NOTE_DB_FILENAME = "note_vectors.sqlite"
+NOTE_EXCLUDE_DIRS = frozenset(
+    {
+        ".build",
+        "node_modules",
+        "dist",
+        ".git",
+        ".utility",
+        "Pods",
+        ".venv",
+        "__pycache__",
+        ".svn",
+        ".hg",
+        ".gradle",
+        "build",
+        "DerivedData",
+        "Utility.app",
+    }
+)
+NOTE_CHUNK_MIN_SIZE = 50
+NOTE_CHUNK_MAX_SIZE = 512
+NOTE_CHUNK_OVERLAP = 48
+NOTE_SIMILARITY_THRESHOLD = 0.35
+NOTE_MAX_CHUNKS_PER_PROJECT = 50000
+NOTE_MAX_RESULTS = 20
+NOTE_PREVIEW_LEN = 300
 SUMMARY_LLM_MODEL = os.environ.get("SUMMARY_MODEL", "deepseek-v4-flash")
 SUMMARY_LLM_API_URL = os.environ.get("SUMMARY_API_URL", "https://api.deepseek.com")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -850,6 +879,405 @@ def tool_project_exports(db_path: str, path: str) -> dict:
         }
 
 
+# ── Project Notes: Semantic .md search ──
+
+_HAS_PATHSPEC = False
+try:
+    import pathspec
+
+    _HAS_PATHSPEC = True
+except ImportError:
+    pass
+
+
+def _load_gitignore(project_path: str):
+    """Load .gitignore patterns as a PathSpec (or None)."""
+    gi = os.path.join(project_path, ".gitignore")
+    if not os.path.isfile(gi):
+        return None
+    try:
+        with open(gi, "r") as f:
+            spec = pathspec.PathSpec.from_lines(
+                pathspec.patterns.GitIgnoreSpecPattern, f
+            )
+        return spec
+    except Exception:
+        return None
+
+
+def _is_ignored(abs_path: str, ignore_spec, project_root: str, is_dir: bool) -> bool:
+    """Check if a path is ignored by .gitignore spec."""
+    if ignore_spec is None:
+        return False
+    try:
+        rel = os.path.relpath(abs_path, project_root)
+        return ignore_spec.match_file(rel) or (
+            is_dir and ignore_spec.match_file(rel + "/")
+        )
+    except Exception:
+        return False
+
+
+def _scan_md_files(project_path: str) -> list[dict]:
+    """Recursively scan .md files under project_path, respecting exclusions."""
+    ignore_spec = _load_gitignore(project_path)
+    files = []
+    try:
+        for root, dirs, names in os.walk(project_path, followlinks=False):
+            # In-place pruning of excluded directories
+            dirs[:] = [d for d in dirs if d not in NOTE_EXCLUDE_DIRS]
+            # Also check .gitignore on remaining dirs when pathspec available
+            if _HAS_PATHSPEC and ignore_spec is not None and root != project_path:
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if not _is_ignored(
+                        os.path.join(root, d), ignore_spec, project_path, is_dir=True
+                    )
+                ]
+
+            for name in names:
+                if not name.endswith(".md"):
+                    continue
+                fpath = os.path.join(root, name)
+                if _is_ignored(fpath, ignore_spec, project_path, is_dir=False):
+                    continue
+                try:
+                    st = os.stat(fpath)
+                except OSError:
+                    continue
+                files.append({"path": fpath, "mtime": st.st_mtime, "size": st.st_size})
+    except Exception as e:
+        logging.warning(f"[project_notes] scan error: {e}")
+    return files
+
+
+def _chunk_md_text(text: str, file_path: str) -> list[dict]:
+    """Split markdown text into chunks by paragraph, with max-size enforcement."""
+    chunks = []
+    paragraphs = text.split("\n\n")
+    line_count = 1
+
+    for para in paragraphs:
+        stripped = para.strip()
+        if not stripped or len(stripped) < NOTE_CHUNK_MIN_SIZE:
+            line_count += para.count("\n") + 1
+            continue
+
+        if len(stripped) <= NOTE_CHUNK_MAX_SIZE:
+            chunks.append(
+                {
+                    "file_path": file_path,
+                    "chunk_index": len(chunks),
+                    "chunk_text": stripped,
+                    "line_start": line_count,
+                }
+            )
+        else:
+            sub = _split_long_text(stripped, file_path, line_count)
+            chunks.extend(sub)
+
+        line_count += para.count("\n") + 1
+
+    return chunks
+
+
+def _split_long_text(text: str, file_path: str, base_line: int) -> list[dict]:
+    """Split a long paragraph into overlapping chunks by line."""
+    lines = text.split("\n")
+    chunks = []
+    current_lines: list[str] = []
+    current_len = 0
+    line_offset = 0
+
+    for idx, line in enumerate(lines):
+        current_lines.append(line)
+        current_len += len(line) + 1  # +1 for the newline
+        if current_len >= NOTE_CHUNK_MAX_SIZE:
+            chunk_text = "\n".join(current_lines)
+            chunks.append(
+                {
+                    "file_path": file_path,
+                    "chunk_index": len(chunks),
+                    "chunk_text": chunk_text,
+                    "line_start": base_line + line_offset,
+                }
+            )
+            # Rewind for overlap: drop lines until we're below overlap threshold
+            overlap_len = 0
+            rewound: list[str] = []
+            for l in reversed(current_lines):
+                if overlap_len >= NOTE_CHUNK_OVERLAP and rewound:
+                    break
+                rewound.insert(0, l)
+                overlap_len += len(l) + 1
+            current_lines = rewound
+            current_len = overlap_len
+            line_offset = idx + 1 - len(current_lines)
+
+    if current_lines:
+        chunk_text = "\n".join(current_lines)
+        chunks.append(
+            {
+                "file_path": file_path,
+                "chunk_index": len(chunks),
+                "chunk_text": chunk_text,
+                "line_start": base_line + line_offset,
+            }
+        )
+
+    return chunks
+
+
+def _get_note_db(db_path: str) -> sqlite3.Connection:
+    """Open note_vectors.sqlite with WAL mode, create schema if needed."""
+    conn = sqlite3.connect(db_path, timeout=5)
+    conn.row_factory = sqlite3.Row
+    with conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chunks (
+                file_path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                chunk_text TEXT NOT NULL,
+                line_start INTEGER NOT NULL DEFAULT 0,
+                mtime REAL NOT NULL,
+                file_size INTEGER NOT NULL,
+                embedding BLOB,
+                PRIMARY KEY (file_path, chunk_index)
+            )
+        """)
+    return conn
+
+
+def _ensure_note_cache(
+    project_path: str,
+) -> tuple[sqlite3.Connection, str, int]:
+    """Incremental cache update: scan .md files, diff mtime/size, embed only changed."""
+    project_path = os.path.normpath(project_path)
+    cache_dir = os.path.join(project_path, ".utility")
+    os.makedirs(cache_dir, exist_ok=True)
+    db_path = os.path.join(cache_dir, NOTE_DB_FILENAME)
+
+    conn = _get_note_db(db_path)
+
+    md_files = _scan_md_files(project_path)
+    cached = {}
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT file_path, mtime, file_size FROM chunks"
+        ).fetchall()
+        cached = {r[0]: {"mtime": r[1], "size": r[2]} for r in rows}
+    except sqlite3.DatabaseError:
+        conn.close()
+        try:
+            os.remove(db_path)
+        except OSError:
+            pass
+        conn = _get_note_db(db_path)
+
+    changed = [
+        mf
+        for mf in md_files
+        if mf["path"] not in cached
+        or cached[mf["path"]]["mtime"] != mf["mtime"]
+        or cached[mf["path"]]["size"] != mf["size"]
+    ]
+
+    if changed:
+        logging.info(
+            f"[project_notes] {project_path}: {len(changed)} files need embedding "
+            f"(of {len(md_files)} total .md files)"
+        )
+        emb = _get_shared_embedder()
+        if emb is None:
+            logging.warning("[project_notes] embedder unavailable, skipping embedding")
+
+        for mf in changed:
+            try:
+                conn.execute("DELETE FROM chunks WHERE file_path = ?", (mf["path"],))
+                with open(mf["path"], "r", encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                chunks = _chunk_md_text(text, mf["path"])
+                if not chunks:
+                    continue
+
+                total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
+                    logging.warning(
+                        f"[project_notes] {project_path}: "
+                        f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
+                    )
+                    chunks = chunks[: NOTE_MAX_CHUNKS_PER_PROJECT - total]
+                    if not chunks:
+                        continue
+
+                if emb is not None:
+                    texts = [c["chunk_text"] for c in chunks]
+                    embeddings = list(emb.embed(texts))
+                    for c, vec in zip(chunks, embeddings):
+                        vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
+                        conn.execute(
+                            "INSERT OR REPLACE INTO chunks " "VALUES (?,?,?,?,?,?,?)",
+                            (
+                                mf["path"],
+                                c["chunk_index"],
+                                c["chunk_text"],
+                                c["line_start"],
+                                mf["mtime"],
+                                mf["size"],
+                                vec_bytes,
+                            ),
+                        )
+                else:
+                    # No embedder: store without embedding (keyword fallback later)
+                    for c in chunks:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO chunks "
+                            "(file_path, chunk_index, chunk_text, line_start, mtime, file_size) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (
+                                mf["path"],
+                                c["chunk_index"],
+                                c["chunk_text"],
+                                c["line_start"],
+                                mf["mtime"],
+                                mf["size"],
+                            ),
+                        )
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"[project_notes] error processing {mf['path']}: {e}")
+                conn.rollback()
+                continue
+
+    total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    return conn, db_path, total_chunks
+
+
+def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
+    """Semantic search over project .md files using cached vectors."""
+    limit = max(1, min(limit, NOTE_MAX_RESULTS))
+
+    try:
+        conn, db_path, total_chunks = _ensure_note_cache(project_path)
+    except Exception as e:
+        logging.error(f"[project_notes] cache init failed: {e}")
+        return {"error": f"Cache init failed: {e}", "results": [], "count": 0}
+
+    try:
+        rows = conn.execute(
+            "SELECT file_path, chunk_index, chunk_text, line_start, embedding FROM chunks"
+        ).fetchall()
+    except sqlite3.DatabaseError as e:
+        conn.close()
+        logging.error(f"[project_notes] db error: {e}")
+        return {"error": f"DB error: {e}", "results": [], "count": 0}
+
+    conn.close()
+
+    if not rows:
+        return {"results": [], "count": 0, "total_chunks": total_chunks}
+
+    # Try vector search first
+    emb = _get_shared_embedder()
+    vector_results: list[dict] = []
+
+    if emb is not None:
+        try:
+            query_vec = list(emb.embed([query]))[0].astype(np.float32)
+            qnorm = np.linalg.norm(query_vec)
+            if qnorm > 1e-10:
+                query_vec = query_vec / qnorm
+
+                entries = []
+                vectors = []
+                for r in rows:
+                    blob = r["embedding"]
+                    if blob is None:
+                        continue
+                    try:
+                        vec = np.frombuffer(blob, dtype=np.float32).copy()
+                        norm = np.linalg.norm(vec)
+                        if norm > 1e-10:
+                            vectors.append(vec / norm)
+                        else:
+                            vectors.append(vec)
+                        entries.append(
+                            {
+                                "file_path": r["file_path"],
+                                "chunk_text": r["chunk_text"],
+                                "line_start": r["line_start"],
+                            }
+                        )
+                    except Exception:
+                        continue
+
+                if vectors:
+                    matrix = np.array(vectors, dtype=np.float32)
+                    sims = np.dot(matrix, query_vec)
+                    indices = np.argsort(-sims)
+                    for idx in indices:
+                        if sims[idx] < NOTE_SIMILARITY_THRESHOLD:
+                            break
+                        if len(vector_results) >= limit:
+                            break
+                        e = entries[idx]
+                        vector_results.append(
+                            {
+                                "file": os.path.relpath(e["file_path"], project_path),
+                                "line": e["line_start"],
+                                "content": e["chunk_text"][:NOTE_PREVIEW_LEN],
+                                "score": round(float(sims[idx]), 4),
+                            }
+                        )
+
+            if vector_results:
+                return {
+                    "results": vector_results,
+                    "count": len(vector_results),
+                    "total_chunks": total_chunks,
+                }
+        except Exception as e:
+            logging.warning(f"[project_notes] vector search failed: {e}")
+            # Fall through to keyword search
+
+    # Fallback: keyword search (grep-lite)
+    tokens = [t for t in query.split() if t]
+    keyword_results: list[dict] = []
+    seen_files: set[tuple[str, int]] = set()
+
+    for r in rows:
+        text = r["chunk_text"]
+        if not tokens or not any(t.lower() in text.lower() for t in tokens):
+            continue
+        # Score: count how many tokens matched
+        matched = sum(1 for t in tokens if t.lower() in text.lower())
+        key = (r["file_path"], r["chunk_index"])
+        if key in seen_files:
+            continue
+        seen_files.add(key)
+        keyword_results.append(
+            {
+                "file": os.path.relpath(r["file_path"], project_path),
+                "line": r["line_start"],
+                "content": text[:NOTE_PREVIEW_LEN],
+                "score": round(matched / max(len(tokens), 1), 4),
+            }
+        )
+
+    keyword_results.sort(key=lambda x: -x["score"])
+    keyword_results = keyword_results[:limit]
+
+    return {
+        "results": keyword_results,
+        "count": len(keyword_results),
+        "total_chunks": total_chunks,
+    }
+
+
 # ============================================================
 # 记忆工具 — 从 self-service-docker 移植, 已适配 Utility 子进程模式
 # ============================================================
@@ -1493,6 +1921,29 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["dbPath", "path"],
             },
         ),
+        Tool(
+            name="project_notes",
+            description=desc.get("project_notes", TOOL_DEFAULTS["project_notes"]),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词，支持自然语言描述",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "项目目录绝对路径",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回结果数",
+                        "default": 5,
+                    },
+                },
+                "required": ["query", "path"],
+            },
+        ),
     ]
     for skill_name, skill in _scan_skills().items():
         tools.append(
@@ -1789,6 +2240,36 @@ async def _handle_project_exports(arguments: dict) -> list[TextContent]:
         result = tool_project_exports(arguments["dbPath"], arguments["path"])
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+
+@_register("project_notes")
+async def _handle_project_notes(arguments: dict) -> list[TextContent]:
+    try:
+        query = arguments["query"]
+        path = arguments["path"]
+        limit = int(arguments.get("limit", 5))
+
+        if not query or not query.strip():
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps({"error": "query must not be empty"}),
+                )
+            ]
+        if not os.path.isdir(path):
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps({"error": f"project directory not found: {path}"}),
+                )
+            ]
+
+        result = _query_project_notes(path, query.strip(), limit)
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+    except Exception as e:
+        logging.error(f"[project_notes] {e}", exc_info=True)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
