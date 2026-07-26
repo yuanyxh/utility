@@ -74,6 +74,7 @@ mcp:
   # 每日总结（由 TaskScheduler 触发 summarize.py）
   summaryEnabled: true
   summaryHour: 17
+  summaryStatsOnly: false  # true=仅统计报表，跳过 AI 总结
 
   # 进程守护
   maxRestarts: 3

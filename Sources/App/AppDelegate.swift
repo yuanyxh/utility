@@ -105,14 +105,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let serverURL = "http://localhost:\(mcp.port)"
 
         let python = MCPProcessManager.pythonVenvPath
-        let cmd = [
+        var cmdParts = [
             "DEEPSEEK_API_KEY=\(apiKey)",
             "NOTES_DIR=\(notesDir)",
             "SUMMARY_API_URL=\(baseURL)",
             "SUMMARY_MODEL=\(model)",
             "MEMORY_SERVER_URL=\(serverURL)",
+            "UTILITY_DATA_DIR=\(AppPaths.configDir.path)",
             python, scriptPath,
-        ].joined(separator: " ")
+        ]
+        if mcp.summaryStatsOnly {
+            cmdParts.append("--stats-only")
+        }
+        let cmd = cmdParts.joined(separator: " ")
 
         let task = TaskConfig(
             name: "mcp-summary",

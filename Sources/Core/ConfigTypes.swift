@@ -52,6 +52,7 @@ public struct MCPConfig: Codable {
     // 每日总结
     var summaryEnabled: Bool = true
     var summaryHour: Int = 17
+    var summaryStatsOnly: Bool = false
 
     // 进程守护
     var maxRestarts: Int = 3
@@ -71,6 +72,7 @@ public struct MCPConfig: Codable {
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
+        summaryStatsOnly = try c.decodeIfPresent(Bool.self, forKey: .summaryStatsOnly) ?? false
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
     }

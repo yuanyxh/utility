@@ -27,6 +27,7 @@ import logging
 import logging.handlers
 import subprocess
 import sqlite3
+import threading
 import httpx
 import numpy as np
 from datetime import datetime, timedelta
@@ -206,6 +207,12 @@ CONTRADICTION_TOP_K = 5
 SERVER_NAME = "mino-brain"
 SERVER_VERSION = "1.0.0"
 MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
+
+# ── 工具调用统计 (Telemetry) ──
+STATS_DB = os.path.join(
+    os.environ.get("UTILITY_DATA_DIR", os.path.expanduser("~/.config/utility")),
+    "tool_usage.sqlite",
+)
 
 # 同义词扩展表 (Layer 2) — 从 synonyms.py 导入
 # 编辑 Sources/MCPScripts/synonyms.py 添加/修改映射
@@ -1052,6 +1059,10 @@ def _get_note_db(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+# 防止并发重建缓存（onx embedding 阻塞事件循环）
+_note_cache_lock = threading.Lock()
+
+
 def _ensure_note_cache(
     project_path: str,
 ) -> tuple[sqlite3.Connection, str, int]:
@@ -1063,98 +1074,112 @@ def _ensure_note_cache(
 
     conn = _get_note_db(db_path)
 
-    md_files = _scan_md_files(project_path)
-    cached = {}
+    # 序列化重建：同时多个请求到来时只跑一次 embedding（ONNX 推理阻塞且内存密集）
+    _note_cache_lock.acquire()
     try:
-        rows = conn.execute(
-            "SELECT DISTINCT file_path, mtime, file_size FROM chunks"
-        ).fetchall()
-        cached = {r[0]: {"mtime": r[1], "size": r[2]} for r in rows}
-    except sqlite3.DatabaseError:
-        conn.close()
+        md_files = _scan_md_files(project_path)
+        cached = {}
         try:
-            os.remove(db_path)
-        except OSError:
-            pass
-        conn = _get_note_db(db_path)
-
-    changed = [
-        mf
-        for mf in md_files
-        if mf["path"] not in cached
-        or cached[mf["path"]]["mtime"] != mf["mtime"]
-        or cached[mf["path"]]["size"] != mf["size"]
-    ]
-
-    if changed:
-        logging.info(
-            f"[project_notes] {project_path}: {len(changed)} files need embedding "
-            f"(of {len(md_files)} total .md files)"
-        )
-        emb = _get_shared_embedder()
-        if emb is None:
-            logging.warning("[project_notes] embedder unavailable, skipping embedding")
-
-        for mf in changed:
+            rows = conn.execute(
+                "SELECT DISTINCT file_path, mtime, file_size FROM chunks"
+            ).fetchall()
+            cached = {r[0]: {"mtime": r[1], "size": r[2]} for r in rows}
+        except sqlite3.DatabaseError:
+            conn.close()
             try:
-                conn.execute("DELETE FROM chunks WHERE file_path = ?", (mf["path"],))
-                with open(mf["path"], "r", encoding="utf-8", errors="replace") as fh:
-                    text = fh.read()
-                chunks = _chunk_md_text(text, mf["path"])
-                if not chunks:
-                    continue
+                os.remove(db_path)
+            except OSError:
+                pass
+            conn = _get_note_db(db_path)
 
-                total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-                if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
-                    logging.warning(
-                        f"[project_notes] {project_path}: "
-                        f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
+        changed = [
+            mf
+            for mf in md_files
+            if mf["path"] not in cached
+            or cached[mf["path"]]["mtime"] != mf["mtime"]
+            or cached[mf["path"]]["size"] != mf["size"]
+        ]
+
+        if changed:
+            logging.info(
+                f"[project_notes] {project_path}: {len(changed)} files need embedding "
+                f"(of {len(md_files)} total .md files)"
+            )
+            emb = _get_shared_embedder()
+            if emb is None:
+                logging.warning(
+                    "[project_notes] embedder unavailable, skipping embedding"
+                )
+
+            for mf in changed:
+                try:
+                    conn.execute(
+                        "DELETE FROM chunks WHERE file_path = ?", (mf["path"],)
                     )
-                    chunks = chunks[: NOTE_MAX_CHUNKS_PER_PROJECT - total]
+                    with open(
+                        mf["path"], "r", encoding="utf-8", errors="replace"
+                    ) as fh:
+                        text = fh.read()
+                    chunks = _chunk_md_text(text, mf["path"])
                     if not chunks:
                         continue
 
-                if emb is not None:
-                    texts = [c["chunk_text"] for c in chunks]
-                    embeddings = list(emb.embed(texts))
-                    for c, vec in zip(chunks, embeddings):
-                        vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
-                        conn.execute(
-                            "INSERT OR REPLACE INTO chunks " "VALUES (?,?,?,?,?,?,?)",
-                            (
-                                mf["path"],
-                                c["chunk_index"],
-                                c["chunk_text"],
-                                c["line_start"],
-                                mf["mtime"],
-                                mf["size"],
-                                vec_bytes,
-                            ),
+                    total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                    if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
+                        logging.warning(
+                            f"[project_notes] {project_path}: "
+                            f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
                         )
-                else:
-                    # No embedder: store without embedding (keyword fallback later)
-                    for c in chunks:
-                        conn.execute(
-                            "INSERT OR REPLACE INTO chunks "
-                            "(file_path, chunk_index, chunk_text, line_start, mtime, file_size) "
-                            "VALUES (?,?,?,?,?,?)",
-                            (
-                                mf["path"],
-                                c["chunk_index"],
-                                c["chunk_text"],
-                                c["line_start"],
-                                mf["mtime"],
-                                mf["size"],
-                            ),
-                        )
-                conn.commit()
-            except Exception as e:
-                logging.warning(f"[project_notes] error processing {mf['path']}: {e}")
-                conn.rollback()
-                continue
+                        chunks = chunks[: NOTE_MAX_CHUNKS_PER_PROJECT - total]
+                        if not chunks:
+                            continue
 
-    total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    return conn, db_path, total_chunks
+                    if emb is not None:
+                        texts = [c["chunk_text"] for c in chunks]
+                        embeddings = list(emb.embed(texts))
+                        for c, vec in zip(chunks, embeddings):
+                            vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
+                            conn.execute(
+                                "INSERT OR REPLACE INTO chunks "
+                                "VALUES (?,?,?,?,?,?,?)",
+                                (
+                                    mf["path"],
+                                    c["chunk_index"],
+                                    c["chunk_text"],
+                                    c["line_start"],
+                                    mf["mtime"],
+                                    mf["size"],
+                                    vec_bytes,
+                                ),
+                            )
+                    else:
+                        # No embedder: store without embedding (keyword fallback later)
+                        for c in chunks:
+                            conn.execute(
+                                "INSERT OR REPLACE INTO chunks "
+                                "(file_path, chunk_index, chunk_text, line_start, mtime, file_size) "
+                                "VALUES (?,?,?,?,?,?)",
+                                (
+                                    mf["path"],
+                                    c["chunk_index"],
+                                    c["chunk_text"],
+                                    c["line_start"],
+                                    mf["mtime"],
+                                    mf["size"],
+                                ),
+                            )
+                    conn.commit()
+                except Exception as e:
+                    logging.warning(
+                        f"[project_notes] error processing {mf['path']}: {e}"
+                    )
+                    conn.rollback()
+                    continue
+
+        total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        return conn, db_path, total_chunks
+    finally:
+        _note_cache_lock.release()
 
 
 def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
@@ -1960,6 +1985,58 @@ async def handle_list_tools() -> list[Tool]:
 # Tool Handler 分发
 # ============================================================
 
+# ── 工具调用统计 ──
+
+_stats_db_conn: sqlite3.Connection | None = None
+
+
+def _get_stats_db() -> sqlite3.Connection:
+    global _stats_db_conn
+    if _stats_db_conn is not None:
+        return _stats_db_conn
+    os.makedirs(os.path.dirname(STATS_DB), exist_ok=True)
+    conn = sqlite3.connect(STATS_DB)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("""CREATE TABLE IF NOT EXISTS tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_name TEXT NOT NULL,
+            called_at TEXT NOT NULL,
+            duration_ms REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'success',
+            error_message TEXT DEFAULT ''
+        )""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_stats_called_at ON tool_calls(called_at)"
+    )
+    _stats_db_conn = conn
+    return conn
+
+
+def _record_tool_call(
+    tool_name: str,
+    duration_ms: float,
+    status: str = "success",
+    error_message: str = "",
+) -> None:
+    try:
+        conn = _get_stats_db()
+        conn.execute(
+            "INSERT INTO tool_calls (tool_name, called_at, duration_ms, status, error_message) VALUES (?, ?, ?, ?, ?)",
+            (
+                tool_name,
+                datetime.now().isoformat(),
+                round(duration_ms, 1),
+                status,
+                error_message,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        pass  # 埋点绝不能影响主流程
+
+
 HANDLERS: dict[str, callable] = {}
 
 
@@ -2205,7 +2282,8 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
 @_register("project_search")
 async def _handle_project_search(arguments: dict) -> list[TextContent]:
     try:
-        result = tool_project_search(
+        result = await asyncio.to_thread(
+            tool_project_search,
             arguments["dbPath"],
             arguments["query"],
             file_path=arguments.get("file_path", ""),
@@ -2219,7 +2297,9 @@ async def _handle_project_search(arguments: dict) -> list[TextContent]:
 @_register("project_structure")
 async def _handle_project_structure(arguments: dict) -> list[TextContent]:
     try:
-        result = tool_project_structure(arguments["dbPath"], arguments.get("path", ""))
+        result = await asyncio.to_thread(
+            tool_project_structure, arguments["dbPath"], arguments.get("path", "")
+        )
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
@@ -2228,7 +2308,9 @@ async def _handle_project_structure(arguments: dict) -> list[TextContent]:
 @_register("project_packages")
 async def _handle_project_packages(arguments: dict) -> list[TextContent]:
     try:
-        result = tool_project_packages(arguments["dbPath"], arguments.get("type", ""))
+        result = await asyncio.to_thread(
+            tool_project_packages, arguments["dbPath"], arguments.get("type", "")
+        )
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
@@ -2237,7 +2319,9 @@ async def _handle_project_packages(arguments: dict) -> list[TextContent]:
 @_register("project_exports")
 async def _handle_project_exports(arguments: dict) -> list[TextContent]:
     try:
-        result = tool_project_exports(arguments["dbPath"], arguments["path"])
+        result = await asyncio.to_thread(
+            tool_project_exports, arguments["dbPath"], arguments["path"]
+        )
         return [TextContent(type="text", text=json.dumps(result))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
@@ -2265,7 +2349,10 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
                 )
             ]
 
-        result = _query_project_notes(path, query.strip(), limit)
+        # 在后台线程运行避免阻塞事件循环（ONNX embedding 是 CPU 密集操作）
+        result = await asyncio.to_thread(
+            _query_project_notes, path, query.strip(), limit
+        )
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
     except Exception as e:
@@ -2275,22 +2362,30 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+    _start = time.time()
     try:
         handler = HANDLERS.get(name)
         if handler:
-            return await handler(arguments)
+            result = await handler(arguments)
+            _record_tool_call(name, (time.time() - _start) * 1000, "success")
+            return result
         skills = _scan_skills()
         if name in skills:
+            _record_tool_call(name, (time.time() - _start) * 1000, "success")
             return [TextContent(type="text", text=skills[name]["content"])]
         normalized = _normalize_name(name)
         if normalized in skills:
+            _record_tool_call(name, (time.time() - _start) * 1000, "success")
             return [TextContent(type="text", text=skills[normalized]["content"])]
+        _record_tool_call(name, (time.time() - _start) * 1000, "error", "unknown tool")
         return [
             TextContent(
                 type="text", text=json.dumps({"error": f"Unknown tool: {name}"})
             )
         ]
     except Exception as e:
+        elapsed = (time.time() - _start) * 1000
+        _record_tool_call(name, elapsed, "error", str(e))
         logging.error(f"Error in {name}: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 

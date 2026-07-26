@@ -190,6 +190,8 @@ mcp:
   # 每日记忆总结
   summaryEnabled: true
   summaryHour: 17
+  # true=仅统计报表，跳过 AI 总结
+  summaryStatsOnly: false
 ```
 </details>
 

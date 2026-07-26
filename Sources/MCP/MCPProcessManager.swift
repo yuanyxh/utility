@@ -64,6 +64,7 @@ final class MCPProcessManager {
         var env = ProcessInfo.processInfo.environment
         env["MCP_PORT"] = String(port)
         env["PYTHONUNBUFFERED"] = "1"
+        env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
 
         // ai 配置
         let ai = ConfigManager.shared.config.ai
