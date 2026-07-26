@@ -38,9 +38,8 @@ def _setup_logging():
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    console = logging.StreamHandler()
-    console.setFormatter(fmt)
-    root.addHandler(console)
+    # 仅写文件日志。不添加 StreamHandler（stderr/stdout）—— TaskExecutor 创建的
+    # pipe buffer 填满后 write() 阻塞会导致进程卡死无法退出。
     fh = logging.handlers.TimedRotatingFileHandler(
         filename=os.path.join(log_dir, "summarize.log"),
         when="midnight",

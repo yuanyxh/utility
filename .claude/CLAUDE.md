@@ -113,11 +113,30 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 ### 单⼀调用
 - 核心逻辑不依赖 UI 上下文，可直接从 CLI 或无头模式调用
 
+### Orchestrate 多 Agent 编排
+- `PlanManager`（`Sources/CLI/PlanManager.swift`）— Plan 文件管理、状态机（pending→oa_task→review→oa_response→done/blocked）、session-id 持久化
+- `OrchestrateCommand`（`Sources/CLI/OrchestrateCommand.swift`）— `utility orchestrate -d <project> --plan <name>` 子命令
+- 数据路径：`<项目>/.utility/plans/<name>.md`（plan）+ `<项目>/.utility/artifacts/<plan>/`（运行时产物）
+- Artifact 命名：`<plan>.<task-id>.<step>.<type>.md`（type: output/review/response）
+- Active plan 通过 `.utility/plans/active` symlink 指向
+- OA（Orchestrator Agent）通过 `--session-id <uuid>` 创建 + `--resume <uuid>` 恢复，跨 task 保持上下文
+- Reviewer 用 `-p --no-session-persistence` 做干净一次性审查
+- Prompt 必须是行动导向（"直接修改源代码"），不是报告导向（"写入分析到文件"）
+- CLI 关键标志：`-d`（目录，注意根命令用 `--dir` customLong）、`--dry-run`（验证调度不启 agent）、`--list`（列出 plan）
+
+### Claude Code CLI 关键标志（v2.1.193）
+- `-p` 从 stdin 读 prompt（非位置参数），输出到 stdout
+- `--session-id <uuid>` 创建命名会话；`--resume <uuid>` 恢复
+- `--add-dir <dir>` 授予工具访问权限（无 `--dir`）
+- `--no-session-persistence` 一次性用完不保存 session
+- 原设计中 `--non-interactive` 不存在
+
 ### 拒绝猜测
 - 看不懂某段代码为什么那样写时，先查 git log 看提交记录和 commit message
 - git 记录看不出来时问用户，不要自己假设
 - Bug 修复依赖现实调试信息，禁止靠猜测修改
 
 ## 未来规划
-- 详见 `~/Documents/selfdata/notes/plan.md`（Utility & MCP 合并计划）
-- MCP 移植、Agent 寄生模式、项目依赖图三条线
+- 详见 `.claude/plans/agent-orchestrate.md`（Orchestrate 设计文档）
+- Orchestrate 已实现 + 真实测试验证通过（2026-07-15）：4 task 全部实际修改源代码（2 新建 + 10 修改文件），action 导向 prompt 方案确认有效。Prompt 必须"直接修改源代码"而非"将分析写入文件"
+- MCP 移植、Agent 寄生模式已完成；项目依赖图持续维护

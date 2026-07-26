@@ -6,7 +6,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let hotkeyManager = HotkeyManager.shared
     let clipboardPanel = ClipboardPanelController()
     lazy var translationPanel = TranslationPanelController()
-    lazy var chatPanel = ChatPanelController()
     private let stageWindow = StageWindowController()
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -156,10 +155,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             }
         }
 
-        hotkeyManager.register(hotkey: config.chat.hotkey, id: "chat") { [weak self] in
-            guard let self = self else { return }
-            EventBus.shared.publish(PanelEvent.requestShow, payload: self.chatPanel)
-        }
     }
 
     private func installEventHandler() {

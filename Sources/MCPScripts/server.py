@@ -74,9 +74,9 @@ def _setup_logging():
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    console = logging.StreamHandler()
-    console.setFormatter(fmt)
-    root.addHandler(console)
+    # 仅写文件日志。不添加 StreamHandler（stderr）—— MCPProcessManager 在启动检测
+    # 完成后停止读取 stderr pipe，若继续写入会导致 pipe buffer 积满 → write() 阻塞
+    # → 主线程卡死 → 服务不可用。
     fh = logging.handlers.TimedRotatingFileHandler(
         filename=os.path.join(log_dir, "server.log"),
         when="midnight",
@@ -183,6 +183,49 @@ MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
 
 
 # ============================================================
+# 内存优化：Monkey-patch mem0 的 fastembed embedder
+# ============================================================
+# mem0 内部创建 TextEmbedding 时只传 model_name，不带 enable_cpu_mem_arena、
+# cache_dir、threads、providers 等优化参数，导致 ONNX Runtime 预分配大量内存
+# （arena 默认 ~1GB）。此处 patch 后 mem0 的 embedder 与 _shared_embedder 共用
+# 相同优化配置，消除重复的 ONNX 会话开销。
+
+
+def _patch_mem0_fastembed():
+    """Monkey-patch mem0 FastEmbedEmbedding 以启用内存优化参数。
+
+    mem0 原始实现只传 model_name 给 TextEmbedding，缺失 cache_dir/threads/providers
+    等优化参数。此处直接替换 init 逻辑，跳过原始 TextEmbedding 创建再重建的浪费。
+    """
+    try:
+        from mem0.embeddings.fastembed import FastEmbedEmbedding
+        from mem0.embeddings.base import EmbeddingBase
+        import fastembed
+
+        def _optimized_init(self, config=None):
+            # 直接调 EmbeddingBase.__init__ 设置 config，跳过 FastEmbedEmbedding 原始
+            # init 中的无优化 TextEmbedding 创建
+            EmbeddingBase.__init__(self, config)
+            self.config.model = self.config.model or "thenlper/gte-large"
+            self.dense_model = fastembed.TextEmbedding(
+                model_name=self.config.model,
+                cache_dir=FASTEMBED_CACHE_DIR,
+                threads=1,
+                providers=["CPUExecutionProvider"],
+                enable_cpu_mem_arena=False,
+            )
+            if not self.config.embedding_dims:
+                self.config.embedding_dims = self.dense_model.embedding_size
+
+        FastEmbedEmbedding.__init__ = _optimized_init
+        logging.info("Patched mem0 FastEmbedEmbedding with memory-optimized config")
+    except ImportError:
+        pass  # mem0 未安装时跳过
+
+
+_patch_mem0_fastembed()
+
+# ============================================================
 # 热层：Mem0 初始化
 # ============================================================
 
@@ -267,11 +310,29 @@ except Exception as e:
     logging.error(f"Cold layer Qdrant init failed: {e}")
     qdrant = None
 
-try:
-    embedder = TextEmbedding(model_name=EMBEDDER_MODEL, cache_dir=FASTEMBED_CACHE_DIR)
-except Exception as e:
-    logging.warning(f"Cold layer embedder init failed (retry on search): {e}")
-    embedder = None
+_shared_embedder = None
+
+
+def _get_shared_embedder():
+    """单一 embedder 实例，冷层和项目向量搜索共用，避免重复加载 ONNX 模型。
+
+    优化：enable_cpu_mem_arena=False 禁用 ONNX Runtime CPU arena 预分配（默认会 malloc
+    ~1GB 大块）；threads=1 限制线程数；CPUExecutionProvider 避免 CoreML/Azure 提供者
+    的额外内存。
+    """
+    global _shared_embedder
+    if _shared_embedder is None:
+        try:
+            _shared_embedder = TextEmbedding(
+                model_name=EMBEDDER_MODEL,
+                cache_dir=FASTEMBED_CACHE_DIR,
+                threads=1,
+                providers=["CPUExecutionProvider"],
+                enable_cpu_mem_arena=False,
+            )
+        except Exception as e:
+            logging.warning(f"Shared embedder init failed (retry on next call): {e}")
+    return _shared_embedder
 
 
 # ============================================================
@@ -417,27 +478,19 @@ def _search_packages(db_path: str, query: str) -> list[dict]:
 # ── Layer 4: Vector search (fastembed + in-memory cache) ──
 
 _symbol_embeddings: dict[str, tuple[list[dict], np.ndarray | None]] = {}
-_project_embedder = None
-
-
-def _get_project_embedder():
-    global _project_embedder
-    if _project_embedder is None:
-        try:
-            _project_embedder = TextEmbedding(model_name=EMBEDDER_MODEL)
-        except Exception:
-            return None
-    return _project_embedder
+_MAX_VECTOR_CACHE = 3  # 最多缓存 3 个项目的向量，避免无界内存增长
+_MAX_VECTOR_ROWS = 50000  # 向量搜索最多加载 5 万条 symbol，超量项目跳过
 
 
 def _search_vectors(db_path: str, query: str) -> list[dict]:
     """Layer 4: Vector similarity search against all project symbols.
 
     Lazy-caches symbol embeddings per db_path on first call.
+    Cache capped at _MAX_VECTOR_CACHE projects (oldest evicted).
     Silently falls back to empty list on any error.
     """
-    embedder = _get_project_embedder()
-    if embedder is None:
+    emb = _get_shared_embedder()
+    if emb is None:
         return []
 
     try:
@@ -447,7 +500,8 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT s.name, s.signature, COALESCE(s.doc_comment, '') AS doc, s.file_path "
-                "FROM symbols s"
+                "FROM symbols s LIMIT ?",
+                (_MAX_VECTOR_ROWS,),
             ).fetchall()
             conn.close()
 
@@ -472,11 +526,16 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
                     }
                 )
 
-            embeddings = list(embedder.embed(texts))
+            embeddings = list(emb.embed(texts))
             emb_matrix = np.array(embeddings, dtype=np.float32)
             norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
             norms[norms < 1e-10] = 1
             emb_matrix = emb_matrix / norms  # pre-normalize → dot = cosine
+            # 缓存新项目前先淘汰最旧的，避免无界增长
+            while len(_symbol_embeddings) >= _MAX_VECTOR_CACHE:
+                oldest = next(iter(_symbol_embeddings))
+                logging.info(f"[vector] evicting cached embeddings for: {oldest}")
+                del _symbol_embeddings[oldest]
             _symbol_embeddings[db_path] = (symbols, emb_matrix)
 
         symbols, emb_matrix = _symbol_embeddings[db_path]
@@ -484,7 +543,7 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
             return []
 
         # Encode query + normalize
-        query_emb = list(embedder.embed([query]))[0]
+        query_emb = list(emb.embed([query]))[0]
         qnorm = np.linalg.norm(query_emb)
         if qnorm < 1e-10:
             return []
@@ -830,18 +889,10 @@ def search_cold_layer(
     query: str, limit: int = 5, include_archived: bool = False
 ) -> list[dict]:
     results = []
-    if qdrant:
-        global embedder
-        if embedder is None:
-            try:
-                embedder = TextEmbedding(
-                    model_name=EMBEDDER_MODEL, cache_dir=FASTEMBED_CACHE_DIR
-                )
-            except Exception:
-                pass
-    if qdrant and embedder:
+    emb = _get_shared_embedder() if qdrant else None
+    if qdrant and emb:
         try:
-            vec = list(embedder.embed(query))[0].tolist()
+            vec = list(emb.embed(query))[0].tolist()
             qfilter = None
             if not include_archived:
                 qfilter = Filter(
@@ -1160,6 +1211,10 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
         return False
 
 
+_pending_contradictions: set[asyncio.Task] = set()
+_MAX_CONTRADICTION_TASKS = 5
+
+
 async def _contradiction_check_hot(content: str, memory_id: str) -> None:
     if not hot_memory:
         return
@@ -1197,11 +1252,25 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
         logging.warning(f"Hot contradiction check failed: {e}")
 
 
+def _spawn_contradiction_check(coro) -> None:
+    """Spawn a contradiction check task, limiting concurrent tasks to avoid memory leak."""
+    # 清理已完成的 task
+    done = {t for t in _pending_contradictions if t.done()}
+    _pending_contradictions.difference_update(done)
+    if len(_pending_contradictions) >= _MAX_CONTRADICTION_TASKS:
+        return  # 积压过多则跳过，等待下一轮
+    task = asyncio.create_task(coro)
+    _pending_contradictions.add(task)
+
+
 async def _contradiction_check_cold(content: str, point_id: str) -> None:
-    if not qdrant or not embedder:
+    if not qdrant:
+        return
+    emb = _get_shared_embedder()
+    if emb is None:
         return
     try:
-        vec = list(embedder.embed(content))[0].tolist()
+        vec = list(emb.embed(content))[0].tolist()
         resp = qdrant.query_points(
             collection_name=COLD_COLLECTION, query=vec, limit=CONTRADICTION_TOP_K
         )
@@ -1497,7 +1566,7 @@ async def _handle_remember(arguments: dict) -> list[TextContent]:
     results = result.get("results", [])
     memory_id = results[0].get("id") if results else None
     if memory_id:
-        asyncio.create_task(_contradiction_check_hot(content, memory_id))
+        _spawn_contradiction_check(_contradiction_check_hot(content, memory_id))
     return [
         TextContent(
             type="text",
@@ -1557,7 +1626,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
             }
             results.append(item_result)
             if memory_id:
-                asyncio.create_task(_contradiction_check_hot(content, memory_id))
+                _spawn_contradiction_check(_contradiction_check_hot(content, memory_id))
         except Exception as e:
             results.append({"success": False, "error": str(e)})
     return [
@@ -1895,13 +1964,14 @@ async def main():
 
     async def api_memory_add_knowledge(request):
         body = await request.json()
-        if not qdrant or not embedder:
+        emb = _get_shared_embedder()
+        if not qdrant or emb is None:
             return JSONResponse(
                 {"error": "Cold layer not initialized"}, status_code=500
             )
         content = body["content"]
         now_iso = datetime.now().isoformat()
-        vec = list(embedder.embed(content))[0].tolist()
+        vec = list(emb.embed(content))[0].tolist()
         point_id = str(uuid.uuid4())
         qdrant.upsert(
             collection_name=COLD_COLLECTION,
@@ -1926,7 +1996,7 @@ async def main():
                 )
             ],
         )
-        asyncio.create_task(_contradiction_check_cold(content, point_id))
+        _spawn_contradiction_check(_contradiction_check_cold(content, point_id))
         return JSONResponse({"success": True, "layer": "cold"})
 
     async def api_memories_recent(request):

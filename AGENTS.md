@@ -80,8 +80,6 @@
 | `PanelManager` | 栈结构面板生命周期：注册/弹出/关闭/焦点追踪 |
 | `KeyDispatcher` | 责任链键盘事件派发：栈顶→栈底→系统 |
 | `PanelProtocol` | 面板统一协议：panelID / showPanel / closePanel / handleKeyEvent |
-| `ChatPanelController` | AI 对话面板：SSE 流式显示、选中文本预填、粘贴 |
-| `AIChatService` | 对话服务：消息构建、system prompt 注入、流式请求生命周期 |
 | `SSEParser` | SSE 帧解析器：`data:` 行 → content delta 回调 |
 | `ClipboardPanelController` | 剪贴板面板 + clipboardStorage + clipboardWatcher（自管生命周期） |
 | `TranslationPanelController` | 翻译面板 + 选中文本获取 |
@@ -119,7 +117,7 @@
 
 ### 并发
 - `Task?.cancel()` + `guard isCancelled` 模式
-- 翻译/对话用序列计数器（`chatSeq`/`translationSeq`）拒绝 stale 回调
+- 翻译用序列计数器（`translationSeq`）拒绝 stale 回调
 
 ### 面板管理
 - `PanelManager.shared.show/close` 统一管理面板生命周期（不直接调 panel.show/close）
@@ -199,3 +197,26 @@
 - `macos-menu-bar-app` — 完整 macOS 菜单栏应用开发指南
 - `macos-swift-appkit` — AppKit 模式与陷阱（NSTableView、pasteboard、CGEventTap 等）
 - `macos-native-dev` — Swift + AppKit 基础开发模式
+
+---
+
+## MCP 进程 pipe buffer 阻塞事故（2026-07-25）
+
+**现象**：MCP server.py 运行 4 天后 "失联"，端口 LISTEN 但 HTTP 请求全部超时。
+**根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（MCPProcessManager）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
+
+**修复**：
+- `Sources/MCPScripts/server.py` / `summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
+- `Sources/MCP/MCPProcessManager.swift`：启动检测通过后继续读取 pipe 并丢弃数据（双重保险）
+
+**症状识别**：
+- 进程旧（数天）、pipe stderr 有大量积压（`lsof -p PID` 看 SIZE/OFF 列）
+- `sample PID` 显示主线程卡在 `write (libsystem_kernel.dylib)`
+- 同一问题的 summarize.py 定时任务会永远不退出的挂起
+
+**排查命令**：
+```bash
+lsof -p PID -a -d 2        # 看 stderr pipe 的积压字节数
+sample PID 3 -file /dev/stdout | head -40  # 看调用栈
+lsof -i :9001 -P           # 检查 MCP 端口
+```

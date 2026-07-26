@@ -7,7 +7,6 @@ public struct AppConfig: Codable {
     var ai: AIConfig = .init()
     var clipboard: ClipboardConfig = .init()
     var translation: TranslationConfig = .init()
-    var chat: ChatConfig = .init()
     var stage: StageConfig = .init()
     var rss: RSSConfig = .init()
     var tasks: [TaskConfig] = []
@@ -23,7 +22,6 @@ public struct AppConfig: Codable {
         ai = (try? c.decode(AIConfig.self, forKey: .ai)) ?? .init()
         clipboard = (try? c.decode(ClipboardConfig.self, forKey: .clipboard)) ?? .init()
         translation = (try? c.decode(TranslationConfig.self, forKey: .translation)) ?? .init()
-        chat = (try? c.decode(ChatConfig.self, forKey: .chat)) ?? .init()
         stage = (try? c.decode(StageConfig.self, forKey: .stage)) ?? .init()
         rss = (try? c.decode(RSSConfig.self, forKey: .rss)) ?? .init()
         tasks = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
@@ -148,36 +146,6 @@ public struct TranslationConfig: Codable {
         firstLang = try c.decodeIfPresent(String.self, forKey: .firstLang) ?? "zh"
         secondLang = try c.decodeIfPresent(String.self, forKey: .secondLang) ?? "en"
         prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
-    }
-}
-
-// MARK: - Chat
-
-public struct ChatAtRuleConfig: Codable {
-    var name: String
-    var command: String
-
-    public init(name: String, command: String) {
-        self.name = name
-        self.command = command
-    }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decode(String.self, forKey: .name)
-        command = try c.decode(String.self, forKey: .command)
-    }
-}
-
-public struct ChatConfig: Codable {
-    var hotkey: String = "option+space"
-    var atRules: [ChatAtRuleConfig] = []
-
-    public init() {}
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+space"
-        atRules = try c.decodeIfPresent([ChatAtRuleConfig].self, forKey: .atRules) ?? []
     }
 }
 

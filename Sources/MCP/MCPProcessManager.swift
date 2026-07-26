@@ -325,19 +325,23 @@ final class MCPProcessManager {
         var ready = false
 
         handle.readabilityHandler = { [weak self] handle in
-            guard let self = self, !ready else { return }
+            guard let self = self else { return }
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            buffer.append(data)
-            guard let output = String(data: buffer, encoding: .utf8) else { return }
 
-            if output.contains("Application startup complete") || output.contains("Uvicorn running on") {
-                ready = true
-                handle.readabilityHandler = nil
-                DispatchQueue.main.async { [weak self] in
-                    self?.startHealthCheck()
+            if !ready {
+                buffer.append(data)
+                guard let output = String(data: buffer, encoding: .utf8) else { return }
+
+                if output.contains("Application startup complete") || output.contains("Uvicorn running on") {
+                    ready = true
+                    // 启动后仍保持读取管道，避免 pipe buffer 积满导致子进程 write() 阻塞
+                    DispatchQueue.main.async { [weak self] in
+                        self?.startHealthCheck()
+                    }
                 }
             }
+            // ready 后继续读取并丢弃数据，防止 pipe buffer 写满阻塞子进程
         }
 
         // 不加超时杀死进程——服务器可能因网络/模型加载慢但最终会准备好

@@ -33,13 +33,6 @@ translation:
   firstLang: zh
   secondLang: en
   prompt: ''
-chat:
-  hotkey: option+space
-  # @ 规则：在聊天框输入 @name content，自动执行命令并获取输出
-  # {content} 会被替换为 @name 之后的内容
-  atRules: []
-    # - name: hermes
-    #   command: hermes chat -q "{content}"
 stage:
   moveOnDragOut: true
 rss:

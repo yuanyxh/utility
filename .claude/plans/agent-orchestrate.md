@@ -1,5 +1,5 @@
 ```sh
-claude --resume 6529da69-7399-409c-bea9-2d430a2360a8
+claude --resume 9c406789-63e6-41c0-90ab-efb14eccf54a
 ```
 
 # Agent 编排模式（orchestrate）

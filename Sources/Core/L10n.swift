@@ -134,10 +134,6 @@ extension L10n {
             format("notify.task_completed", name)
         }
 
-        static var chatCompleted: String {
-            string("notify.chat_completed")
-        }
-
         static var launchAtLoginFailed: String {
             string("notify.launch_at_login_failed")
         }
@@ -280,9 +276,6 @@ extension L10n {
             string("prompt.translate_auto")
         }
 
-        static var chat: String {
-            string("prompt.chat")
-        }
     }
 }
 
