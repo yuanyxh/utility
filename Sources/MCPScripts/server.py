@@ -23,8 +23,6 @@ import sys
 import time
 import asyncio
 import anyio
-import logging
-import logging.handlers
 import subprocess
 import sqlite3
 import threading
@@ -59,41 +57,9 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from synonyms import SYNONYM_MAP  # 同义词扩展表
+from log_utils import setup_logging
 
-
-def _setup_logging():
-    log_dir = os.environ.get(
-        "LOG_DIR",
-        os.path.join(
-            os.environ.get(
-                "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
-            ),
-            "logs",
-        ),
-    )
-    os.makedirs(log_dir, exist_ok=True)
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    # 仅写文件日志。不添加 StreamHandler（stderr）—— MCPProcessManager 在启动检测
-    # 完成后停止读取 stderr pipe，若继续写入会导致 pipe buffer 积满 → write() 阻塞
-    # → 主线程卡死 → 服务不可用。
-    fh = logging.handlers.TimedRotatingFileHandler(
-        filename=os.path.join(log_dir, "server.log"),
-        when="midnight",
-        interval=1,
-        backupCount=30,
-        encoding="utf-8",
-    )
-    fh.setFormatter(fmt)
-    root.addHandler(fh)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
-
-
-_setup_logging()
+logger = setup_logging("server")
 
 # ============================================================
 # 配置(环境变量驱动, 由 Swift MCPProcessManager 注入)
@@ -116,9 +82,9 @@ def _cleanup_qdrant_locks() -> None:
         if os.path.isfile(lock):
             try:
                 os.remove(lock)
-                logging.info(f"Cleaned stale lock: {lock}")
+                logger.info(f"Cleaned stale lock: {lock}")
             except OSError as e:
-                logging.warning(f"Failed to remove lock {lock}: {e}")
+                logger.warning(f"Failed to remove lock {lock}: {e}")
 
 
 _cleanup_qdrant_locks()
@@ -131,7 +97,7 @@ FASTEMBED_CACHE_DIR = os.environ.get(
     "FASTEMBED_CACHE_PATH", os.path.expanduser("~/.cache/fastembed_cache")
 )
 os.environ.setdefault("FASTEMBED_CACHE_PATH", FASTEMBED_CACHE_DIR)
-logging.info(
+logger.info(
     f"ENV CHECK: FASTEMBED_CACHE_PATH={FASTEMBED_CACHE_DIR}, MCP_PORT={os.environ.get('MCP_PORT')}, "
     f"QDRANT_PATH={os.environ.get('QDRANT_PATH')}, MEM0_TELEMETRY={os.environ.get('MEM0_TELEMETRY')}"
 )
@@ -254,7 +220,7 @@ def _patch_mem0_fastembed():
                 self.config.embedding_dims = self.dense_model.embedding_size
 
         FastEmbedEmbedding.__init__ = _optimized_init
-        logging.info("Patched mem0 FastEmbedEmbedding with memory-optimized config")
+        logger.info("Patched mem0 FastEmbedEmbedding with memory-optimized config")
     except ImportError:
         pass  # mem0 未安装时跳过
 
@@ -307,22 +273,22 @@ def _init_hot_memory() -> bool:
         posthog.disabled = True
     except ImportError:
         pass
-    logging.info(
+    logger.info(
         f"Mem0 telemetry disabled (MEM0_TELEMETRY={os.environ.get('MEM0_TELEMETRY')}), "
         "PostHog network calls will be skipped"
     )
     for attempt in range(HOT_INIT_MAX_RETRIES):
         try:
             hot_memory = Memory.from_config(MEM0_CONFIG)
-            logging.info("Mem0 (hot layer) initialized")
+            logger.info("Mem0 (hot layer) initialized")
             return True
         except Exception as e:
-            logging.warning(
+            logger.warning(
                 f"Hot layer init attempt {attempt + 1}/{HOT_INIT_MAX_RETRIES} failed: {e}"
             )
             if attempt < HOT_INIT_MAX_RETRIES - 1:
                 time.sleep(HOT_INIT_RETRY_DELAY)
-    logging.error(f"Hot layer init failed after {HOT_INIT_MAX_RETRIES} attempts")
+    logger.error(f"Hot layer init failed after {HOT_INIT_MAX_RETRIES} attempts")
     return False
 
 
@@ -340,10 +306,10 @@ try:
             collection_name=COLD_COLLECTION,
             vectors_config=VectorParams(size=EMBEDDER_DIMS, distance=Distance.COSINE),
         )
-        logging.info(f"Cold layer collection '{COLD_COLLECTION}' created")
-    logging.info("Cold layer (Qdrant direct) initialized")
+        logger.info(f"Cold layer collection '{COLD_COLLECTION}' created")
+    logger.info("Cold layer (Qdrant direct) initialized")
 except Exception as e:
-    logging.error(f"Cold layer Qdrant init failed: {e}")
+    logger.error(f"Cold layer Qdrant init failed: {e}")
     qdrant = None
 
 _shared_embedder = None
@@ -367,7 +333,7 @@ def _get_shared_embedder():
                 enable_cpu_mem_arena=False,
             )
         except Exception as e:
-            logging.warning(f"Shared embedder init failed (retry on next call): {e}")
+            logger.warning(f"Shared embedder init failed (retry on next call): {e}")
     return _shared_embedder
 
 
@@ -570,7 +536,7 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
             # 缓存新项目前先淘汰最旧的，避免无界增长
             while len(_symbol_embeddings) >= _MAX_VECTOR_CACHE:
                 oldest = next(iter(_symbol_embeddings))
-                logging.info(f"[vector] evicting cached embeddings for: {oldest}")
+                logger.info(f"[vector] evicting cached embeddings for: {oldest}")
                 del _symbol_embeddings[oldest]
             _symbol_embeddings[db_path] = (symbols, emb_matrix)
 
@@ -608,7 +574,7 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
         return results
 
     except Exception as e:
-        logging.warning(f"[vector_search] {e}")
+        logger.warning(f"[vector_search] {e}")
         return []
 
 
@@ -955,7 +921,7 @@ def _scan_md_files(project_path: str) -> list[dict]:
                     continue
                 files.append({"path": fpath, "mtime": st.st_mtime, "size": st.st_size})
     except Exception as e:
-        logging.warning(f"[project_notes] scan error: {e}")
+        logger.warning(f"[project_notes] scan error: {e}")
     return files
 
 
@@ -1101,13 +1067,13 @@ def _ensure_note_cache(
         ]
 
         if changed:
-            logging.info(
+            logger.info(
                 f"[project_notes] {project_path}: {len(changed)} files need embedding "
                 f"(of {len(md_files)} total .md files)"
             )
             emb = _get_shared_embedder()
             if emb is None:
-                logging.warning(
+                logger.warning(
                     "[project_notes] embedder unavailable, skipping embedding"
                 )
 
@@ -1126,7 +1092,7 @@ def _ensure_note_cache(
 
                     total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
                     if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
-                        logging.warning(
+                        logger.warning(
                             f"[project_notes] {project_path}: "
                             f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
                         )
@@ -1170,7 +1136,7 @@ def _ensure_note_cache(
                             )
                     conn.commit()
                 except Exception as e:
-                    logging.warning(
+                    logger.warning(
                         f"[project_notes] error processing {mf['path']}: {e}"
                     )
                     conn.rollback()
@@ -1189,7 +1155,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     try:
         conn, db_path, total_chunks = _ensure_note_cache(project_path)
     except Exception as e:
-        logging.error(f"[project_notes] cache init failed: {e}")
+        logger.error(f"[project_notes] cache init failed: {e}")
         return {"error": f"Cache init failed: {e}", "results": [], "count": 0}
 
     try:
@@ -1198,7 +1164,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
         ).fetchall()
     except sqlite3.DatabaseError as e:
         conn.close()
-        logging.error(f"[project_notes] db error: {e}")
+        logger.error(f"[project_notes] db error: {e}")
         return {"error": f"DB error: {e}", "results": [], "count": 0}
 
     conn.close()
@@ -1266,7 +1232,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
                     "total_chunks": total_chunks,
                 }
         except Exception as e:
-            logging.warning(f"[project_notes] vector search failed: {e}")
+            logger.warning(f"[project_notes] vector search failed: {e}")
             # Fall through to keyword search
 
     # Fallback: keyword search (grep-lite)
@@ -1328,12 +1294,12 @@ async def _ensure_hot_memory() -> bool:
         _hot_runtime_failures = 0
         return True
     _hot_runtime_failures += 1
-    logging.error(
+    logger.error(
         f"Hot layer runtime recovery failed ({_hot_runtime_failures}/{HOT_INIT_MAX_RUNTIME_FAILURES})"
     )
     if _hot_runtime_failures >= HOT_INIT_MAX_RUNTIME_FAILURES:
         fail_msg = f"[{datetime.now().isoformat()}] HOT LAYER FATAL: {_hot_runtime_failures} consecutive init failures"
-        logging.critical(fail_msg)
+        logger.critical(fail_msg)
         sys.exit(1)
     return False
 
@@ -1376,7 +1342,7 @@ def search_cold_layer(
                 )
                 _update_cold_heat(h.id)
         except Exception as e:
-            logging.warning(f"Qdrant cold search failed: {e}")
+            logger.warning(f"Qdrant cold search failed: {e}")
     tokens = [t for t in query.split() if t]
     if not tokens:
         tokens = [query]
@@ -1427,7 +1393,7 @@ def search_cold_layer(
                 except Exception:
                     continue
     except Exception as e:
-        logging.warning(f"Notes search failed: {e}")
+        logger.warning(f"Notes search failed: {e}")
     results.sort(key=_heat_sort_key, reverse=True)
     return results[:limit]
 
@@ -1446,7 +1412,7 @@ def get_aggregated_prompt() -> str:
                 if content:
                     parts.append(f"## {f[:-3]}\n\n{content}")
     except Exception as e:
-        logging.warning(f"Failed to read prompts: {e}")
+        logger.warning(f"Failed to read prompts: {e}")
     if not parts:
         return ""
     body = "\n\n---\n\n".join(parts)
@@ -1635,7 +1601,7 @@ async def _check_contradiction(content: str, similar_items: list[dict]) -> dict 
             if start != -1 and end != -1:
                 return json.loads(raw[start : end + 1])
     except Exception as e:
-        logging.warning(f"Contradiction check failed: {e}")
+        logger.warning(f"Contradiction check failed: {e}")
     return None
 
 
@@ -1698,11 +1664,9 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
                 _mark_hot_disputed(memory_id, cid, reason)
                 if cid:
                     _mark_hot_disputed(cid, memory_id, reason)
-                logging.info(
-                    f"Contradiction detected: {memory_id} <-> {cid} ({reason})"
-                )
+                logger.info(f"Contradiction detected: {memory_id} <-> {cid} ({reason})")
     except Exception as e:
-        logging.warning(f"Hot contradiction check failed: {e}")
+        logger.warning(f"Hot contradiction check failed: {e}")
 
 
 def _spawn_contradiction_check(coro) -> None:
@@ -1754,11 +1718,11 @@ async def _contradiction_check_cold(content: str, point_id: str) -> None:
                             )
                         except Exception:
                             pass
-                logging.info(
+                logger.info(
                     f"Cold contradiction detected: {point_id} <-> {cid} ({reason})"
                 )
     except Exception as e:
-        logging.warning(f"Cold contradiction check failed: {e}")
+        logger.warning(f"Cold contradiction check failed: {e}")
 
 
 # ============================================================
@@ -2199,7 +2163,7 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
                 r["heat_score"] = meta.get("heat_score", DEFAULT_HEAT_SCORE)
                 results.append(r)
         except Exception as e:
-            logging.warning(f"Hot search failed: {e}")
+            logger.warning(f"Hot search failed: {e}")
     cold = search_cold_layer(query, limit, include_archived=include_archived)
     results.extend(cold)
     results.sort(key=_heat_sort_key, reverse=True)
@@ -2239,7 +2203,7 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
         if isinstance(data, dict):
             data = data.get("results", [])
     except Exception as e:
-        logging.warning(f"Hot layer catch_up failed: {e}")
+        logger.warning(f"Hot layer catch_up failed: {e}")
         data = []
     since_ts = (datetime.now() - timedelta(days=since_days)).timestamp()
     data = [
@@ -2356,7 +2320,7 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
     except Exception as e:
-        logging.error(f"[project_notes] {e}", exc_info=True)
+        logger.error(f"[project_notes] {e}", exc_info=True)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
@@ -2386,7 +2350,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
     except Exception as e:
         elapsed = (time.time() - _start) * 1000
         _record_tool_call(name, elapsed, "error", str(e))
-        logging.error(f"Error in {name}: {e}")
+        logger.error(f"Error in {name}: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
@@ -2430,7 +2394,7 @@ def _run_archive_sync_impl() -> tuple[int, int, int]:
                     except Exception:
                         pass
         except Exception as e:
-            logging.warning(f"Hot cleanup failed: {e}")
+            logger.warning(f"Hot cleanup failed: {e}")
     if qdrant:
         try:
             scroll_limit, scroll_offset, cold_processed = 1000, None, 0
@@ -2483,7 +2447,7 @@ def _run_archive_sync_impl() -> tuple[int, int, int]:
                 if scroll_offset is None:
                     break
         except Exception as e:
-            logging.warning(f"Cold archive check failed: {e}")
+            logger.warning(f"Cold archive check failed: {e}")
     return deleted_hot, archived_count, decayed_count
 
 
@@ -2495,19 +2459,19 @@ async def _run_archive_sync() -> tuple[int, int, int]:
 async def archive_scheduler():
     await asyncio.sleep(300)
     while True:
-        logging.info("=== Archive check started ===")
+        logger.info("=== Archive check started ===")
         try:
             deleted_hot, archived_count, decayed_count = await asyncio.wait_for(
                 _run_archive_sync(), timeout=300
             )
-            logging.info(
+            logger.info(
                 f"=== Archive check finished: hot_deleted={deleted_hot}, "
                 f"cold_archived={archived_count}, cold_decayed={decayed_count} ==="
             )
         except asyncio.TimeoutError:
-            logging.warning("Archive check timed out")
+            logger.warning("Archive check timed out")
         except Exception as e:
-            logging.warning(f"Archive check failed: {e}")
+            logger.warning(f"Archive check failed: {e}")
         await asyncio.sleep(ARCHIVE_INTERVAL_HOURS * 3600)
 
 

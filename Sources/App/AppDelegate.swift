@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // 启动 MCP 服务
         startMCPService()
 
+        // 启动 Token 代理监控
+        startTokenProxy()
+
         registerAllHotkeys()
         installEventHandler()
 
@@ -47,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     func applicationWillTerminate(_: Notification) {
         MCPProcessManager.shared.stop()
+        TokenProxyManager.shared.stop()
         menuBar.terminateAllTasks()
     }
 
@@ -61,7 +65,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         updateMCPSummaryTask()
     }
 
-    /// 配置重载：重新评估 MCP 服务 + 总结任务
+    /// 启动 Token 代理监控
+    private func startTokenProxy() {
+        guard ConfigManager.shared.config.modelProxy?.enabled ?? false else {
+            debugLog("[TokenProxy] Disabled by config")
+            return
+        }
+        debugLog("[TokenProxy] Starting service...")
+        TokenProxyManager.shared.start()
+    }
+
+    /// 配置重载：重新评估 MCP 服务 + 总结任务 + Token 代理
     /// 无论 enabled/disabled、配置是否变更，都根据当前配置重新建立状态。
     private func onConfigReloaded() {
         let mcpConfig = ConfigManager.shared.config.mcp
@@ -71,14 +85,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             debugLog("[MCP] Disabled by config reload, stopping...")
             MCPProcessManager.shared.stop()
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
-            return
+        } else {
+            // enabled 且配置可能已变：强制重启，所有新配置（port/qdrantPath/apiKey 等）
+            // 在 MCPProcessManager.buildEnv() 中实时读取
+            debugLog("[MCP] Restarting with new config...")
+            MCPProcessManager.shared.forceRestart()
+            updateMCPSummaryTask()
         }
 
-        // enabled 且配置可能已变：强制重启，所有新配置（port/qdrantPath/apiKey 等）
-        // 在 MCPProcessManager.buildEnv() 中实时读取
-        debugLog("[MCP] Restarting with new config...")
-        MCPProcessManager.shared.forceRestart()
-        updateMCPSummaryTask()
+        // Token 代理：根据配置重启或停止
+        let proxyEnabled = ConfigManager.shared.config.modelProxy?.enabled ?? false
+        if proxyEnabled {
+            debugLog("[TokenProxy] Restarting with new config...")
+            TokenProxyManager.shared.forceRestart()
+        } else {
+            TokenProxyManager.shared.stop()
+        }
     }
 
     /// 注册/注销内置记忆总结任务。幂等：先清旧任务再按配置注册。
@@ -159,7 +181,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 }
             }
         }
-
     }
 
     private func installEventHandler() {

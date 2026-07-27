@@ -18,8 +18,6 @@
 import argparse
 import os
 import json
-import logging
-import logging.handlers
 import sqlite3
 import time
 import re
@@ -28,6 +26,10 @@ from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 import httpx
+from log_utils import (
+    setup_logging as _log_setup,
+    write_error_log as _shared_write_error_log,
+)
 
 # CLI 参数解析
 _parser = argparse.ArgumentParser(description="Utility 记忆总结流水线")
@@ -37,37 +39,7 @@ _parser.add_argument(
 _args = _parser.parse_args()
 STATS_ONLY = _args.stats_only
 
-
-def _setup_logging():
-    log_dir = os.environ.get(
-        "LOG_DIR",
-        os.path.join(
-            os.environ.get(
-                "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
-            ),
-            "logs",
-        ),
-    )
-    os.makedirs(log_dir, exist_ok=True)
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    # 仅写文件日志。不添加 StreamHandler（stderr/stdout）—— TaskExecutor 创建的
-    # pipe buffer 填满后 write() 阻塞会导致进程卡死无法退出。
-    fh = logging.handlers.TimedRotatingFileHandler(
-        filename=os.path.join(log_dir, "summarize.log"),
-        when="midnight",
-        interval=1,
-        backupCount=30,
-        encoding="utf-8",
-    )
-    fh.setFormatter(fmt)
-    root.addHandler(fh)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-
-_setup_logging()
+logger = _log_setup("summarize")
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "deepseek-v4-flash")
@@ -111,16 +83,15 @@ _HTTP = httpx.Client(timeout=SUMMARY_API_TIMEOUT)
 
 def write_error_log(msg: str, code: str = "UNKNOWN"):
     try:
-        NOTES_DIR.mkdir(parents=True, exist_ok=True)
-        record = {
-            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "code": code,
-            "message": msg,
-        }
-        with open(ERROR_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _shared_write_error_log(
+            str(ERROR_LOG),
+            {
+                "code": code,
+                "message": msg,
+            },
+        )
     except Exception as e:
-        logging.error(f"Error log write failed: {e}")
+        logger.error(f"Error log write failed: {e}")
 
 
 def write_to_cold_layer(
@@ -143,11 +114,11 @@ def write_to_cold_layer(
             },
         )
         if resp.status_code != 200:
-            logging.warning(
+            logger.warning(
                 f"Cold layer write failed: {resp.status_code} {resp.text[:200]}"
             )
     except Exception as e:
-        logging.warning(f"Cold layer write failed: {e}")
+        logger.warning(f"Cold layer write failed: {e}")
 
 
 def scan_notes_structure(root: Path, max_depth: int = 3) -> str:
@@ -236,21 +207,21 @@ def git_commit(message: str, stage: str = ""):
         )
         out = ((r_cmt.stdout or "") + (r_cmt.stderr or "")).strip()
         if r_cmt.returncode == 0:
-            logging.info(f"[git]{label} {out[:200]}")
+            logger.info(f"[git]{label} {out[:200]}")
             return True
         elif r_cmt.returncode == 1 and "nothing to commit" in (r_cmt.stdout or ""):
-            logging.info(f"[git]{label} 无变更，跳过提交")
+            logger.info(f"[git]{label} 无变更，跳过提交")
             return True
         else:
             write_error_log(f"git commit 失败{label}: {out[:300]}", code="GIT_COMMIT")
-            logging.warning(f"[git]{label} commit 失败: {out[:200]}")
+            logger.warning(f"[git]{label} commit 失败: {out[:200]}")
             return False
     except subprocess.TimeoutExpired:
         write_error_log(f"git 操作超时{label}", code="GIT_TIMEOUT")
         return False
     except Exception as e:
         write_error_log(f"git 异常{label}: {e}", code="GIT_ERROR")
-        logging.warning(f"[git]{label} commit 失败: {e}")
+        logger.warning(f"[git]{label} commit 失败: {e}")
         return False
 
 
@@ -272,7 +243,7 @@ def _llm_chat(prompt: str) -> str | None:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        logging.warning(f"LLM call failed: {e}")
+        logger.warning(f"LLM call failed: {e}")
         return None
 
 
@@ -388,7 +359,7 @@ def _run_phase2(writes: list[dict], facts_text: str, dir_tree: str) -> list[dict
         )
         target_parts = Path(target_dir_name).parts
         if any(part in SUMMARY_EXCLUDE_DIRS for part in target_parts):
-            logging.warning(f"Skipping excluded path: {target_dir_name}")
+            logger.warning(f"Skipping excluded path: {target_dir_name}")
             continue
         prompt = f"""\
 你正在将过去 3 天的记忆事实整理为高质量的详细知识笔记。
@@ -413,7 +384,7 @@ def _run_phase2(writes: list[dict], facts_text: str, dir_tree: str) -> list[dict
 {facts_text}"""
         content = None
         for attempt in range(SUMMARY_LLM_RETRIES):
-            logging.info(
+            logger.info(
                 f"  Generating '{title}' (attempt {attempt + 1}/{SUMMARY_LLM_RETRIES})..."
             )
             raw = _llm_chat(prompt)
@@ -423,7 +394,7 @@ def _run_phase2(writes: list[dict], facts_text: str, dir_tree: str) -> list[dict
             if attempt < SUMMARY_LLM_RETRIES - 1:
                 time.sleep(3 * (attempt + 1))
         if not content or len(content) < SUMMARY_MIN_CONTENT_LEN:
-            logging.warning(
+            logger.warning(
                 f"Skipping '{title}': content too short "
                 f"({len(content) if content else 0} < {SUMMARY_MIN_CONTENT_LEN})"
             )
@@ -579,12 +550,12 @@ def _generate_stats_report() -> None:
         content = "\n".join(lines)
         MCP_DIR.mkdir(parents=True, exist_ok=True)
         STATS_OUTPUT.write_text(content, encoding="utf-8")
-        logging.info(
+        logger.info(
             f"工具调用统计已写入: {STATS_OUTPUT} "
             f"({day_count} 天, {total_calls} 次调用)"
         )
     except Exception as e:
-        logging.warning(f"工具调用统计生成失败: {e}")
+        logger.warning(f"工具调用统计生成失败: {e}")
 
 
 def _print_report(today_str: str, memory_count: int, updated_files: dict[str, str]):
@@ -601,7 +572,7 @@ def main():
     _generate_stats_report()
 
     if STATS_ONLY:
-        logging.info("--stats-only 模式，跳过 AI 总结")
+        logger.info("--stats-only 模式，跳过 AI 总结")
         return
 
     if not DEEPSEEK_API_KEY:
@@ -613,10 +584,10 @@ def main():
     today_str = today.isoformat()
     EXTRACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    logging.info("Pre-run: committing any pending changes...")
+    logger.info("Pre-run: committing any pending changes...")
     git_commit("每日总结 - 流水线启动", stage="启动")
 
-    logging.info("Fetching memories from past 3 days via REST API...")
+    logger.info("Fetching memories from past 3 days via REST API...")
     recent_memories = fetch_memories(today)
     if recent_memories is None:
         print("❌ 获取记忆失败")
@@ -625,7 +596,7 @@ def main():
         print("过去 3 天无新记忆，跳过总结")
         return
 
-    logging.info("Scanning notes directory structure...")
+    logger.info("Scanning notes directory structure...")
     dir_tree = scan_notes_structure(NOTES_DIR)
 
     facts_text = _build_facts_text(recent_memories)
@@ -636,7 +607,7 @@ def main():
     if not phase1_writes:
         return
 
-    logging.info(f"Phase 2: Generating content for {len(phase1_writes)} articles...")
+    logger.info(f"Phase 2: Generating content for {len(phase1_writes)} articles...")
     writes = _run_phase2(phase1_writes, facts_text, dir_tree)
     if not writes:
         print("所有文章生成失败或内容过短，跳过总结")

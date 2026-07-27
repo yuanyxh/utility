@@ -79,3 +79,9 @@ mcp:
   # 进程守护
   maxRestarts: 3
   restartDelayMs: 2000
+
+# ---------- 模型代理 ----------
+modelProxy:
+  enabled: false
+  url: ''
+  port: 8613

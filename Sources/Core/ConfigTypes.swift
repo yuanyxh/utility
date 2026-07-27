@@ -13,6 +13,7 @@ public struct AppConfig: Codable {
     var prompts: PromptConfig = .init()
     var notifications: NotificationConfig = .init()
     var mcp: MCPConfig? = nil
+    var modelProxy: ModelProxyConfig? = nil
 
     public init() {}
 
@@ -28,6 +29,7 @@ public struct AppConfig: Codable {
         prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
+        modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
     }
 }
 
@@ -103,6 +105,22 @@ public struct AIConfig: Codable {
         baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+    }
+}
+
+// MARK: - Model Proxy
+
+public struct ModelProxyConfig: Codable {
+    var enabled: Bool = false
+    var url: String = ""       // 上游 API 地址，为空则用 ai.baseURL
+    var port: Int = 8080       // 本地代理监听端口
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 8080
     }
 }
 

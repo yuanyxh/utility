@@ -7,6 +7,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
     private var mcpMenuItem: NSMenuItem!
+    private var tokenMenuItem: NSMenuItem!
     private var tasksMenuItem: NSMenuItem!
     private var clearItem: NSMenuItem!
     private var quitItem: NSMenuItem!
@@ -72,6 +73,13 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // ── Token ──
+        tokenMenuItem = NSMenuItem(title: tokenTitleText(), action: nil, keyEquivalent: "")
+        tokenMenuItem.submenu = NSMenu()
+        menu.addItem(tokenMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // ── RSS ──
         rssMenuItem = NSMenuItem(title: L10n.Menu.rss, action: nil, keyEquivalent: "")
         rssMenuItem.submenu = NSMenu()
@@ -106,6 +114,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     public func menuWillOpen(_: NSMenu) {
         refreshRSSItem()
         refreshMCPItem()
+        refreshTokenItem()
         refreshTasksItem()
     }
 
@@ -200,6 +209,79 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         return "\(dot) MCP"
     }
 
+    // MARK: - Token menu
+
+    private func refreshTokenItem() {
+        let proxyEnabled = ConfigManager.shared.config.modelProxy?.enabled ?? false
+        let state = TokenProxyManager.shared.state
+        let sub = NSMenu()
+
+        if proxyEnabled {
+            let stateItem = NSMenuItem(title: tokenStateText(state), action: nil, keyEquivalent: "")
+            stateItem.isEnabled = false
+            sub.addItem(stateItem)
+
+            sub.addItem(NSMenuItem.separator())
+
+            // 异步获取今日用量
+            let summaryItem = NSMenuItem(title: "Loading...", action: nil, keyEquivalent: "")
+            summaryItem.isEnabled = false
+            sub.addItem(summaryItem)
+
+            Task { @MainActor [summaryItem, sub] in
+                let summary = await TokenProxyManager.shared.fetchTodaySummary()
+
+                let inputK = Double(summary.input_tokens) / 1000
+                let outputK = Double(summary.output_tokens) / 1000
+                summaryItem.title = String(
+                    format: "Today: %.1fK in / %.1fK out",
+                    inputK, outputK
+                )
+
+                if summary.total_requests > 0 {
+                    sub.addItem(NSMenuItem.separator())
+                    let invalidPct = summary.total_requests > 0
+                        ? Double(summary.invalid_requests) / Double(summary.total_requests) * 100
+                        : 0
+                    let infoItem = NSMenuItem(
+                        title: String(
+                            format: "Requests: %d | Invalid: %d (%.0f%%)",
+                            summary.total_requests, summary.invalid_requests, invalidPct
+                        ),
+                        action: nil, keyEquivalent: ""
+                    )
+                    infoItem.isEnabled = false
+                    sub.addItem(infoItem)
+                }
+            }
+        } else {
+            let disabledItem = NSMenuItem(title: L10n.Token.disabled, action: nil, keyEquivalent: "")
+            disabledItem.isEnabled = false
+            sub.addItem(disabledItem)
+        }
+
+        tokenMenuItem.submenu = sub
+    }
+
+    private func tokenStateText(_ state: TokenProxyManager.State) -> String {
+        switch state {
+        case .running: return L10n.Token.stateRunning
+        case .stopped: return L10n.Token.stateStopped
+        case .crashed: return L10n.Token.stateCrashed
+        }
+    }
+
+    private func tokenTitleText() -> String {
+        let dot: String = {
+            switch TokenProxyManager.shared.state {
+            case .running: return "●"
+            case .stopped: return "○"
+            case .crashed: return "✕"
+            }
+        }()
+        return "\(dot) Token"
+    }
+
     // MARK: - EventBus subscription
 
     private func startMCPSateMonitor() {
@@ -209,6 +291,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             let state = MCPProcessManager.State(rawValue: raw) ?? .stopped
             DispatchQueue.main.async {
                 self.mcpMenuItem?.title = self.mcpTitleText(state)
+            }
+        }
+        EventBus.shared.subscribe("token_proxy_state_changed") { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.tokenMenuItem?.title = self.tokenTitleText()
             }
         }
     }
@@ -385,6 +473,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         launchAtLoginItem.title = L10n.Menu.launchAtLogin
         rssMenuItem.title = L10n.Menu.rss
         mcpMenuItem.title = mcpTitleText(MCPProcessManager.shared.state)
+        tokenMenuItem.title = tokenTitleText()
         tasksMenuItem.title = L10n.Menu.tasks
         clearItem.title = L10n.Menu.clearClipboard
         quitItem.title = L10n.Menu.quit

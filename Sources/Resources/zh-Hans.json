@@ -60,5 +60,10 @@
     "menu.mcp_state_stopped": "○ 已停止",
     "menu.mcp_state_crashed": "✕ 崩溃",
     "notify.mcp_crashed_title": "MCP 服务",
-    "notify.mcp_crashed": "连续崩溃 %ld 次，已停止"
+    "notify.mcp_crashed": "连续崩溃 %ld 次，已停止",
+    "menu.token_state_running": "● 运行中",
+    "menu.token_state_stopped": "○ 已停止",
+    "menu.token_state_crashed": "✕ 崩溃",
+    "menu.token_today": "今日: %@ in / %@ out / %@",
+    "menu.token_disabled": "○ Token（未启用）"
 }

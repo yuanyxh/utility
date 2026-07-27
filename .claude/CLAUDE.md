@@ -78,6 +78,22 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 环境变量由 `buildEnv()` 从 ConfigManager 实时读取，不缓存
 - Python venv 路径 `~/.config/utility/mcp-venv/bin/python3`
 
+### Token Proxy（token_proxy.py）
+- aiohttp 反向代理，拦截 Claude Code API 请求记录 token 用量
+- 路由 `/open/{path}` → 上游 `UPSTREAM_URL/{path}` 原样转发
+- SSE 流式解析：`model` 在早期 chunk，`usage` 在最后 chunk，`stop_reason` 在 `delta.stop_reason`
+- LLM usage field resolver：自动发现不同 provider 的 usage 字段路径，缓存到 SQLite `usage_field_cache` 表
+- TokenProxyManager.swift：进程守护（lifecycleQueue + terminationHandler + health check）
+- 健康检查必须 `async/await` + `@MainActor`，不能用 `DispatchSemaphore`（阻塞主线程导致 URLSession 回调死锁）
+- `response_valid`：只有 `error` stop_reason 是无效，`max_tokens`/`end_turn`/`stop_sequence` 正常
+- 费用估算已移除（不准确），`estimated_cost_usd` 置 0
+- 用户设置 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 使请求经代理转发
+
+### 共享 Python 日志模块（log_utils.py）
+- `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`
+- 禁止 StreamHandler（pipe buffer 死锁），TimedRotatingFileHandler midnight 轮转 30 天
+- server.py 和 summarize.py 已替换为使用此模块
+
 ### server.py（MCP Python 服务）
 - mem0 热层（`Memory.from_config`）使用 Qdrant 本地存储 + fastembed 嵌入
 - Qdrant 冷层独立集合 `knowledge_base`

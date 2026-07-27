@@ -275,7 +275,6 @@ extension L10n {
         static var translateAuto: String {
             string("prompt.translate_auto")
         }
-
     }
 }
 
@@ -367,6 +366,32 @@ extension L10n {
 
         static func notifyCrashedBody(_ n: Int) -> String {
             format("notify.mcp_crashed", n)
+        }
+    }
+}
+
+// MARK: - Token Proxy Strings
+
+extension L10n {
+    enum Token {
+        static var stateRunning: String {
+            string("menu.token_state_running")
+        }
+
+        static var stateStopped: String {
+            string("menu.token_state_stopped")
+        }
+
+        static var stateCrashed: String {
+            string("menu.token_state_crashed")
+        }
+
+        static func todaySummary(_ input: String, _ output: String, _ cost: String) -> String {
+            format("menu.token_today", input, output, cost)
+        }
+
+        static var disabled: String {
+            string("menu.token_disabled")
         }
     }
 }
