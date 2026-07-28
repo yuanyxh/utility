@@ -331,7 +331,7 @@ def extract_request_context(body: dict) -> dict:
                     ctx["request_type"] = "tool_result"
                     break
 
-    # 提取最后一条 user message 作为 context_summary
+    # 提取最后一条 user message 作为 context_summary，跳过 system-reminder
     for msg in reversed(messages):
         if msg.get("role") == "user":
             content = msg.get("content", "")
@@ -342,10 +342,16 @@ def extract_request_context(body: dict) -> dict:
                     if isinstance(b, dict) and b.get("type") == "text"
                 ]
                 content = " ".join(text_parts)
-            ctx["context_summary"] = str(content)[:100]
+            content_str = str(content)
+            if "<system-reminder>" in content_str:
+                end_tag = "</system-reminder>"
+                end_idx = content_str.find(end_tag)
+                if end_idx != -1:
+                    content_str = content_str[end_idx + len(end_tag) :].strip()
+            ctx["context_summary"] = content_str[:100]
             break
 
-    # input_preview: 所有 user messages 前 200 字拼接
+    # input_preview: 所有 user messages 前 200 字拼接，跳过 system-reminder
     user_texts = []
     for msg in messages:
         if msg.get("role") == "user":
@@ -357,7 +363,15 @@ def extract_request_context(body: dict) -> dict:
                     if isinstance(b, dict) and b.get("type") == "text"
                 ]
                 content = " ".join(text_parts)
-            user_texts.append(str(content)[:200])
+            # 跳过 system-reminder 内容
+            content_str = str(content)
+            if "<system-reminder>" in content_str:
+                # 找到 </system-reminder> 后的内容
+                end_tag = "</system-reminder>"
+                end_idx = content_str.find(end_tag)
+                if end_idx != -1:
+                    content_str = content_str[end_idx + len(end_tag) :].strip()
+            user_texts.append(content_str[:200])
     ctx["input_preview"] = " | ".join(user_texts)[:200]
 
     return ctx
@@ -384,6 +398,7 @@ async def record_usage(
     response_body: dict,
     status: int,
     latency_ms: int,
+    output_preview: str = "",
 ):
     """记录一次 API 调用的 token 用量。"""
     if status != 200:
@@ -407,7 +422,7 @@ async def record_usage(
         "input_preview": req_ctx["input_preview"],
         "input_message_count": req_ctx["input_message_count"],
         "has_tool_result": req_ctx["has_tool_result"],
-        "output_preview": "",  # SSE 流中难以提取，后续可优化
+        "output_preview": output_preview,
         "output_type": resp_ctx["output_type"],
         "stop_reason": resp_ctx["stop_reason"],
         "response_valid": resp_ctx["response_valid"],
@@ -523,7 +538,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 url=upstream,
                 headers=headers,
                 data=body_bytes,
-                timeout=aiohttp.ClientTimeout(total=300),
+                timeout=aiohttp.ClientTimeout(
+                    total=300,
+                    sock_connect=10,
+                    sock_read=60,
+                ),
             ) as upstream_resp:
                 latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -544,16 +563,22 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     "content-type", ""
                 )
 
-                async for chunk in upstream_resp.content.iter_any():
-                    await response.write(chunk)
-                    if is_sse:
-                        collected_body.extend(chunk)
+                try:
+                    async for chunk in upstream_resp.content.iter_any():
+                        await response.write(chunk)
+                        if is_sse:
+                            collected_body.extend(chunk)
+                except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
+                    # 客户端已断开连接，停止转发
+                    pass
 
                 await response.write_eof()
 
-                # 从 SSE 流中提取最后一个 chunk 的 usage
+                # 从 SSE 流中提取最后一个 chunk 的 usage 和输出内容
                 if is_sse and collected_body:
-                    usage_data = _extract_usage_from_sse(bytes(collected_body))
+                    sse_bytes = bytes(collected_body)
+                    usage_data = _extract_usage_from_sse(sse_bytes)
+                    output_preview = _extract_output_from_sse(sse_bytes)
                     if usage_data:
                         # 补充 model：部分 API 的 SSE 响应不含 model 字段
                         if not usage_data.get("model"):
@@ -564,6 +589,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 usage_data,
                                 upstream_resp.status,
                                 latency_ms,
+                                output_preview,
                             )
                         )
 
@@ -633,6 +659,34 @@ def _extract_usage_from_sse(sse_data: bytes) -> dict | None:
             last_usage["stop_reason"] = detected_stop_reason
 
     return last_usage
+
+
+def _extract_output_from_sse(sse_data: bytes) -> str:
+    """从 SSE 流中提取输出文本内容（取前 2000 字符）。"""
+    output_text = []
+    for line in sse_data.decode("utf-8", errors="replace").split("\n"):
+        if not line.startswith("data: "):
+            continue
+        data_str = line[6:].strip()
+        if data_str == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data_str)
+            # 提取 content_delta 中的文本
+            delta = chunk.get("delta", {})
+            if "text" in delta:
+                output_text.append(delta["text"])
+            # 提取 content 数组中的文本
+            content = chunk.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        output_text.append(block.get("text", ""))
+        except json.JSONDecodeError:
+            continue
+    # 截取前 2000 字符
+    full_text = "".join(output_text)
+    return full_text[:2000] if full_text else ""
 
 
 async def handle_health(request: web.Request) -> web.Response:
