@@ -391,11 +391,17 @@ def extract_request_context(body: dict) -> dict:
             ctx["context_summary"] = content_str[:100]
             break
 
-    # input_preview: 所有 user messages 前 200 字拼接
+    # input_preview: 所有 user messages 前 200 字拼接，跳过续接提示词
     user_texts = []
     for msg in messages:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
+            # 跳过续接提示词
+            if content_str.startswith(CONTINUATION_PREFIX):
+                continue
+            # 跳过纯摘要内容
+            if content_str.strip().startswith("Summary:"):
+                continue
             user_texts.append(content_str[:200])
     ctx["input_preview"] = " | ".join(user_texts)[:200]
 
@@ -687,11 +693,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         error_message = ""
                         if upstream_resp.status >= 400:
                             try:
-                                error_body = json.loads(sse_bytes.decode("utf-8", errors="replace"))
+                                error_body = json.loads(
+                                    sse_bytes.decode("utf-8", errors="replace")
+                                )
                                 if "error" in error_body:
                                     error_data = error_body["error"]
                                     if isinstance(error_data, dict):
-                                        error_message = error_data.get("message", str(error_data))
+                                        error_message = error_data.get(
+                                            "message", str(error_data)
+                                        )
                                     else:
                                         error_message = str(error_data)
                             except (json.JSONDecodeError, UnicodeDecodeError):
