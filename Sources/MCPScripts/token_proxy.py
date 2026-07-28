@@ -87,13 +87,19 @@ def init_db():
     cursor = conn.execute("PRAGMA table_info(api_usage)")
     columns = [row[1] for row in cursor.fetchall()]
     if "request_level" not in columns:
-        conn.execute("ALTER TABLE api_usage ADD COLUMN request_level TEXT DEFAULT 'core'")
+        conn.execute(
+            "ALTER TABLE api_usage ADD COLUMN request_level TEXT DEFAULT 'core'"
+        )
         conn.execute("ALTER TABLE api_usage ADD COLUMN tool_name TEXT")
         conn.execute("ALTER TABLE api_usage ADD COLUMN parent_id INTEGER")
         conn.execute("ALTER TABLE api_usage ADD COLUMN actual_user_input TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level)"
+        )
         # 根据 stop_reason 回填 request_level
-        conn.execute("UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'")
+        conn.execute(
+            "UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'"
+        )
         conn.commit()
 
     # 三个月自动清理
@@ -607,7 +613,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 timeout=aiohttp.ClientTimeout(
                     total=300,
                     sock_connect=10,
-                    sock_read=60,
+                    sock_read=120,
                 ),
             ) as upstream_resp:
                 latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -674,7 +680,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
                 return response
 
-    except aiohttp.ClientError as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         latency_ms = int((time.monotonic() - start_time) * 1000)
         logger.error(
             json.dumps(
@@ -821,74 +827,90 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
         conn = sqlite3.connect(DB_PATH)
         if level == "core":
             # 只查询 end_turn（核心交换）
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT id, timestamp, actual_user_input, input_preview, output_preview,
                        input_tokens, output_tokens, stop_reason, latency_ms, model
                 FROM api_usage
                 WHERE stop_reason = 'end_turn'
                 ORDER BY timestamp DESC
                 LIMIT ? OFFSET ?
-            """, (limit, offset)).fetchall()
+            """,
+                (limit, offset),
+            ).fetchall()
 
             result = []
             for r in rows:
-                result.append({
-                    "id": r[0],
-                    "timestamp": r[1],
-                    "user_input": r[2] or r[3],  # actual_user_input 优先，fallback 到 input_preview
-                    "output": r[4],
-                    "input_tokens": r[5],
-                    "output_tokens": r[6],
-                    "stop_reason": r[7],
-                    "latency_ms": r[8],
-                    "model": r[9],
-                })
+                result.append(
+                    {
+                        "id": r[0],
+                        "timestamp": r[1],
+                        "user_input": r[2]
+                        or r[3],  # actual_user_input 优先，fallback 到 input_preview
+                        "output": r[4],
+                        "input_tokens": r[5],
+                        "output_tokens": r[6],
+                        "stop_reason": r[7],
+                        "latency_ms": r[8],
+                        "model": r[9],
+                    }
+                )
         elif level == "process":
             # 查询 tool_use 过程记录
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT id, timestamp, tool_name, input_tokens, output_tokens,
                        latency_ms, parent_id
                 FROM api_usage
                 WHERE stop_reason = 'tool_use'
                 ORDER BY timestamp DESC
                 LIMIT ? OFFSET ?
-            """, (limit, offset)).fetchall()
+            """,
+                (limit, offset),
+            ).fetchall()
 
             result = []
             for r in rows:
-                result.append({
-                    "id": r[0],
-                    "timestamp": r[1],
-                    "tool_name": r[2],
-                    "input_tokens": r[3],
-                    "output_tokens": r[4],
-                    "latency_ms": r[5],
-                    "parent_id": r[6],
-                })
+                result.append(
+                    {
+                        "id": r[0],
+                        "timestamp": r[1],
+                        "tool_name": r[2],
+                        "input_tokens": r[3],
+                        "output_tokens": r[4],
+                        "latency_ms": r[5],
+                        "parent_id": r[6],
+                    }
+                )
         else:
             # 查询所有
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT id, timestamp, request_level, input_preview, output_preview,
                        input_tokens, output_tokens, stop_reason, latency_ms, tool_name
                 FROM api_usage
                 ORDER BY timestamp DESC
                 LIMIT ? OFFSET ?
-            """, (limit, offset)).fetchall()
+            """,
+                (limit, offset),
+            ).fetchall()
 
             result = []
             for r in rows:
-                result.append({
-                    "id": r[0],
-                    "timestamp": r[1],
-                    "level": r[2],
-                    "input": r[3],
-                    "output": r[4],
-                    "input_tokens": r[5],
-                    "output_tokens": r[6],
-                    "stop_reason": r[7],
-                    "latency_ms": r[8],
-                    "tool_name": r[9],
-                })
+                result.append(
+                    {
+                        "id": r[0],
+                        "timestamp": r[1],
+                        "level": r[2],
+                        "input": r[3],
+                        "output": r[4],
+                        "input_tokens": r[5],
+                        "output_tokens": r[6],
+                        "stop_reason": r[7],
+                        "latency_ms": r[8],
+                        "tool_name": r[9],
+                    }
+                )
 
         conn.close()
         return web.json_response(result)
