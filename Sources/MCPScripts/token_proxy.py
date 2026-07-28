@@ -65,7 +65,8 @@ def init_db():
             request_level TEXT DEFAULT 'core',
             tool_name TEXT,
             parent_id INTEGER,
-            actual_user_input TEXT
+            actual_user_input TEXT,
+            error_message TEXT
         );
         CREATE TABLE IF NOT EXISTS usage_field_cache (
             provider TEXT NOT NULL,
@@ -100,6 +101,9 @@ def init_db():
         conn.execute(
             "UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'"
         )
+        conn.commit()
+    if "error_message" not in columns:
+        conn.execute("ALTER TABLE api_usage ADD COLUMN error_message TEXT")
         conn.commit()
 
     # 三个月自动清理
@@ -427,10 +431,27 @@ def extract_response_context(usage_data: dict) -> dict:
     )
     # 只有 error 和空响应算无效，max_tokens/end_turn/stop_sequence 都是正常
     response_valid = 0 if stop_reason == "error" else 1
+
+    # 提取错误信息
+    error_message = ""
+    if stop_reason == "error":
+        error_data = usage_data.get("error", {})
+        if isinstance(error_data, dict):
+            error_message = error_data.get("message", str(error_data))
+        elif isinstance(error_data, str):
+            error_message = error_data
+    elif usage_data.get("error"):
+        error_data = usage_data.get("error", {})
+        if isinstance(error_data, dict):
+            error_message = error_data.get("message", str(error_data))
+        elif isinstance(error_data, str):
+            error_message = error_data
+
     return {
         "output_type": "text",
         "stop_reason": stop_reason,
         "response_valid": response_valid,
+        "error_message": error_message,
     }
 
 
@@ -440,6 +461,7 @@ async def record_usage(
     status: int,
     latency_ms: int,
     output_preview: str = "",
+    error_message: str = "",
 ):
     """记录一次 API 调用的 token 用量。"""
     if status != 200:
@@ -454,6 +476,10 @@ async def record_usage(
 
     model = response_body.get("model", "unknown")
     stop_reason = resp_ctx["stop_reason"]
+
+    # 使用 resp_ctx 中的 error_message（如果未提供）
+    if not error_message:
+        error_message = resp_ctx.get("error_message", "")
 
     # 确定 request_level
     request_level = "core" if stop_reason == "end_turn" else "process"
@@ -499,6 +525,7 @@ async def record_usage(
         "request_level": request_level,
         "tool_name": tool_name,
         "parent_id": None,
+        "error_message": error_message,
     }
 
     try:
@@ -509,8 +536,8 @@ async def record_usage(
             "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
             "output_type, stop_reason, response_valid, model, input_tokens, "
             "output_tokens, cache_read_tokens, cache_write_tokens, "
-            "estimated_cost_usd, latency_ms, api_format, request_level, tool_name, parent_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "estimated_cost_usd, latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 record["timestamp"],
                 record["session_id"],
@@ -536,6 +563,7 @@ async def record_usage(
                 record["request_level"],
                 record["tool_name"],
                 record["parent_id"],
+                record["error_message"],
             ),
         )
         record_id = cursor.lastrowid
@@ -655,6 +683,19 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         # 补充 model：部分 API 的 SSE 响应不含 model 字段
                         if not usage_data.get("model"):
                             usage_data["model"] = request_body.get("model", "unknown")
+                        # 提取错误信息（如果有的话）
+                        error_message = ""
+                        if upstream_resp.status >= 400:
+                            try:
+                                error_body = json.loads(sse_bytes.decode("utf-8", errors="replace"))
+                                if "error" in error_body:
+                                    error_data = error_body["error"]
+                                    if isinstance(error_data, dict):
+                                        error_message = error_data.get("message", str(error_data))
+                                    else:
+                                        error_message = str(error_data)
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                pass
                         asyncio.create_task(
                             record_usage(
                                 request_body,
@@ -662,6 +703,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 upstream_resp.status,
                                 latency_ms,
                                 output_preview,
+                                error_message,
                             )
                         )
 
