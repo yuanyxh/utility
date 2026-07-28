@@ -687,15 +687,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         error_message = ""
                         if upstream_resp.status >= 400:
                             try:
-                                error_body = json.loads(
-                                    sse_bytes.decode("utf-8", errors="replace")
-                                )
+                                error_body = json.loads(sse_bytes.decode("utf-8", errors="replace"))
                                 if "error" in error_body:
                                     error_data = error_body["error"]
                                     if isinstance(error_data, dict):
-                                        error_message = error_data.get(
-                                            "message", str(error_data)
-                                        )
+                                        error_message = error_data.get("message", str(error_data))
                                     else:
                                         error_message = str(error_data)
                             except (json.JSONDecodeError, UnicodeDecodeError):
