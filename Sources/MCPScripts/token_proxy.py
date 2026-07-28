@@ -61,7 +61,11 @@ def init_db():
             cache_write_tokens INTEGER DEFAULT 0,
             estimated_cost_usd REAL DEFAULT 0,
             latency_ms INTEGER DEFAULT 0,
-            api_format TEXT
+            api_format TEXT,
+            request_level TEXT DEFAULT 'core',
+            tool_name TEXT,
+            parent_id INTEGER,
+            actual_user_input TEXT
         );
         CREATE TABLE IF NOT EXISTS usage_field_cache (
             provider TEXT NOT NULL,
@@ -76,7 +80,22 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);
         CREATE INDEX IF NOT EXISTS idx_api_usage_session ON api_usage(session_id);
         CREATE INDEX IF NOT EXISTS idx_api_usage_project ON api_usage(project_path);
+        CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level);
     """)
+
+    # 迁移：为旧表添加新列（如果不存在）
+    cursor = conn.execute("PRAGMA table_info(api_usage)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "request_level" not in columns:
+        conn.execute("ALTER TABLE api_usage ADD COLUMN request_level TEXT DEFAULT 'core'")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN tool_name TEXT")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN parent_id INTEGER")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN actual_user_input TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level)")
+        # 根据 stop_reason 回填 request_level
+        conn.execute("UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'")
+        conn.commit()
+
     # 三个月自动清理
     conn.execute("DELETE FROM api_usage WHERE timestamp < datetime('now', '-3 months')")
     conn.commit()
@@ -306,12 +325,36 @@ class UsageFieldResolver:
 resolver = UsageFieldResolver()
 
 
+def _extract_user_text(content) -> str:
+    """从消息内容中提取纯文本，跳过 system-reminder。"""
+    if isinstance(content, list):
+        text_parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        content = " ".join(text_parts)
+    content_str = str(content)
+    # 跳过 system-reminder
+    if "<system-reminder>" in content_str:
+        end_tag = "</system-reminder>"
+        end_idx = content_str.find(end_tag)
+        if end_idx != -1:
+            content_str = content_str[end_idx + len(end_tag) :].strip()
+    return content_str
+
+
+# 续接提示词前缀，用于识别 Claude Code 注入的会话续接
+CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
+
+
 def extract_request_context(body: dict) -> dict:
     """从 Claude Code 请求 body 提取上下文信息。"""
     ctx = {
         "request_type": "conversation",
         "context_summary": "",
         "input_preview": "",
+        "actual_user_input": "",
         "input_message_count": 0,
         "has_tool_result": 0,
     }
@@ -331,48 +374,40 @@ def extract_request_context(body: dict) -> dict:
                     ctx["request_type"] = "tool_result"
                     break
 
-    # 提取最后一条 user message 作为 context_summary，跳过 system-reminder
+    # 提取最后一条 user message 作为 context_summary
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text_parts = [
-                    b.get("text", "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                content = " ".join(text_parts)
-            content_str = str(content)
-            if "<system-reminder>" in content_str:
-                end_tag = "</system-reminder>"
-                end_idx = content_str.find(end_tag)
-                if end_idx != -1:
-                    content_str = content_str[end_idx + len(end_tag) :].strip()
+            content_str = _extract_user_text(msg.get("content", ""))
             ctx["context_summary"] = content_str[:100]
             break
 
-    # input_preview: 所有 user messages 前 200 字拼接，跳过 system-reminder
+    # input_preview: 所有 user messages 前 200 字拼接
     user_texts = []
     for msg in messages:
         if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text_parts = [
-                    b.get("text", "")
-                    for b in content
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ]
-                content = " ".join(text_parts)
-            # 跳过 system-reminder 内容
-            content_str = str(content)
-            if "<system-reminder>" in content_str:
-                # 找到 </system-reminder> 后的内容
-                end_tag = "</system-reminder>"
-                end_idx = content_str.find(end_tag)
-                if end_idx != -1:
-                    content_str = content_str[end_idx + len(end_tag) :].strip()
+            content_str = _extract_user_text(msg.get("content", ""))
             user_texts.append(content_str[:200])
     ctx["input_preview"] = " | ".join(user_texts)[:200]
+
+    # actual_user_input: 提取用户实际输入，跳过续接提示词和 system-reminder
+    actual_parts = []
+    for msg in messages:
+        if msg.get("role") == "user":
+            content_str = _extract_user_text(msg.get("content", ""))
+            # 跳过续接提示词
+            if content_str.startswith(CONTINUATION_PREFIX):
+                # 续接提示词后可能有实际用户输入，用 "Summary:" 分隔
+                summary_idx = content_str.find("Summary:")
+                if summary_idx != -1:
+                    # 续接提示词结束，后面是摘要
+                    continue
+                continue
+            # 跳过纯摘要内容（以 "Summary:" 开头）
+            if content_str.strip().startswith("Summary:"):
+                continue
+            if content_str.strip():
+                actual_parts.append(content_str[:500])
+    ctx["actual_user_input"] = " | ".join(actual_parts)[:500] if actual_parts else ""
 
     return ctx
 
@@ -412,6 +447,26 @@ async def record_usage(
     resp_ctx = extract_response_context(response_body)
 
     model = response_body.get("model", "unknown")
+    stop_reason = resp_ctx["stop_reason"]
+
+    # 确定 request_level
+    request_level = "core" if stop_reason == "end_turn" else "process"
+
+    # 提取 tool_name（如果有的话）
+    tool_name = ""
+    if request_body.get("tools") and stop_reason == "tool_use":
+        # 从请求中提取工具名称
+        messages = request_body.get("messages", [])
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_name = block.get("name", "")
+                            break
+                if tool_name:
+                    break
 
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -420,11 +475,12 @@ async def record_usage(
         "request_type": req_ctx["request_type"],
         "context_summary": req_ctx["context_summary"],
         "input_preview": req_ctx["input_preview"],
+        "actual_user_input": req_ctx["actual_user_input"],
         "input_message_count": req_ctx["input_message_count"],
         "has_tool_result": req_ctx["has_tool_result"],
         "output_preview": output_preview,
         "output_type": resp_ctx["output_type"],
-        "stop_reason": resp_ctx["stop_reason"],
+        "stop_reason": stop_reason,
         "response_valid": resp_ctx["response_valid"],
         "model": model,
         "input_tokens": usage["input_tokens"],
@@ -434,18 +490,21 @@ async def record_usage(
         "estimated_cost_usd": 0,
         "latency_ms": latency_ms,
         "api_format": "anthropic",
+        "request_level": request_level,
+        "tool_name": tool_name,
+        "parent_id": None,
     }
 
     try:
         conn = sqlite3.connect(DB_PATH)
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO api_usage "
             "(timestamp, session_id, project_path, request_type, context_summary, "
-            "input_preview, input_message_count, has_tool_result, output_preview, "
+            "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
             "output_type, stop_reason, response_valid, model, input_tokens, "
             "output_tokens, cache_read_tokens, cache_write_tokens, "
-            "estimated_cost_usd, latency_ms, api_format) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "estimated_cost_usd, latency_ms, api_format, request_level, tool_name, parent_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 record["timestamp"],
                 record["session_id"],
@@ -453,6 +512,7 @@ async def record_usage(
                 record["request_type"],
                 record["context_summary"],
                 record["input_preview"],
+                record["actual_user_input"],
                 record["input_message_count"],
                 record["has_tool_result"],
                 record["output_preview"],
@@ -467,8 +527,12 @@ async def record_usage(
                 record["estimated_cost_usd"],
                 record["latency_ms"],
                 record["api_format"],
+                record["request_level"],
+                record["tool_name"],
+                record["parent_id"],
             ),
         )
+        record_id = cursor.lastrowid
         conn.commit()
         conn.close()
         logger.info(
@@ -479,6 +543,8 @@ async def record_usage(
                     "input_tokens": usage["input_tokens"],
                     "output_tokens": usage["output_tokens"],
                     "latency_ms": latency_ms,
+                    "request_level": request_level,
+                    "tool_name": tool_name,
                 }
             )
         )
@@ -745,6 +811,91 @@ async def handle_cost_by_project(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_usage_layers(request: web.Request) -> web.Response:
+    """分层查询：核心交换（end_turn）+ 过程记录（tool_use）。"""
+    try:
+        level = request.query.get("level", "core")
+        limit = int(request.query.get("limit", "50"))
+        offset = int(request.query.get("offset", "0"))
+
+        conn = sqlite3.connect(DB_PATH)
+        if level == "core":
+            # 只查询 end_turn（核心交换）
+            rows = conn.execute("""
+                SELECT id, timestamp, actual_user_input, input_preview, output_preview,
+                       input_tokens, output_tokens, stop_reason, latency_ms, model
+                FROM api_usage
+                WHERE stop_reason = 'end_turn'
+                ORDER BY timestamp DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset)).fetchall()
+
+            result = []
+            for r in rows:
+                result.append({
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "user_input": r[2] or r[3],  # actual_user_input 优先，fallback 到 input_preview
+                    "output": r[4],
+                    "input_tokens": r[5],
+                    "output_tokens": r[6],
+                    "stop_reason": r[7],
+                    "latency_ms": r[8],
+                    "model": r[9],
+                })
+        elif level == "process":
+            # 查询 tool_use 过程记录
+            rows = conn.execute("""
+                SELECT id, timestamp, tool_name, input_tokens, output_tokens,
+                       latency_ms, parent_id
+                FROM api_usage
+                WHERE stop_reason = 'tool_use'
+                ORDER BY timestamp DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset)).fetchall()
+
+            result = []
+            for r in rows:
+                result.append({
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "tool_name": r[2],
+                    "input_tokens": r[3],
+                    "output_tokens": r[4],
+                    "latency_ms": r[5],
+                    "parent_id": r[6],
+                })
+        else:
+            # 查询所有
+            rows = conn.execute("""
+                SELECT id, timestamp, request_level, input_preview, output_preview,
+                       input_tokens, output_tokens, stop_reason, latency_ms, tool_name
+                FROM api_usage
+                ORDER BY timestamp DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset)).fetchall()
+
+            result = []
+            for r in rows:
+                result.append({
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "level": r[2],
+                    "input": r[3],
+                    "output": r[4],
+                    "input_tokens": r[5],
+                    "output_tokens": r[6],
+                    "stop_reason": r[7],
+                    "latency_ms": r[8],
+                    "tool_name": r[9],
+                })
+
+        conn.close()
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 # ---------------------------------------------------------------------------
 # 启动
 # ---------------------------------------------------------------------------
@@ -755,6 +906,7 @@ def create_app() -> web.Application:
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/by_project", handle_cost_by_project)
+    app.router.add_route("GET", "/usage/layers", handle_usage_layers)
     app.router.add_route("*", "/open/{path:.*}", handle_proxy)
     return app
 
