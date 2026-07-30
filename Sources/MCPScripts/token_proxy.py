@@ -28,6 +28,10 @@ DB_PATH = os.path.join(DB_DIR, "token_usage.sqlite")
 LLM_API_URL = os.environ.get("SUMMARY_API_URL", "")
 LLM_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 LLM_MODEL = os.environ.get("SUMMARY_MODEL", "")
+NOTES_DIR = os.environ.get(
+    "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
+)
+SYSTEM_PROMPTS_FILE = os.path.join(NOTES_DIR, "MCP", "System_Prompts.md")
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -118,7 +122,70 @@ def init_db():
 
 
 class UsageFieldResolver:
-    """根据 provider/model 智能定位 usage 字段路径。"""
+    """根据 provider/model 智能定位 usage 字段路径。
+
+    已知 provider 路径映射（避免 LLM 回调）：
+      - Anthropic/DeepSeek：usage.input_tokens / usage.output_tokens
+      - OpenAI：usage.prompt_tokens / usage.completion_tokens
+    """
+
+    # 已知字段路径（model name 前缀匹配 → paths dict）
+    _KNOWN_PATTERNS: list[tuple[str, dict]] = [
+        (
+            "anthropic",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "claude",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "deepseek",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "gpt",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "usage.prompt_tokens_details.cached_tokens",
+                "cache_write_path": "",
+            },
+        ),
+        (
+            "o1",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "",
+                "cache_write_path": "",
+            },
+        ),
+        (
+            "o3",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "",
+                "cache_write_path": "",
+            },
+        ),
+    ]
 
     def __init__(self):
         self._cache: dict[tuple[str, str], dict] = {}
@@ -235,6 +302,37 @@ class UsageFieldResolver:
         paths = self._cache.get(key) or self._load_from_db(provider, model)
 
         if not paths:
+            # 尝试已知 pattern 匹配
+            for prefix, known_paths in self._KNOWN_PATTERNS:
+                if model.lower().startswith(prefix):
+                    paths = known_paths
+                    self._cache[key] = paths
+                    self._save_to_db(provider, model, paths)
+                    break
+
+        if not paths:
+            # 从 response body 的 usage 字段名自动探测
+            usage_data = response_body.get("usage", {})
+            if isinstance(usage_data, dict):
+                if "input_tokens" in usage_data:
+                    paths = {
+                        "input_path": "usage.input_tokens",
+                        "output_path": "usage.output_tokens",
+                        "cache_read_path": "usage.cache_read_input_tokens",
+                        "cache_write_path": "usage.cache_creation_input_tokens",
+                    }
+                elif "prompt_tokens" in usage_data:
+                    paths = {
+                        "input_path": "usage.prompt_tokens",
+                        "output_path": "usage.completion_tokens",
+                        "cache_read_path": "usage.prompt_tokens_details.cached_tokens",
+                        "cache_write_path": "",
+                    }
+            if paths:
+                self._cache[key] = paths
+                self._save_to_db(provider, model, paths)
+
+        if not paths:
             # 首次遇到此 model，调用模型识别
             paths = await self._ask_model(response_body)
             if paths:
@@ -336,22 +434,38 @@ resolver = UsageFieldResolver()
 
 
 def _extract_user_text(content) -> str:
-    """从消息内容中提取纯文本，跳过 system-reminder。"""
+    """从消息内容中提取纯文本，跳过各种 system-reminder 标签。
+
+    兼容 Anthropic（content list of blocks）和 OpenAI（content string）格式。
+    """
+    if content is None:
+        return ""
     if isinstance(content, list):
         text_parts = [
             b.get("text", "")
             for b in content
             if isinstance(b, dict) and b.get("type") == "text"
         ]
-        content = " ".join(text_parts)
+        content = " ".join(text_parts) if text_parts else ""
     content_str = str(content)
-    # 跳过 system-reminder
-    if "<system-reminder>" in content_str:
-        end_tag = "</system-reminder>"
-        end_idx = content_str.find(end_tag)
-        if end_idx != -1:
-            content_str = content_str[end_idx + len(end_tag) :].strip()
-    return content_str
+    # 跳过所有 system-reminder 类型的标签（包括 <system-reminder> 和 <local-command-caveat> 等）
+    while True:
+        start = content_str.find("<")
+        if start == -1:
+            break
+        end = content_str.find(">", start)
+        if end == -1:
+            break
+        tag = content_str[start : end + 1]
+        # 关闭标签
+        close_tag = f"</{tag[1:]}"
+        close_start = content_str.find(close_tag)
+        if close_start != -1:
+            close_end = close_start + len(close_tag)
+            content_str = content_str[:start] + content_str[close_end:].strip()
+        else:
+            content_str = content_str[:start] + content_str[end + 1 :].strip()
+    return content_str.strip()
 
 
 # 续接提示词前缀，用于识别 Claude Code 注入的会话续接
@@ -375,8 +489,12 @@ def extract_request_context(body: dict) -> dict:
     if body.get("tools"):
         ctx["request_type"] = "tool_use"
 
-    # 检查是否有 tool_result
+    # 检查是否有 tool_result（兼容两种格式）
     for msg in messages:
+        if msg.get("role") == "tool":
+            ctx["has_tool_result"] = 1
+            ctx["request_type"] = "tool_result"
+            break
         if isinstance(msg.get("content"), list):
             for block in msg["content"]:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -402,8 +520,9 @@ def extract_request_context(body: dict) -> dict:
             # 跳过纯摘要内容
             if content_str.strip().startswith("Summary:"):
                 continue
-            user_texts.append(content_str[:200])
-    ctx["input_preview"] = " | ".join(user_texts)[:200]
+            if content_str.strip():
+                user_texts.append(content_str[:200])
+    ctx["input_preview"] = " | ".join(user_texts)
 
     # actual_user_input: 提取用户实际输入，跳过续接提示词和 system-reminder
     actual_parts = []
@@ -423,7 +542,7 @@ def extract_request_context(body: dict) -> dict:
                 continue
             if content_str.strip():
                 actual_parts.append(content_str[:500])
-    ctx["actual_user_input"] = " | ".join(actual_parts)[:500] if actual_parts else ""
+    ctx["actual_user_input"] = " | ".join(actual_parts) if actual_parts else ""
 
     return ctx
 
@@ -468,6 +587,8 @@ async def record_usage(
     latency_ms: int,
     output_preview: str = "",
     error_message: str = "",
+    tool_name_override: str = "",
+    api_format: str = "anthropic",
 ):
     """记录一次 API 调用的 token 用量。"""
     if status != 200:
@@ -490,10 +611,10 @@ async def record_usage(
     # 确定 request_level
     request_level = "core" if stop_reason == "end_turn" else "process"
 
-    # 提取 tool_name（如果有的话）
-    tool_name = ""
-    if request_body.get("tools") and stop_reason == "tool_use":
-        # 从请求中提取工具名称
+    # 提取 tool_name：SSE 流提取优先 > 请求体 assistant 消息兜底
+    tool_name = tool_name_override
+    if not tool_name and request_body.get("tools") and stop_reason == "tool_use":
+        # 从请求中提取工具名称（兜底）
         messages = request_body.get("messages", [])
         for msg in reversed(messages):
             if msg.get("role") == "assistant":
@@ -527,7 +648,7 @@ async def record_usage(
         "cache_write_tokens": usage["cache_write_tokens"],
         "estimated_cost_usd": 0,
         "latency_ms": latency_ms,
-        "api_format": "anthropic",
+        "api_format": api_format,
         "request_level": request_level,
         "tool_name": tool_name,
         "parent_id": None,
@@ -599,6 +720,122 @@ def _detect_project(body: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# System Prompt 注入
+# ---------------------------------------------------------------------------
+
+
+def _detect_api_format(body: dict) -> str:
+    """从请求体检测 API 格式：'anthropic' 或 'openai'。"""
+    if "system" in body and isinstance(body.get("system"), list):
+        return "anthropic"
+    messages = body.get("messages", [])
+    if messages and messages[0].get("role") == "system":
+        return "openai"
+    tools = body.get("tools", [])
+    if tools:
+        if "inputSchema" in tools[0]:
+            return "anthropic"
+        if isinstance(tools[0], dict) and tools[0].get("type") == "function":
+            return "openai"
+    return "anthropic"
+
+
+# 缓存：文件内容 + mtime，mtime 未变时不重新读盘
+_sys_prompt_content: str | None = None
+_sys_prompt_mtime: float = 0
+
+# 首次请求标志，用于调试日志
+_logged_first_body: bool = False
+
+
+def _inject_system_prompt(body: dict) -> bytes | None:
+    """读取 System_Prompts.md 注入到请求体的 system 字段。
+
+    返回修改后的 body_bytes，文件不存在或读取失败时返回 None。
+    注入的提示词不设置 cache_control，保证每次请求都携带。
+    文件 mtime 未变时跳过读盘，使用缓存的内容。
+    """
+    global _sys_prompt_content, _sys_prompt_mtime
+
+    try:
+        current_mtime = os.path.getmtime(SYSTEM_PROMPTS_FILE)
+    except OSError:
+        _sys_prompt_content = None
+        return None
+
+    if current_mtime != _sys_prompt_mtime:
+        try:
+            with open(SYSTEM_PROMPTS_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            _sys_prompt_content = content if content else None
+            _sys_prompt_mtime = current_mtime
+        except Exception as e:
+            _sys_prompt_content = None
+            logger.warning(
+                json.dumps({"msg": "system_prompt_read_failed", "error": str(e)})
+            )
+            return None
+
+    if _sys_prompt_content is None:
+        return None
+
+    fmt = _detect_api_format(body)
+    if fmt == "anthropic":
+        body.setdefault("system", [])
+        body["system"].append(
+            {
+                "type": "text",
+                "text": _sys_prompt_content,
+            }
+        )
+    else:
+        messages = body.setdefault("messages", [])
+        if messages and isinstance(messages[0].get("content"), str):
+            # 常见 case：system content 是字符串 → 转数组，原始内容设断点，注入内容在断点后
+            messages[0]["content"] = [
+                {
+                    "type": "text",
+                    "text": messages[0]["content"],
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                },
+                {"type": "text", "text": _sys_prompt_content},
+            ]
+        elif messages and isinstance(messages[0].get("content"), list):
+            # system content 已是数组：最后一个 dict 块设断点，追加注入
+            blocks = list(messages[0].get("content", []))
+            for i in range(len(blocks) - 1, -1, -1):
+                if (
+                    isinstance(blocks[i], dict)
+                    and "prompt_cache_breakpoint" not in blocks[i]
+                ):
+                    blocks[i] = {
+                        **blocks[i],
+                        "prompt_cache_breakpoint": {"mode": "explicit"},
+                    }
+                    break
+            blocks.append({"type": "text", "text": _sys_prompt_content})
+            messages[0]["content"] = blocks
+        else:
+            # 无 system 消息：插入，空块断点后接注入
+            messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "",
+                            "prompt_cache_breakpoint": {"mode": "explicit"},
+                        },
+                        {"type": "text", "text": _sys_prompt_content},
+                    ],
+                },
+            )
+
+    return json.dumps(body).encode()
+
+
+# ---------------------------------------------------------------------------
 # ProxyServer — aiohttp 反向代理
 # ---------------------------------------------------------------------------
 
@@ -628,6 +865,43 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
+    # 检测 API 格式（anthropic / openai）
+    api_format = _detect_api_format(request_body)
+
+    # System prompt 注入：从 System_Prompts.md 读取并追加（无缓存）
+    injected = _inject_system_prompt(request_body)
+    if injected is not None:
+        body_bytes = injected
+
+    # 首次请求日志：输出注入后的完整 body，用于验证系统提示词生效
+    global _logged_first_body
+    if not _logged_first_body:
+        _logged_first_body = True
+        try:
+            parsed = json.loads(body_bytes)
+            # 只输出 system 字段和 model，避免刷屏
+            log_body = {
+                "model": parsed.get("model", ""),
+                "system": (
+                    parsed.get("system")
+                    if api_format == "anthropic"
+                    else parsed.get("messages", [{}])[0]
+                ),
+            }
+            logger.info(
+                json.dumps(
+                    {
+                        "msg": "first_request_body",
+                        "api_format": api_format,
+                        "body_debug": log_body,
+                    }
+                )
+            )
+        except Exception as e:
+            logger.warning(
+                json.dumps({"msg": "first_body_log_failed", "error": str(e)})
+            )
+
     # 转发 headers（透传 API Key 等）
     headers = {}
     skip_headers = {"host", "content-length", "transfer-encoding"}
@@ -645,9 +919,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 headers=headers,
                 data=body_bytes,
                 timeout=aiohttp.ClientTimeout(
-                    total=300,
+                    total=120,
                     sock_connect=10,
-                    sock_read=120,
+                    sock_read=30,
                 ),
             ) as upstream_resp:
                 latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -674,8 +948,13 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         await response.write(chunk)
                         if is_sse:
                             collected_body.extend(chunk)
-                except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-                    # 客户端已断开连接，停止转发
+                except (
+                    ConnectionResetError,
+                    BrokenPipeError,
+                    RuntimeError,
+                    asyncio.CancelledError,
+                ):
+                    # 客户端已断开连接或 transport 关闭，停止转发
                     pass
 
                 await response.write_eof()
@@ -683,8 +962,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 # 从 SSE 流中提取最后一个 chunk 的 usage 和输出内容
                 if is_sse and collected_body:
                     sse_bytes = bytes(collected_body)
-                    usage_data = _extract_usage_from_sse(sse_bytes)
-                    output_preview = _extract_output_from_sse(sse_bytes)
+                    usage_data = _extract_usage_from_sse(
+                        sse_bytes, api_format=api_format
+                    )
+                    output_preview = _extract_output_from_sse(
+                        sse_bytes, api_format=api_format
+                    )
+                    tool_name = _extract_tool_name_from_sse(
+                        sse_bytes, api_format=api_format
+                    )
                     if usage_data:
                         # 补充 model：部分 API 的 SSE 响应不含 model 字段
                         if not usage_data.get("model"):
@@ -714,6 +1000,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 latency_ms,
                                 output_preview,
                                 error_message,
+                                tool_name_override=tool_name,
+                                api_format=api_format,
                             )
                         )
 
@@ -750,11 +1038,20 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         )
 
 
-def _extract_usage_from_sse(sse_data: bytes) -> dict | None:
-    """从 SSE 流中提取最后一个包含 usage 的 chunk。"""
+def _extract_usage_from_sse(
+    sse_data: bytes, api_format: str = "anthropic"
+) -> dict | None:
+    """从 SSE 流中提取最后一个包含 usage 的 chunk。
+
+    api_format="openai" 时：
+      - usage 字段使用 prompt_tokens/completion_tokens
+      - finish_reason 映射为 stop_reason
+      - 归一化为 input_tokens/output_tokens/cache_read_input_tokens 字段名
+    """
     last_usage = None
     detected_model = ""
     detected_stop_reason = ""
+
     for line in sse_data.decode("utf-8", errors="replace").split("\n"):
         if not line.startswith("data: "):
             continue
@@ -763,14 +1060,31 @@ def _extract_usage_from_sse(sse_data: bytes) -> dict | None:
             break
         try:
             chunk = json.loads(data_str)
-            # model 在首批 chunk 中出现，需单独跟踪
+
             if "model" in chunk:
                 detected_model = chunk["model"]
-            sr = chunk.get("stop_reason") or (chunk.get("delta") or {}).get(
-                "stop_reason"
-            )
-            if sr:
-                detected_stop_reason = sr
+
+            if api_format == "anthropic":
+                sr = chunk.get("stop_reason") or (chunk.get("delta") or {}).get(
+                    "stop_reason"
+                )
+                if sr:
+                    detected_stop_reason = sr
+            else:
+                # OpenAI: finish_reason 在 choices[0]
+                choices = chunk.get("choices", [])
+                if choices:
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        # 映射 OpenAI finish_reason → 统一 stop_reason
+                        _map = {
+                            "stop": "end_turn",
+                            "tool_calls": "tool_use",
+                            "length": "max_tokens",
+                            "content_filter": "content_filter",
+                        }
+                        detected_stop_reason = _map.get(fr, fr)
+
             if "usage" in chunk:
                 last_usage = chunk
         except json.JSONDecodeError:
@@ -782,10 +1096,21 @@ def _extract_usage_from_sse(sse_data: bytes) -> dict | None:
         if detected_stop_reason:
             last_usage["stop_reason"] = detected_stop_reason
 
+        if api_format == "openai":
+            # 归一化 OpenAI usage 字段名到统一格式
+            u = last_usage.get("usage", {})
+            if "prompt_tokens" in u:
+                u["input_tokens"] = u["prompt_tokens"]
+            if "completion_tokens" in u:
+                u["output_tokens"] = u["completion_tokens"]
+            details = u.get("prompt_tokens_details", {})
+            if isinstance(details, dict) and "cached_tokens" in details:
+                u["cache_read_input_tokens"] = details["cached_tokens"]
+
     return last_usage
 
 
-def _extract_output_from_sse(sse_data: bytes) -> str:
+def _extract_output_from_sse(sse_data: bytes, api_format: str = "anthropic") -> str:
     """从 SSE 流中提取输出文本内容（取前 2000 字符）。"""
     output_text = []
     for line in sse_data.decode("utf-8", errors="replace").split("\n"):
@@ -796,21 +1121,76 @@ def _extract_output_from_sse(sse_data: bytes) -> str:
             break
         try:
             chunk = json.loads(data_str)
-            # 提取 content_delta 中的文本
-            delta = chunk.get("delta", {})
-            if "text" in delta:
-                output_text.append(delta["text"])
-            # 提取 content 数组中的文本
-            content = chunk.get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        output_text.append(block.get("text", ""))
+
+            if api_format == "anthropic":
+                # 提取 content_delta 中的文本
+                delta = chunk.get("delta", {})
+                if "text" in delta:
+                    output_text.append(delta["text"])
+                # 提取 content 数组中的文本
+                content = chunk.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            output_text.append(block.get("text", ""))
+            else:
+                # OpenAI: choices[0].delta.content
+                choices = chunk.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content")
+                    if content is not None:
+                        output_text.append(content)
         except json.JSONDecodeError:
             continue
     # 截取前 2000 字符
     full_text = "".join(output_text)
     return full_text[:2000] if full_text else ""
+
+
+def _extract_tool_name_from_sse(sse_data: bytes, api_format: str = "anthropic") -> str:
+    """从 SSE 流中提取 tool_use/tool_calls 的工具名。"""
+    if api_format == "anthropic":
+        # Anthropic: content_block_start → content_block.name
+        for line in sse_data.decode("utf-8", errors="replace").split("\n"):
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                if chunk.get("type") == "content_block_start":
+                    block = chunk.get("content_block", {})
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        name = block.get("name", "")
+                        if name:
+                            return name
+            except json.JSONDecodeError:
+                continue
+    else:
+        # OpenAI: choices[0].delta.tool_calls[0].function.name
+        for line in sse_data.decode("utf-8", errors="replace").split("\n"):
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                choices = chunk.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    tool_calls = delta.get("tool_calls", [])
+                    if tool_calls:
+                        for tc in tool_calls:
+                            fn = tc.get("function", {})
+                            name = fn.get("name", "")
+                            if name:
+                                return name
+            except json.JSONDecodeError:
+                continue
+    return ""
 
 
 async def handle_health(request: web.Request) -> web.Response:

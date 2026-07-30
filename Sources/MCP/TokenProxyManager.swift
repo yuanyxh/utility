@@ -54,6 +54,11 @@ final class TokenProxyManager {
         if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
         if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
 
+        if let mcp = ConfigManager.shared.config.mcp {
+            let notesDir = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
+            env["NOTES_DIR"] = notesDir
+        }
+
         return env
     }
 

@@ -88,6 +88,15 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `response_valid`：只有 `error` stop_reason 是无效，`max_tokens`/`end_turn`/`stop_sequence` 正常
 - 费用估算已移除（不准确），`estimated_cost_usd` 置 0
 - 用户设置 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 使请求经代理转发
+- **分层记录模式**：`request_level` 字段区分 `core`（end_turn，最终回复）和 `process`（tool_use，工具调用）
+- **输入过滤**：`actual_user_input` 跳过续接提示词（"This session is being continued..."）和 `<system-reminder>` 标签
+- **错误记录**：`error_message` 字段存储 API 错误（如 Connection closed mid-response）
+- **超时配置**：`sock_connect=10s`, `sock_read=120s`，捕获 `ConnectionResetError`/`BrokenPipeError`/`asyncio.CancelledError`
+- **输出提取**：`_extract_output_from_sse()` 从 SSE 流提取 LLM 输出文本（无截断限制）
+- **工具名提取**：`tool_name` 字段记录工具调用名称（Bash/Read/Edit 等），当前提取率约 85%（711 条中 651 条为空需修复）
+- **OpenAI 格式适配**：`_detect_api_format()` 三步检测（顶层 system 数组→messages[0].role=="system"→tools 定义格式）
+- **OpenAI SSE 解析**：`_extract_usage_from_sse()` 归一化 `prompt_tokens→input_tokens`，`finish_reason→stop_reason`（stop→end_turn, tool_calls→tool_use, length→max_tokens）；`_extract_output_from_sse()` 读 `choices[0].delta.content`；`_extract_tool_name_from_sse()` 读 `choices[0].delta.tool_calls[0].function.name`
+- **系统提示词注入缓存控制**：Anthropic 格式注入不设 `cache_control`→不在缓存前缀；OpenAI 格式在原始内容最后一块设 `prompt_cache_breakpoint:{mode:"explicit"}`，注入在断点后→不在缓存中
 
 ### 共享 Python 日志模块（log_utils.py）
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`
