@@ -110,6 +110,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 热层惰性初始化：不在模块加载阶段执行，由 `_ensure_hot_memory()` 在首次工具调用时触发
 - `FASTEMBED_CACHE_PATH`（注意不是 `FASTEMBED_CACHE_DIR`）是 fastembed 读取的环境变量名，两处设置此变量：server.py 模块级 + Swift MCPProcessManager.buildEnv()
 - `MEM0_CONFIG["embedder"]["config"]` 不支持 `cache_dir` 参数（`BaseEmbedderConfig` 不接受），依靠 `FASTEMBED_CACHE_PATH` 环境变量让 mem0 内部 fastembed 找到已有缓存
+- `tool_resource` 工具返回已注册 skill 的附属资源：path 必须位于 `references`/`agents`/`scripts` 之下，且不能逃逸 skill 目录（normpath + startswith 校验）
+- `_scan_skills` 递归 os.walk：目录含 SKILL.md（Waza 式目录 skill）→ 跳过 `_SKILL_SKIP_DIRS` 子目录且只注册 SKILL.md 本身；无 SKILL.md 的普通目录 → 其内所有 .md（含附属子目录）照常注册
+- `_find_skill_dir` 按 normalize 后注册名定位 skill 目录；扁平 .md skill 不在目录注册表，定位失败返回 None → `"skill not found"`（设计使然非 bug）
 - `pyproject.toml` 未知，依赖见 `requirements.txt`
 
 ### OCR overlay
@@ -138,16 +141,14 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 ### 单⼀调用
 - 核心逻辑不依赖 UI 上下文，可直接从 CLI 或无头模式调用
 
-### Orchestrate 多 Agent 编排
-- `PlanManager`（`Sources/CLI/PlanManager.swift`）— Plan 文件管理、状态机（pending→oa_task→review→oa_response→done/blocked）、session-id 持久化
-- `OrchestrateCommand`（`Sources/CLI/OrchestrateCommand.swift`）— `utility orchestrate -d <project> --plan <name>` 子命令
-- 数据路径：`<项目>/.utility/plans/<name>.md`（plan）+ `<项目>/.utility/artifacts/<plan>/`（运行时产物）
-- Artifact 命名：`<plan>.<task-id>.<step>.<type>.md`（type: output/review/response）
-- Active plan 通过 `.utility/plans/active` symlink 指向
-- OA（Orchestrator Agent）通过 `--session-id <uuid>` 创建 + `--resume <uuid>` 恢复，跨 task 保持上下文
+### Orchestrate 多 Agent 编排（设计沉淀，代码已移除）
+> ⚠️ 现状（2026-08-03 确认）：`PlanManager.swift` + `OrchestrateCommand.swift` 从未被 git 跟踪，工作区开发验证后删除；`utility orchestrate` 子命令已不存在。以下为设计思路沉淀，核心已被 devflow 研发编排沿袭。
+- 设计理念：loop 循环编排器——输入计划，启动多个子 Agent 进程（Coding Agent 持久化上下文 + Reviewer 干净上下文），循环直至计划完成
+- 状态机：pending→oa_task→review→oa_response→done/blocked；OA（Orchestrator Agent）是最终决策者
+- OA 通过 `--session-id <uuid>` 创建 + `--resume <uuid>` 恢复，跨 task 保持上下文
 - Reviewer 用 `-p --no-session-persistence` 做干净一次性审查
-- Prompt 必须是行动导向（"直接修改源代码"），不是报告导向（"写入分析到文件"）
-- CLI 关键标志：`-d`（目录，注意根命令用 `--dir` customLong）、`--dry-run`（验证调度不启 agent）、`--list`（列出 plan）
+- **Prompt 必须行动导向**（"直接修改源代码"），不是报告导向（"写入分析到文件"）——第二次测试 4 task 全部实际落码验证（2 新建 + 10 修改文件）
+- 数据路径（设计）：`<项目>/.utility/plans/<name>.md`（plan）+ `<项目>/.utility/artifacts/<plan>/`（运行时产物）
 
 ### Claude Code CLI 关键标志（v2.1.193）
 - `-p` 从 stdin 读 prompt（非位置参数），输出到 stdout
@@ -162,6 +163,6 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Bug 修复依赖现实调试信息，禁止靠猜测修改
 
 ## 未来规划
-- 详见 `.claude/plans/agent-orchestrate.md`（Orchestrate 设计文档）
-- Orchestrate 已实现 + 真实测试验证通过（2026-07-15）：4 task 全部实际修改源代码（2 新建 + 10 修改文件），action 导向 prompt 方案确认有效。Prompt 必须"直接修改源代码"而非"将分析写入文件"
+- Orchestrate 已实现 + 真实测试验证通过（2026-07-15），但代码已移除（2026-08-03 确认），设计沉淀见「Orchestrate 多 Agent 编排」小节与 `.claude/plans/agent-orchestrate.md`
+- devflow 研发编排（云效需求拉取 → 子会话 → 状态流转 → 汇报）为当前落地方向
 - MCP 移植、Agent 寄生模式已完成；项目依赖图持续维护
