@@ -119,6 +119,7 @@ TOOL_DEFAULTS: dict[str, str] = {
     "project_packages": "列出项目三方依赖。",
     "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
     "project_notes": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须并行调用本工具。recall 变体, 搜索项目本地信息",
+    "tool_resource": "当指示加载 references 文件或需要查看 scripts 脚本内容时调用。返回附属资源内容（references/agents/scripts 目录下的参考文档）。",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
@@ -1498,30 +1499,70 @@ def _normalize_name(name: str) -> str:
     return name.replace("-", "_")
 
 
+# Skill 附属子目录（参考文档 / 子代理 / 脚本），不作为独立 skill 注册
+_SKILL_SKIP_DIRS = {"references", "agents", "scripts"}
+
+
 def _scan_skills() -> dict[str, dict]:
     skills: dict[str, dict] = {}
     if not os.path.isdir(SKILLS_DIR):
         return skills
     try:
-        for f in sorted(os.listdir(SKILLS_DIR)):
-            if not f.endswith(".md"):
-                continue
-            path = os.path.join(SKILLS_DIR, f)
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    raw = fh.read()
-                name, description, content = _parse_skill_frontmatter(raw, f)
-                if name:
-                    skills[_normalize_name(name)] = {
-                        "name": name,
-                        "description": description,
-                        "content": content,
-                    }
-            except Exception:
-                pass
+        # 递归遍历 SKILLS_DIR 下所有子目录，深度扫描 .md 文件。
+        # 仅当当前目录是 Waza 式目录 skill（含 SKILL.md）时，才跳过其
+        # references/agents/scripts 附属子目录，并只注册 SKILL.md 本身；
+        # 无 SKILL.md 的普通目录不跳过，其内所有 .md（含 references 等
+        # 子目录中的）照常注册。
+        for root, dirs, files in os.walk(SKILLS_DIR):
+            if "SKILL.md" in files:
+                dirs[:] = [d for d in dirs if d not in _SKILL_SKIP_DIRS]
+                files = [f for f in files if f == "SKILL.md"]
+            dirs.sort()
+            for f in sorted(files):
+                if not f.endswith(".md"):
+                    continue
+                path = os.path.join(root, f)
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        raw = fh.read()
+                    name, description, content = _parse_skill_frontmatter(raw, f)
+                    if name:
+                        skills[_normalize_name(name)] = {
+                            "name": name,
+                            "description": description,
+                            "content": content,
+                        }
+                except Exception:
+                    pass
     except Exception:
         pass
     return skills
+
+
+def _find_skill_dir(name: str) -> str | None:
+    """按注册名（normalize 后）定位 skill 目录；返回绝对路径，未找到返回 None。"""
+    direct = os.path.join(SKILLS_DIR, name)
+    if os.path.isfile(os.path.join(direct, "SKILL.md")):
+        return direct
+    # 注册名来自 SKILL.md frontmatter 的 name（normalize 后），目录名可能保留原名/连字符
+    try:
+        entries = os.listdir(SKILLS_DIR)
+    except OSError:
+        return None
+    for entry in sorted(entries):
+        skill_dir = os.path.join(SKILLS_DIR, entry)
+        skill_md = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.isfile(skill_md):
+            continue
+        try:
+            with open(skill_md, "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except Exception:
+            continue
+        fname, _, _ = _parse_skill_frontmatter(raw, skill_md)
+        if fname and _normalize_name(fname) == name:
+            return skill_dir
+    return None
 
 
 def _load_tool_descriptions() -> dict[str, str]:
@@ -1974,6 +2015,24 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["query", "path"],
             },
         ),
+        Tool(
+            name="tool_resource",
+            description=desc.get("tool_resource", TOOL_DEFAULTS["tool_resource"]),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "parentName": {
+                        "type": "string",
+                        "description": "tool 注册名，如 check/write/think",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "附属资源相对 tool 目录的路径，如 references/durable-context.md",
+                    },
+                },
+                "required": ["parentName", "path"],
+            },
+        ),
     ]
     for skill_name, skill in _scan_skills().items():
         tools.append(
@@ -2345,6 +2404,72 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
     except Exception as e:
         logger.error(f"[project_notes] {e}", exc_info=True)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+
+@_register("tool_resource")
+async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
+    parent_name = str(arguments.get("parentName", "")).strip()
+    rel_path = str(arguments.get("path", "")).strip()
+    if not parent_name or not rel_path:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "parentName and path are required"}),
+            )
+        ]
+    skill_dir = _find_skill_dir(parent_name)
+    if skill_dir is None:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": f"skill not found: {parent_name}"}),
+            )
+        ]
+    # 只允许引用附属子目录（references/agents/scripts）内资源
+    top = rel_path.split("/", 1)[0]
+    if top not in _SKILL_SKIP_DIRS:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {"error": f"path must be under one of: {sorted(_SKILL_SKIP_DIRS)}"}
+                ),
+            )
+        ]
+    full = os.path.normpath(os.path.join(skill_dir, rel_path))
+    if full != skill_dir and not full.startswith(skill_dir + os.sep):
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "path escapes the skill directory"}),
+            )
+        ]
+    if not os.path.isfile(full):
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": f"resource not found: {rel_path}"}),
+            )
+        ]
+    try:
+        with open(full, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except UnicodeDecodeError:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "resource is not utf-8 text"}),
+            )
+        ]
+    except Exception as e:
+        logger.error(f"[tool_resource] {e}", exc_info=True)
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": f"read failed: {e}"}),
+            )
+        ]
+    return [TextContent(type="text", text=content)]
 
 
 @server.call_tool()

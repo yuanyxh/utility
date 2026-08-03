@@ -324,6 +324,7 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 | `forget` | 删除指定记忆 |
 | `project_notes` | 语义搜索项目本地 .md 笔记文件（向量索引 + 增量缓存） |
 | `project_search/structure/packages/exports` | 项目符号/结构/依赖/导出查询 |
+| `tool_resource` | 返回已注册 skill 的附属资源内容（references/agents/scripts 目录） |
 
 **每日总结流水线：** 定时（默认每日 17 点）从热层拉取 3 天记忆 → LLM 去重/分类 → 写入 `Extracts/` 目录 + 同步冷层。
 
