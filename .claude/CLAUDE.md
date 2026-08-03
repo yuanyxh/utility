@@ -83,17 +83,19 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 路由 `/open/{path}` → 上游 `UPSTREAM_URL/{path}` 原样转发
 - SSE 流式解析：`model` 在早期 chunk，`usage` 在最后 chunk，`stop_reason` 在 `delta.stop_reason`
 - LLM usage field resolver：自动发现不同 provider 的 usage 字段路径，缓存到 SQLite `usage_field_cache` 表
+- `cache_write_tokens` 恒为 0——deepseek/mimo 等 provider 的 usage 响应不含非零 `cache_creation_input_tokens`，resolver 路径已正确配置，属上游不返回（非解析缺陷）
 - TokenProxyManager.swift：进程守护（lifecycleQueue + terminationHandler + health check）
 - 健康检查必须 `async/await` + `@MainActor`，不能用 `DispatchSemaphore`（阻塞主线程导致 URLSession 回调死锁）
 - `response_valid`：只有 `error` stop_reason 是无效，`max_tokens`/`end_turn`/`stop_sequence` 正常
-- 费用估算已移除（不准确），`estimated_cost_usd` 置 0
+- 费用估算已移除（不准确），`estimated_cost_usd` 字段已从写入侧、API 与表结构整体移除
+- `session_id`/`project_path` 采集已废弃（Claude Code 请求 metadata 无此字段，全为空），`/usage/by_project` 端点与 Swift `ProjectCost` 已删除
 - 用户设置 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 使请求经代理转发
 - **分层记录模式**：`request_level` 字段区分 `core`（end_turn，最终回复）和 `process`（tool_use，工具调用）
 - **输入过滤**：`actual_user_input` 跳过续接提示词（"This session is being continued..."）和 `<system-reminder>` 标签
-- **错误记录**：`error_message` 字段存储 API 错误（如 Connection closed mid-response）
+- **错误记录**：`error_message` 字段存储 API 错误；SSE 流中断（ConnectionReset/BrokenPipe/RuntimeError/Cancelled）时记录异常类型与信息
 - **超时配置**：`sock_connect=10s`, `sock_read=120s`，捕获 `ConnectionResetError`/`BrokenPipeError`/`asyncio.CancelledError`
 - **输出提取**：`_extract_output_from_sse()` 从 SSE 流提取 LLM 输出文本（无截断限制）
-- **工具名提取**：`tool_name` 字段记录工具调用名称（Bash/Read/Edit 等），当前提取率约 85%（711 条中 651 条为空需修复）
+- **工具名提取**：`tool_name` 字段记录工具调用名称（Bash/Read/Edit 等），SSE 流提取优先，请求体 assistant 消息兜底不要求请求含 `tools` 定义（仅需 `stop_reason == "tool_use"`）
 - **OpenAI 格式适配**：`_detect_api_format()` 三步检测（顶层 system 数组→messages[0].role=="system"→tools 定义格式）
 - **OpenAI SSE 解析**：`_extract_usage_from_sse()` 归一化 `prompt_tokens→input_tokens`，`finish_reason→stop_reason`（stop→end_turn, tool_calls→tool_use, length→max_tokens）；`_extract_output_from_sse()` 读 `choices[0].delta.content`；`_extract_tool_name_from_sse()` 读 `choices[0].delta.tool_calls[0].function.name`
 - **系统提示词注入缓存控制**：Anthropic 格式注入不设 `cache_control`→不在缓存前缀；OpenAI 格式在原始内容最后一块设 `prompt_cache_breakpoint:{mode:"explicit"}`，注入在断点后→不在缓存中

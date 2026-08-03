@@ -47,8 +47,6 @@ def init_db():
         CREATE TABLE IF NOT EXISTS api_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
-            session_id TEXT,
-            project_path TEXT,
             request_type TEXT,
             context_summary TEXT,
             input_preview TEXT,
@@ -63,7 +61,6 @@ def init_db():
             output_tokens INTEGER DEFAULT 0,
             cache_read_tokens INTEGER DEFAULT 0,
             cache_write_tokens INTEGER DEFAULT 0,
-            estimated_cost_usd REAL DEFAULT 0,
             latency_ms INTEGER DEFAULT 0,
             api_format TEXT,
             request_level TEXT DEFAULT 'core',
@@ -83,8 +80,6 @@ def init_db():
             PRIMARY KEY (provider, model)
         );
         CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_api_usage_session ON api_usage(session_id);
-        CREATE INDEX IF NOT EXISTS idx_api_usage_project ON api_usage(project_path);
         CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level);
     """)
 
@@ -109,6 +104,26 @@ def init_db():
     if "error_message" not in columns:
         conn.execute("ALTER TABLE api_usage ADD COLUMN error_message TEXT")
         conn.commit()
+
+    # 迁移：移除已废弃的三字段（session_id/project_path/estimated_cost_usd）
+    # 先 DROP 引用列的索引，再 DROP COLUMN（SQLite 约束）
+    if "session_id" in columns:
+        conn.execute("DROP INDEX IF EXISTS idx_api_usage_session")
+        conn.execute("ALTER TABLE api_usage DROP COLUMN session_id")
+    if "project_path" in columns:
+        conn.execute("DROP INDEX IF EXISTS idx_api_usage_project")
+        conn.execute("ALTER TABLE api_usage DROP COLUMN project_path")
+    if "estimated_cost_usd" in columns:
+        conn.execute("ALTER TABLE api_usage DROP COLUMN estimated_cost_usd")
+    conn.commit()
+
+    # 修正历史：首日中断（stop_reason 为空串 ''）被默认回填为 core，修正归入 process
+    # 当前写入逻辑对 stop_reason 空归 process，新数据不会产生该组合，幂等无害
+    conn.execute(
+        "UPDATE api_usage SET request_level = 'process' "
+        "WHERE request_level = 'core' AND (stop_reason IS NULL OR stop_reason = '')"
+    )
+    conn.commit()
 
     # 三个月自动清理
     conn.execute("DELETE FROM api_usage WHERE timestamp < datetime('now', '-3 months')")
@@ -613,7 +628,7 @@ async def record_usage(
 
     # 提取 tool_name：SSE 流提取优先 > 请求体 assistant 消息兜底
     tool_name = tool_name_override
-    if not tool_name and request_body.get("tools") and stop_reason == "tool_use":
+    if not tool_name and stop_reason == "tool_use":
         # 从请求中提取工具名称（兜底）
         messages = request_body.get("messages", [])
         for msg in reversed(messages):
@@ -629,8 +644,6 @@ async def record_usage(
 
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "session_id": request_body.get("metadata", {}).get("session_id", ""),
-        "project_path": _detect_project(request_body),
         "request_type": req_ctx["request_type"],
         "context_summary": req_ctx["context_summary"],
         "input_preview": req_ctx["input_preview"],
@@ -646,7 +659,6 @@ async def record_usage(
         "output_tokens": usage["output_tokens"],
         "cache_read_tokens": usage["cache_read_tokens"],
         "cache_write_tokens": usage["cache_write_tokens"],
-        "estimated_cost_usd": 0,
         "latency_ms": latency_ms,
         "api_format": api_format,
         "request_level": request_level,
@@ -659,16 +671,14 @@ async def record_usage(
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.execute(
             "INSERT INTO api_usage "
-            "(timestamp, session_id, project_path, request_type, context_summary, "
+            "(timestamp, request_type, context_summary, "
             "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
             "output_type, stop_reason, response_valid, model, input_tokens, "
             "output_tokens, cache_read_tokens, cache_write_tokens, "
-            "estimated_cost_usd, latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 record["timestamp"],
-                record["session_id"],
-                record["project_path"],
                 record["request_type"],
                 record["context_summary"],
                 record["input_preview"],
@@ -684,7 +694,6 @@ async def record_usage(
                 record["output_tokens"],
                 record["cache_read_tokens"],
                 record["cache_write_tokens"],
-                record["estimated_cost_usd"],
                 record["latency_ms"],
                 record["api_format"],
                 record["request_level"],
@@ -711,12 +720,6 @@ async def record_usage(
         )
     except Exception as e:
         logger.error(json.dumps({"msg": "usage_record_failed", "error": str(e)}))
-
-
-def _detect_project(body: dict) -> str:
-    """尝试从请求中检测项目路径。"""
-    metadata = body.get("metadata", {})
-    return metadata.get("project_path", "")
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +945,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 is_sse = "text/event-stream" in upstream_resp.headers.get(
                     "content-type", ""
                 )
+                # 流中断时的异常信息，供 record_usage 记录
+                stream_error = ""
 
                 try:
                     async for chunk in upstream_resp.content.iter_any():
@@ -955,7 +960,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     asyncio.CancelledError,
                 ):
                     # 客户端已断开连接或 transport 关闭，停止转发
-                    pass
+                    stream_error = f"{type(e).__name__}: {e}"
 
                 await response.write_eof()
 
@@ -975,9 +980,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         # 补充 model：部分 API 的 SSE 响应不含 model 字段
                         if not usage_data.get("model"):
                             usage_data["model"] = request_body.get("model", "unknown")
-                        # 提取错误信息（如果有的话）
-                        error_message = ""
-                        if upstream_resp.status >= 400:
+                        # 提取错误信息（优先流中断异常，其次上游 error body）
+                        error_message = stream_error
+                        if not error_message and upstream_resp.status >= 400:
                             try:
                                 error_body = json.loads(
                                     sse_bytes.decode("utf-8", errors="replace")
@@ -1207,7 +1212,6 @@ async def handle_usage_summary(request: web.Request) -> web.Response:
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(cache_read_tokens), 0),
-                COALESCE(SUM(estimated_cost_usd), 0),
                 COUNT(*),
                 SUM(CASE WHEN response_valid = 0 THEN 1 ELSE 0 END)
             FROM api_usage
@@ -1220,31 +1224,10 @@ async def handle_usage_summary(request: web.Request) -> web.Response:
                 "input_tokens": row[0],
                 "output_tokens": row[1],
                 "cache_read_tokens": row[2],
-                "estimated_cost_usd": row[3],
-                "total_requests": row[4],
-                "invalid_requests": row[5] or 0,
+                "total_requests": row[3],
+                "invalid_requests": row[4] or 0,
             }
         )
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_cost_by_project(request: web.Request) -> web.Response:
-    """按项目分组的费用统计。"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("""
-            SELECT COALESCE(project_path, 'unknown') as project,
-                   COALESCE(SUM(estimated_cost_usd), 0) as cost
-            FROM api_usage
-            WHERE timestamp >= date('now', 'start of day')
-            GROUP BY project
-            ORDER BY cost DESC
-            LIMIT 10
-        """).fetchall()
-        conn.close()
-
-        return web.json_response([{"project": r[0], "cost": r[1]} for r in rows])
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -1359,7 +1342,6 @@ def create_app() -> web.Application:
     app = web.Application()
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
-    app.router.add_route("GET", "/usage/by_project", handle_cost_by_project)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)
     app.router.add_route("*", "/open/{path:.*}", handle_proxy)
     return app

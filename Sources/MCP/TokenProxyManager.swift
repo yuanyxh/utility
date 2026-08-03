@@ -114,14 +114,8 @@ final class TokenProxyManager {
         var input_tokens: Int = 0
         var output_tokens: Int = 0
         var cache_read_tokens: Int = 0
-        var estimated_cost_usd: Double = 0
         var total_requests: Int = 0
         var invalid_requests: Int = 0
-    }
-
-    struct ProjectCost: Codable {
-        var project: String
-        var cost: Double
     }
 
     func fetchTodaySummary() async -> TodaySummary {
@@ -131,16 +125,6 @@ final class TokenProxyManager {
             return try JSONDecoder().decode(TodaySummary.self, from: data)
         } catch {
             return TodaySummary()
-        }
-    }
-
-    func fetchCostByProject() async -> [ProjectCost] {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/usage/by_project") else { return [] }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            return try JSONDecoder().decode([ProjectCost].self, from: data)
-        } catch {
-            return []
         }
     }
 
