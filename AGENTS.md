@@ -149,6 +149,8 @@
 - server.py 所有配置从环境变量读取（MCPProcessManager.buildEnv() 实时构建），不解析 sys.argv
 - 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
 - summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入
+- summarize.py 防重复触发：单实例文件锁 + 距上次完整总结 < 6h 跳过；mcp-summary 注册时
+  enabled 直接 register（不先 unregister，避免清 last_fire 后 handleMissed 每天重复补触发）
 - MEMORY_SERVER_URL 从配置 mcp.port 动态计算，确保总结流水线连对端口
 
 ### 项目扫描

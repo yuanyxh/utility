@@ -103,16 +103,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
     }
 
-    /// 注册/注销内置记忆总结任务。幂等：先清旧任务再按配置注册。
+    /// 注册/注销内置记忆总结任务。幂等：disabled 时注销；enabled 时直接注册。
+    /// 注意：enabled 时不要先 unregister——unregister 会清掉 last_fire，register 后
+    /// handleMissed 会把「今天 17:00 已触发过」误判为未触发，导致每天 17:00 后每次
+    /// 重启/reload 配置都重复触发一次总结。
     private func updateMCPSummaryTask() {
-        // 无论配置如何，先清旧任务
-        TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
-
         guard let mcp = ConfigManager.shared.config.mcp,
               mcp.summaryEnabled,
               mcp.enabled,
               let scriptPath = MCPProcessManager.shared.findScript(named: "summarize.py")
         else {
+            TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
             debugLog("[MCP] Summary task disabled or unavailable")
             return
         }

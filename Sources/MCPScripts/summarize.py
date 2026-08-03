@@ -9,10 +9,14 @@
 流程：
 1. 从 mino-brain REST API 获取过去 3 天记忆
 2. 扫描笔记目录结构（排除 SaveWebPages/Self_Data/Works/Works_Jobs）
-3. LLM 去重/筛选/按现有目录结构分类
-4. 写入 Markdown（同标题追加，异标题新建）
-5. 同步写入冷层 Qdrant（通过 REST API）
+3. LLM 去重/筛选/按现有目录结构分类（严格基于记忆事实，禁止编造）
+4. 写入 Markdown（同标题 H1 段合并去重，异标题末尾新增一节）
+5. 同步写入冷层 Qdrant（按内容哈希去重，通过 REST API）
 6. 异常 → 写入流水线错误日志
+
+防重复触发：
+- 单实例文件锁：同一时刻只允许一个实例运行
+- 最小间隔节流：与上次完整总结间隔 < 6 小时则跳过
 """
 
 import argparse
@@ -21,6 +25,8 @@ import json
 import sqlite3
 import time
 import re
+import fcntl
+import hashlib
 import subprocess
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
@@ -68,11 +74,19 @@ SUMMARY_LLM_RETRIES = 3
 SUMMARY_API_TIMEOUT = 10
 SUMMARY_GIT_TIMEOUT = 30
 
-# ── MCP 工具调用统计 ──
-STATS_DB = (
-    Path(os.environ.get("UTILITY_DATA_DIR", os.path.expanduser("~/.config/utility")))
-    / "tool_usage.sqlite"
+# ── 数据目录（脚本自身状态也放这里，与 Swift 数据同目录） ──
+UTILITY_DATA_DIR = Path(
+    os.environ.get("UTILITY_DATA_DIR", os.path.expanduser("~/.config/utility"))
 )
+
+# ── 单实例 / 节流保护 ──
+LOCK_FILE = UTILITY_DATA_DIR / "summarize.lock"
+LAST_RUN_FILE = UTILITY_DATA_DIR / "summarize_last_run"
+MIN_RUN_INTERVAL = 6 * 3600  # 与上次完整总结间隔不足 6 小时则跳过（防重复触发）
+COLD_SYNC_DB = UTILITY_DATA_DIR / "cold_sync.sqlite"  # 冷层去重记录
+
+# ── MCP 工具调用统计 ──
+STATS_DB = UTILITY_DATA_DIR / "tool_usage.sqlite"
 MCP_DIR = NOTES_DIR / "MCP"
 STATS_OUTPUT = MCP_DIR / "工具调用统计.md"
 STATS_DAYS = 15  # 报表显示最近天数
@@ -94,6 +108,65 @@ def write_error_log(msg: str, code: str = "UNKNOWN"):
         logger.error(f"Error log write failed: {e}")
 
 
+def _acquire_single_instance() -> bool:
+    """获取单实例文件锁。已有实例在运行时返回 False（由调用方退出）。"""
+    try:
+        UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            os.close(fd)
+            return False
+    except Exception:
+        return True  # 锁不可用时放行，避免误阻断
+
+
+def _throttle_ai_run() -> bool:
+    """距上次完整总结不足 MIN_RUN_INTERVAL 时返回 False（防重复触发）。"""
+    try:
+        UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        last = (
+            float(LAST_RUN_FILE.read_text().strip()) if LAST_RUN_FILE.exists() else 0.0
+        )
+        if now - last < MIN_RUN_INTERVAL:
+            logger.info(
+                f"距上次总结不足 {MIN_RUN_INTERVAL // 3600} 小时，跳过（防重复触发）"
+            )
+            return False
+        LAST_RUN_FILE.write_text(str(now))
+        return True
+    except Exception:
+        return True
+
+
+def _cold_already_synced(content: str, source_file: str) -> bool:
+    """按 source_file+content 哈希去重：已同步过的内容跳过，避免冷层重复写入。"""
+    h = hashlib.sha256(f"{source_file}|{content}".encode("utf-8")).hexdigest()
+    try:
+        UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(COLD_SYNC_DB))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS synced (hash TEXT PRIMARY KEY, at TEXT)"
+            )
+            exists = conn.execute("SELECT 1 FROM synced WHERE hash=?", (h,)).fetchone()
+            if exists:
+                return True
+            conn.execute(
+                "INSERT OR IGNORE INTO synced (hash, at) VALUES (?, ?)",
+                (h, date.today().isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return False
+    except Exception:
+        return False
+
+
 def write_to_cold_layer(
     content: str,
     source_file: str,
@@ -101,6 +174,8 @@ def write_to_cold_layer(
     tags: list | None = None,
     confidence: float = 1.0,
 ):
+    if _cold_already_synced(content, source_file):
+        return
     try:
         resp = _HTTP.post(
             f"{MEMORY_SERVER_URL}/api/memory/add_knowledge",
@@ -149,6 +224,8 @@ def _normalize_slug(s: str) -> str:
     """Normalize a title/slug for fuzzy dedup matching."""
     # Remove parenthetical content: （...）(...)
     s = re.sub(r"[（(][^）)]*[）)]", "", s)
+    # 剥离 .md 后缀，防止生成 .md.md 双后缀文件名
+    s = re.sub(r"\.md$", "", s, flags=re.IGNORECASE)
     # Normalize spaces, colons, slashes to underscores
     s = re.sub(r"[\s:/]+", "_", s)
     # Collapse multiple underscores
@@ -178,10 +255,15 @@ def resolve_target_file(target_dir: Path, title: str) -> tuple[Path, bool]:
         if existing_slug == slug and existing_path.parent == target_dir:
             return existing_path, True
 
-    # Priority 2: substring match — one slug contains the other
-    for existing_path, existing_slug in all_extract_files:
-        if slug and existing_slug and (slug in existing_slug or existing_slug in slug):
-            return existing_path, True
+    # Priority 2: substring match, limited to the same directory.
+    # 跨目录命中会追加到旧文件造成内容错位，故不跨目录匹配；过短的 slug
+    # 模糊匹配命中率低且易误配（如 "devflow" 会匹配一切），仅 >=4 字符时启用。
+    if len(slug) >= 4:
+        for existing_path, existing_slug in all_extract_files:
+            if existing_path.parent == target_dir and (
+                slug in existing_slug or existing_slug in slug
+            ):
+                return existing_path, True
 
     return filepath, False
 
@@ -293,21 +375,30 @@ def _build_facts_text(memories: list[dict]) -> str:
     )
 
 
-def _list_extract_titles() -> list[str]:
-    """List existing extract file titles (stem without date) for dedup context."""
-    titles = []
+def _list_extract_summaries() -> list[str]:
+    """List existing extract notes (title + first content line) for dedup context."""
+    entries = []
     if not EXTRACTS_DIR.exists():
-        return titles
+        return entries
     for f in sorted(EXTRACTS_DIR.rglob("*.md")):
         stem = f.stem
         title = re.sub(r"_\d{4}-\d{2}-\d{2}$", "", stem)
         title = title.replace("_", " ")
-        titles.append(f"{title}  ({f.parent.name}/)")
-    return titles
+        excerpt = ""
+        try:
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                s = ln.strip()
+                if s and not s.startswith(("#", ">", "---", "-", "|", "```")):
+                    excerpt = s[:80]
+                    break
+        except Exception:
+            pass
+        entries.append(f"- {title}（{f.parent.name}/）: {excerpt}")
+    return entries
 
 
 def _run_phase1(facts_text: str, dir_tree: str) -> list[dict] | None:
-    existing = _list_extract_titles()
+    existing = _list_extract_summaries()
     existing_block = "\n".join(existing) if existing else "(暂无已有笔记)"
 
     prompt = f"""\
@@ -316,16 +407,16 @@ def _run_phase1(facts_text: str, dir_tree: str) -> list[dict] | None:
 现有笔记目录结构：
 {dir_tree}
 
-已有知识笔记：
+已有知识笔记（标题+首行摘要，用于判断是否复用已有文件）：
 {existing_block}
 
 ### 要求
 
 1. **合并关联事实**：同一主题的多条事实务必合并为一篇，不要分散
 2. **只保留有长期价值的内容**，丢弃一次性/临时状态碎片信息
-3. **根据现有目录结构**决定存放目录（目录路径相对于笔记根目录），无匹配则建议新目录
+3. **根据现有目录结构**决定存放目录（目录路径相对于笔记根目录）：目录必须复用已有目录，或与已有目录同级的新顶层目录，禁止随意嵌套多级新目录
 4. **标题要具体**，如 "UTSJSONObject null 安全访问" 而非 "UTSJSONObject 坑"
-5. **优先复用已有知识笔记**：如果已有笔记与当前主题相关，使用相同的 dir 和 title 以便内容追加到同一文件，不要为相同主题另建新文件
+5. **优先复用已有知识笔记**：如果已有笔记与当前主题相关（标题或摘要相关），使用相同的 dir 和 title 使内容合并到同一文件，不要为相同主题另建新文件
 
 记忆事实：
 {facts_text}
@@ -361,24 +452,49 @@ def _run_phase2(writes: list[dict], facts_text: str, dir_tree: str) -> list[dict
         if any(part in SUMMARY_EXCLUDE_DIRS for part in target_parts):
             logger.warning(f"Skipping excluded path: {target_dir_name}")
             continue
+
+        # 目录白名单：新顶层目录只允许单层，禁止随意嵌套多级新目录
+        parts = [p for p in Path(target_dir_name).parts if p]
+        if len(parts) > 1:
+            existing_tops = (
+                {d.name for d in EXTRACTS_DIR.iterdir() if d.is_dir()}
+                if EXTRACTS_DIR.exists()
+                else set()
+            )
+            if parts[0] not in existing_tops:
+                logger.warning(
+                    f"新建多级目录 {target_dir_name}，回退为单层目录 {parts[0]}"
+                )
+                target_dir_name = parts[0]
+
+        # 读取目标文件已有内容，追加时避免与旧内容重复
+        existing_excerpt = ""
+        filepath, is_append = resolve_target_file(EXTRACTS_DIR / target_dir_name, title)
+        if is_append and filepath.exists():
+            existing_excerpt = filepath.read_text(encoding="utf-8")[:1200]
+
+        context_block = (
+            f"### 目标文件已有内容（补充时只写新增信息，不要重复）\n{existing_excerpt}"
+            if existing_excerpt
+            else "（目标文件不存在，将新建）"
+        )
+
         prompt = f"""\
-你正在将过去 3 天的记忆事实整理为高质量的详细知识笔记。
-
-现有笔记目录结构：
-{dir_tree}
-
-### 生成要求
+你正在将过去 3 天的记忆事实整理为详细的知识笔记。
 
 主题："{title}"
 存放目录：{target_dir_name}
 
-1. **展开而非压缩**：写 300-800 字的详细内容，包含：
-   - 具体问题描述（背景 + 触发条件）
-   - 解决方案 / 关键代码 / 配置片段（用代码块包裹）
-   - 注意事项和陷阱
-   - 命令、路径、版本号等可操作性细节
-2. **只围绕此主题展开**，不要输出无关内容
-3. **直接返回 Markdown 正文**，不需要 JSON 包装，不需要代码块包裹正文
+{context_block}
+
+### 生成要求
+
+1. **严格基于下方"相关记忆事实"写作**：只使用其中出现的信息，禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码
+2. 记忆事实未提供的细节**不要补造**，宁可缺省也不虚构
+3. **只围绕此主题展开**，不要输出无关内容
+4. 若目标文件已有内容，仅补充新的、未覆盖的信息
+5. 篇幅以事实密度优先（150-500 字），不要为凑字数写空泛泛化内容
+6. **直接返回 Markdown 正文**，不需要 JSON 包装，不需要代码块包裹正文
 
 相关记忆事实：
 {facts_text}"""
@@ -409,6 +525,46 @@ def _collect_tags(memories: list[dict]) -> list[str]:
     return list(set(t for m in memories for t in m.get("metadata", {}).get("tags", [])))
 
 
+def _strip_leading_h1(content: str) -> str:
+    """剥离正文开头自带的 # 标题，避免与脚本写入的文件标题重复。"""
+    lines = content.splitlines()
+    while lines and re.match(r"^#\s+\S", lines[0]):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _merge_into_file(
+    filepath: Path, title: str, content: str, today_str: str, is_append: bool
+) -> bool:
+    """写入文件。新建时创建；追加时按 H1 段合并：同名 H1 段替换（去重），
+    否则在末尾新增一节（保留历史）。返回是否写入成功。"""
+    content = _strip_leading_h1(content)
+    block = f"# {title}\n\n> 补充于 {today_str}\n\n{content}\n"
+    if not is_append:
+        filepath.write_text(
+            f"# {title}\n\n> 自动总结于 {today_str}\n\n{content}\n",
+            encoding="utf-8",
+        )
+        return True
+
+    old = filepath.read_text(encoding="utf-8")
+    target_slug = _normalize_slug(title)
+    segments = re.split(r"(?m)^(?=#\s)", old)
+    replaced = False
+    out = []
+    for seg in segments:
+        head = seg.splitlines()[0] if seg.strip() else ""
+        seg_slug = _normalize_slug(re.sub(r"^#\s+", "", head))
+        if seg_slug and seg_slug == target_slug:
+            out.append(block)
+            replaced = True
+        else:
+            out.append(seg)
+    merged = "".join(out) if replaced else old.rstrip() + "\n\n---\n\n" + block
+    filepath.write_text(merged.rstrip() + "\n", encoding="utf-8")
+    return True
+
+
 def _write_articles(
     writes: list[dict], today_str: str, all_tags: list[str]
 ) -> dict[str, str]:
@@ -420,20 +576,22 @@ def _write_articles(
         target_dir = EXTRACTS_DIR / target_dir_name
         target_dir.mkdir(parents=True, exist_ok=True)
         filepath, is_append = resolve_target_file(target_dir, title)
-        if is_append:
-            with open(filepath, "a", encoding="utf-8") as f:
-                f.write(f"\n\n---\n> 补充于 {today_str}\n\n{content}\n")
-        else:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"# {title}\n\n> 自动总结于 {today_str}\n\n{content}\n")
-        updated[str(filepath)] = "追加" if is_append else "新建"
-        write_to_cold_layer(
-            content=content,
-            source_file=str(filepath),
-            category=target_dir_name,
-            tags=all_tags,
-            confidence=1.0,
-        )
+        if _merge_into_file(filepath, title, content, today_str, is_append):
+            # 轻量 QC：文件体积异常时告警（不阻断）
+            try:
+                size = filepath.stat().st_size
+                if size > 500_000:
+                    logger.warning(f"QC: {filepath} 体积异常 ({size // 1024}KB)")
+            except OSError:
+                pass
+            updated[str(filepath)] = "追加" if is_append else "新建"
+            write_to_cold_layer(
+                content=content,
+                source_file=str(filepath),
+                category=target_dir_name,
+                tags=all_tags,
+                confidence=1.0,
+            )
     return updated
 
 
@@ -568,6 +726,10 @@ def _print_report(today_str: str, memory_count: int, updated_files: dict[str, st
 
 
 def main():
+    if not _acquire_single_instance():
+        print("⚠️ 已有 summarize 实例在运行，跳过本次")
+        return
+
     # 工具调用统计报表独立于总结流程，每次 summarize 运行都生成
     _generate_stats_report()
 
@@ -580,12 +742,12 @@ def main():
         print("❌ DEEPSEEK_API_KEY 未设置")
         return
 
+    if not _throttle_ai_run():
+        return
+
     today = date.today()
     today_str = today.isoformat()
     EXTRACTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    logger.info("Pre-run: committing any pending changes...")
-    git_commit("每日总结 - 流水线启动", stage="启动")
 
     logger.info("Fetching memories from past 3 days via REST API...")
     recent_memories = fetch_memories(today)
@@ -613,12 +775,10 @@ def main():
         print("所有文章生成失败或内容过短，跳过总结")
         return
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    git_commit(now_str, stage="写入前")
-
     all_tags = _collect_tags(recent_memories)
     updated_files = _write_articles(writes, today_str, all_tags)
 
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     overview = f"{now_str} - 记忆总结（{len(recent_memories)} 条事实，{len(updated_files)} 个文件）"
     git_commit(overview, stage="写入后")
 
