@@ -66,7 +66,7 @@ logger = setup_logging("server")
 # ============================================================
 
 QDRANT_PATH = os.environ.get(
-    "QDRANT_PATH", os.path.expanduser("~/Documents/selfdata/qdrant_data")
+    "QDRANT_PATH", os.path.expanduser("~/Documents/selfdata/database/qdrant_data")
 )
 MEM0_QDRANT_PATH = os.path.join(QDRANT_PATH, "mem0")
 

@@ -40,7 +40,7 @@ public struct MCPConfig: Codable {
     var port: Int = 9001
 
     // 数据存储路径
-    var qdrantPath: String = "~/Documents/selfdata/qdrant_data"
+    var qdrantPath: String = "~/Documents/selfdata/database/qdrant_data"
     var knowledgeBasePath: String = "~/Documents/selfdata/notes"
 
     // fastembed 模型缓存
@@ -66,7 +66,7 @@ public struct MCPConfig: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 9001
-        qdrantPath = try c.decodeIfPresent(String.self, forKey: .qdrantPath) ?? "~/Documents/selfdata/qdrant_data"
+        qdrantPath = try c.decodeIfPresent(String.self, forKey: .qdrantPath) ?? "~/Documents/selfdata/database/qdrant_data"
         knowledgeBasePath = try c.decodeIfPresent(String.self, forKey: .knowledgeBasePath) ?? "~/Documents/selfdata/notes"
         fastembedCacheDir = try c.decodeIfPresent(String.self, forKey: .fastembedCacheDir) ?? "~/.cache/fastembed_cache"
         embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? "sentence-transformers/all-MiniLM-L6-v2"

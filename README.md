@@ -180,7 +180,7 @@ mcp:
   # MCP 服务端口
   port: 9001
   # Qdrant 向量数据库路径
-  qdrantPath: "~/Documents/selfdata/qdrant_data"
+  qdrantPath: "~/Documents/selfdata/database/qdrant_data"
   # 知识库路径（笔记目录）
   knowledgeBasePath: "~/Documents/selfdata/notes"
   # fastembed 模型缓存目录
@@ -455,7 +455,7 @@ RSS (3 未读)  ▸ 抓取 RSS
 ─────────
 ● MCP        ▸ 运行中
                  重启服务
-                 Qdrant: ~/Documents/selfdata/qdrant_data
+                 Qdrant: ~/Documents/selfdata/database/qdrant_data
                  知识库: ~/Documents/selfdata/notes
 ─────────
 任务 (2)     ▸ RSS 日报
