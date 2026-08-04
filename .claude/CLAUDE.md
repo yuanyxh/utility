@@ -93,7 +93,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - **分层记录模式**：`request_level` 字段区分 `core`（end_turn，最终回复）和 `process`（tool_use，工具调用）
 - **输入过滤**：`actual_user_input` 跳过续接提示词（"This session is being continued..."）和 `<system-reminder>` 标签
 - **错误记录**：`error_message` 字段存储 API 错误；SSE 流中断（ConnectionReset/BrokenPipe/RuntimeError/Cancelled）时记录异常类型与信息
-- **超时配置**：`sock_connect=10s`, `sock_read=120s`，捕获 `ConnectionResetError`/`BrokenPipeError`/`asyncio.CancelledError`
+- **超时配置**：`total=300s`（5 分钟），`sock_connect=10s`，`sock_read=30s`，捕获 `ConnectionResetError`/`BrokenPipeError`/`asyncio.CancelledError`
+- **503 瞬时重试**：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"）时等待 0.5s 重试，最多 3 次（`proxy_retry` 日志）。根因：Claude Code 的 safety classifier 调用撞上上游 503 会导致 Bash 被拦截（2026-08-04 诊断：1090 请求中 25 个 503≈2.3%，latency 300-1300ms 快速拒绝，非超时）
+- **classifier 请求加速**：Claude Code auto mode 的 safety classifier 请求（deepseek 默认 thinking 时响应 28-32s，撞约 30s 内部超时 → Bash/Agent 被拦截）注入 `thinking: disabled` 后降至 1-3s。识别分两步——`_is_claude_code`（`x-anthropic-billing-header` 存在或 UA 含 "claude"，协议级来源判断非内容匹配）+ `_is_classifier_candidate`（纯结构启发式：stream != true + tools 空 + messages ≤ 2；v2.1.160+ 带 assistant pre-fill 为 2 条，真实对话几十到上百条；不匹配任何硬编码签名防版本静默失效）。注入用 `_inject_classifier_disabled`（anthropic 设 `thinking: disabled` + 移除 `reasoning_effort`/`output_config`；openai 仅移除 `reasoning_effort`）。**关键路径日志**：命中记 `classifier_thinking_disabled`（info，含 model/messages/api_format），Claude Code 来源非候选记 `classifier_check_skip`（debug，含 stream/tools/messages 供观测形态变化），非 Claude 来源记 `classifier_source_not_claude`（debug）——修复失效可观测
 - **输出提取**：`_extract_output_from_sse()` 从 SSE 流提取 LLM 输出文本（无截断限制）
 - **工具名提取**：`tool_name` 字段记录工具调用名称（Bash/Read/Edit 等），SSE 流提取优先，请求体 assistant 消息兜底不要求请求含 `tools` 定义（仅需 `stop_reason == "tool_use"`）
 - **OpenAI 格式适配**：`_detect_api_format()` 三步检测（顶层 system 数组→messages[0].role=="system"→tools 定义格式）

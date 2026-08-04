@@ -743,6 +743,43 @@ def _detect_api_format(body: dict) -> str:
     return "anthropic"
 
 
+def _is_claude_code(headers) -> bool:
+    """判断请求是否来自 Claude Code（请求头特征，非内容匹配）。
+
+    用协议级特征而非具体文案：x-anthropic-billing-header 是 Claude Code
+    特有的请求头；User-Agent 兜底含 "claude"。其他客户端（codex/curl 等）
+    不满足，不会触发 classifier 处理。
+    """
+    if headers.get("x-anthropic-billing-header"):
+        return True
+    return "claude" in headers.get("user-agent", "").lower()
+
+
+def _is_classifier_candidate(body: dict) -> bool:
+    """结构启发式判断是否 classifier 候选：stream != true + tools 空 + messages ≤ 2。
+
+    不匹配任何硬编码签名（签名随 Claude Code 版本变化，泛化避免静默失效）。
+    v2.1.160+ 的 classifier 请求带 assistant pre-fill，messages 为 2 条；
+    真实对话几十到上百条。
+    """
+    if body.get("stream"):
+        return False
+    if body.get("tools"):
+        return False
+    return len(body.get("messages", [])) <= 2
+
+
+def _inject_classifier_disabled(body: dict, api_format: str) -> None:
+    """向请求体注入 thinking disabled（deepseek 兼容层），并移除旧版参数。"""
+    if api_format == "anthropic":
+        body["thinking"] = {"type": "disabled"}
+        for k in ("reasoning_effort", "output_config"):
+            body.pop(k, None)
+    else:
+        # openai 格式：无 thinking 参数，移除 reasoning_effort 即可
+        body.pop("reasoning_effort", None)
+
+
 # 缓存：文件内容 + mtime，mtime 未变时不重新读盘
 _sys_prompt_content: str | None = None
 _sys_prompt_mtime: float = 0
@@ -871,6 +908,39 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # 检测 API 格式（anthropic / openai）
     api_format = _detect_api_format(request_body)
 
+    # 安全分类请求（classifier）关闭 thinking，加速响应。
+    # 仅对 Claude Code 来源生效（_is_claude_code 校验请求头），结构启发式识别。
+    # 关键路径日志：命中记 info；Claude Code 来源但非 candidate 记 debug，
+    # 用于观测形态变化（防静默失效）；非 Claude Code 来源记 debug。
+    if _is_claude_code(request.headers):
+        if _is_classifier_candidate(request_body):
+            _inject_classifier_disabled(request_body, api_format)
+            body_bytes = json.dumps(request_body).encode()
+            logger.info(
+                json.dumps(
+                    {
+                        "msg": "classifier_thinking_disabled",
+                        "model": request_body.get("model", ""),
+                        "messages": len(request_body.get("messages", [])),
+                        "api_format": api_format,
+                    }
+                )
+            )
+        else:
+            logger.debug(
+                json.dumps(
+                    {
+                        "msg": "classifier_check_skip",
+                        "model": request_body.get("model", ""),
+                        "stream": request_body.get("stream"),
+                        "tools": len(request_body.get("tools", [])),
+                        "messages": len(request_body.get("messages", [])),
+                    }
+                )
+            )
+    else:
+        logger.debug("classifier_source_not_claude")
+
     # System prompt 注入：从 System_Prompts.md 读取并追加（无缓存）
     injected = _inject_system_prompt(request_body)
     if injected is not None:
@@ -914,133 +984,157 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
     start_time = time.monotonic()
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.request(
-                method=request.method,
-                url=upstream,
-                headers=headers,
-                data=body_bytes,
-                timeout=aiohttp.ClientTimeout(
-                    total=120,
-                    sock_connect=10,
-                    sock_read=30,
-                ),
-            ) as upstream_resp:
-                latency_ms = int((time.monotonic() - start_time) * 1000)
+    # 503 瞬时重试：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"），
+    # 命中 Claude Code 的 classifier 调用时会导致 Bash 被拦截。等待后重试，最多 3 次。
+    RETRY_MAX = 2  # 额外重试次数
+    RETRY_DELAY = 0.5  # 重试间隔（秒）
+    for attempt in range(RETRY_MAX + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.request(
+                    method=request.method,
+                    url=upstream,
+                    headers=headers,
+                    data=body_bytes,
+                    timeout=aiohttp.ClientTimeout(
+                        total=300,
+                        sock_connect=10,
+                        sock_read=30,
+                    ),
+                ) as upstream_resp:
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
 
-                # 流式转发响应
-                response = web.StreamResponse(
-                    status=upstream_resp.status,
-                    headers={
-                        k: v
-                        for k, v in upstream_resp.headers.items()
-                        if k.lower() not in {"transfer-encoding", "content-encoding"}
-                    },
-                )
-                await response.prepare(request)
-
-                # 收集 SSE chunks 以提取 usage
-                collected_body = bytearray()
-                is_sse = "text/event-stream" in upstream_resp.headers.get(
-                    "content-type", ""
-                )
-                # 流中断时的异常信息，供 record_usage 记录
-                stream_error = ""
-
-                try:
-                    async for chunk in upstream_resp.content.iter_any():
-                        await response.write(chunk)
-                        if is_sse:
-                            collected_body.extend(chunk)
-                except (
-                    ConnectionResetError,
-                    BrokenPipeError,
-                    RuntimeError,
-                    asyncio.CancelledError,
-                ):
-                    # 客户端已断开连接或 transport 关闭，停止转发
-                    stream_error = f"{type(e).__name__}: {e}"
-
-                await response.write_eof()
-
-                # 从 SSE 流中提取最后一个 chunk 的 usage 和输出内容
-                if is_sse and collected_body:
-                    sse_bytes = bytes(collected_body)
-                    usage_data = _extract_usage_from_sse(
-                        sse_bytes, api_format=api_format
-                    )
-                    output_preview = _extract_output_from_sse(
-                        sse_bytes, api_format=api_format
-                    )
-                    tool_name = _extract_tool_name_from_sse(
-                        sse_bytes, api_format=api_format
-                    )
-                    if usage_data:
-                        # 补充 model：部分 API 的 SSE 响应不含 model 字段
-                        if not usage_data.get("model"):
-                            usage_data["model"] = request_body.get("model", "unknown")
-                        # 提取错误信息（优先流中断异常，其次上游 error body）
-                        error_message = stream_error
-                        if not error_message and upstream_resp.status >= 400:
-                            try:
-                                error_body = json.loads(
-                                    sse_bytes.decode("utf-8", errors="replace")
-                                )
-                                if "error" in error_body:
-                                    error_data = error_body["error"]
-                                    if isinstance(error_data, dict):
-                                        error_message = error_data.get(
-                                            "message", str(error_data)
-                                        )
-                                    else:
-                                        error_message = str(error_data)
-                            except (json.JSONDecodeError, UnicodeDecodeError):
-                                pass
-                        asyncio.create_task(
-                            record_usage(
-                                request_body,
-                                usage_data,
-                                upstream_resp.status,
-                                latency_ms,
-                                output_preview,
-                                error_message,
-                                tool_name_override=tool_name,
-                                api_format=api_format,
+                    # 上游瞬时 503：放弃本次连接，等待后重试
+                    if upstream_resp.status == 503 and attempt < RETRY_MAX:
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "msg": "proxy_retry",
+                                    "path": f"/open/{path}",
+                                    "attempt": attempt + 1,
+                                    "latency_ms": latency_ms,
+                                    "model": request_body.get("model", ""),
+                                }
                             )
                         )
+                        await asyncio.sleep(RETRY_DELAY)
+                        continue
 
-                logger.info(
-                    json.dumps(
-                        {
-                            "msg": "proxy_request",
-                            "method": request.method,
-                            "path": f"/open/{path}",
-                            "status": upstream_resp.status,
-                            "latency_ms": latency_ms,
-                            "model": request_body.get("model", ""),
-                        }
+                    # 流式转发响应
+                    response = web.StreamResponse(
+                        status=upstream_resp.status,
+                        headers={
+                            k: v
+                            for k, v in upstream_resp.headers.items()
+                            if k.lower()
+                            not in {"transfer-encoding", "content-encoding"}
+                        },
                     )
+                    await response.prepare(request)
+
+                    # 收集 SSE chunks 以提取 usage
+                    collected_body = bytearray()
+                    is_sse = "text/event-stream" in upstream_resp.headers.get(
+                        "content-type", ""
+                    )
+                    # 流中断时的异常信息，供 record_usage 记录
+                    stream_error = ""
+
+                    try:
+                        async for chunk in upstream_resp.content.iter_any():
+                            await response.write(chunk)
+                            if is_sse:
+                                collected_body.extend(chunk)
+                    except (
+                        ConnectionResetError,
+                        BrokenPipeError,
+                        RuntimeError,
+                        asyncio.CancelledError,
+                    ) as e:
+                        # 客户端已断开连接或 transport 关闭，停止转发
+                        stream_error = f"{type(e).__name__}: {e}"
+
+                    await response.write_eof()
+
+                    # 从 SSE 流中提取最后一个 chunk 的 usage 和输出内容
+                    if is_sse and collected_body:
+                        sse_bytes = bytes(collected_body)
+                        usage_data = _extract_usage_from_sse(
+                            sse_bytes, api_format=api_format
+                        )
+                        output_preview = _extract_output_from_sse(
+                            sse_bytes, api_format=api_format
+                        )
+                        tool_name = _extract_tool_name_from_sse(
+                            sse_bytes, api_format=api_format
+                        )
+                        if usage_data:
+                            # 补充 model：部分 API 的 SSE 响应不含 model 字段
+                            if not usage_data.get("model"):
+                                usage_data["model"] = request_body.get(
+                                    "model", "unknown"
+                                )
+                            # 提取错误信息（优先流中断异常，其次上游 error body）
+                            error_message = stream_error
+                            if not error_message and upstream_resp.status >= 400:
+                                try:
+                                    error_body = json.loads(
+                                        sse_bytes.decode("utf-8", errors="replace")
+                                    )
+                                    if "error" in error_body:
+                                        error_data = error_body["error"]
+                                        if isinstance(error_data, dict):
+                                            error_message = error_data.get(
+                                                "message", str(error_data)
+                                            )
+                                        else:
+                                            error_message = str(error_data)
+                                except (json.JSONDecodeError, UnicodeDecodeError):
+                                    pass
+                            asyncio.create_task(
+                                record_usage(
+                                    request_body,
+                                    usage_data,
+                                    upstream_resp.status,
+                                    latency_ms,
+                                    output_preview,
+                                    error_message,
+                                    tool_name_override=tool_name,
+                                    api_format=api_format,
+                                )
+                            )
+
+                    logger.info(
+                        json.dumps(
+                            {
+                                "msg": "proxy_request",
+                                "method": request.method,
+                                "path": f"/open/{path}",
+                                "status": upstream_resp.status,
+                                "latency_ms": latency_ms,
+                                "model": request_body.get("model", ""),
+                            }
+                        )
+                    )
+
+                    return response
+
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+            logger.error(
+                json.dumps(
+                    {
+                        "msg": "proxy_error",
+                        "path": f"/open/{path}",
+                        "error": str(e),
+                        "latency_ms": latency_ms,
+                    }
                 )
-
-                return response
-
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-        logger.error(
-            json.dumps(
-                {
-                    "msg": "proxy_error",
-                    "path": f"/open/{path}",
-                    "error": str(e),
-                    "latency_ms": latency_ms,
-                }
             )
-        )
-        return web.json_response(
-            {"error": f"upstream_error: {e}"},
-            status=502,
-        )
+            return web.json_response(
+                {"error": f"upstream_error: {e}"},
+                status=502,
+            )
 
 
 def _extract_usage_from_sse(
