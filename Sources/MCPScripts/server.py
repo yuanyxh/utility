@@ -109,7 +109,7 @@ SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
 TOOL_DEFAULTS: dict[str, str] = {
-    "remember": "用户说「记住/记录」、bug 修复完成或有关键发现 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
+    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
     "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
     "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
@@ -2444,6 +2444,22 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
                 text=json.dumps({"error": "path escapes the skill directory"}),
             )
         ]
+    # symlink 防护：normpath 只挡语法层 ../，不解析 symlink。
+    # 解析真实路径后仍须位于 skill 目录真实路径内，防 skill 附属目录内
+    # symlink 指向外部文件造成信息泄露。读取统一用 real_full（已解析），
+    # 避免校验后到 open 之间二次跟随（TOCTOU）。
+    real_skill = os.path.realpath(skill_dir)
+    real_full = os.path.realpath(full)
+    if real_full != real_skill and not real_full.startswith(real_skill + os.sep):
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {"error": "path escapes the skill directory via symlink"}
+                ),
+            )
+        ]
+    full = real_full
     if not os.path.isfile(full):
         return [
             TextContent(
