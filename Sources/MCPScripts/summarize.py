@@ -8,11 +8,12 @@
 
 流程：
 1. 从 mino-brain REST API 获取过去 3 天记忆
-2. 扫描笔记目录结构（排除 SaveWebPages/Self_Data/Works/Works_Jobs）
-3. LLM 去重/筛选/按现有目录结构分类（严格基于记忆事实，禁止编造）
+2. 阶段1 聚合：分批 LLM 按主题分类/合并去重/retain 评估（think disabled，带时间线演进），递归合并至收敛
+3. 阶段2 精炼：逐组提炼关键词 → 本地检索 Extracts → 判断归并已有笔记/新建 → think enable 生成正文
 4. 写入 Markdown（同标题 H1 段合并去重，异标题末尾新增一节）
 5. 同步写入冷层 Qdrant（按内容哈希去重，通过 REST API）
-6. 异常 → 写入流水线错误日志
+6. 阶段3 规范提炼 → MCP/Skills/Rules/*.md
+7. 异常 → 写入流水线错误日志；阶段2 单组失败不中断整体
 
 防重复触发：
 - 单实例文件锁：同一时刻只允许一个实例运行
@@ -74,11 +75,21 @@ SUMMARY_LLM_RETRIES = 3
 SUMMARY_API_TIMEOUT = 10
 SUMMARY_GIT_TIMEOUT = 30
 
-# ── 阶段1 记忆聚合（先分类/合并/去重，再走原总结逻辑） ──
-AGGREGATE_BATCH_THRESHOLD = 120  # 记忆条数超过此值分批聚合
-AGGREGATE_BATCH_SIZE = 120  # 每批条数
+# ── 阶段1 记忆聚合（先分类/合并/去重/时间线，递归收敛） ──
+AGGREGATE_BATCH_THRESHOLD = 60  # 记忆条数超过此值分批聚合
+AGGREGATE_BATCH_SIZE = 60  # 每批条数
 AGGREGATE_LLM_TEMPERATURE = 0.2  # 聚合允许归纳，比生成略高
 AGGREGATE_LLM_TIMEOUT = 120
+AGGREGATE_MAX_ROUNDS = 3  # 递归合并最大轮数（组数单调不增，必然收敛）
+
+# ── 阶段2 检索驱动逐组精炼（关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成） ──
+SUMMARY_KEYWORD_MAX_TOKENS = 8192  # 关键词提炼
+SUMMARY_JUDGE_MAX_TOKENS = 8192  # 归并判断
+SUMMARY_GEN_MAX_TOKENS = 16384  # 最终生成（正文较长）
+SUMMARY_SEARCH_LIMIT = 5  # 检索返回命中上限
+SEARCH_MIN_TOKEN_LEN = 2  # 关键词最小长度，过滤通配词
+SUMMARY_KEYWORD_COUNT = 8  # 关键词数量上限
+SUMMARY_MERGE_CONTEXT_CHARS = 2000  # 归并判断/生成时截取上下文长度
 
 # ── 数据目录（脚本自身状态也放这里，与 Swift 数据同目录） ──
 UTILITY_DATA_DIR = Path(
@@ -145,7 +156,11 @@ def _acquire_single_instance() -> bool:
 
 
 def _throttle_ai_run() -> bool:
-    """距上次完整总结不足 MIN_RUN_INTERVAL 时返回 False（防重复触发）。"""
+    """距上次完整总结不足 MIN_RUN_INTERVAL 时返回 False（防重复触发）。
+
+    只读判断，不更新 last_run——只有总结成功完成后才由 _mark_run_success()
+    记录时间，避免「运行开始即写」导致失败后 6h 窗口内无法重试。
+    """
     try:
         UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
         now = time.time()
@@ -157,10 +172,18 @@ def _throttle_ai_run() -> bool:
                 f"距上次总结不足 {MIN_RUN_INTERVAL // 3600} 小时，跳过（防重复触发）"
             )
             return False
-        LAST_RUN_FILE.write_text(str(now))
         return True
     except Exception:
         return True
+
+
+def _mark_run_success() -> None:
+    """总结成功完成后记录 last_run，开启新一轮防重复冷却。"""
+    try:
+        UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_RUN_FILE.write_text(str(time.time()))
+    except Exception:
+        pass
 
 
 def _cold_already_synced(content: str, source_file: str) -> bool:
@@ -329,22 +352,36 @@ def git_commit(message: str, stage: str = ""):
 
 
 def _llm_chat(
-    prompt: str, temperature: float | None = None, timeout: float | None = None
+    prompt: str,
+    temperature: float | None = None,
+    timeout: float | None = None,
+    max_tokens: int | None = None,
+    disable_thinking: bool = False,
 ) -> str | None:
     try:
+        body = {
+            "model": SUMMARY_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": (
+                temperature if temperature is not None else SUMMARY_LLM_TEMPERATURE
+            ),
+        }
+        # 聚合/文章生成等输出较大的阶段显式放宽 max_tokens，
+        # 否则 LLM 默认 4096 截断导致 JSON 解析失败（AGGREGATE_JSON 根因）
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        # deepseek-v4-flash 为推理模型：长 prompt 下 thinking 思考会吃光
+        # max_tokens，content 为空 → JSON 解析失败。聚合/生成阶段关思考，
+        # 让输出 token 全部用于 content（实测 thinking disabled + 16384 完整输出）
+        if disable_thinking:
+            body["thinking"] = {"type": "disabled"}
         resp = _HTTP.post(
             f"{SUMMARY_API_URL}/chat/completions",
             headers={
                 "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": SUMMARY_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": (
-                    temperature if temperature is not None else SUMMARY_LLM_TEMPERATURE
-                ),
-            },
+            json=body,
             timeout=timeout if timeout is not None else SUMMARY_LLM_TIMEOUT,
         )
         resp.raise_for_status()
@@ -372,7 +409,46 @@ def _parse_json_any(raw: str) -> dict | None:
         try:
             return json.loads(fixed, strict=False)
         except json.decoder.JSONDecodeError:
-            return None
+            # LLM 复制原文时可能把英文双引号原样带进字符串值且未转义 → 转义后重试
+            quoted = _escape_inline_quotes(fixed)
+            try:
+                return json.loads(quoted, strict=False)
+            except json.decoder.JSONDecodeError:
+                return None
+
+
+def _escape_inline_quotes(s: str) -> str:
+    """把字符串值内未转义的裸引号转义为 \\"（键结束/值结束引号不受影响）。"""
+    out = []
+    in_str = False
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if in_str:
+            if c == "\\":
+                out.append(c)
+                if i + 1 < n:
+                    out.append(s[i + 1])
+                    i += 2
+                    continue
+            elif c == '"':
+                j = i + 1
+                while j < n and s[j] in " \t":
+                    j += 1
+                if j < n and s[j] in ",}]:":
+                    in_str = False
+                    out.append(c)
+                else:
+                    out.append('\\"')
+            else:
+                out.append(c)
+        else:
+            if c == '"':
+                in_str = True
+            out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def fetch_memories(today: date) -> list | None:
@@ -393,11 +469,32 @@ def fetch_memories(today: date) -> list | None:
         return None
 
 
-def _build_facts_text(memories: list[dict]) -> str:
+def _memory_date(m: dict) -> str:
+    """从记忆条目提取 MM-DD 日期；优先 created_at（服务端 recent 端点已用其过滤排序），
+    缺键/异常返回空串。"""
+    raw = m.get("created_at") or m.get("updated_at") or ""
+    return raw[5:10] if len(raw) >= 10 else ""
+
+
+def _build_facts_text_v2(memories: list[dict]) -> str:
     # 记忆项正文在 `memory` 键（REST API 返回），`content` 键不存在 → 读错会拿到空
+    # 英文双引号归一化为中文引号（成对交替左右）：LLM 复制原文时会把裸引号带进
+    # JSON 字符串值且不转义，导致下游 _parse_json_any 解析失败（2026-08-05 实测）
+    def _clean(text: str) -> str:
+        out = []
+        open_q = True
+        for ch in text:
+            if ch == '"':
+                out.append("“" if open_q else "”")
+                open_q = not open_q
+            else:
+                out.append(ch)
+        return "".join(out)
+
     return "\n".join(
         f"- [{','.join(m.get('metadata', {}).get('tags', []))}] "
-        f"{m.get('memory') or m.get('content') or ''}"
+        f"[{_memory_date(m) or '日期未知'}] "
+        f"{_clean(m.get('memory') or m.get('content') or '')}"
         for m in memories
     )
 
@@ -424,12 +521,89 @@ def _list_extract_summaries() -> list[str]:
     return entries
 
 
-def _run_aggregate(memories: list[dict]) -> list[dict] | None:
-    """阶段1：将原始记忆按主题分类、组内合并去重、丢弃一次性临时信息。
+def _aggregate_round(
+    facts_text: str, label: str
+) -> tuple[list[dict] | None, str | None]:
+    """单轮聚合：把记忆事实按主题分类/组内合并去重/retain 评估，返回 (groups, raw)。
 
-    返回 [{"topic", "facts", "tags"}, ...]，每组对应一篇后续笔记。
-    超过 AGGREGATE_BATCH_THRESHOLD 条时按 AGGREGATE_BATCH_SIZE 分批聚合，
-    分批后对 topic 相同/相近的组再做一次跨批合并。
+    label 用于日志区分「分批」与「递归合并轮」。LLM 输出无效（重试 1 次后仍失败）
+    时返回 (None, raw)，由调用方决定中断（首轮）或保留当前结果继续（递归轮）。
+    """
+    prompt = f"""\
+你正在对一批记忆事实做聚合预处理：按主题分类、组内合并去重、丢弃无长期价值的一次性信息。
+
+记忆事实{label}：
+{facts_text}
+
+### 要求
+
+1. **按主题分组**：语义相近/同一主题的事实归为同一组
+2. **组内合并去重**：同一件事的重复/相似记录合并为一条连贯文本，不要重复罗列
+3. **时间线演进**：同一主题跨多日的记忆，按时间先后组织进 facts（先发生在前），体现「先 A、后改成 B」的演变轨迹；内容发生变化时保留演变过程而非只留最终状态
+4. **关键节点标日期**：根因判定、方案选型、决策、修复完成等关键节点在 facts 中标注日期，如（8/3 首次发现，8/5 确认根因）
+5. **评估沉淀价值（retain）**：每组判断是否值得沉淀为长期知识笔记——
+   - **retain=true**：含可长期复用的知识，如技术方案、架构决策、踩坑与解决办法、可复用的经验结论
+   - **retain=false**：纯临时工作记录，如任务编号流水、无细节的单条调研痕迹、过程性碎片（"对 X 做了调研""讨论了 Y"）、几天后即无意义的中间态
+   - **宁可遗漏，不要产出临时记录**
+6. **丢弃一次性信息**：临时状态、过时配置、纯日志类碎片不进入分组
+7. **主题要具体**：如 "蓝牙打印机 SDK 集成" 而非 "打印"
+8. **只保留记忆中出现的信息**：禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
+9. **facts 完整度**：必须包含该主题全部记忆条目中的所有可复用细节，特别是文件路径、组件/接口名、参数名、判断条件、报错信息等定位信息，不得因分组而丢弃
+
+返回 JSON：{{"groups": [{{"topic": "具体主题", "facts": "合并去重后按时间组织的事实文本", "tags": ["标签"], "retain": true}}]}}
+没有有效内容时返回 {{"groups": []}}。
+只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    parsed = None
+    raw = None
+    for attempt in range(2):  # 失败重试 1 次（LLM 偶发输出不完整/非 JSON）
+        raw = _llm_chat(
+            prompt,
+            temperature=AGGREGATE_LLM_TEMPERATURE,
+            timeout=AGGREGATE_LLM_TIMEOUT,
+            max_tokens=16384,
+            disable_thinking=True,
+        )
+        parsed = _parse_json_any(raw) if raw else None
+        if parsed:
+            break
+        logger.warning(
+            f"聚合{label} 第 {attempt + 1} 次尝试无效"
+            + ("，重试" if attempt == 0 else "，放弃")
+        )
+    if not parsed:
+        return None, raw
+    return parsed.get("groups", []) or [], raw
+
+
+def _groups_to_facts(groups: list[dict]) -> str:
+    """把已聚合 groups 转回事实文本，供递归合并轮再次聚合。"""
+    return "\n".join(
+        f"- [{','.join(g.get('tags', []) or [])}] "
+        f"{g.get('topic', '')}：{g.get('facts', '')}"
+        for g in groups
+    )
+
+
+def _filter_retain(groups: list[dict]) -> list[dict]:
+    """只保留有长期沉淀价值的组（retain=true）；缺失时按 false 处理（宁缺毋滥）。"""
+    retained = []
+    for g in groups:
+        if g.get("retain") not in (True, "true", "True"):
+            logger.info(f"聚合丢弃无沉淀价值组：{g.get('topic', '')!r}")
+            continue
+        if not str(g.get("facts", "")).strip():
+            continue
+        retained.append(g)
+    return retained
+
+
+def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
+    """阶段1 v2：分批聚合 → 跨批合并 → retain 过滤 → 递归合并直至收敛。
+
+    返回 (groups, rounds)：groups 为 None 仅表示首轮致命失败（中断）；
+    rounds 为实际执行的递归轮数（不含首轮分批）。递归只合并不拆散、
+    组数单调不增，故 ≤ AGGREGATE_MAX_ROUNDS 必然收敛；递归轮失败保留
+    当前结果继续（非致命）。
     """
     batches: list[list[dict]] = []
     if len(memories) > AGGREGATE_BATCH_THRESHOLD:
@@ -440,67 +614,42 @@ def _run_aggregate(memories: list[dict]) -> list[dict] | None:
 
     groups: list[dict] = []
     for bi, batch in enumerate(batches):
-        facts_text = _build_facts_text(batch)
+        facts_text = _build_facts_text_v2(batch)
         batch_label = f"（{bi + 1}/{len(batches)} 批）" if len(batches) > 1 else ""
-
-        prompt = f"""\
-你正在对一批记忆事实做聚合预处理：按主题分类、组内合并去重、丢弃无长期价值的一次性信息。
-
-记忆事实{batch_label}：
-{facts_text}
-
-### 要求
-
-1. **按主题分组**：语义相近/同一主题的事实归为同一组
-2. **组内合并去重**：同一件事的重复/相似记录合并为一条连贯文本，不要重复罗列
-3. **评估沉淀价值（retain）**：每组判断是否值得沉淀为长期知识笔记——
-   - **retain=true**：含可长期复用的知识，如技术方案、架构决策、踩坑与解决办法、可复用的经验结论
-   - **retain=false**：纯临时工作记录，如任务编号流水、无细节的单条调研痕迹、过程性碎片（"对 X 做了调研""讨论了 Y"）、几天后即无意义的中间态
-   - **宁可遗漏，不要产出临时记录**
-4. **丢弃一次性信息**：临时状态、过时配置、纯日志类碎片不进入分组
-5. **主题要具体**：如 "蓝牙打印机 SDK 集成" 而非 "打印"
-6. **只保留记忆中出现的信息**：禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
-
-返回 JSON：{{"groups": [{{"topic": "具体主题", "facts": "合并去重后的事实文本", "tags": ["标签"], "retain": true}}]}}
-没有有效内容时返回 {{"groups": []}}。
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-        raw = _llm_chat(
-            prompt,
-            temperature=AGGREGATE_LLM_TEMPERATURE,
-            timeout=AGGREGATE_LLM_TIMEOUT,
-        )
-        if not raw:
+        batch_groups, raw = _aggregate_round(facts_text, batch_label)
+        if batch_groups is None:
             write_error_log(
-                f"聚合批 {bi + 1}/{len(batches)} LLM 调用失败", code="AGGREGATE_LLM"
-            )
-            return None
-        parsed = _parse_json_any(raw)
-        if not parsed:
-            write_error_log(
-                f"聚合批 {bi + 1}/{len(batches)} JSON 解析错误：\n{raw[:1000]}",
+                f"聚合批 {bi + 1}/{len(batches)} LLM 输出无效（重试后仍失败）：\n{(raw or '')[:1000]}",
                 code="AGGREGATE_JSON",
             )
-            return None
-        groups.extend(parsed.get("groups", []) or [])
+            return None, 0
+        groups.extend(batch_groups)
 
     if not groups:
         print("聚合无有效主题，跳过总结")
-        return []
+        return [], 0
 
     # 分批聚合时跨批二次合并：topic 相同/相近的组收敛为一组
     if len(batches) > 1:
         groups = _merge_cross_batch_groups(groups)
 
-    # 只保留有长期沉淀价值的组（retain=true）；缺失时按 false 处理（宁缺毋滥）
-    retained = []
-    for g in groups:
-        if g.get("retain") not in (True, "true", "True"):
-            logger.info(f"聚合丢弃无沉淀价值组：{g.get('topic', '')!r}")
-            continue
-        if not str(g.get("facts", "")).strip():
-            continue
-        retained.append(g)
-    return retained
+    # 递归合并：组数不再减少即收敛；最多 AGGREGATE_MAX_ROUNDS 轮
+    rounds = 0
+    for rnd in range(1, AGGREGATE_MAX_ROUNDS + 1):
+        prev_len = len(groups)
+        round_groups, _raw = _aggregate_round(
+            _groups_to_facts(groups), f"（第 {rnd} 轮递归合并）"
+        )
+        if round_groups is None:
+            logger.warning(f"递归合并第 {rnd} 轮失败，保留当前分组继续")
+            break
+        groups = round_groups
+        rounds = rnd
+        logger.info(f"聚合收敛：第 {rnd} 轮 {prev_len} → {len(groups)} 组")
+        if len(groups) >= prev_len:
+            break
+
+    return _filter_retain(groups), rounds
 
 
 def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
@@ -515,12 +664,16 @@ def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
 记忆组：
 {entries}
 
-返回 JSON：{{"groups": [{{"topic": "合并后主题", "facts": "合并后的完整事实文本", "tags": ["标签"], "retain": true}}]}}
+要求：合并后 facts 按时间线组织（先发生在前），同一主题跨批演进时保留演变过程、关键节点保留日期标注。
+
+返回 JSON：{{"groups": [{{"topic": "合并后主题", "facts": "合并后按时间组织的完整事实文本", "tags": ["标签"], "retain": true}}]}}
 只返回严格标准的 JSON 对象，不要代码块包裹。"""
     raw = _llm_chat(
         prompt,
         temperature=AGGREGATE_LLM_TEMPERATURE,
         timeout=AGGREGATE_LLM_TIMEOUT,
+        max_tokens=16384,
+        disable_thinking=True,
     )
     if not raw:
         logger.warning("跨批二次合并 LLM 调用失败，保留原分组")
@@ -532,153 +685,351 @@ def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
     return parsed["groups"]
 
 
-def _run_phase1(groups: list[dict], dir_tree: str) -> list[dict] | None:
-    existing = _list_extract_summaries()
-    existing_block = "\n".join(existing) if existing else "(暂无已有笔记)"
-    groups_block = "\n".join(
-        f"- [{i}] {g.get('topic', '')}：{g.get('facts', '')[:120]}"
-        for i, g in enumerate(groups)
-    )
+def _llm_json(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float | None = None,
+    timeout: float | None = None,
+    disable_thinking: bool = False,
+) -> dict | None:
+    """think enable 输出 JSON；解析失败自动降级 disable_thinking 重试一次。
 
+    返回解析成功的 dict；两次都失败返回 None。disable_thinking=True 时全程禁用。
+    """
+    for attempt in range(2):
+        raw = _llm_chat(
+            prompt,
+            temperature=temperature,
+            timeout=timeout,
+            max_tokens=max_tokens,
+            disable_thinking=(disable_thinking or attempt > 0),
+        )
+        if raw:
+            parsed = _parse_json_any(raw)
+            if parsed:
+                return parsed
+        if attempt == 0:
+            logger.warning("JSON 输出解析失败，降级 disable_thinking 重试一次")
+    return None
+
+
+def _extract_keywords(group: dict) -> list[str]:
+    """提炼组主题的检索关键词（3-8 个名词性词）。失败返回 []。"""
+    facts = str(group.get("facts", ""))[:SUMMARY_MERGE_CONTEXT_CHARS]
     prompt = f"""\
-你正在将过去 3 天的记忆事实整理为高质量的详细知识笔记。
+从以下记忆主题中提炼 3-{SUMMARY_KEYWORD_COUNT} 个用于检索知识库的关键词。
 
-以下为已按主题聚合的记忆组（每组对应一篇笔记，请每组独立成篇，不要合并组）：
-{groups_block}
+主题：{group.get('topic', '')}
+相关事实：
+{facts}
+
+要求：
+1. 名词性关键词：专有名词、项目名、技术栈、库名、主题中心词
+2. 每个关键词 ≥{SEARCH_MIN_TOKEN_LEN} 字符
+3. 避免「记忆」「总结」「问题」「修复」「开发」等通配词
+4. 用具体词而非描述句
+5. 数量 3-{SUMMARY_KEYWORD_COUNT} 个
+
+返回 JSON：{{"keywords": ["关键词1", "关键词2", ...]}}
+只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    parsed = _llm_json(prompt, max_tokens=SUMMARY_KEYWORD_MAX_TOKENS)
+    if not parsed:
+        return []
+    kws = parsed.get("keywords") or []
+    if isinstance(kws, str):
+        kws = re.split(r"[、,，]", kws)
+    out = []
+    for k in kws:
+        s = str(k).strip()
+        if len(s) >= SEARCH_MIN_TOKEN_LEN:
+            out.append(s)
+    return out[:SUMMARY_KEYWORD_COUNT]
+
+
+def _make_snippet(text: str, keyword: str) -> str:
+    """取关键词首次命中处前后 ~60 字符作检索摘要。"""
+    idx = text.lower().find(keyword.lower())
+    if idx == -1:
+        return text[:120]
+    start = max(0, idx - 60)
+    end = min(len(text), idx + len(keyword) + 60)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return f"{prefix}{text[start:end].strip()}{suffix}"
+
+
+def search_extracts(
+    keywords: list[str], limit: int = SUMMARY_SEARCH_LIMIT
+) -> list[dict]:
+    """在 EXTRACTS_DIR 内按关键词子串匹配检索（纯本地，零外部依赖）。
+
+    冷层向量库 ≠ Extracts 全文（冷层只含每次 summarize 同步的聚合条目），
+    且 Qdrant local 有排他锁，summarize 独立进程不能直连——故检索用纯
+    Python 大小写不敏感子串匹配。返回按命中关键词数降序的前 limit 条
+    [{"rel_path", "snippet", "matched", "score"}]。
+    """
+    if not keywords or not EXTRACTS_DIR.exists():
+        return []
+    kws = [k for k in keywords if k]
+    hits: list[dict] = []
+    for f in sorted(EXTRACTS_DIR.rglob("*.md")):
+        if any(part.startswith(".") for part in f.relative_to(EXTRACTS_DIR).parts):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        low = text.lower()
+        matched = [k for k in kws if k.lower() in low]
+        if not matched:
+            continue
+        hits.append(
+            {
+                "rel_path": str(f.relative_to(EXTRACTS_DIR)),
+                "snippet": _make_snippet(text, matched[0]),
+                "matched": matched,
+                "score": len(matched),
+            }
+        )
+    hits.sort(key=lambda h: h["score"], reverse=True)
+    return hits[:limit]
+
+
+def _existing_extract_tops() -> set[str]:
+    """Extracts 现有顶层目录名集合（供目录白名单/LLM 提示复用）。"""
+    if not EXTRACTS_DIR.exists():
+        return set()
+    return {d.name for d in EXTRACTS_DIR.iterdir() if d.is_dir()}
+
+
+def _dir_excluded(dir_name: str) -> bool:
+    """目录路径任一层命中排除目录（notes 根的手写区）。"""
+    return any(p in SUMMARY_EXCLUDE_DIRS for p in Path(dir_name).parts)
+
+
+def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
+    """判断该组应归并到已有笔记还是新建。
+
+    无命中返回 None（直接新建）；有命中返回 {"action", "target"(相对Extracts), "reason"}。
+    判断 JSON 失败（降级后仍 None）→ 兜底 merge 到 hits[0] 并写 REFINE_JUDGE_JSON 日志。
+    """
+    if not hits:
+        return None
+
+    facts = str(group.get("facts", ""))[:SUMMARY_MERGE_CONTEXT_CHARS]
+    candidates = "\n".join(
+        f"- [{i}] {h['rel_path']}：{h['snippet'][:120]}" for i, h in enumerate(hits)
+    )
+    prompt = f"""\
+判断以下记忆主题是否应该归并到已有的知识笔记中。
+
+待沉淀主题：{group.get('topic', '')}
+相关事实：
+{facts}
+
+已有笔记候选（检索命中，按相关度降序）：
+{candidates}
+
+判定标准：
+1. **归并（action=merge）**：已有笔记与当前主题高度相关——同技术栈/同项目/同一件事的持续演进
+2. **新建（action=new）**：仅沾边/命中通用词，或本质是新主题，强行归并会污染已有笔记
+3. 多命中时选最相关的一个 target；内容演进/冲突仍可归并（reason 注明）
+4. target 必须是上方候选列表中的 rel_path，不要臆造路径
+
+返回 JSON：{{"action": "merge" 或 "new", "target": "相对Extracts的md路径（merge时）", "reason": "一句话理由"}}
+只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    parsed = _llm_json(prompt, max_tokens=SUMMARY_JUDGE_MAX_TOKENS)
+    if parsed:
+        action = str(parsed.get("action", "")).strip().lower()
+        if action == "merge":
+            target = str(parsed.get("target", "")).strip()
+            t = (EXTRACTS_DIR / target).resolve()
+            if (
+                target.endswith(".md")
+                and t.is_file()
+                and EXTRACTS_DIR.resolve() in t.parents
+                and not _dir_excluded(str(t.relative_to(EXTRACTS_DIR)))
+            ):
+                return {
+                    "action": "merge",
+                    "target": target,
+                    "reason": str(parsed.get("reason", "")),
+                }
+            logger.warning(f"归并目标 {target!r} 非法/不存在，回退为新建")
+            return {"action": "new", "target": "", "reason": "judge target 非法"}
+        return {"action": "new", "target": "", "reason": str(parsed.get("reason", ""))}
+
+    # 判断失败（降级后仍 None）→ 兜底 merge 到最相关命中，比乱建好
+    write_error_log(
+        f"归并判断 JSON 失败，兜底归并到 {hits[0]['rel_path']}"
+        f"（topic={group.get('topic', '')!r}）",
+        code="REFINE_JUDGE_JSON",
+    )
+    return {
+        "action": "merge",
+        "target": hits[0]["rel_path"],
+        "reason": "judge 失败兜底",
+    }
+
+
+def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None:
+    """think enable 生成新建文章：{"dir", "title", "content"}。失败返回 None。"""
+    facts = str(group.get("facts", ""))
+    tops_block = "、".join(sorted(existing_tops)) if existing_tops else "（空）"
+    prompt = f"""\
+将以下记忆事实整理为一篇高质量知识笔记（新建文件）。
+
+待沉淀主题：{group.get('topic', '')}
+相关事实：
+{facts}
 
 现有笔记目录结构：
 {dir_tree}
 
-已有知识笔记（标题+首行摘要，用于判断是否复用已有文件）：
-{existing_block}
+现有顶层目录：{tops_block}
 
 ### 要求
 
-1. **宁缺毋滥**：输入组虽经价值评估，但若某组主题仍是临时工作记录或信息量不足以成篇，直接忽略该组，不要为其创建写入目标；产出 0 篇是可接受的结果
-2. **每组独立成篇**：每个记忆组生成一个写入目标，不要合并不同组
-3. **只保留有长期价值的内容**，丢弃一次性/临时状态碎片信息
-4. **根据现有目录结构**决定存放目录（目录路径相对于笔记根目录）：目录必须复用已有目录，或与已有目录同级的新顶层目录，禁止随意嵌套多级新目录
-5. **标题要具体**，如 "UTSJSONObject null 安全访问" 而非 "UTSJSONObject 坑"
-6. **优先复用已有知识笔记**：如果已有笔记与当前主题相关（标题或摘要相关），使用相同的 dir 和 title 使内容合并到同一文件，不要为相同主题另建新文件
+1. **严格基于相关事实写作**：只使用其中出现的信息，禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
+2. 记忆事实未提供的细节不要补造，宁可缺省也不虚构
+3. **时间线演进**：事实含跨日演进时按时间组织，关键节点保留日期标注（如 8/3 首次发现，8/5 确认根因）
+4. **目录（dir）**：复用现有顶层目录，或新建单层顶层目录；禁止嵌套多级新目录；禁止使用 {sorted(SUMMARY_EXCLUDE_DIRS)} 作为目录
+5. **标题（title）**：具体，如 "UTSJSONObject null 安全访问" 而非 "UTSJSONObject 坑"
+6. 篇幅 150-500 字，事实密度优先，不要空泛
+7. 正文不需要 # 标题行（脚本会写）
 
-返回 JSON：{{"writes": [{{"group_index": 记忆组序号, "dir": "相对目录路径", "title": "具体的标题"}}]}}
-没有有效内容时返回 {{}}。
+返回 JSON：{{"dir": "相对目录路径", "title": "具体标题", "content": "Markdown 正文"}}
 只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    raw = _llm_chat(prompt)
-    if not raw:
-        write_error_log("Phase 1 LLM 调用失败", code="PHASE1_LLM")
-        return None
-    parsed = _parse_json_any(raw)
+    parsed = _llm_json(prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2)
     if not parsed:
-        write_error_log(f"Phase 1 JSON 解析错误：\n{raw[:1000]}", code="PHASE1_JSON")
         return None
-    # 防御：group_index 越界/缺失的写入目标剔除，避免 Phase 2 无对应事实
-    writes = []
-    for w in parsed.get("writes", []):
-        gi = w.get("group_index")
-        if isinstance(gi, int) and 0 <= gi < len(groups):
-            w["group_index"] = gi
-            writes.append(w)
-        else:
-            logger.warning(
-                f"Phase 1 写入目标 group_index={gi!r} 越界/缺失，剔除 '{w.get('title', '')}'"
-            )
-    if not writes:
-        print("无有效内容需要归档，跳过总结")
-        return []
-    return writes
+    dir_name = str(parsed.get("dir", "")).strip().strip("/")
+    title = str(parsed.get("title", "")).strip()
+    content = str(parsed.get("content", "")).strip()
+    if not dir_name or not title or not content:
+        return None
+    return {"dir": dir_name, "title": title, "content": content}
 
 
-def _run_phase2(writes: list[dict], groups: list[dict], dir_tree: str) -> list[dict]:
-    phase2_items = []
-    for idx, item in enumerate(writes):
-        target_dir_name = str(item.get("dir", "")).strip()
-        title = (
-            str(item.get("title", "")).strip()
-            or target_dir_name.split("/")[-1]
-            or "未分类"
-        )
-        # 取对应组的聚合事实作为上下文；越界/缺失时跳过该篇
-        group_index = item.get("group_index")
-        group_facts = ""
-        if isinstance(group_index, int) and 0 <= group_index < len(groups):
-            group_facts = str(groups[group_index].get("facts", "")).strip()
-        if not group_facts:
-            logger.warning(
-                f"Skipping '{title}': group_index={group_index!r} 无聚合事实"
-            )
-            continue
-        target_parts = Path(target_dir_name).parts
-        if any(part in SUMMARY_EXCLUDE_DIRS for part in target_parts):
-            logger.warning(f"Skipping excluded path: {target_dir_name}")
-            continue
+def _gen_merge(group: dict, target_file: Path, existing_text: str) -> dict | None:
+    """think enable 生成归并内容：只写未被已有内容覆盖的新增信息。失败返回 None。"""
+    facts = str(group.get("facts", ""))
+    prompt = f"""\
+将以下记忆事实补充到已有知识笔记中（追加新信息）。
 
-        # 目录白名单：新顶层目录只允许单层，禁止随意嵌套多级新目录
-        parts = [p for p in Path(target_dir_name).parts if p]
-        if len(parts) > 1:
-            existing_tops = (
-                {d.name for d in EXTRACTS_DIR.iterdir() if d.is_dir()}
-                if EXTRACTS_DIR.exists()
-                else set()
-            )
-            if parts[0] not in existing_tops:
-                logger.warning(
-                    f"新建多级目录 {target_dir_name}，回退为单层目录 {parts[0]}"
+待沉淀主题：{group.get('topic', '')}
+相关事实：
+{facts}
+
+目标笔记：{target_file.relative_to(EXTRACTS_DIR)}
+目标笔记已有内容（前 {SUMMARY_MERGE_CONTEXT_CHARS} 字符）：
+{existing_text[:SUMMARY_MERGE_CONTEXT_CHARS]}
+
+### 要求
+
+1. **严格基于相关事实写作**：只使用其中出现的信息，禁止编造
+2. **只写已有内容未覆盖的新增信息**：已有内容已写过的细节不要重复
+3. **时间线演进**：与已有内容构成先后演进时标注日期（如 8/3 首次发现，8/5 确认根因），体现「先 A、后改成 B」
+4. **内容冲突时**：以事实为准，注明与旧结论的差异
+5. 篇幅 150-500 字，事实密度优先
+6. 正文不需要 # 标题行（脚本会写）
+
+返回 JSON：{{"title": "本节标题", "content": "Markdown 正文"}}
+只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    parsed = _llm_json(prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2)
+    if not parsed:
+        return None
+    title = str(parsed.get("title", "")).strip()
+    content = str(parsed.get("content", "")).strip()
+    if not title or not content:
+        return None
+    return {"title": title, "content": content}
+
+
+def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
+    """阶段2：逐组「提炼关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成」。
+
+    单组任一环节失败不中断整体：write_error_log + stats 计数 + 跳过该组。
+    返回 (results, stats)；results 为写入单元（含 action: new/merge）。
+    """
+    stats = {
+        "ok": 0,
+        "kw_fail": 0,
+        "gen_fail": 0,
+        "too_short": 0,
+        "new": 0,
+        "merge": 0,
+        "hit_files": set(),
+    }
+    results: list[dict] = []
+    existing_tops = _existing_extract_tops()
+    for gi, group in enumerate(groups):
+        topic = str(group.get("topic", "")) or f"组{gi}"
+        logger.info(f"Refine [{gi}] {topic} ...")
+        try:
+            keywords = _extract_keywords(group)
+            if not keywords:
+                stats["kw_fail"] += 1
+                write_error_log(
+                    f"主题 {topic!r} 关键词提炼失败，跳过", code="REFINE_KEYWORD"
                 )
-                target_dir_name = parts[0]
+                continue
+            hits = search_extracts(keywords)
+            if hits:
+                stats["hit_files"].add(hits[0]["rel_path"])
 
-        # 读取目标文件已有内容，追加时避免与旧内容重复
-        existing_excerpt = ""
-        filepath, is_append = resolve_target_file(EXTRACTS_DIR / target_dir_name, title)
-        if is_append and filepath.exists():
-            existing_excerpt = filepath.read_text(encoding="utf-8")[:1200]
+            try:
+                decision = _decide_merge(group, hits)
+            except Exception as e:
+                stats["gen_fail"] += 1
+                write_error_log(
+                    f"主题 {topic!r} 归并判断异常: {e}", code="REFINE_JUDGE"
+                )
+                continue
 
-        context_block = (
-            f"### 目标文件已有内容（补充时只写新增信息，不要重复）\n{existing_excerpt}"
-            if existing_excerpt
-            else "（目标文件不存在，将新建）"
-        )
+            try:
+                if decision is not None and decision["action"] == "merge":
+                    target_file = EXTRACTS_DIR / decision["target"]
+                    existing_text = (
+                        target_file.read_text(encoding="utf-8")
+                        if target_file.exists()
+                        else ""
+                    )
+                    item = _gen_merge(group, target_file, existing_text)
+                    action = "merge"
+                    target_label = decision["target"]
+                    if item:
+                        # _gen_merge 返回 {title, content}，补 target 供写入层定位
+                        item["target"] = decision["target"]
+                else:
+                    item = _gen_new(group, dir_tree, existing_tops)
+                    action = "new"
+                    target_label = item["dir"] if item else ""
+            except Exception as e:
+                stats["gen_fail"] += 1
+                write_error_log(f"主题 {topic!r} 生成异常: {e}", code="REFINE_GEN")
+                continue
 
-        prompt = f"""\
-你正在将过去 3 天的记忆事实整理为详细的知识笔记。
+            if not item:
+                stats["gen_fail"] += 1
+                write_error_log(f"主题 {topic!r} 生成失败，跳过", code="REFINE_GEN")
+                continue
+            if len(item.get("content", "")) < SUMMARY_MIN_CONTENT_LEN:
+                stats["too_short"] += 1
+                logger.warning(f"主题 {topic!r} 内容过短，跳过")
+                continue
 
-主题："{title}"
-存放目录：{target_dir_name}
-
-{context_block}
-
-### 生成要求
-
-1. **严格基于下方"相关记忆事实"写作**：只使用其中出现的信息，禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
-2. 记忆事实未提供的细节**不要补造**，宁可缺省也不虚构
-3. **只围绕此主题展开**，不要输出无关内容
-4. 若目标文件已有内容，仅补充新的、未覆盖的信息
-5. 篇幅以事实密度优先（150-500 字），不要为凑字数写空泛泛化内容
-6. **直接返回 Markdown 正文**，不需要 JSON 包装，不需要代码块包裹正文
-
-相关记忆事实：
-{group_facts}"""
-        content = None
-        for attempt in range(SUMMARY_LLM_RETRIES):
-            logger.info(
-                f"  Generating '{title}' (attempt {attempt + 1}/{SUMMARY_LLM_RETRIES})..."
-            )
-            raw = _llm_chat(prompt)
-            if raw:
-                content = raw.strip()
-                break
-            if attempt < SUMMARY_LLM_RETRIES - 1:
-                time.sleep(3 * (attempt + 1))
-        if not content or len(content) < SUMMARY_MIN_CONTENT_LEN:
-            logger.warning(
-                f"Skipping '{title}': content too short "
-                f"({len(content) if content else 0} < {SUMMARY_MIN_CONTENT_LEN})"
-            )
+            results.append({"topic": topic, "action": action, **item})
+            stats["ok"] += 1
+            stats[action] += 1
+            logger.info(f"  → {action} {target_label} ({topic})")
+        except Exception as e:
+            stats["gen_fail"] += 1
+            write_error_log(f"主题 {topic!r} 精炼异常: {e}", code="REFINE_GEN")
             continue
-        phase2_items.append(
-            {"dir": target_dir_name, "title": title, "content": content}
-        )
-    return phase2_items
+    stats["hit_files"] = sorted(stats["hit_files"])
+    return results, stats
 
 
 def _parse_rules_entries(text: str) -> list[dict]:
@@ -797,7 +1148,13 @@ def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
 
 返回 JSON：{{"keep_indexes": [保留的条目下标数组]}}
 只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    raw = _llm_chat(prompt, temperature=0.1, timeout=RULES_LLM_TIMEOUT)
+    raw = _llm_chat(
+        prompt,
+        temperature=0.1,
+        timeout=RULES_LLM_TIMEOUT,
+        max_tokens=16384,
+        disable_thinking=True,
+    )
     if not raw:
         logger.warning(f"规范文件淘汰 LLM 调用失败，保留前 {RULES_MAX_PER_FILE} 条")
         return entries[:RULES_MAX_PER_FILE]
@@ -873,7 +1230,11 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
 没有规范类内容时返回 {{"candidates": [], "norms": []}}。
 只返回严格标准的 JSON 对象，不要代码块包裹。"""
     raw = _llm_chat(
-        prompt, temperature=RULES_LLM_TEMPERATURE, timeout=RULES_LLM_TIMEOUT
+        prompt,
+        temperature=RULES_LLM_TEMPERATURE,
+        timeout=RULES_LLM_TIMEOUT,
+        max_tokens=16384,
+        disable_thinking=True,
     )
     if not raw:
         write_error_log("阶段3 规范提炼 LLM 调用失败", code="RULES_LLM")
@@ -986,18 +1347,42 @@ def _merge_into_file(
     return True
 
 
-def _write_articles(
-    writes: list[dict], today_str: str, all_tags: list[str]
+def _sanitize_new_dir(dir_name: str) -> str:
+    """清洗 LLM 给定的新建目录：剔除排除目录；多级嵌套仅当顶层是已有顶层时
+    保留，否则回退单层（防御 LLM 造深层路径）。"""
+    raw = str(dir_name or "").strip().strip("/")
+    parts = [p for p in Path(raw).parts if p and p not in SUMMARY_EXCLUDE_DIRS]
+    if not parts:
+        return ""
+    existing_tops = _existing_extract_tops()
+    if len(parts) > 1 and parts[0] not in existing_tops:
+        logger.warning(f"新建多级目录 {raw}，回退为单层目录 {parts[0]}")
+        return parts[0]
+    return "/".join(parts)
+
+
+def _write_articles_v2(
+    results: list[dict], today_str: str, all_tags: list[str]
 ) -> dict[str, str]:
+    """阶段2 写入：merge 直写判断目标；new 走 resolve_target_file 兜底防撞。
+    写入异常逐条 try/except 记录 WRITE 错误日志，不中断其余写入。"""
     updated = {}
-    for item in writes:
-        target_dir_name = item["dir"]
-        content = item["content"]
-        title = item["title"]
-        target_dir = EXTRACTS_DIR / target_dir_name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        filepath, is_append = resolve_target_file(target_dir, title)
-        if _merge_into_file(filepath, title, content, today_str, is_append):
+    for item in results:
+        try:
+            if item["action"] == "merge":
+                filepath = EXTRACTS_DIR / item["target"]
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+                is_append = True
+            else:
+                dir_name = _sanitize_new_dir(item["dir"])
+                target_dir = EXTRACTS_DIR / dir_name if dir_name else EXTRACTS_DIR
+                target_dir.mkdir(parents=True, exist_ok=True)
+                filepath, is_append = resolve_target_file(target_dir, item["title"])
+            ok = _merge_into_file(
+                filepath, item["title"], item["content"], today_str, is_append
+            )
+            if not ok:
+                continue
             # 轻量 QC：文件体积异常时告警（不阻断）
             try:
                 size = filepath.stat().st_size
@@ -1007,12 +1392,15 @@ def _write_articles(
                 pass
             updated[str(filepath)] = "追加" if is_append else "新建"
             write_to_cold_layer(
-                content=content,
+                content=item["content"],
                 source_file=str(filepath),
-                category=target_dir_name,
+                category=filepath.parent.name or "Extracts",
                 tags=all_tags,
                 confidence=1.0,
             )
+        except Exception as e:
+            write_error_log(f"写入失败 {item.get('topic', '')!r}: {e}", code="WRITE")
+            continue
     return updated
 
 
@@ -1137,14 +1525,25 @@ def _generate_stats_report() -> None:
         logger.warning(f"工具调用统计生成失败: {e}")
 
 
-def _print_report(
+def _print_report_v2(
     today_str: str,
     memory_count: int,
     updated_files: dict[str, str],
     rules_updates: str = "",
+    refine_stats: dict | None = None,
+    agg_rounds: int = 0,
 ):
     print(f"📝 记忆总结报告 ({today_str})")
     print(f"   过去 3 天事实: {memory_count} 条")
+    if refine_stats:
+        print(
+            f"   阶段2 精炼: {refine_stats['ok']} 成功"
+            f"（新建 {refine_stats['new']} / 归并 {refine_stats['merge']}），"
+            f"关键词失败 {refine_stats['kw_fail']}，生成失败 {refine_stats['gen_fail']}，"
+            f"过短 {refine_stats['too_short']}，检索命中 {len(refine_stats['hit_files'])}"
+        )
+    if agg_rounds:
+        print(f"   聚合收敛轮数: {agg_rounds}")
     print(f"   写入文件: {len(updated_files)} 个")
     for path, action in updated_files.items():
         print(f"     {'📄' if action == '新建' else '📎'} {path} ({action})")
@@ -1189,30 +1588,26 @@ def main():
     logger.info("Scanning notes directory structure...")
     dir_tree = scan_notes_structure(NOTES_DIR)
 
-    # 阶段1：记忆聚合（分类/合并/去重/分批）
+    # 阶段1：记忆聚合（分类/合并/去重/时间线，递归收敛）
     logger.info(f"Aggregating {len(recent_memories)} memories into groups...")
-    groups = _run_aggregate(recent_memories)
+    groups, agg_rounds = _run_aggregate_v2(recent_memories)
     if groups is None:
         print("⚠️ 记忆聚合失败，跳过本次总结")
         return
     if not groups:
         return
 
-    phase1_writes = _run_phase1(groups, dir_tree)
-    if phase1_writes is None:
-        print("⚠️ Phase 1 分类失败，跳过本次总结")
-        return
-    if not phase1_writes:
-        return
-
-    logger.info(f"Phase 2: Generating content for {len(phase1_writes)} articles...")
-    writes = _run_phase2(phase1_writes, groups, dir_tree)
+    # 阶段2：逐组「关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成」
+    logger.info(
+        f"Phase 2: Refining {len(groups)} groups (keyword → search → merge/new)..."
+    )
+    writes, refine_stats = _run_refine(groups, dir_tree)
     if not writes:
         print("所有文章生成失败或内容过短，跳过总结")
         return
 
     all_tags = _collect_tags(recent_memories)
-    updated_files = _write_articles(writes, today_str, all_tags)
+    updated_files = _write_articles_v2(writes, today_str, all_tags)
 
     # 阶段3：规范提炼（规则/规范类记忆 → MCP/Skills/Rules/*.md）
     phase3 = _run_phase3(groups, today_str)
@@ -1224,7 +1619,16 @@ def main():
     overview = f"{now_str} - 记忆总结（{len(recent_memories)} 条事实，{len(updated_files)} 个文件）"
     git_commit(overview, stage="写入后")
 
-    _print_report(today_str, len(recent_memories), updated_files, rules_updates)
+    _mark_run_success()
+
+    _print_report_v2(
+        today_str,
+        len(recent_memories),
+        updated_files,
+        rules_updates,
+        refine_stats,
+        agg_rounds,
+    )
 
 
 if __name__ == "__main__":
