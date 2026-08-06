@@ -152,6 +152,13 @@
 - summarize.py 防重复触发：单实例文件锁 + 距上次完整总结 < 6h 跳过；mcp-summary 注册时
   enabled 直接 register（不先 unregister，避免清 last_fire 后 handleMissed 每天重复补触发）
 - MEMORY_SERVER_URL 从配置 mcp.port 动态计算，确保总结流水线连对端口
+- summarize.py 输入侧质量门（方案 E v5，细节见 notes 分类文章/工具使用/总结流水线审计与质量门方案.md §五）：规则层零 LLM 过滤低质记忆（截断占位/半词/过短等）+ LLM 3 票复核（3 全 drop 才 drop + fail-open），丢弃不标记 processed 保留下轮重评估
+- summarize.py 输出侧 merge 去重三层防线（2026-08-07 修复，真实跑 11 处重复段根因）：
+  1. **上下文**：`SUMMARY_MERGE_LOOKBACK_CHARS=8000` + `_relevant_segments`（按 facts 与段体 difflib ratio 排序取 top 段，兜底文件头）——防大文件前 2K 截断看不到文件尾既有段，LLM 无从判断重复
+  2. **机械兜底**：`_max_segment_similarity` 多级标题 `#{1,6}` 切段 + **覆盖率指标**（SequenceMatcher matched/len(new_content)），`SUMMARY_DUP_SIM_THRESHOLD=0.7` 超值判无增量跳过（0.8 ratio→0.7 覆盖率，实测 ScanTextUtil 重复 0.767）
+  3. **LLM 语义判定**：`_gen_merge` prompt 第 8 条 no_increment——改写式重复（措辞不同但信息已被既有段覆盖）拦截
+  - 契约：`_gen_merge` 正常返回 `{title,content,supersedes}` **不带 action**，仅 no_increment 带 `{"action":"no_increment","reason":...}`——防 `results.append({..., **item})` 中 action 覆盖局部变量污染 fallback_merge
+  - 纯 ratio 阈值不可分：真重复（0.55-0.75）与正常段（README 模板 0.7-1.0）区间重叠 → 覆盖率 + LLM 语义双判定
 
 ### 项目扫描
 - 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册

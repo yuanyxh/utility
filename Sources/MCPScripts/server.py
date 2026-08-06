@@ -120,6 +120,7 @@ TOOL_DEFAULTS: dict[str, str] = {
     "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
     "project_notes": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须并行调用本工具。recall 变体, 搜索项目本地信息",
     "tool_resource": "当指示加载 references 文件或需要查看 scripts 脚本内容时调用。返回附属资源内容（references/agents/scripts 目录下的参考文档）。",
+    "set_memory_processed": "设置/重置记忆的已处理标识位（metadata.processed 位掩码）。bit0=1 表示已被总结脚本成功处理。测试与还原用：value=1 设置、value=0 重置，幂等。",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
@@ -163,6 +164,9 @@ HEAT_MAX = 1.0
 HEAT_DECAY_PER_DAY = 0.01
 HOT_INIT_RUNTIME_COOLDOWN = 60
 HOT_INIT_MAX_RUNTIME_FAILURES = 5
+# 已处理位掩码：metadata["processed"] 整数位，bit0=1 表示已被总结脚本成功处理
+PROCESSED_FIELD = "processed"
+PROCESSED_MAX_BIT = 7
 ARCHIVE_DAYS = 90
 HOT_RETENTION_DAYS = 180
 ARCHIVE_INTERVAL_HOURS = 24
@@ -1638,6 +1642,8 @@ def _build_metadata(src: dict, now_iso: str) -> dict:
         "last_accessed_at": now_iso,
         "access_count": 0,
         "archived": False,
+        # 已处理位掩码：bit0=1 表示已被总结脚本成功处理（其余位预留）
+        "processed": 0,
     }
 
 
@@ -1701,6 +1707,7 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
             return False
         old_content = old.get("memory", "")
         old_meta = dict(old.get("metadata", {}) or {})
+        old_meta.setdefault("processed", 0)  # 透传已处理位，避免 delete+add 重建丢失
         old_meta["disputed"] = True
         old_meta["disputed_by"] = disputed_by
         old_meta["dispute_reason"] = reason
@@ -1714,6 +1721,33 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
                 return False
         return True
     except Exception:
+        return False
+
+
+def _set_processed_bit(memory_id: str, bit: int, value: int) -> bool:
+    """设置/重置记忆 metadata['processed'] 的指定位（bit0=已总结处理）。
+
+    经 mem0 update 只改 payload 不重建向量（data=None 跳过 embed），幂等；
+    HTTP 端点与 MCP 工具共用，单一实现。
+    """
+    if not hot_memory:
+        return False
+    if not (0 <= bit <= PROCESSED_MAX_BIT):
+        raise ValueError(f"bit 超出范围 0-{PROCESSED_MAX_BIT}: {bit}")
+    try:
+        old = hot_memory.get(memory_id)
+        if not old:
+            return False
+        meta = dict(old.get("metadata", {}) or {})
+        flags = int(meta.get(PROCESSED_FIELD, 0) or 0)
+        mask = 1 << bit
+        meta[PROCESSED_FIELD] = flags | mask if value else flags & ~mask
+        hot_memory.update(memory_id, metadata=meta)
+        return True
+    except Exception as e:
+        logger.warning(
+            f"设置 processed 位失败 {memory_id} bit={bit} value={value}: {e}"
+        )
         return False
 
 
@@ -1916,6 +1950,33 @@ async def handle_list_tools() -> list[Tool]:
                         "default": "hot",
                     },
                 },
+            },
+        ),
+        Tool(
+            name="set_memory_processed",
+            description=desc.get(
+                "set_memory_processed", TOOL_DEFAULTS["set_memory_processed"]
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "memory_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "记忆 ID 列表",
+                    },
+                    "bit": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "位索引, 0=已总结处理",
+                    },
+                    "value": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "1=设置位, 0=重置位",
+                    },
+                },
+                "required": ["memory_ids"],
             },
         ),
         # ── 项目工具 ──
@@ -2320,6 +2381,63 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
         except Exception:
             pass
     return [TextContent(type="text", text=json.dumps({"success": True}))]
+
+
+@_register("set_memory_processed")
+async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
+    if not await _ensure_hot_memory():
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "error": "Hot layer not initialized",
+                        "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
+                    }
+                ),
+            )
+        ]
+    memory_ids = arguments.get("memory_ids", [])
+    bit = int(arguments.get("bit", 0))
+    value = int(arguments.get("value", 1))
+    if not memory_ids:
+        return [
+            TextContent(type="text", text=json.dumps({"error": "memory_ids 不能为空"}))
+        ]
+    if not (0 <= bit <= PROCESSED_MAX_BIT):
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": f"bit 超出范围 0-{PROCESSED_MAX_BIT}"}),
+            )
+        ]
+    if value not in (0, 1):
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": "value 只能为 0(重置)或 1(设置)"}),
+            )
+        ]
+    results = []
+    for mid in memory_ids:
+        try:
+            ok = await asyncio.to_thread(_set_processed_bit, mid, bit, value)
+            results.append({"memory_id": mid, "success": ok})
+        except Exception as e:
+            results.append({"memory_id": mid, "success": False, "error": str(e)})
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(
+                {
+                    "results": results,
+                    "updated": sum(1 for r in results if r.get("success")),
+                    "failed": sum(1 for r in results if not r.get("success")),
+                },
+                ensure_ascii=False,
+            ),
+        )
+    ]
 
 
 # ── 项目 Tool handlers ──
@@ -2734,6 +2852,51 @@ async def main():
         )[:limit]
         return JSONResponse({"results": data, "count": len(data)})
 
+    async def api_memories_processed(request):
+        """批量设置/重置记忆已处理位（bit0=已总结处理），幂等；供 summarize 写回与测试还原。"""
+        if not await _ensure_hot_memory():
+            return JSONResponse({"error": "Hot layer not initialized"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        memory_ids = body.get("memory_ids", [])
+        try:
+            bit = int(body.get("bit", 0))
+            value = int(body.get("value", 1))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "bit/value 必须为整数"}, status_code=400)
+        if not memory_ids:
+            return JSONResponse({"error": "memory_ids 不能为空"}, status_code=400)
+        if not (0 <= bit <= PROCESSED_MAX_BIT):
+            return JSONResponse(
+                {"error": f"bit 超出范围 0-{PROCESSED_MAX_BIT}"}, status_code=400
+            )
+        if value not in (0, 1):
+            return JSONResponse(
+                {"error": "value 只能为 0(重置)或 1(设置)"}, status_code=400
+            )
+        updated = 0
+        failed_ids = []
+        for mid in memory_ids:
+            try:
+                if await asyncio.to_thread(_set_processed_bit, mid, bit, value):
+                    updated += 1
+                else:
+                    failed_ids.append(mid)
+            except Exception:
+                failed_ids.append(mid)
+        return JSONResponse(
+            {
+                "success": not failed_ids,
+                "bit": bit,
+                "value": value,
+                "updated": updated,
+                "failed": len(failed_ids),
+                "failed_ids": failed_ids,
+            }
+        )
+
     async def api_project_search(request):
         body = await request.json()
         try:
@@ -2777,6 +2940,11 @@ async def main():
             ),
             Route(
                 "/api/memories/recent", endpoint=api_memories_recent, methods=["GET"]
+            ),
+            Route(
+                "/api/memories/processed",
+                endpoint=api_memories_processed,
+                methods=["POST"],
             ),
             Route("/api/project/search", endpoint=api_project_search, methods=["POST"]),
             Route(
