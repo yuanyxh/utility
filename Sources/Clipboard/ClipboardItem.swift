@@ -38,14 +38,4 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
             plainText = str
         }
     }
-
-    /// GRDB 列映射
-    public enum Columns {
-        static let id = Column("id")
-        static let timestamp = Column("timestamp")
-        static let type = Column("type")
-        static let content = Column("content")
-        static let application = Column("application")
-        static let plainText = Column("search_text")
-    }
 }

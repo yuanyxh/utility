@@ -28,10 +28,6 @@ enum L10n {
         loadJSON(language: lang, notify: true)
     }
 
-    static func setLanguage(_ lang: String) {
-        loadJSON(language: lang, notify: true)
-    }
-
     private static func loadJSON(language: String, notify: Bool) {
         let lang = language.hasPrefix("zh") ? "zh-Hans" : "en"
         _lang = lang
@@ -384,10 +380,6 @@ extension L10n {
 
         static var stateCrashed: String {
             string("menu.token_state_crashed")
-        }
-
-        static func todaySummary(_ input: String, _ output: String, _ cost: String) -> String {
-            format("menu.token_today", input, output, cost)
         }
 
         static var disabled: String {

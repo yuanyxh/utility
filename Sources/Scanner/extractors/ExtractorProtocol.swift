@@ -9,14 +9,6 @@ protocol SymbolExtractor {
     func extract(from content: String, filePath: String) -> [SymbolRecord]
 }
 
-struct ExtractedSymbol {
-    let name: String
-    let kind: String
-    let signature: String?
-    let visibility: String?
-    let docComment: String?
-}
-
 // MARK: - Regex match helper
 
 struct RegexMatch {

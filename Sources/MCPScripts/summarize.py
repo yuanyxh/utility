@@ -73,7 +73,6 @@ EXTRACTS_DIR = NOTES_DIR / "Extracts"
 SUMMARY_MIN_CONTENT_LEN = 150
 SUMMARY_LLM_TEMPERATURE = 0.1
 SUMMARY_LLM_TIMEOUT = 90
-SUMMARY_LLM_RETRIES = 3
 SUMMARY_API_TIMEOUT = 10
 SUMMARY_GIT_TIMEOUT = 30
 
@@ -797,28 +796,6 @@ def _build_facts_text_v2(memories: list[dict]) -> str:
         f"{_clean(m.get('memory') or m.get('content') or '')}"
         for m in memories
     )
-
-
-def _list_extract_summaries() -> list[str]:
-    """List existing extract notes (title + first content line) for dedup context."""
-    entries = []
-    if not EXTRACTS_DIR.exists():
-        return entries
-    for f in sorted(EXTRACTS_DIR.rglob("*.md")):
-        stem = f.stem
-        title = re.sub(r"_\d{4}-\d{2}-\d{2}$", "", stem)
-        title = title.replace("_", " ")
-        excerpt = ""
-        try:
-            for ln in f.read_text(encoding="utf-8").splitlines():
-                s = ln.strip()
-                if s and not s.startswith(("#", ">", "---", "-", "|", "```")):
-                    excerpt = s[:80]
-                    break
-        except Exception:
-            pass
-        entries.append(f"- {title}（{f.parent.name}/）: {excerpt}")
-    return entries
 
 
 def _aggregate_round(

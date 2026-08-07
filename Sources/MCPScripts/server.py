@@ -104,7 +104,6 @@ logger.info(
 NOTES_DIR = os.environ.get(
     "NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes")
 )
-LOG_DIR = os.path.join(NOTES_DIR, "logs")
 SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
