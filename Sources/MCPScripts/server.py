@@ -153,6 +153,46 @@ NOTE_SIMILARITY_THRESHOLD = 0.35
 NOTE_MAX_CHUNKS_PER_PROJECT = 50000
 NOTE_MAX_RESULTS = 20
 NOTE_PREVIEW_LEN = 300
+
+# 常见工程特征文件 —— 判定目标路径是否为「开发项目」
+# 注意:不含 .git/.gitignore(纯文档仓库如 notes 也有),避免误判
+PROJECT_MARKER_FILES = frozenset(
+    {
+        # JS/TS
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        # Swift/Apple
+        "Package.swift",
+        "Podfile",
+        "Podfile.lock",
+        # Go
+        "go.mod",
+        "go.sum",
+        # Rust
+        "Cargo.toml",
+        # Java/Kotlin
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        # Python
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "Pipfile",
+        # 其他
+        "composer.json",
+        "Gemfile",
+        "mix.exs",
+    }
+)
+# 项目特征扫描的最大目录深度(相对项目根)
+PROJECT_MARKER_MAX_DEPTH = 2
+# 通配特征:文件名后缀(matchfile 用)与目录特征(os.walk 中 dirs 里匹配)
+PROJECT_MARKER_FILE_SUFFIXES = (".csproj", ".sln")
+PROJECT_MARKER_DIR_SUFFIXES = (".xcodeproj", ".xcworkspace")
 SUMMARY_LLM_MODEL = os.environ.get("SUMMARY_MODEL", "deepseek-v4-flash")
 SUMMARY_LLM_API_URL = os.environ.get("SUMMARY_API_URL", "https://api.deepseek.com")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -1226,9 +1266,92 @@ def _ensure_note_cache(
         _note_cache_lock.release()
 
 
+def _is_dev_project(project_path: str) -> bool:
+    """浅层扫描目标路径是否含常见工程特征文件 —— 判定是否为「开发项目」。
+
+    纯文档仓库(如 notes:只有 .md + .git)不含这些特征 → 返回 False,
+    从而让 project_notes 对非开发项目走纯内存 keyword 搜索,不再创建 .utility 缓存。
+    注意:刻意不含 .git/.gitignore(notes 等文档仓库也有),避免误判。
+    """
+    project_path = os.path.normpath(project_path)
+
+    def _scan(root: str, depth: int) -> bool:
+        if depth > PROJECT_MARKER_MAX_DEPTH:
+            return False
+        try:
+            with os.scandir(root) as it:
+                for entry in it:
+                    if entry.is_dir():
+                        if entry.name in NOTE_EXCLUDE_DIRS:
+                            continue
+                        if entry.name.endswith(PROJECT_MARKER_DIR_SUFFIXES):
+                            return True
+                        if _scan(entry.path, depth + 1):
+                            return True
+                    elif entry.is_file():
+                        if entry.name in PROJECT_MARKER_FILES:
+                            return True
+                        if entry.name.endswith(PROJECT_MARKER_FILE_SUFFIXES):
+                            return True
+        except OSError:
+            pass
+        return False
+
+    return _scan(project_path, 0)
+
+
+def _keyword_search_uncached(project_path: str, query: str, limit: int) -> dict:
+    """非开发项目降级路径:纯内存 keyword 搜索,不创建 .utility 缓存。
+
+    与 _query_project_notes 的 keyword fallback 逻辑一致,但直接扫文件
+    切块匹配,不落盘 SQLite。notes 这类目录反复查询不会产生磁盘残留。
+    """
+    tokens = [t for t in query.split() if t]
+    results: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+
+    for mf in _scan_md_files(project_path):
+        try:
+            with open(mf["path"], "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for c in _chunk_md_text(text, mf["path"]):
+            ct = c["chunk_text"]
+            if not tokens or not any(t.lower() in ct.lower() for t in tokens):
+                continue
+            matched = sum(1 for t in tokens if t.lower() in ct.lower())
+            key = (mf["path"], c["chunk_index"])
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(
+                {
+                    "file": os.path.relpath(mf["path"], project_path),
+                    "line": c["line_start"],
+                    "content": ct[:NOTE_PREVIEW_LEN],
+                    "score": round(matched / max(len(tokens), 1), 4),
+                }
+            )
+
+    results.sort(key=lambda x: -x["score"])
+    return {
+        "results": results[:limit],
+        "count": min(len(results), limit),
+        "total_chunks": len(seen),
+    }
+
+
 def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     """Semantic search over project .md files using cached vectors."""
     limit = max(1, min(limit, NOTE_MAX_RESULTS))
+
+    # 非开发项目(无工程特征文件):不落 .utility 缓存,纯内存 keyword 搜索
+    if not _is_dev_project(project_path):
+        logger.info(
+            f"[project_notes] non-dev project, uncached keyword search: {project_path}"
+        )
+        return _keyword_search_uncached(project_path, query, limit)
 
     try:
         conn, db_path, total_chunks = _ensure_note_cache(project_path)

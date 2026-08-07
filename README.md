@@ -322,7 +322,7 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 | `recall` | 搜索记忆库（热层 + 冷层 + 笔记全文） |
 | `catch_up` | 获取最近记忆列表 |
 | `forget` | 删除指定记忆 |
-| `project_notes` | 语义搜索项目本地 .md 笔记文件（向量索引 + 增量缓存） |
+| `project_notes` | 语义搜索项目本地 .md 笔记文件（向量索引 + 增量缓存；目标路径无工程特征文件时降级为纯内存 keyword 搜索，不创建 `.utility` 缓存） |
 | `project_search/structure/packages/exports` | 项目符号/结构/依赖/导出查询 |
 | `tool_resource` | 返回已注册 skill 的附属资源内容（references/agents/scripts 目录） |
 
