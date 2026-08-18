@@ -153,6 +153,7 @@
   enabled 直接 register（不先 unregister，避免清 last_fire 后 handleMissed 每天重复补触发）
 - MEMORY_SERVER_URL 从配置 mcp.port 动态计算，确保总结流水线连对端口
 - summarize.py 输入侧质量门（方案 E v5，细节见 notes 分类文章/工具使用/总结流水线审计与质量门方案.md §五）：规则层零 LLM 过滤低质记忆（截断占位/半词/过短等）+ LLM 3 票复核（3 全 drop 才 drop + fail-open），丢弃不标记 processed 保留下轮重评估
+- summarize.py 输出侧主题归属过滤（2026-08-18，根治「正文偶然命中导致错位归并」）：`_file_topic_feature`（文件主题特征=相对路径+所有 H1 标题+首段）+ `_hit_topic_relevant`（组关键词 ≥1 命中主题特征才算相关，正文命中不算）→ `_decide_merge` 前过滤 hits，无主题相关候选判定新建；fallback_merge 用过滤后 hits；检索加权 `title_matched`（路径+首段命中优先）+ `_gen_new` 复用目录优先 + `_sanitize_new_dir` 共享主题词回退
 - summarize.py 输出侧 merge 去重三层防线（2026-08-07 修复，真实跑 11 处重复段根因）：
   1. **上下文**：`SUMMARY_MERGE_LOOKBACK_CHARS=8000` + `_relevant_segments`（按 facts 与段体 difflib ratio 排序取 top 段，兜底文件头）——防大文件前 2K 截断看不到文件尾既有段，LLM 无从判断重复
   2. **机械兜底**：`_max_segment_similarity` 多级标题 `#{1,6}` 切段 + **覆盖率指标**（SequenceMatcher matched/len(new_content)），`SUMMARY_DUP_SIM_THRESHOLD=0.7` 超值判无增量跳过（0.8 ratio→0.7 覆盖率，实测 ScanTextUtil 重复 0.767）

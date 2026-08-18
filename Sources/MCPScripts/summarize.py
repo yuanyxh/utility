@@ -1061,15 +1061,23 @@ def search_extracts(
         matched = [k for k in kws if k.lower() in low]
         if not matched:
             continue
+        # P1 命中加权：相对路径（含文件名/目录名）+ 首段命中的关键词单独计数
+        # 为主题性命中。正文偶然命中（同词但主题无关）不计 title_matched，排序沉底。
+        title_feature = (
+            str(f.relative_to(EXTRACTS_DIR)) + " " + re.split(r"(?m)^#", text)[0][:200]
+        ).lower()
+        title_matched = [k for k in matched if k.lower() in title_feature]
         hits.append(
             {
                 "rel_path": str(f.relative_to(EXTRACTS_DIR)),
                 "snippet": _make_snippet(text, matched[0]),
                 "matched": matched,
+                "title_matched": title_matched,
                 "score": len(matched),
             }
         )
-    hits.sort(key=lambda h: h["score"], reverse=True)
+    # 排序：主题性命中优先，其次总命中词数
+    hits.sort(key=lambda h: (len(h["title_matched"]), h["score"]), reverse=True)
     return hits[:limit]
 
 
@@ -1083,6 +1091,36 @@ def _existing_extract_tops() -> set[str]:
 def _dir_excluded(dir_name: str) -> bool:
     """目录路径任一层命中排除目录（notes 根的手写区）。"""
     return any(p in SUMMARY_EXCLUDE_DIRS for p in Path(dir_name).parts)
+
+
+def _file_topic_feature(rel_path: str) -> str:
+    """文件主题特征 = 文件名 + 所有 H1 标题 + 头部内容（首个 # 前）。
+
+    主题归属过滤的匹配基准：只认「文件自我声明的主题」（文件名/标题/开头），
+    正文命中不算——正文偶然出现关键词正是错位归并的来源
+    （如 SCHEME_PANEL_DEBRIEF 关键词命中 waza 文件正文的 PanelManager 字样）。
+    """
+    fp = EXTRACTS_DIR / rel_path
+    try:
+        text = fp.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return rel_path
+    h1s = re.findall(r"(?m)^#\s+(.+)$", text)
+    head = re.split(r"(?m)^#", text)[0]  # 首个 # 之前（文件头说明/前言）
+    return " ".join([rel_path, *h1s, head[:500]])
+
+
+def _hit_topic_relevant(group: dict, hit: dict, keywords: list[str]) -> bool:
+    """组关键词 ≥1 个命中文件主题特征 → 允许作为归并候选 target。
+
+    与 _topical_related 同思路（共享主题词即同族），但判定对象是「文件主题
+    特征」而非另一组关键词。关键词提炼失败（[]）时视为全部相关，不误拦。
+    """
+    kws = [k for k in keywords if k]
+    if not kws:
+        return True
+    feature = _file_topic_feature(hit["rel_path"]).lower()
+    return any(k.lower() in feature for k in kws)
 
 
 def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
@@ -1181,7 +1219,7 @@ def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None
 1. **严格基于相关事实写作**：只使用其中出现的信息，禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
 2. 记忆事实未提供的细节不要补造，宁可缺省也不虚构
 3. **时间线演进**：事实含跨日演进时按时间组织，关键节点保留日期标注（如 8/3 首次发现，8/5 确认根因）
-4. **目录（dir）**：复用现有顶层目录，或新建单层顶层目录；禁止嵌套多级新目录；禁止使用 {sorted(SUMMARY_EXCLUDE_DIRS)} 作为目录
+4. **目录（dir）**：**必须优先复用**上方「现有顶层目录」之一；仅当现有目录都无法容纳该主题时才新建单层顶层目录（此时明确给出新建理由）；禁止嵌套多级新目录；禁止使用 {sorted(SUMMARY_EXCLUDE_DIRS)} 作为目录
 5. **标题（title）**：具体，如 "UTSJSONObject null 安全访问" 而非 "UTSJSONObject 坑"
 6. 篇幅 150-500 字，事实密度优先，不要空泛
 7. 正文不需要 # 标题行（脚本会写）
@@ -1438,6 +1476,21 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
             if hits:
                 stats["hit_files"].add(hits[0]["rel_path"])
 
+            # P0 主题归属过滤：仅「关键词命中文件主题特征（文件名/H1/首段）」的
+            # hit 可作归并候选。search_extracts 是正文子串匹配，正文偶然命中会带
+            # 主题无关文件进候选造成错位归并（SCHEME_PANEL_DEBRIEF 命中 waza 文件
+            # 正文 PanelManager 字样即此类）——本层确定性拦截，无相关候选 →
+            # _decide_merge 返回 None → 走新建。
+            if keywords and hits:
+                cands = [h for h in hits if _hit_topic_relevant(group, h, keywords)]
+                dropped = [h["rel_path"] for h in hits if h not in cands]
+                if dropped:
+                    logger.info(
+                        f"主题 {topic!r} 主题归属过滤剔除 {len(dropped)} 个候选"
+                        f"（仅正文命中，非文件名/标题/首段）：{dropped}"
+                    )
+                hits = cands
+
             try:
                 decision = _decide_merge(group, hits)
             except Exception as e:
@@ -1514,7 +1567,7 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                         fb = next(
                             (
                                 h
-                                for h in (resolved_all.get(gi) or {}).get("hits", [])
+                                for h in hits  # 局部 hits 已过 P0 主题归属过滤
                                 if not _dir_excluded(h["rel_path"])
                             ),
                             None,
@@ -1994,7 +2047,8 @@ def _merge_into_file(
 
 def _sanitize_new_dir(dir_name: str) -> str:
     """清洗 LLM 给定的新建目录：剔除排除目录；多级嵌套仅当顶层是已有顶层时
-    保留，否则回退单层（防御 LLM 造深层路径）。"""
+    保留，否则回退单层（防御 LLM 造深层路径）；新建顶层与现有顶层同主题域时
+    回退归入现有目录（防跨目录散落 + 随意新建重复目录）。"""
     raw = str(dir_name or "").strip().strip("/")
     parts = [p for p in Path(raw).parts if p and p not in SUMMARY_EXCLUDE_DIRS]
     if not parts:
@@ -2003,6 +2057,24 @@ def _sanitize_new_dir(dir_name: str) -> str:
     if len(parts) > 1 and parts[0] not in existing_tops:
         logger.warning(f"新建多级目录 {raw}，回退为单层目录 {parts[0]}")
         return parts[0]
+    # 共享主题词回退：新建顶层目录名与某现有顶层目录互相包含（「面板系统」
+    # vs「面板」、「工具集」vs「Utility工具集」）→ 同主题域，回退归入现有目录。
+    # 3 字符下限滤掉「技术/笔记」等通用短词；按长度降序优先匹配更长（更具体）的
+    # 现有目录（「Utility工具集」先于「工具集」被匹配，选主题最贴近的）。
+    if len(parts) == 1:
+        new_top = parts[0]
+        for top in sorted(existing_tops, key=len, reverse=True):
+            if top == new_top:
+                break
+            if (
+                len(new_top) >= 3
+                and len(top) >= 3
+                and (new_top in top or top in new_top)
+            ):
+                logger.warning(
+                    f"新建目录 {new_top} 与现有目录 {top} 同主题域，回退归入 {top}"
+                )
+                return top
     return "/".join(parts)
 
 

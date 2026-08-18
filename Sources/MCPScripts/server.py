@@ -108,7 +108,7 @@ SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
 TOOL_DEFAULTS: dict[str, str] = {
-    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
+    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。content: 记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。多条内容请用 remember_batch。",
     "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
     "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
@@ -1985,7 +1985,10 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "记忆内容"},
+                    "content": {
+                        "type": "string",
+                        "description": "记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。",
+                    },
                     "agent_id": {"type": "string", "default": "unknown"},
                     "visibility": {
                         "type": "string",
@@ -2011,7 +2014,10 @@ async def handle_list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "content": {"type": "string"},
+                                "content": {
+                                    "type": "string",
+                                    "description": "记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。",
+                                },
                                 "agent_id": {"type": "string", "default": "unknown"},
                                 "visibility": {
                                     "type": "string",
