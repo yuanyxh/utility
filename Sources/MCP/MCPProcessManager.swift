@@ -12,7 +12,7 @@ final class MCPProcessManager {
     static let pythonVenvPath = (
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/utility/mcp-venv/bin/python3")
-            .path
+            .path,
     )
 
     enum State: String {
@@ -275,26 +275,26 @@ final class MCPProcessManager {
 
         // Handle process exit
         proc.terminationHandler = { [weak self] p in
-            guard let self = self else { return }
+            guard let self else { return }
             // stop() 主动关闭时不触发重启
-            if self.isStopping { return }
+            if isStopping { return }
 
             let reason = p.terminationReason
             if reason == .uncaughtSignal {
-                self.crashCount += 1
-                log("[MCP] Process crashed (\(self.crashCount)/\(self.maxRestarts))")
-                if self.crashCount >= self.maxRestarts {
-                    self.state = .crashed
-                    self.notifyCrash()
+                crashCount += 1
+                log("[MCP] Process crashed (\(crashCount)/\(maxRestarts))")
+                if crashCount >= maxRestarts {
+                    state = .crashed
+                    notifyCrash()
                     return
                 }
-                self.state = .restarting
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.restartDelaySec) {
+                state = .restarting
+                DispatchQueue.main.asyncAfter(deadline: .now() + restartDelaySec) {
                     self.launchProcess(serverPath: serverPath)
                 }
             } else {
                 // Normal exit (exit(0) — shouldn't happen in server mode)
-                self.state = .stopped
+                state = .stopped
             }
         }
 
@@ -326,7 +326,7 @@ final class MCPProcessManager {
         var ready = false
 
         handle.readabilityHandler = { [weak self] handle in
-            guard let self = self else { return }
+            guard let self else { return }
             let data = handle.availableData
             guard !data.isEmpty else { return }
 
@@ -359,14 +359,14 @@ final class MCPProcessManager {
 
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
             [weak self] timer in
-            guard let self = self else { return }
+            guard let self else { return }
 
             retries += 1
             if retries > maxRetries {
                 log("[MCP] Health check timed out (server unresponsive)")
                 timer.invalidate()
-                self.state = .crashed
-                self.stop()
+                state = .crashed
+                stop()
                 return
             }
 
@@ -374,12 +374,12 @@ final class MCPProcessManager {
             var healthy = false
 
             URLSession.shared.dataTask(with: url) { data, _, err in
-                if let data = data,
+                if let data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    (json["status"] as? String) == "ok"
                 {
                     healthy = true
-                } else if let err = err {
+                } else if let err {
                     log("[MCP] Health check attempt \(retries): \(err.localizedDescription)")
                 }
                 sem.signal()
@@ -388,8 +388,8 @@ final class MCPProcessManager {
             _ = sem.wait(timeout: .now() + 2.0)
 
             if healthy {
-                self.crashCount = 0
-                self.state = .running
+                crashCount = 0
+                state = .running
                 timer.invalidate()
                 log("[MCP] Server ready")
             }

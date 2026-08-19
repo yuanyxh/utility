@@ -158,22 +158,22 @@ final class TokenProxyManager {
         proc.environment = buildEnv()
 
         proc.terminationHandler = { [weak self] p in
-            guard let self = self else { return }
-            if self.isStopping { return }
+            guard let self else { return }
+            if isStopping { return }
 
             if p.terminationReason == .uncaughtSignal {
-                self.crashCount += 1
-                debugLog("[TokenProxy] Crashed (\(self.crashCount)/\(self.maxRestarts))")
-                if self.crashCount >= self.maxRestarts {
-                    self.state = .crashed
+                crashCount += 1
+                debugLog("[TokenProxy] Crashed (\(crashCount)/\(maxRestarts))")
+                if crashCount >= maxRestarts {
+                    state = .crashed
                     return
                 }
-                self.state = .stopped
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.restartDelaySec) {
+                state = .stopped
+                DispatchQueue.main.asyncAfter(deadline: .now() + restartDelaySec) {
                     self.lifecycleQueue.async { self.launchProcess() }
                 }
             } else {
-                self.state = .stopped
+                state = .stopped
             }
         }
 
@@ -199,13 +199,13 @@ final class TokenProxyManager {
         let maxRetries = 20
 
         healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-            guard let self = self else { return }
+            guard let self else { return }
             retries += 1
             if retries > maxRetries {
                 debugLog("[TokenProxy] Health check timed out")
                 timer.invalidate()
-                self.state = .crashed
-                self.stop()
+                state = .crashed
+                stop()
                 return
             }
 

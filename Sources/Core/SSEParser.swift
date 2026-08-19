@@ -15,7 +15,7 @@ public final class SSEParser {
     public func feed(
         _ data: Data,
         onToken: @escaping (String) -> Void,
-        onComplete: @escaping () -> Void
+        onComplete: @escaping () -> Void,
     ) {
         guard let str = String(data: data, encoding: .utf8) else { return }
         buffer += str

@@ -15,12 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         do { try ConfigManager.shared.load() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.configLoadFailed, body: error.localizedDescription
+                title: L10n.Menu.configLoadFailed, body: error.localizedDescription,
             ))
         }
         do { try AppDatabase.shared.setup() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.dbInitFailed, body: error.localizedDescription
+                title: L10n.Menu.dbInitFailed, body: error.localizedDescription,
             ))
         }
 
@@ -153,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             trigger: trigger,
             exec: .sh(cmd),
             enabled: true,
-            mode: .cron
+            mode: .cron,
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[MCP] Summary task registered (cron: \(trigger))")
@@ -202,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             trigger: "",
             exec: .sh(cmd),
             enabled: true,
-            mode: .manual
+            mode: .manual,
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[Article] gen-article task registered (manual)")
@@ -212,17 +212,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let config = ConfigManager.shared.config
 
         hotkeyManager.register(hotkey: config.clipboard.hotkey, id: "clip") { [weak self] in
-            guard let self = self else { return }
-            EventBus.shared.publish(PanelEvent.requestShow, payload: self.clipboardPanel)
+            guard let self else { return }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: clipboardPanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
-            guard let self = self else { return }
-            EventBus.shared.publish(PanelEvent.requestShow, payload: self.translationPanel)
+            guard let self else { return }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: translationPanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             Task {
                 if let text = await OCRService.selectAndRecognize() {
                     await MainActor.run {
@@ -231,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                             payload: [
                                 "panel": self.translationPanel,
                                 "text": text,
-                            ]
+                            ],
                         )
                     }
                 }
@@ -243,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let eventSpec = [
             EventTypeSpec(
                 eventClass: OSType(kEventClassKeyboard),
-                eventKind: UInt32(kEventHotKeyPressed)
+                eventKind: UInt32(kEventHotKeyPressed),
             ),
         ]
         InstallEventHandler(
@@ -252,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 let handled = HotkeyManager.shared.handleEvent(event: event)
                 return handled ? OSStatus(noErr) : OSStatus(eventNotHandledErr)
             },
-            1, eventSpec, nil, nil
+            1, eventSpec, nil, nil,
         )
     }
 }

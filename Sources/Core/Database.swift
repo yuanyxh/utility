@@ -9,7 +9,7 @@ public final class AppDatabase {
 
     public func setup() throws {
         try FileManager.default.createDirectory(
-            at: AppPaths.configDir, withIntermediateDirectories: true
+            at: AppPaths.configDir, withIntermediateDirectories: true,
         )
         let dbPath = AppPaths.database.path
         dbQueue = try DatabaseQueue(path: dbPath)
@@ -36,7 +36,7 @@ public final class AppDatabase {
                 literal: """
                     CREATE INDEX IF NOT EXISTS idx_clipboard_timestamp
                     ON clipboard_item(timestamp DESC)
-                """
+                """,
             )
 
             // 暂存条目
@@ -50,7 +50,7 @@ public final class AppDatabase {
                 literal: """
                     CREATE INDEX IF NOT EXISTS idx_stage_timestamp
                     ON stage_item(timestamp DESC)
-                """
+                """,
             )
 
             // RSS 条目
@@ -67,7 +67,7 @@ public final class AppDatabase {
                 literal: """
                     CREATE INDEX IF NOT EXISTS idx_rss_pubdate
                     ON rss_item(pub_date DESC)
-                """
+                """,
             )
         }
 

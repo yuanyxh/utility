@@ -16,7 +16,7 @@ public final class HotkeyManager {
             fputs("\(msg)\n", stderr)
             debugLog(msg)
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.hotkeyParseFailed, body: "\(id): \(hotkey)"
+                title: L10n.Menu.hotkeyParseFailed, body: "\(id): \(hotkey)",
             ))
             return false
         }
@@ -27,7 +27,7 @@ public final class HotkeyManager {
         var hotkeyRef: EventHotKeyRef?
         let status = RegisterEventHotKey(
             UInt32(keyCode), flags, hotkeyID,
-            GetEventDispatcherTarget(), 0, &hotkeyRef
+            GetEventDispatcherTarget(), 0, &hotkeyRef,
         )
         guard status == noErr else {
             let msg = "[Hotkey] Register failed \(hotkey) (\(id)) status=\(status)"
@@ -35,7 +35,7 @@ public final class HotkeyManager {
             debugLog(msg)
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                 title: L10n.Menu.hotkeyRegisterFailed,
-                body: L10n.format("notify.hotkey_register_failed_body", id, hotkey)
+                body: L10n.format("notify.hotkey_register_failed_body", id, hotkey),
             ))
             return false
         }
@@ -50,7 +50,7 @@ public final class HotkeyManager {
         let err = GetEventParameter(
             event, EventParamName(kEventParamDirectObject),
             EventParamType(typeEventHotKeyID), nil,
-            MemoryLayout<EventHotKeyID>.size, nil, &hkID
+            MemoryLayout<EventHotKeyID>.size, nil, &hkID,
         )
         guard err == noErr else { return false }
         if let handler = handlers[hkID.signature] {

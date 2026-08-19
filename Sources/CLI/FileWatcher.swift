@@ -43,7 +43,7 @@ final class FileWatcher {
             info: Unmanaged.passUnretained(self).toOpaque(),
             retain: nil,
             release: nil,
-            copyDescription: nil
+            copyDescription: nil,
         )
 
         let paths = [projectPath]
@@ -52,7 +52,7 @@ final class FileWatcher {
         guard let ref = FSEventStreamCreate(
             kCFAllocatorDefault,
             { _, info, numEvents, pathsPtr, flagsPtr, _ in
-                guard let info = info else { return }
+                guard let info else { return }
                 let watcher = Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue()
                 let paths = Unmanaged<CFArray>.fromOpaque(pathsPtr).takeUnretainedValue() as! [String]
                 var flagArray: [FSEventStreamEventFlags] = []
@@ -65,7 +65,7 @@ final class FileWatcher {
             paths as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             latency,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents),
         ) else {
             debugLog("[Watcher] Failed to create FSEventStream")
             return
@@ -265,7 +265,7 @@ final class FileWatcher {
             }
 
             // Priority 2: regex fallback
-            if symbols.isEmpty, let extractor = extractor {
+            if symbols.isEmpty, let extractor {
                 symbols = extractor.extract(from: content, filePath: relPath)
                 if !symbols.isEmpty {
                     extractionSource = "regex"
@@ -287,7 +287,7 @@ final class FileWatcher {
                     dirPath: parentDir,
                     name: (relPath as NSString).lastPathComponent,
                     ext: ext,
-                    symCount: symbols.count
+                    symCount: symbols.count,
                 )
                 try db.insertFile(fileRec)
 
@@ -345,11 +345,11 @@ final class FileWatcher {
                 let count = try Int.fetchOne(
                     db,
                     sql: "SELECT COUNT(*) FROM files WHERE dir_path = ?",
-                    arguments: [dirPath]
+                    arguments: [dirPath],
                 ) ?? 0
                 try db.execute(
                     sql: "UPDATE directories SET file_count = ? WHERE path = ?",
-                    arguments: [count, dirPath]
+                    arguments: [count, dirPath],
                 )
             }
         } catch {

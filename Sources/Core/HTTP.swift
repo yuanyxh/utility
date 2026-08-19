@@ -26,7 +26,7 @@ enum HTTP {
         var method: Method = .get
         var url: URL
         var headers: [String: String] = [:]
-        var body: Data? = nil
+        var body: Data?
         var timeout: TimeInterval = 30
         var retryCount: Int = 0
     }
@@ -65,7 +65,7 @@ enum HTTP {
                 return Response(
                     data: data,
                     statusCode: httpResponse.statusCode,
-                    headers: httpResponse.allHeaderFields
+                    headers: httpResponse.allHeaderFields,
                 )
             } catch {
                 lastError = error
@@ -80,7 +80,7 @@ enum HTTP {
 
     static func get(
         url: URL,
-        configure: (inout RequestConfig) -> Void = { _ in }
+        configure: (inout RequestConfig) -> Void = { _ in },
     ) async throws -> Response {
         var cfg = RequestConfig(method: .get, url: url)
         configure(&cfg)
@@ -90,7 +90,7 @@ enum HTTP {
     static func post(
         url: URL,
         body: Data? = nil,
-        configure: (inout RequestConfig) -> Void = { _ in }
+        configure: (inout RequestConfig) -> Void = { _ in },
     ) async throws -> Response {
         var cfg = RequestConfig(method: .post, url: url, body: body)
         configure(&cfg)
@@ -108,11 +108,11 @@ enum HTTPError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "Invalid HTTP response"
+            "Invalid HTTP response"
         case let .httpError(code, body):
-            return "HTTP \(code): \(body.prefix(200))"
+            "HTTP \(code): \(body.prefix(200))"
         case .unknown:
-            return "Unknown HTTP error"
+            "Unknown HTTP error"
         }
     }
 }

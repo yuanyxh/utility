@@ -27,7 +27,7 @@ public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identi
         timestamp: Date = Date(),
         type: String,
         content: Data,
-        application: String? = nil
+        application: String? = nil,
     ) {
         self.id = id
         self.timestamp = timestamp

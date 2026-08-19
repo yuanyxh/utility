@@ -24,7 +24,7 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
     public init(
         id: String, title: String, link: String,
         itemDescription: String, pubDate: Date,
-        feedName: String, isRead: Bool = false
+        feedName: String, isRead: Bool = false,
     ) {
         self.id = id
         self.title = title

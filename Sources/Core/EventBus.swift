@@ -20,10 +20,10 @@ public final class EventBus {
     ///   - id: subscriber 标识，用于后续取消订阅（默认 UUID）
     ///   - handler: 事件处理闭包，payload 为发布方传入的可选数据
     @discardableResult
-    public func subscribe<Key: Hashable>(
-        _ key: Key,
+    public func subscribe(
+        _ key: some Hashable,
         id: AnyHashable = UUID(),
-        handler: @escaping (Any?) -> Void
+        handler: @escaping (Any?) -> Void,
     ) -> AnyHashable {
         lock.lock()
         defer { lock.unlock() }
@@ -38,14 +38,14 @@ public final class EventBus {
     // MARK: - Unsubscribe
 
     /// 取消指定 key 下的单个 subscriber
-    public func unsubscribe<Key: Hashable>(_ key: Key, id: AnyHashable) {
+    public func unsubscribe(_ key: some Hashable, id: AnyHashable) {
         lock.lock()
         defer { lock.unlock() }
         handlers[AnyHashable(key)]?.removeAll { $0.id == id }
     }
 
     /// 清除指定 key 的全部 subscriber
-    public func unsubscribeAll<Key: Hashable>(for key: Key) {
+    public func unsubscribeAll(for key: some Hashable) {
         lock.lock()
         defer { lock.unlock() }
         handlers[AnyHashable(key)] = nil
@@ -57,7 +57,7 @@ public final class EventBus {
     /// - Parameters:
     ///   - key: 事件键
     ///   - payload: 可选负载数据
-    public func publish<Key: Hashable>(_ key: Key, payload: Any? = nil) {
+    public func publish(_ key: some Hashable, payload: Any? = nil) {
         lock.lock()
         let subs = handlers[AnyHashable(key)] ?? []
         lock.unlock()

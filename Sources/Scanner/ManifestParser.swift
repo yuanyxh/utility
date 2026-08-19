@@ -72,7 +72,7 @@ enum ManifestParser {
                 version: version,
                 type: "spm",
                 description: nil,
-                sourceUrl: urlOrPath.hasPrefix("http") ? urlOrPath : nil
+                sourceUrl: urlOrPath.hasPrefix("http") ? urlOrPath : nil,
             ))
         }
         return ManifestInfo(type: "spm", packages: packages)
@@ -143,7 +143,7 @@ enum ManifestParser {
                     if !name.isEmpty {
                         packages.append(PackageRecord(
                             name: name, version: version, type: "pip",
-                            description: inDevDeps ? "dev" : nil
+                            description: inDevDeps ? "dev" : nil,
                         ))
                     }
                 }

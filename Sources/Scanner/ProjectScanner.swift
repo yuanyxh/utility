@@ -52,7 +52,7 @@ final class ProjectScanner {
         guard let enumerator = fm.enumerator(
             at: rootURL,
             includingPropertiesForKeys: [.isDirectoryKey, .nameKey],
-            options: [.skipsHiddenFiles]
+            options: [.skipsHiddenFiles],
         ) else {
             throw ScannerError.cannotEnumerate(projectPath)
         }
@@ -81,7 +81,7 @@ final class ProjectScanner {
                         moduleName: name,
                         parentPath: parent.isEmpty ? nil : parent,
                         fileCount: 0,
-                        hasPackageManifest: hasManifest
+                        hasPackageManifest: hasManifest,
                     )
                 }
                 continue
@@ -104,7 +104,7 @@ final class ProjectScanner {
                 dirPath: parentPath,
                 name: url.lastPathComponent,
                 ext: ext,
-                symCount: 0
+                symCount: 0,
             ), content))
 
             // Update directory file count
@@ -150,7 +150,7 @@ final class ProjectScanner {
             failedCounts[fileRec.path] = fails
             if fails < 3 {
                 astBatchInputs.append(ASTExtractorRunner.BatchInput(
-                    content: content, filePath: fileRec.path, ext: fileRec.ext
+                    content: content, filePath: fileRec.path, ext: fileRec.ext,
                 ))
             }
         }
@@ -189,7 +189,7 @@ final class ProjectScanner {
                 }
 
                 // Priority 2: regex fallback
-                if symbols.isEmpty, let regexExtractor = regexExtractor {
+                if symbols.isEmpty, let regexExtractor {
                     symbols = regexExtractor.extract(from: content, filePath: fileRec.path)
                     if !symbols.isEmpty {
                         astFailed = false
@@ -203,13 +203,13 @@ final class ProjectScanner {
         }
 
         // ── phase 3: batch write ──
-        try db.batchWriteFiles((0..<totalFiles).compactMap { results[$0] })
+        try db.batchWriteFiles((0 ..< totalFiles).compactMap { results[$0] })
 
         symCount = results.values.reduce(0) { $0 + $1.symbols.count }
-        failCount = results.values.filter { $0.astFailed }.count
+        failCount = results.values.count(where: { $0.astFailed })
 
         // Build scanned paths set for pruneFailedFiles
-        let allScannedPaths = Set(fileResults.map { $0.0.path })
+        let allScannedPaths = Set(fileResults.map(\.0.path))
 
         // ── phase 3: parse manifests ──
         let manifests = ManifestParser.parseAll(in: projectPath)
@@ -232,7 +232,7 @@ final class ProjectScanner {
             files: fileCount,
             symbols: symCount,
             packages: pkgCount,
-            failed: failCount
+            failed: failCount,
         )
     }
 
@@ -262,7 +262,7 @@ enum ScannerError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .cannotEnumerate(path):
-            return "Cannot enumerate directory: \(path)"
+            "Cannot enumerate directory: \(path)"
         }
     }
 }

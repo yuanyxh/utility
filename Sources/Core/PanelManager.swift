@@ -13,16 +13,16 @@ public final class PanelManager {
         EventBus.shared.subscribe(PanelEvent.requestShow) { [weak self] payload in
             let dict = payload as? [String: Any]
             let panel = dict?["panel"] as? PanelProtocol ?? payload as? PanelProtocol
-            guard let self = self, let panel = panel else { return }
-            self.onRequestShow(panel, context: dict)
+            guard let self, let panel else { return }
+            onRequestShow(panel, context: dict)
         }
         EventBus.shared.subscribe(PanelEvent.requestClose) { [weak self] payload in
-            guard let self = self, let panel = payload as? PanelProtocol else { return }
-            self.onRequestClose(panel)
+            guard let self, let panel = payload as? PanelProtocol else { return }
+            onRequestClose(panel)
         }
         EventBus.shared.subscribe(PanelEvent.requestPaste) { [weak self] payload in
-            guard let self = self, let panel = payload as? PanelProtocol else { return }
-            self.onRequestPaste(panel)
+            guard let self, let panel = payload as? PanelProtocol else { return }
+            onRequestPaste(panel)
         }
     }
 
@@ -88,20 +88,20 @@ public final class PanelManager {
         unobserve(panelID)
         let becomeKey = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
-            object: window, queue: .main
+            object: window, queue: .main,
         ) { [weak self] _ in
             self?.lock.lock()
             if let i = self?.stack.firstIndex(where: { $0.panelID == panelID }) {
                 let p = self?.stack.remove(at: i)
-                if let p = p { self?.stack.append(p) }
+                if let p { self?.stack.append(p) }
             }
             self?.lock.unlock()
         }
         let resignKey = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
-            object: window, queue: .main
+            object: window, queue: .main,
         ) { [weak self] _ in
-            guard let self = self else { return }
+            guard let self else { return }
             DispatchQueue.main.async {
                 let keyWin = NSApplication.shared.keyWindow
                 self.lock.lock()
@@ -109,7 +109,7 @@ public final class PanelManager {
                 self.lock.unlock()
                 if !ours {
                     self.lock.lock()
-                    let closable = self.stack.filter { $0.closesOnResignKey }
+                    let closable = self.stack.filter(\.closesOnResignKey)
                     self.lock.unlock()
                     for panel in closable {
                         self.remove(panel.panelID)
@@ -132,7 +132,7 @@ public final class PanelManager {
 
     func dispatchKey(_ event: NSEvent) -> Bool {
         lock.lock()
-        let panels = stack.reversed().filter { $0.isPanelVisible }
+        let panels = stack.reversed().filter(\.isPanelVisible)
         lock.unlock()
         for panel in panels {
             if panel.handleKeyEvent(event) {

@@ -72,7 +72,7 @@ public enum SelectedTextService {
         // 异步轮询等待 cmd+c 写入（最多 ~120ms，通过 continuation 不阻塞调用方）
         return await withCheckedContinuation { continuation in
             _pollClipboard(
-                pb, sinceChangeCount: postClearCount, remainingAttempts: 6, continuation: continuation
+                pb, sinceChangeCount: postClearCount, remainingAttempts: 6, continuation: continuation,
             )
         }
     }
@@ -81,7 +81,7 @@ public enum SelectedTextService {
     private static func _pollClipboard(
         _ pb: NSPasteboard, sinceChangeCount: Int,
         remainingAttempts: Int,
-        continuation: CheckedContinuation<String?, Never>
+        continuation: CheckedContinuation<String?, Never>,
     ) {
         if pb.changeCount > sinceChangeCount {
             // 剪贴板已变化，读取文本
@@ -91,7 +91,7 @@ public enum SelectedTextService {
                 _pollClipboard(
                     pb, sinceChangeCount: sinceChangeCount,
                     remainingAttempts: remainingAttempts - 1,
-                    continuation: continuation
+                    continuation: continuation,
                 )
             }
         } else {

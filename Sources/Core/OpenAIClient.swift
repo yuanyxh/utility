@@ -44,7 +44,7 @@ public struct OpenAIChatRequest: Codable {
         reasoningEffort: String? = nil,
         presencePenalty: Double? = nil,
         frequencyPenalty: Double? = nil,
-        stream: Bool = false
+        stream: Bool = false,
     ) {
         self.model = model
         self.messages = messages
@@ -138,7 +138,7 @@ public final class OpenAIClient {
     public func chat(
         request req: OpenAIChatRequest,
         baseURL: String,
-        completion: @escaping (Result<OpenAIChatResponse, Error>) -> Void
+        completion: @escaping (Result<OpenAIChatResponse, Error>) -> Void,
     ) -> URLSessionDataTask? {
         let urlRequest: URLRequest
         do {
@@ -149,7 +149,7 @@ public final class OpenAIClient {
         }
 
         let task = session.dataTask(with: urlRequest) { data, response, error in
-            if let error = error {
+            if let error {
                 completion(.failure(error))
                 return
             }
@@ -162,7 +162,7 @@ public final class OpenAIClient {
                 completion(.failure(OpenAIError.httpError(httpResponse.statusCode, body)))
                 return
             }
-            guard let data = data else {
+            guard let data else {
                 completion(.failure(OpenAIError.emptyData))
                 return
             }
@@ -204,7 +204,7 @@ public final class OpenAIClient {
         request req: OpenAIChatRequest,
         baseURL: String,
         onToken: @escaping (String) -> Void,
-        onComplete: @escaping (Result<Void, Error>) -> Void
+        onComplete: @escaping (Result<Void, Error>) -> Void,
     ) -> URLSessionDataTask? {
         let urlRequest: URLRequest
         do {
@@ -219,7 +219,7 @@ public final class OpenAIClient {
         let streamSession = URLSession(
             configuration: .default,
             delegate: delegate,
-            delegateQueue: nil
+            delegateQueue: nil,
         )
         let task = streamSession.dataTask(with: urlRequest)
         // 保持 session 引用，防止 task 未 retain 时 session 被提前释放
@@ -241,7 +241,7 @@ public final class OpenAIClient {
         init(
             parser: SSEParser,
             onToken: @escaping (String) -> Void,
-            onComplete: @escaping (Result<Void, Error>) -> Void
+            onComplete: @escaping (Result<Void, Error>) -> Void,
         ) {
             self.parser = parser
             self.onToken = onToken
@@ -252,7 +252,7 @@ public final class OpenAIClient {
             _: URLSession,
             dataTask _: URLSessionDataTask,
             didReceive response: URLResponse,
-            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void,
         ) {
             guard let httpResponse = response as? HTTPURLResponse else {
                 complete(.failure(OpenAIError.invalidResponse))
@@ -272,12 +272,12 @@ public final class OpenAIClient {
                 data, onToken: onToken,
                 onComplete: { [weak self] in
                     self?.complete(.success(()))
-                }
+                },
             )
         }
 
         func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: Error?) {
-            if let error = error {
+            if let error {
                 complete(.failure(error))
             }
         }

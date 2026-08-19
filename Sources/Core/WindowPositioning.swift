@@ -8,7 +8,7 @@ enum WindowPositioning {
         windowSize: NSSize,
         padding: CGFloat = 12,
         screen: NSScreen?,
-        mouseLocation: NSPoint? = nil
+        mouseLocation: NSPoint? = nil,
     ) -> NSPoint {
         let mouse = mouseLocation ?? NSEvent.mouseLocation
         guard let screenFrame = screen?.visibleFrame else {
@@ -36,7 +36,7 @@ enum WindowPositioning {
     static func screenCenter(
         windowSize: NSSize,
         offsetFraction: CGFloat = 0.2,
-        screen: NSScreen?
+        screen: NSScreen?,
     ) -> NSPoint {
         guard let frame = screen?.visibleFrame else { return .zero }
         let x = frame.midX - windowSize.width / 2
@@ -48,7 +48,7 @@ enum WindowPositioning {
     static func savedOrNearMouse(
         windowSize: NSSize,
         key: String,
-        screen: NSScreen?
+        screen: NSScreen?,
     ) -> NSPoint {
         if let saved = UserDefaults.standard.string(forKey: key) {
             let savedPoint = NSPointFromString(saved)

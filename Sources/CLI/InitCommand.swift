@@ -6,7 +6,7 @@ import Foundation
 struct InitCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "init",
-        abstract: "扫描项目并生成依赖图 (.utility/deps.sqlite)"
+        abstract: "扫描项目并生成依赖图 (.utility/deps.sqlite)",
     )
 
     @Option(name: .shortAndLong, help: ArgumentHelp("项目路径（默认：当前目录）"))

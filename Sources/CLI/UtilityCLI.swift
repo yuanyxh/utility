@@ -15,7 +15,7 @@ struct UtilityCLI: ParsableCommand {
             RSSCommand.self,
             InitCommand.self,
         ],
-        defaultSubcommand: nil
+        defaultSubcommand: nil,
     )
 
     // ── Agent mode flags (仅无子命令时生效) ──

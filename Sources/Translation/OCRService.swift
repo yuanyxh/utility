@@ -11,7 +11,7 @@ public enum OCRService {
             activeSelector = selector
             selector.startCapture { image in
                 activeSelector = nil
-                guard let image = image else {
+                guard let image else {
                     completion(nil)
                     return
                 }
@@ -23,13 +23,13 @@ public enum OCRService {
     }
 
     public static func selectAndRecognize() async -> String? {
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 let selector = ScreenSelector()
                 activeSelector = selector
                 selector.startCapture { image in
                     activeSelector = nil
-                    guard let image = image else {
+                    guard let image else {
                         continuation.resume(returning: nil)
                         return
                     }
@@ -60,7 +60,7 @@ public enum OCRService {
     }
 
     private static func recognizeText(in cgImage: CGImage) async -> String {
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 guard error == nil else {
                     continuation.resume(returning: "")
@@ -103,7 +103,7 @@ private final class ScreenSelector: NSObject {
         let panel = NSPanel(
             contentRect: screen.frame,
             styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false
+            backing: .buffered, defer: false,
         )
         panel.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
         panel.isOpaque = false
@@ -115,13 +115,13 @@ private final class ScreenSelector: NSObject {
 
         let overlay = SelectionOverlay(frame: screen.frame)
         overlay.onSelectionComplete = { [weak self] rect in
-            guard let self = self else { return }
-            self.captureAndReturn(rect: rect, screen: screen)
+            guard let self else { return }
+            captureAndReturn(rect: rect, screen: screen)
         }
         overlay.onCancel = { [weak self] in
-            guard let self = self else { return }
-            self.releaseTap()
-            self.cleanup()
+            guard let self else { return }
+            releaseTap()
+            cleanup()
             self.completion?(nil)
             OCRService.activeSelector = nil
         }
@@ -133,7 +133,7 @@ private final class ScreenSelector: NSObject {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard type == .keyDown,
                   event.getIntegerValueField(.keyboardEventKeycode) == 53,
-                  let refcon = refcon
+                  let refcon
             else {
                 return Unmanaged.passUnretained(event)
             }
@@ -148,7 +148,7 @@ private final class ScreenSelector: NSObject {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
             callback: callback,
-            userInfo: ptr
+            userInfo: ptr,
         ) {
             eventTap = tap
             let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -200,11 +200,11 @@ private final class ScreenSelector: NSObject {
                 x: rect.minX * scale,
                 y: (screenFrame.height - rect.maxY) * scale,
                 width: rect.width * scale,
-                height: rect.height * scale
+                height: rect.height * scale,
             )
             let cropped = fullImage.cropping(to: cropRect)
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self else { return }
                 self.releaseTap()
                 self.cleanup()
                 self.completion?(cropped)
@@ -251,7 +251,7 @@ private final class SelectionOverlay: NSView {
         let current = convert(event.locationInWindow, from: nil)
         currentRect = NSRect(
             x: min(start.x, current.x), y: min(start.y, current.y),
-            width: abs(current.x - start.x), height: abs(current.y - start.y)
+            width: abs(current.x - start.x), height: abs(current.y - start.y),
         )
         needsDisplay = true
     }
@@ -261,7 +261,7 @@ private final class SelectionOverlay: NSView {
         let current = convert(event.locationInWindow, from: nil)
         let rect = NSRect(
             x: min(start.x, current.x), y: min(start.y, current.y),
-            width: abs(current.x - start.x), height: abs(current.y - start.y)
+            width: abs(current.x - start.x), height: abs(current.y - start.y),
         )
         guard rect.width > 5, rect.height > 5 else {
             startPoint = nil

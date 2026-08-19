@@ -17,7 +17,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         id: String = UUID().uuidString,
         timestamp: Date = Date(),
         type: String,
-        content: Data
+        content: Data,
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -32,7 +32,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             resolvingBookmarkData: content,
             options: [],
             relativeTo: nil,
-            bookmarkDataIsStale: &isStale
+            bookmarkDataIsStale: &isStale,
         )
     }
 

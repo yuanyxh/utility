@@ -22,7 +22,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         startMCPSateMonitor()
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
-            name: L10n.languageDidChange, object: nil
+            name: L10n.languageDidChange, object: nil,
         )
     }
 
@@ -36,8 +36,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         let view = NetworkSpeedView()
         view.onClick = { [weak self] event in
-            guard let self, let menu = self.statusItem.menu,
-                  let v = self.statusItem.value(forKey: "view") as? NSView
+            guard let self, let menu = statusItem.menu,
+                  let v = statusItem.value(forKey: "view") as? NSView
             else { return }
             NSMenu.popUpContextMenu(menu, with: event, for: v)
         }
@@ -49,7 +49,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.delegate = self
 
         reloadItem = NSMenuItem(
-            title: L10n.Menu.reloadConfig, action: #selector(reloadConfig), keyEquivalent: "r"
+            title: L10n.Menu.reloadConfig, action: #selector(reloadConfig), keyEquivalent: "r",
         )
         reloadItem.target = self
         menu.addItem(reloadItem)
@@ -57,7 +57,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         launchAtLoginItem = NSMenuItem(
-            title: L10n.Menu.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: ""
+            title: L10n.Menu.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: "",
         )
         launchAtLoginItem.target = self
         launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -95,7 +95,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         clearItem = NSMenuItem(
-            title: L10n.Menu.clearClipboard, action: #selector(clearClipboard), keyEquivalent: ""
+            title: L10n.Menu.clearClipboard, action: #selector(clearClipboard), keyEquivalent: "",
         )
         clearItem.target = self
         menu.addItem(clearItem)
@@ -124,13 +124,13 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         let sub = NSMenu()
 
         let fetchItem = NSMenuItem(
-            title: L10n.Menu.rssFetch, action: #selector(rssFetch), keyEquivalent: ""
+            title: L10n.Menu.rssFetch, action: #selector(rssFetch), keyEquivalent: "",
         )
         fetchItem.target = self
         sub.addItem(fetchItem)
 
         let markReadItem = NSMenuItem(
-            title: L10n.Menu.rssMarkAllRead, action: #selector(rssMarkAllRead), keyEquivalent: ""
+            title: L10n.Menu.rssMarkAllRead, action: #selector(rssMarkAllRead), keyEquivalent: "",
         )
         markReadItem.target = self
         sub.addItem(markReadItem)
@@ -157,7 +157,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             // Restart action (available when MCP is active or crashed/stopped)
             let canRestart = state != .initializing && state != .restarting
             let restartItem = NSMenuItem(
-                title: L10n.MCP.restartService, action: #selector(restartMCPService), keyEquivalent: ""
+                title: L10n.MCP.restartService, action: #selector(restartMCPService), keyEquivalent: "",
             )
             restartItem.target = self
             restartItem.isEnabled = canRestart
@@ -189,24 +189,22 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func mcpStateText(_ state: MCPProcessManager.State) -> String {
         switch state {
-        case .running: return L10n.MCP.stateRunning
-        case .initializing: return L10n.MCP.stateInitializing
-        case .restarting: return L10n.MCP.stateRestarting
-        case .stopped: return L10n.MCP.stateStopped
-        case .crashed: return L10n.MCP.stateCrashed
+        case .running: L10n.MCP.stateRunning
+        case .initializing: L10n.MCP.stateInitializing
+        case .restarting: L10n.MCP.stateRestarting
+        case .stopped: L10n.MCP.stateStopped
+        case .crashed: L10n.MCP.stateCrashed
         }
     }
 
     private func mcpTitleText(_ state: MCPProcessManager.State) -> String {
-        let dot: String = {
-            switch state {
-            case .running: return "●"
-            case .initializing,
-                 .restarting: return "◐"
-            case .stopped: return "○"
-            case .crashed: return "✕"
-            }
-        }()
+        let dot = switch state {
+        case .running: "●"
+        case .initializing,
+             .restarting: "◐"
+        case .stopped: "○"
+        case .crashed: "✕"
+        }
         return "\(dot) MCP"
     }
 
@@ -236,7 +234,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 let outputK = Double(summary.output_tokens) / 1000
                 summaryItem.title = String(
                     format: "Today: %.1fK in / %.1fK out",
-                    inputK, outputK
+                    inputK, outputK,
                 )
 
                 if summary.total_requests > 0 {
@@ -247,9 +245,9 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                     let infoItem = NSMenuItem(
                         title: String(
                             format: "Requests: %d | Invalid: %d (%.0f%%)",
-                            summary.total_requests, summary.invalid_requests, invalidPct
+                            summary.total_requests, summary.invalid_requests, invalidPct,
                         ),
-                        action: nil, keyEquivalent: ""
+                        action: nil, keyEquivalent: "",
                     )
                     infoItem.isEnabled = false
                     sub.addItem(infoItem)
@@ -266,20 +264,18 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func tokenStateText(_ state: TokenProxyManager.State) -> String {
         switch state {
-        case .running: return L10n.Token.stateRunning
-        case .stopped: return L10n.Token.stateStopped
-        case .crashed: return L10n.Token.stateCrashed
+        case .running: L10n.Token.stateRunning
+        case .stopped: L10n.Token.stateStopped
+        case .crashed: L10n.Token.stateCrashed
         }
     }
 
     private func tokenTitleText() -> String {
-        let dot: String = {
-            switch TokenProxyManager.shared.state {
-            case .running: return "●"
-            case .stopped: return "○"
-            case .crashed: return "✕"
-            }
-        }()
+        let dot = switch TokenProxyManager.shared.state {
+        case .running: "●"
+        case .stopped: "○"
+        case .crashed: "✕"
+        }
         return "\(dot) Token"
     }
 
@@ -311,14 +307,14 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private func refreshTasksItem() {
         let configTasks = ConfigManager.shared.config.tasks
         let internalTasks = TaskScheduler.shared.internalTasks
-        debugLog("[MenuBar] refreshTasksItem config=\(configTasks.map { $0.name }) internal=\(internalTasks.map { $0.name }) runningKeys=\(Array(runningProcesses.keys))")
+        debugLog("[MenuBar] refreshTasksItem config=\(configTasks.map(\.name)) internal=\(internalTasks.map(\.name)) runningKeys=\(Array(runningProcesses.keys))")
         let sub = NSMenu()
 
         for task in configTasks {
             let item = NSMenuItem(
                 title: task.name,
                 action: task.enabled ? #selector(taskTrigger(_:)) : nil,
-                keyEquivalent: ""
+                keyEquivalent: "",
             )
             item.target = task.enabled ? self : nil
             item.isEnabled = task.enabled
@@ -335,7 +331,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             let item = NSMenuItem(
                 title: task.name,
                 action: task.enabled ? #selector(taskTrigger(_:)) : nil,
-                keyEquivalent: ""
+                keyEquivalent: "",
             )
             item.target = task.enabled ? self : nil
             item.isEnabled = task.enabled
@@ -375,7 +371,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 guard !Task.isCancelled else { return }
                 debugLog("[MenuBar] RSS fetch failed: \(error)")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.rssFetchFailed, body: error.localizedDescription
+                    title: L10n.Menu.rssFetchFailed, body: error.localizedDescription,
                 ))
             }
         }
@@ -402,8 +398,8 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     /// 清理配置和内部任务中已不存在的运行进程
     private func cleanupOrphanProcesses() {
-        let configNames = Set(ConfigManager.shared.config.tasks.map { $0.name })
-        let internalNames = Set(TaskScheduler.shared.internalTasks.map { $0.name })
+        let configNames = Set(ConfigManager.shared.config.tasks.map(\.name))
+        let internalNames = Set(TaskScheduler.shared.internalTasks.map(\.name))
         let activeNames = configNames.union(internalNames)
         for name in runningProcesses.keys where !activeNames.contains(name) {
             runningProcesses[name]?.terminate()
@@ -442,16 +438,16 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                     self?.runningProcesses.removeValue(forKey: name)
                     if result.success {
                         EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                            title: L10n.Menu.taskCompleted(name), body: ""
+                            title: L10n.Menu.taskCompleted(name), body: "",
                         ))
                     } else {
                         let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
                         EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                            title: L10n.Menu.taskFailed(name), body: errMsg
+                            title: L10n.Menu.taskFailed(name), body: errMsg,
                         ))
                     }
                 }
-            }
+            },
         )
         runningProcesses[name] = process
         debugLog("[MenuBar] taskTrigger start name=\(name) runningKeys=\(Array(runningProcesses.keys))")
@@ -471,7 +467,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         } catch {
             debugLog("[LoginItem] Failed: \(error)")
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.launchAtLoginFailed, body: error.localizedDescription
+                title: L10n.Menu.launchAtLoginFailed, body: error.localizedDescription,
             ))
         }
     }
@@ -499,7 +495,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.configReloadFailed, body: error.localizedDescription
+                title: L10n.Menu.configReloadFailed, body: error.localizedDescription,
             ))
         }
     }
@@ -567,7 +563,7 @@ private final class NetworkSpeedView: NSView {
         let downSz = downLabel.intrinsicContentSize
         return NSSize(
             width: max(upSz.width, downSz.width),
-            height: upSz.height + downSz.height
+            height: upSz.height + downSz.height,
         )
     }
 

@@ -44,7 +44,7 @@ public final class NotificationManager: NSObject {
     private func subscribeToEvents() {
         EventBus.shared.subscribe(AppEvent.notify) { [weak self] payload in
             guard let self, let note = payload as? NotificationPayload else { return }
-            self.post(title: note.title, body: note.body)
+            post(title: note.title, body: note.body)
         }
     }
 
@@ -67,7 +67,7 @@ public final class NotificationManager: NSObject {
             content.body = body
             content.sound = .default
             let request = UNNotificationRequest(
-                identifier: UUID().uuidString, content: content, trigger: nil
+                identifier: UUID().uuidString, content: content, trigger: nil,
             )
             UNUserNotificationCenter.current().add(request) { error in
                 if let e = error { debugLog("[Notify] Post failed: \(e)") }
@@ -82,9 +82,9 @@ public final class NotificationManager: NSObject {
     extension NotificationManager: NSUserNotificationCenterDelegate {
         public func userNotificationCenter(
             _: NSUserNotificationCenter,
-            shouldPresent _: NSUserNotification
+            shouldPresent _: NSUserNotification,
         ) -> Bool {
-            return true
+            true
         }
     }
 #else
@@ -92,7 +92,7 @@ public final class NotificationManager: NSObject {
         public func userNotificationCenter(
             _: UNUserNotificationCenter,
             willPresent _: UNNotification,
-            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void,
         ) {
             completionHandler([.banner, .sound])
         }

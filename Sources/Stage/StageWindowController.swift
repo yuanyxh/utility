@@ -13,7 +13,7 @@ public final class StageWindowController: NSWindowController {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 320),
             styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered, defer: false
+            backing: .buffered, defer: false,
         )
         panel.level = .floating
         panel.isFloatingPanel = true
@@ -30,7 +30,7 @@ public final class StageWindowController: NSWindowController {
         addVisualEffectView()
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
-            name: L10n.languageDidChange, object: nil
+            name: L10n.languageDidChange, object: nil,
         )
         // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
         panel.orderFront(nil)
@@ -229,7 +229,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
     // MARK: - Drag out of window (drag IN handled by StageDropMonitor via EventTap)
 
     public func tableView(
-        _ tableView: NSTableView, writeRowsWith rowIndexes: IndexSet, to pboard: NSPasteboard
+        _ tableView: NSTableView, writeRowsWith rowIndexes: IndexSet, to pboard: NSPasteboard,
     ) -> Bool {
         guard let row = rowIndexes.first, row < items.count else { return false }
         let item = items[row]
@@ -238,7 +238,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         // 拖出操作 mask：moveOnDragOut=true 时允许 Finder 移动（系统级 cmd+option+v）
         let config = ConfigManager.shared.config.stage
         tableView.setDraggingSourceOperationMask(
-            config.moveOnDragOut ? [.copy, .move] : .copy, forLocal: false
+            config.moveOnDragOut ? [.copy, .move] : .copy, forLocal: false,
         )
 
         switch item.type {
@@ -278,7 +278,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func tableView(
         _: NSTableView, draggingSession _: NSDraggingSession, endedAt _: NSPoint,
-        operation: NSDragOperation
+        operation: NSDragOperation,
     ) {
         defer {
             draggingItemId = nil

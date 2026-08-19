@@ -32,7 +32,7 @@ public enum TaskExecutor {
     public static func execute(
         _ config: TaskExecConfig,
         onOutput: ((String) -> Void)?,
-        onComplete: @escaping (Result) -> Void
+        onComplete: @escaping (Result) -> Void,
     ) -> Process {
         let pc = config.toProcess()
         var accumulatedOutput = ""

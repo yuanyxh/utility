@@ -14,7 +14,7 @@ public final class ClipboardPanelController: NSWindowController {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 312, height: 380),
             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
-            backing: .buffered, defer: false
+            backing: .buffered, defer: false,
         )
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
@@ -151,14 +151,14 @@ public final class ClipboardPanelController: NSWindowController {
         let origin = WindowPositioning.nearMouseQuadrant(
             windowSize: panelSize,
             padding: 12,
-            screen: window?.screen
+            screen: window?.screen,
         )
         window?.setFrameOrigin(origin)
 
         // 清理过期的粘贴缓存文件（>1天）
         let cacheDir = AppPaths.clipCacheDir
         if let files = try? FileManager.default.contentsOfDirectory(
-            at: cacheDir, includingPropertiesForKeys: [.creationDateKey]
+            at: cacheDir, includingPropertiesForKeys: [.creationDateKey],
         ) {
             let cutoff = Date().addingTimeInterval(-86400)
             for url in files {
@@ -298,7 +298,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
 
     /// 缓存颜色，避免每帧创建 NSColor
     private static let selBG = NSColor(
-        red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36
+        red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36,
     ).cgColor
     private static let clearBG = NSColor.clear.cgColor
 }
@@ -356,10 +356,10 @@ private final class NumberCircleView: NSView {
     }
 
     private static let hlColor = NSColor(
-        red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0
+        red: 0x34 / 255, green: 0x78 / 255, blue: 0xF6 / 255, alpha: 1.0,
     ).cgColor
     private static let noColor = NSColor(
-        red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0
+        red: 0xA4 / 255, green: 0xA4 / 255, blue: 0xA4 / 255, alpha: 1.0,
     ).cgColor
 
     private let numberLabel: NSTextField = {

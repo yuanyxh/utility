@@ -21,7 +21,7 @@ public final class RSSManager {
 
     /// 删除配置中已不存在的 feed 的历史条目
     private func cleanupStaleFeeds() {
-        let configuredNames = Set(ConfigManager.shared.config.rss.feeds.map { $0.name })
+        let configuredNames = Set(ConfigManager.shared.config.rss.feeds.map(\.name))
         let dbFeedNames: Set<String>
         do {
             dbFeedNames = try db.read { db in
@@ -78,7 +78,7 @@ public final class RSSManager {
                 let exists =
                     try Int.fetchOne(
                         db, sql: "SELECT COUNT(*) FROM rss_item WHERE id = ?",
-                        arguments: [item.id]
+                        arguments: [item.id],
                     ) ?? 0
                 if exists == 0 {
                     try item.insert(db)

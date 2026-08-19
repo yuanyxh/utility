@@ -59,7 +59,7 @@ public final class TaskScheduler {
     // MARK: - Stale cleanup
 
     private func cleanupStaleTaskStates() {
-        let configuredNames = Set(allTasks().map { $0.name })
+        let configuredNames = Set(allTasks().map(\.name))
         let dbNames = stateDB.allTaskNames()
         let stale = dbNames.filter { !configuredNames.contains($0) }
         for name in stale {
@@ -142,11 +142,11 @@ public final class TaskScheduler {
             if !result.success {
                 let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.taskFailed(task.name), body: errMsg
+                    title: L10n.Menu.taskFailed(task.name), body: errMsg,
                 ))
             } else {
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.taskCompleted(task.name), body: ""
+                    title: L10n.Menu.taskCompleted(task.name), body: "",
                 ))
             }
         }

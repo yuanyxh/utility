@@ -6,7 +6,7 @@ import Foundation
 struct RSSCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "rss",
-        abstract: "RSS 订阅管理（Headless）"
+        abstract: "RSS 订阅管理（Headless）",
     )
 
     @Flag(name: .shortAndLong, help: ArgumentHelp("抓取并更新所有订阅"))

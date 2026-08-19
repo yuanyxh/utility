@@ -44,7 +44,7 @@ public final class TranslationPanelController: NSWindowController {
             font: .systemFont(ofSize: 13),
             textContainerInset: NSSize(width: 6, height: 6),
             showsVerticalScroller: true,
-            border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4)
+            border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4),
         )
         let v = ScrolledInputTextView(style: style)
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -61,7 +61,7 @@ public final class TranslationPanelController: NSWindowController {
         textContainerInset: NSSize(width: 6, height: 6),
         isEditable: false,
         showsVerticalScroller: true,
-        border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4)
+        border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4),
     ))
 
     /// 下面板遮罩层
@@ -115,7 +115,7 @@ public final class TranslationPanelController: NSWindowController {
         let panel = TranslationPanel(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
-            backing: .buffered, defer: false
+            backing: .buffered, defer: false,
         )
         panel.level = NSWindow.Level.floating
         panel.isFloatingPanel = true
@@ -128,7 +128,7 @@ public final class TranslationPanelController: NSWindowController {
         setupUI()
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
-            name: L10n.languageDidChange, object: nil
+            name: L10n.languageDidChange, object: nil,
         )
     }
 
@@ -147,7 +147,7 @@ public final class TranslationPanelController: NSWindowController {
         let content = panel.contentView!
 
         // ---- 原文区 ----
-        let sourceLabel = self.sourceLabel
+        let sourceLabel = sourceLabel
         sourceLabel.stringValue = L10n.Translation.source
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
@@ -167,7 +167,7 @@ public final class TranslationPanelController: NSWindowController {
         sourceSection.translatesAutoresizingMaskIntoConstraints = false
 
         // ---- 译文区 ----
-        let targetLabel = self.targetLabel
+        let targetLabel = targetLabel
         targetLabel.stringValue = L10n.Translation.target
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
 
@@ -221,7 +221,7 @@ public final class TranslationPanelController: NSWindowController {
         // 拖动停止时记忆位置
         NotificationCenter.default.addObserver(
             self, selector: #selector(savePosition),
-            name: NSWindow.didMoveNotification, object: panel
+            name: NSWindow.didMoveNotification, object: panel,
         )
     }
 
@@ -326,19 +326,19 @@ public final class TranslationPanelController: NSWindowController {
             text: text, source: sourceCode, target: targetCode,
             completion: { [weak self] result, error in
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
+                    guard let self else { return }
                     guard seq == self.translationSeq else { return }
                     self.currentTask = nil
-                    if let result = result {
+                    if let result {
                         self.targetOutput.string = result
                         self.overlay.hide()
                         self.targetOutput.scroll(to: .bottom)
-                    } else if let error = error {
+                    } else if let error {
                         if (error as NSError).code == NSURLErrorCancelled { return }
                         self.overlay.showError(error.localizedDescription)
                     }
                 }
-            }
+            },
         )
     }
 
@@ -354,7 +354,7 @@ public final class TranslationPanelController: NSWindowController {
         resetState()
 
         let pendingText: String
-        if let text = text, !text.isEmpty {
+        if let text, !text.isEmpty {
             sourceInputView.string = text
             pendingText = text
         } else {
@@ -365,7 +365,7 @@ public final class TranslationPanelController: NSWindowController {
         let origin = WindowPositioning.savedOrNearMouse(
             windowSize: window?.frame.size ?? .zero,
             key: UDKey.translationPanelOrigin,
-            screen: window?.screen
+            screen: window?.screen,
         )
         window?.setFrameOrigin(origin)
         // 记录当前前台 app，粘贴时恢复到它
@@ -376,11 +376,11 @@ public final class TranslationPanelController: NSWindowController {
         if !pendingText.isEmpty {
             // 延迟设焦点 + 滚动到底部
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
-                self.window?.makeKey()
-                self.window?.makeFirstResponder(self.sourceInputView.textView)
-                self.sourceInputView.setCursor(to: .end)
-                self.sourceInputView.scroll(to: .bottom)
+                guard let self else { return }
+                window?.makeKey()
+                window?.makeFirstResponder(sourceInputView.textView)
+                sourceInputView.setCursor(to: .end)
+                sourceInputView.scroll(to: .bottom)
             }
         }
     }
@@ -414,7 +414,7 @@ public final class TranslationPanelController: NSWindowController {
         let origin = WindowPositioning.savedOrNearMouse(
             windowSize: window?.frame.size ?? .zero,
             key: UDKey.translationPanelOrigin,
-            screen: window?.screen
+            screen: window?.screen,
         )
         window?.setFrameOrigin(origin)
         window?.orderFront(nil)

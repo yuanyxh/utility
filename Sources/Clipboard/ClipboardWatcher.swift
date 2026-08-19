@@ -73,7 +73,7 @@ public final class ClipboardWatcher {
             let plainText = htmlItem.string(forType: .string)
             let clip = ClipboardItem(
                 type: "html", content: html.data(using: .utf8) ?? Data(),
-                application: plainText ?? pasteboardOwner()
+                application: plainText ?? pasteboardOwner(),
             )
             try? storage.add(clip)
             return
@@ -86,7 +86,7 @@ public final class ClipboardWatcher {
             let clip = ClipboardItem(
                 type: "text",
                 content: str.data(using: .utf8) ?? Data(),
-                application: pasteboardOwner()
+                application: pasteboardOwner(),
             )
             try? storage.add(clip)
             return
@@ -103,16 +103,16 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["path": urls[0].path]) {
                 let clip = ClipboardItem(
                     type: "file", content: data,
-                    application: urls[0].lastPathComponent
+                    application: urls[0].lastPathComponent,
                 )
                 try? storage.add(clip)
             }
         } else {
-            let paths = urls.map { $0.path }
+            let paths = urls.map(\.path)
             if let data = try? JSONEncoder().encode(["paths": paths]) {
                 let clip = ClipboardItem(
                     type: "file_batch", content: data,
-                    application: L10n.Clipboard.fileCount(urls.count)
+                    application: L10n.Clipboard.fileCount(urls.count),
                 )
                 try? storage.add(clip)
             }
@@ -128,7 +128,7 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["path": fileURL.path]) {
                 let clip = ClipboardItem(
                     type: "file", content: data,
-                    application: filename
+                    application: filename,
                 )
                 try? storage.add(clip)
             }

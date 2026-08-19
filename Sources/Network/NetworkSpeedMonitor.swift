@@ -53,9 +53,9 @@ final class NetworkSpeedMonitor {
     /// ≥1GB → X.XXG, else → X.XXM
     private func format(_ bytes: UInt64) -> String {
         if bytes >= 1_000_000_000 {
-            return String(format: "%.2fG", Double(bytes) / 1_000_000_000.0)
+            String(format: "%.2fG", Double(bytes) / 1_000_000_000.0)
         } else {
-            return String(format: "%.2fM", Double(bytes) / 1_000_000.0)
+            String(format: "%.2fM", Double(bytes) / 1_000_000.0)
         }
     }
 
@@ -72,7 +72,7 @@ final class NetworkSpeedMonitor {
 
         for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let name = String(cString: ptr.pointee.ifa_name)
-            guard name.hasPrefix("en"), name.dropFirst(2).allSatisfy({ $0.isNumber }) else { continue }
+            guard name.hasPrefix("en"), name.dropFirst(2).allSatisfy(\.isNumber) else { continue }
 
             let sa = ptr.pointee.ifa_addr.pointee
             guard sa.sa_family == UInt8(AF_LINK), let data = ptr.pointee.ifa_data else { continue }

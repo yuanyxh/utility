@@ -114,8 +114,8 @@ public struct AIConfig: Codable {
 
 public struct ModelProxyConfig: Codable {
     var enabled: Bool = false
-    var url: String = ""       // 上游 API 地址，为空则用 ai.baseURL
-    var port: Int = 8080       // 本地代理监听端口
+    var url: String = "" // 上游 API 地址，为空则用 ai.baseURL
+    var port: Int = 8080 // 本地代理监听端口
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -320,7 +320,7 @@ public enum TaskExecConfig: Codable {
         case "py": self = .py(cmd)
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)"
+                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)",
             )
         }
     }

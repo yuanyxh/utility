@@ -23,11 +23,11 @@ public final class PromptManager {
     private func defaultPrompt(for feature: String) -> String {
         switch feature {
         case "translate":
-            return L10n.Prompt.translate
+            L10n.Prompt.translate
         case "translate_auto":
-            return L10n.Prompt.translateAuto
+            L10n.Prompt.translateAuto
         default:
-            return ""
+            ""
         }
     }
 

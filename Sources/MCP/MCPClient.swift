@@ -154,11 +154,11 @@ enum MCPError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .invalidURL(e):
-            return "Invalid URL: \(e)"
+            "Invalid URL: \(e)"
         case .invalidResponse:
-            return "Invalid server response"
+            "Invalid server response"
         case let .serverError(code, msg):
-            return "Server \(code): \(msg)"
+            "Server \(code): \(msg)"
         }
     }
 }

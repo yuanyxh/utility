@@ -26,7 +26,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     public func parser(
         _: XMLParser, didStartElement elementName: String,
         namespaceURI _: String?, qualifiedName _: String?,
-        attributes attributeDict: [String: String] = [:]
+        attributes attributeDict: [String: String] = [:],
     ) {
         currentElement = elementName
 
@@ -65,7 +65,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
     public func parser(
         _: XMLParser, didEndElement elementName: String,
-        namespaceURI _: String?, qualifiedName _: String?
+        namespaceURI _: String?, qualifiedName _: String?,
     ) {
         guard isItem, elementName == "item" || elementName == "entry" else { return }
 
@@ -79,8 +79,8 @@ public final class RSSParser: NSObject, XMLParserDelegate {
                 link: currentLink.trimmingCharacters(in: .whitespacesAndNewlines),
                 itemDescription: currentDesc.trimmingCharacters(in: .whitespacesAndNewlines),
                 pubDate: date,
-                feedName: feedName
-            )
+                feedName: feedName,
+            ),
         )
         isItem = false
     }

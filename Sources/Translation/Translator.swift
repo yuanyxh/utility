@@ -25,12 +25,12 @@ public final class Translator {
                 variables: [
                     "first": config.translation.firstLang,
                     "second": config.translation.secondLang,
-                ]
+                ],
             )
         }
         return PromptManager.shared.prompt(
             for: "translate",
-            variables: ["source": source, "target": target]
+            variables: ["source": source, "target": target],
         )
     }
 
@@ -39,7 +39,7 @@ public final class Translator {
     @discardableResult
     public func translate(
         text: String, source: String = "auto", target: String = "zh",
-        completion: @escaping (String?, Error?) -> Void
+        completion: @escaping (String?, Error?) -> Void,
     ) -> URLSessionTask? {
         let config = ConfigManager.shared.config
         guard !config.ai.apiKey.isEmpty else {
@@ -55,7 +55,7 @@ public final class Translator {
                 .init(role: "user", content: text),
             ],
             temperature: 0.1,
-            thinking: .init(type: "disabled")
+            thinking: .init(type: "disabled"),
         )
 
         client.chat(request: request, baseURL: config.ai.baseURL) { result in
@@ -87,7 +87,7 @@ public final class Translator {
                 .init(role: "user", content: text),
             ],
             temperature: 0.1,
-            thinking: .init(type: "disabled")
+            thinking: .init(type: "disabled"),
         )
 
         let response = try await client.chat(request: request, baseURL: config.ai.baseURL)
@@ -103,8 +103,8 @@ public enum TranslationError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingAPIKey: return L10n.Translation.missingApiKey
-        case .apiError: return L10n.Translation.apiFailed
+        case .missingAPIKey: L10n.Translation.missingApiKey
+        case .apiError: L10n.Translation.apiFailed
         }
     }
 }

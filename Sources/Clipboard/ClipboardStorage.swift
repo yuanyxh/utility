@@ -24,7 +24,7 @@ public final class ClipboardStorage {
                             SELECT id FROM clipboard_item
                             WHERE type = 'text' AND search_text = ?
                             LIMIT 1
-                        """, arguments: [text]
+                        """, arguments: [text],
                     )
                 }
                 // file / file_batch / html — 按 content 匹配
@@ -40,7 +40,7 @@ public final class ClipboardStorage {
                 try db.execute(
                     literal: """
                         UPDATE clipboard_item SET timestamp = \(Date()) WHERE id = \(existingId)
-                    """
+                    """,
                 )
             } else {
                 try item.insert(db)
@@ -49,7 +49,7 @@ public final class ClipboardStorage {
                 try db.execute(
                     literal: """
                         DELETE FROM clipboard_item WHERE timestamp < \(cutoff)
-                    """
+                    """,
                 )
             }
         }
@@ -68,7 +68,7 @@ public final class ClipboardStorage {
             try db.execute(
                 literal: """
                     UPDATE clipboard_item SET timestamp = \(Date()) WHERE id = \(id)
-                """
+                """,
             )
         }
     }

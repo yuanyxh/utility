@@ -29,14 +29,14 @@ public final class StageManager {
         let bookmark = try url.bookmarkData(
             options: [],
             includingResourceValuesForKeys: nil,
-            relativeTo: nil
+            relativeTo: nil,
         )
         try add(type: "fileURL", content: bookmark)
     }
 
     public func addFiles(urls: [URL]) throws {
         guard !urls.isEmpty else { return }
-        let paths = urls.map { $0.path }
+        let paths = urls.map(\.path)
         let json = try JSONEncoder().encode(paths)
         try add(type: "fileGroup", content: json)
     }

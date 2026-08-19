@@ -39,7 +39,7 @@ public final class StageDropMonitor {
 
     private func installEventTap() {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+            guard let refcon else { return Unmanaged.passUnretained(event) }
             let ctrl = Unmanaged<StageDropMonitor>.fromOpaque(refcon).takeUnretainedValue()
             return ctrl.handleEvent(type: type, event: event)
         }
@@ -54,7 +54,7 @@ public final class StageDropMonitor {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(mask),
             callback: callback,
-            userInfo: ptr
+            userInfo: ptr,
         ) {
             eventTap = tap
             let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -121,7 +121,7 @@ public final class StageDropMonitor {
         let pb = NSPasteboard(name: .drag)
         // URL（与 processDrop 相同的过滤逻辑）
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
-            let fileURLs = urls.map { $0.standardizedFileURL }.filter {
+            let fileURLs = urls.map(\.standardizedFileURL).filter {
                 $0.isFileURL && FileManager.default.fileExists(atPath: $0.path)
             }
             let webURLs = urls.filter { !$0.standardizedFileURL.isFileURL }
@@ -156,7 +156,7 @@ public final class StageDropMonitor {
         guard let frame = stageWindow?.window?.frame else { return false }
         return NSRect(
             x: frame.minX - 20, y: frame.minY - 20,
-            width: frame.width + 40, height: frame.height + 40
+            width: frame.width + 40, height: frame.height + 40,
         )
         .contains(mouse)
     }
@@ -168,7 +168,7 @@ public final class StageDropMonitor {
         if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
            !urls.isEmpty
         {
-            let fileURLs = urls.map { $0.standardizedFileURL }.filter {
+            let fileURLs = urls.map(\.standardizedFileURL).filter {
                 $0.isFileURL && FileManager.default.fileExists(atPath: $0.path)
             }
             let webURLs = urls.filter { !$0.standardizedFileURL.isFileURL }

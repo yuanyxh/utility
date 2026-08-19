@@ -52,7 +52,7 @@ public final class OverlayView: NSView {
     private func setup() {
         wantsLayer = true
         layer?.backgroundColor = CGColor(
-            red: 0xF5 / 0xFF, green: 0xF5 / 0xFF, blue: 0xF5 / 0xFF, alpha: 0.72
+            red: 0xF5 / 0xFF, green: 0xF5 / 0xFF, blue: 0xF5 / 0xFF, alpha: 0.72,
         )
         layer?.cornerRadius = 4
 

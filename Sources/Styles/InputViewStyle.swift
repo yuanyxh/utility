@@ -50,7 +50,7 @@ public struct InputViewStyle {
         textContainerInset: NSSize = NSSize(width: 8, height: 8),
         isEditable: Bool = true,
         showsVerticalScroller: Bool = false,
-        border: BorderStyle? = nil
+        border: BorderStyle? = nil,
     ) {
         self.backgroundColor = backgroundColor
         self.font = font

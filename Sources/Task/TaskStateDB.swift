@@ -15,7 +15,7 @@ public final class TaskStateDB {
         guard let db = dbQueue else { return nil }
         return try? db.read { db in
             if let ts: Double = try Double.fetchOne(
-                db, sql: "SELECT last_fire FROM task_state WHERE task_name = ?", arguments: [taskName]
+                db, sql: "SELECT last_fire FROM task_state WHERE task_name = ?", arguments: [taskName],
             ) {
                 return Date(timeIntervalSince1970: ts)
             }
@@ -29,7 +29,7 @@ public final class TaskStateDB {
         try? db.write { db in
             try db.execute(
                 sql: "INSERT OR REPLACE INTO task_state (task_name, last_fire) VALUES (?, ?)",
-                arguments: [taskName, date.timeIntervalSince1970]
+                arguments: [taskName, date.timeIntervalSince1970],
             )
         }
     }

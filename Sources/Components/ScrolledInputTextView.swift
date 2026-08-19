@@ -38,7 +38,7 @@ public final class ScrolledInputTextView: NSView {
         tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.containerSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
+            height: CGFloat.greatestFiniteMagnitude,
         )
         return tv
     }()
@@ -254,15 +254,13 @@ public final class ScrolledInputTextView: NSView {
 
     public func setCursor(to position: CursorPosition) {
         let count = textView.string.count
-        let target: Int
-
-        switch position {
+        let target: Int = switch position {
         case .start:
-            target = 0
+            0
         case .end:
-            target = count
+            count
         case let .index(n):
-            target = max(0, min(n, count))
+            max(0, min(n, count))
         }
 
         textView.setSelectedRange(NSRange(location: target, length: 0))
