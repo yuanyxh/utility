@@ -97,7 +97,6 @@ rss:
   feeds:
     - name: "MDN Blog"
       url: "https://developer.mozilla.org/en-US/blog/rss.xml"
-  updateInterval: 60
 
 # ---------- 定时任务 ----------
 tasks:
