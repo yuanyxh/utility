@@ -71,16 +71,23 @@ public final class TaskScheduler {
 
     private func handleMissed() {
         let now = Date()
+        let calendar = Calendar.current
         let configs = allTasks().filter { $0.enabled && !$0.name.isEmpty && $0.mode != .manual }
 
         for task in configs {
             guard let expr = CronExpression(task.trigger) else { continue }
 
-            // 无历史记录时，用今天 00:00 作为基准（防止 DB 重建后错过今日触发）
-            let lastFire = stateDB.lastFire(for: task.name)
-            let reference = lastFire ?? Calendar.current.startOfDay(for: now)
-            let nextFire = nextCronDate(after: reference, expr: expr)
-            guard let next = nextFire, next <= now else { continue }
+            // 以「今天 00:00 之后第一个 cron 匹配点」为补触发基准：
+            // - 该点尚未到达（今天还没到触发时间段）→ 不补，交给 scheduleNext 等时间到
+            // - 该点已过且今天尚未触发过 → 立即补触发当天
+            // 不再以 lastFire 为基准，避免 lastFire 距今多天时从历史旧点逐点补触发
+            // （如每天 10:00 的任务前天触发过，今天 09:00 打开 app 会立即补跑昨天的）。
+            guard let todayPoint = nextCronDate(after: calendar.startOfDay(for: now), expr: expr),
+                  todayPoint <= now
+            else { continue }
+
+            // 今天已触发过（lastFire 不早于今天的 cron 点），不重复补
+            if let lastFire = stateDB.lastFire(for: task.name), lastFire >= todayPoint { continue }
 
             fireTask(task)
             stateDB.setLastFire(now, for: task.name)
@@ -96,11 +103,10 @@ public final class TaskScheduler {
 
         for task in configs {
             guard let expr = CronExpression(task.trigger) else { continue }
-            let lastFire = stateDB.lastFire(for: task.name)
-            // 下次触发：lastFire（或 now）之后的下一个 cron 匹配点
-            if let next = nextCronDate(after: lastFire ?? now, expr: expr),
-               next > now
-            {
+            // 未来最近触发点：从 now 之后找，不用 lastFire 作基准
+            // （lastFire 距今多天时 nextCronDate 会找到过去点被 next > now 过滤，
+            // 导致今天 cron 点失去调度，永远不会触发）
+            if let next = nextCronDate(after: now, expr: expr) {
                 if earliest == nil || next < earliest! {
                     earliest = next
                 }
@@ -122,20 +128,8 @@ public final class TaskScheduler {
     // MARK: - Timer fired
 
     private func onTimerFired() {
-        let now = Date()
-        let configs = allTasks().filter { $0.enabled && !$0.name.isEmpty && $0.mode != .manual }
-
-        for task in configs {
-            guard let expr = CronExpression(task.trigger) else { continue }
-            let lastFire = stateDB.lastFire(for: task.name)
-            if let next = nextCronDate(after: lastFire ?? now.addingTimeInterval(-60), expr: expr),
-               next <= now
-            {
-                fireTask(task)
-                stateDB.setLastFire(now, for: task.name)
-            }
-        }
-
+        // 复用 handleMissed 的补触发判断：以「今天」为基准，到点即触发
+        handleMissed()
         scheduleNext()
     }
 
