@@ -112,6 +112,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     public func menuWillOpen(_: NSMenu) {
+        debugLog("[MenuBar] menuWillOpen")
         refreshRSSItem()
         refreshMCPItem()
         refreshTokenItem()
@@ -310,6 +311,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private func refreshTasksItem() {
         let configTasks = ConfigManager.shared.config.tasks
         let internalTasks = TaskScheduler.shared.internalTasks
+        debugLog("[MenuBar] refreshTasksItem config=\(configTasks.map { $0.name }) internal=\(internalTasks.map { $0.name }) runningKeys=\(Array(runningProcesses.keys))")
         let sub = NSMenu()
 
         for task in configTasks {
@@ -339,6 +341,9 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             item.isEnabled = task.enabled
             item.representedObject = task.name
             item.state = (runningProcesses[task.name] != nil) ? .on : .off
+            if task.name == "gen-article" {
+                debugLog("[MenuBar] gen-article item.state=\(item.state.rawValue) (running=\(runningProcesses[task.name] != nil))")
+            }
             sub.addItem(item)
         }
 
@@ -413,13 +418,17 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         guard let name = sender.representedObject as? String,
               let task = (ConfigManager.shared.config.tasks + TaskScheduler.shared.internalTasks)
               .first(where: { $0.name == name && $0.enabled })
-        else { return }
+        else {
+            debugLog("[MenuBar] taskTrigger early-return represented=\(String(describing: sender.representedObject))")
+            return
+        }
 
         // 已在运行 → 终止
         if let process = runningProcesses[name] {
             process.terminate()
             runningProcesses.removeValue(forKey: name)
             sender.state = .off
+            debugLog("[MenuBar] taskTrigger terminate name=\(name) runningKeys=\(Array(runningProcesses.keys))")
             return
         }
 
@@ -445,6 +454,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             }
         )
         runningProcesses[name] = process
+        debugLog("[MenuBar] taskTrigger start name=\(name) runningKeys=\(Array(runningProcesses.keys))")
     }
 
     // MARK: - Actions

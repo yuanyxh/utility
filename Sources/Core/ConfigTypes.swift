@@ -14,6 +14,7 @@ public struct AppConfig: Codable {
     var notifications: NotificationConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
+    var article: ArticleConfig = .init()
 
     public init() {}
 
@@ -30,6 +31,7 @@ public struct AppConfig: Codable {
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
+        article = (try? c.decode(ArticleConfig.self, forKey: .article)) ?? .init()
     }
 }
 
@@ -121,6 +123,26 @@ public struct ModelProxyConfig: Codable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+    }
+}
+
+// MARK: - Article
+
+/// 文章生成（gen-article 内部任务）配置。路径一律由 mcp.knowledgeBasePath
+/// 推导出 Gen_Articles/ 工作目录，不做路径配置（最少配置化）。
+public struct ArticleConfig: Codable {
+    var enabled: Bool = false
+    /// agent CLI 命令模板（占位符 {system_prompt_file}/{prompt_file} 由脚本替换）。
+    /// ⚠️ GUI/LaunchAgent 启动的子进程 PATH 不含用户工具目录，主命令须写绝对路径。
+    var agentCli: String = "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
+    var retries: Int = 5
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
+        retries = try c.decodeIfPresent(Int.self, forKey: .retries) ?? 5
     }
 }
 

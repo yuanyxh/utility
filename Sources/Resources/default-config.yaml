@@ -84,3 +84,13 @@ modelProxy:
   enabled: false
   url: ''
   port: 8613
+
+# ---------- 文章生成 ----------
+article:
+  enabled: false
+  # agent CLI 命令模板，占位符 {system_prompt_file}/{prompt_file} 由脚本替换。
+  # ⚠️ GUI/LaunchAgent 启动的任务子进程 PATH 不含 /opt/homebrew/bin 等用户工具目录，
+  # agent 主命令必须写绝对路径（如 /opt/homebrew/bin/claude），否则启动即失败。
+  agentCli: '/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}'
+  # 生成后自动验证，硬门槛不满足自动重跑次数
+  retries: 5

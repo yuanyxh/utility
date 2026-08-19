@@ -42,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // 启动 Token 代理监控
         startTokenProxy()
 
+        // 注册 gen-article 手动任务
+        updateArticleTask()
+
         registerAllHotkeys()
         installEventHandler()
 
@@ -101,6 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         } else {
             TokenProxyManager.shared.stop()
         }
+
+        // gen-article 内部任务：按配置注册/注销
+        updateArticleTask()
     }
 
     /// 注册/注销内置记忆总结任务。幂等：disabled 时注销；enabled 时直接注册。
@@ -151,6 +157,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[MCP] Summary task registered (cron: \(trigger))")
+    }
+
+    /// 注册/注销 gen-article 手动任务：素材自动化 + 文章生成一条龙。
+    /// 路径一律由 knowledgeBasePath 推导 Gen_Articles/ 工作目录，不做路径配置。
+    /// 幂等：disabled 时注销；enabled 时直接注册（内部同名替换）。
+    private func updateArticleTask() {
+        let article = ConfigManager.shared.config.article
+        guard article.enabled,
+              let kbPath = ConfigManager.shared.config.mcp?.knowledgeBasePath,
+              !kbPath.isEmpty,
+              let prepareScript = MCPProcessManager.shared.findScript(named: "prepare_article_source.py"),
+              let genScript = MCPProcessManager.shared.findScript(named: "gen_article_generic.py")
+        else {
+            TaskScheduler.shared.unregisterInternalTask(named: "gen-article")
+            debugLog("[Article] Task disabled or unavailable")
+            return
+        }
+
+        let genDir = (kbPath as NSString).expandingTildeInPath + "/Gen_Articles"
+        let topicPath = genDir + "/topic.md"
+        let factsPath = genDir + "/topic_facts.md"
+        let soulPath = genDir + "/SOUL.md"
+        let articlesDir = genDir + "/articles"
+
+        let python = MCPProcessManager.pythonVenvPath
+        let agent = article.agentCli
+        let cmd = [
+            python, prepareScript,
+            "--topic", topicPath,
+            "--out", factsPath,
+            "--agent", "'\(agent)'",
+            "&&",
+            python, genScript,
+            "--soul", soulPath,
+            "--src", factsPath,
+            "--out", articlesDir,
+            "--retries", "\(article.retries)",
+            "--agent", "'\(agent)'",
+        ].joined(separator: " ")
+
+        let task = TaskConfig(
+            name: "gen-article",
+            trigger: "",
+            exec: .sh(cmd),
+            enabled: true,
+            mode: .manual
+        )
+        TaskScheduler.shared.registerInternalTask(task)
+        debugLog("[Article] gen-article task registered (manual)")
     }
 
     private func registerAllHotkeys() {
