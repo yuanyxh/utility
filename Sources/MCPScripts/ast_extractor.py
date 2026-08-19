@@ -161,7 +161,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
             doc = _py_docstring(node)
             sig = _py_signature(node)
 
-            entry = {"name": name, "kind": kind}
+            entry = {
+                "name": name,
+                "kind": kind,
+                "start_line": node.lineno,
+                "end_line": node.end_lineno,
+            }
             if sig:
                 entry["signature"] = sig
             if doc:
@@ -185,7 +190,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
         elif isinstance(node, ast.ClassDef):
             sig = _py_signature(node)
             doc = _py_docstring(node)
-            entry = {"name": _py_name(node), "kind": "class"}
+            entry = {
+                "name": _py_name(node),
+                "kind": "class",
+                "start_line": node.lineno,
+                "end_line": node.end_lineno,
+            }
             if sig:
                 entry["signature"] = sig
             if doc:
@@ -216,7 +226,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
                         elif dn in ("staticmethod", "classmethod"):
                             method_kind = dn
                     sig = _py_signature(child)
-                    method_entry = {"name": method_name, "kind": method_kind}
+                    method_entry = {
+                        "name": method_name,
+                        "kind": method_kind,
+                        "start_line": child.lineno,
+                        "end_line": child.end_lineno,
+                    }
                     if sig:
                         method_entry["signature"] = sig
                     doc = _py_docstring(child)
@@ -231,7 +246,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
                     name = target.id
                     if name.isupper() or depth == 0:
                         kind = "constant" if name.isupper() else "variable"
-                        entry = {"name": name, "kind": kind}
+                        entry = {
+                            "name": name,
+                            "kind": kind,
+                            "start_line": node.lineno,
+                            "end_line": node.end_lineno,
+                        }
                         # Try to get type annotation via value type
                         symbols.append(entry)
 
@@ -240,7 +260,12 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
             if isinstance(node.target, ast.Name) and depth == 0:
                 name = node.target.id
                 kind = "constant" if name.isupper() else "variable"
-                entry = {"name": name, "kind": kind}
+                entry = {
+                    "name": name,
+                    "kind": kind,
+                    "start_line": node.lineno,
+                    "end_line": node.end_lineno,
+                }
                 # Get type annotation
                 anno_str = (
                     _py_type_annotation(node.annotation) if node.annotation else None
@@ -361,9 +386,17 @@ def _extract_vue(content: str, file_path: str) -> list[dict]:
         return []
 
     attrs = m.group(1)
-    script_content = m.group(2).strip()
+    raw = m.group(2)
+    script_content = raw.strip()
     if not script_content:
         return []
+
+    # 行号偏移:parse 结果行号相对 strip 后的 script 块,需补偿回原文件。
+    # content[:m.start(2)].count("\n") = `<script>` 的 `>` 之前的换行总数;
+    # lead_newlines = script 块前导空白(被 strip 掉)里的换行数,相加即 parse 行 → 文件行 的加数。
+    lead_newlines = raw[: len(raw) - len(raw.lstrip())].count("\n")
+    offset = content[: m.start(2)].count("\n") + lead_newlines
+    script_tag_line = content[: m.start()].count("\n") + 1
 
     # Detect lang
     is_ts = bool(re.search(r'lang\s*=\s*["\']ts["\']', attrs))
@@ -374,12 +407,24 @@ def _extract_vue(content: str, file_path: str) -> list[dict]:
     _raise_if_error(result)
 
     symbols = result.get("symbols", []) if isinstance(result, dict) else []
+    for s in symbols:
+        if "start_line" in s:
+            s["start_line"] += offset
+        if "end_line" in s:
+            s["end_line"] += offset
 
     # Add component name from filename if not already extracted
     base = Path(file_path).stem
     already = {s.get("name") for s in symbols}
     if base not in already and not base.startswith("index"):
-        symbols.append({"name": base, "kind": "component"})
+        symbols.append(
+            {
+                "name": base,
+                "kind": "component",
+                "start_line": script_tag_line,
+                "end_line": script_tag_line,
+            }
+        )
 
     return symbols
 

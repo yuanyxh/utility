@@ -18,8 +18,11 @@ struct PythonExtractor: SymbolExtractor {
         var lastDecorator: String?
         var inTripleString = false
         var tripleChar = "\"\"\""
+        // 缩进栈定 def/class 体结束:end = 缩进回落到声明缩进那行的上一行
+        var openDefs: [(symIdx: Int, indent: Int)] = []
+        var lastContentLine = 0
 
-        for rawLine in lines {
+        for (lineIdx, rawLine) in lines.enumerated() {
             // stripped: whitespace-trimmed for content inspection
             let stripped = rawLine.trimmingCharacters(in: .whitespaces)
 
@@ -42,6 +45,14 @@ struct PythonExtractor: SymbolExtractor {
                 continue
             }
 
+            // ── resolve def/class body end (indent fell back to ≤ declaration indent) ──
+            let indent = rawLine.prefix(while: { $0 == " " || $0 == "\t" }).count
+            while let top = openDefs.last, indent <= top.indent {
+                symbols[top.symIdx].endLine = lastContentLine + 1
+                openDefs.removeLast()
+            }
+            lastContentLine = lineIdx
+
             // ── decorator tracking ──
             if beforeComment.hasPrefix("@") {
                 lastDecorator = beforeComment
@@ -54,20 +65,18 @@ struct PythonExtractor: SymbolExtractor {
                 let kind = (beforeComment as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
                 let name = (beforeComment as NSString).substring(with: match.range(at: 2))
 
-                let docComment: String?
-                if let d = lastDecorator {
+                let docComment: String? = if let d = lastDecorator {
                     // Find the docstring immediately after this def for real doc comments
                     // For now just store the decorator as context
-                    docComment = d
+                    d
                 } else {
-                    docComment = nil
+                    nil
                 }
 
-                let sig: String?
-                if kind == "def" || kind == "cdef" || kind == "async def" {
-                    sig = Self.trimTrailingColon(beforeComment)
+                let sig: String? = if kind == "def" || kind == "cdef" || kind == "async def" {
+                    Self.trimTrailingColon(beforeComment)
                 } else {
-                    sig = nil
+                    nil
                 }
 
                 symbols.append(SymbolRecord(
@@ -76,8 +85,10 @@ struct PythonExtractor: SymbolExtractor {
                     kind: kind,
                     signature: sig,
                     docComment: docComment,
-                    visibility: nil
+                    visibility: nil,
+                    startLine: lineIdx + 1,
                 ))
+                openDefs.append((symIdx: symbols.count - 1, indent: indent))
 
                 lastDecorator = nil
                 continue
@@ -94,13 +105,21 @@ struct PythonExtractor: SymbolExtractor {
                     kind: "const",
                     signature: nil,
                     docComment: nil,
-                    visibility: nil
+                    visibility: nil,
+                    startLine: lineIdx + 1,
+                    endLine: lineIdx + 1,
                 ))
                 lastDecorator = nil
                 continue
             }
 
             lastDecorator = nil
+        }
+
+        // ── EOF:任何未闭合的 def/class 体结束于文件末行 ──
+        while let top = openDefs.last {
+            symbols[top.symIdx].endLine = lines.count
+            openDefs.removeLast()
         }
 
         return symbols
@@ -214,7 +233,7 @@ struct PythonExtractor: SymbolExtractor {
         let after = line[tripleRange.upperBound...]
 
         // Count odd/even quotes before the triple — odd means we're inside a string
-        let precedingQuotes = before.filter { $0 == quote.first }.count
+        let precedingQuotes = before.count(where: { $0 == quote.first })
         if precedingQuotes % 2 == 1 {
             return nil // inside a regular string, not a triple-quote start
         }

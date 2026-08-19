@@ -55,6 +55,21 @@ enum ASTExtractorRunner {
         proc.standardOutput = outputPipe
         proc.standardError = errorPipe
 
+        // 边读边存 stdout:批量 AST 输出可能超过 pipe buffer(64KB),
+        // 等待期间不读会导致子进程写满阻塞、无法退出,被 30s 超时误杀
+        var outputData = Data()
+        let outputLock = NSLock()
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            outputLock.lock()
+            outputData.append(chunk)
+            outputLock.unlock()
+        }
+
         do {
             try proc.run()
 
@@ -69,13 +84,18 @@ enum ASTExtractorRunner {
             while proc.isRunning, .now() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
+            // 停止异步读取,同步 drain 剩余(handler 可能没读完退出瞬间的尾部数据)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
                 debugLog("[AST] Batch subprocess timed out")
                 return [:]
             }
-
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            while let chunk = outputPipe.fileHandleForReading.availableData as Data?, !chunk.isEmpty {
+                outputLock.lock()
+                outputData.append(chunk)
+                outputLock.unlock()
+            }
             guard !outputData.isEmpty,
                   let json = try JSONSerialization.jsonObject(with: outputData) as? [String: Any]
             else {
@@ -96,7 +116,9 @@ enum ASTExtractorRunner {
                             kind: kind,
                             signature: dict["signature"] as? String,
                             docComment: dict["doc_comment"] as? String,
-                            visibility: dict["visibility"] as? String
+                            visibility: dict["visibility"] as? String,
+                            startLine: dict["start_line"] as? Int,
+                            endLine: dict["end_line"] as? Int,
                         )
                     }
                     results[filePath] = symbols
@@ -137,6 +159,20 @@ enum ASTExtractorRunner {
         proc.standardOutput = outputPipe
         proc.standardError = errorPipe
 
+        // 边读边存 stdout,避免子进程输出超 pipe buffer 时阻塞(与 extractBatch 同模式)
+        var outputData = Data()
+        let outputLock = NSLock()
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            outputLock.lock()
+            outputData.append(chunk)
+            outputLock.unlock()
+        }
+
         do {
             try proc.run()
 
@@ -151,13 +187,18 @@ enum ASTExtractorRunner {
             while proc.isRunning, .now() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
+            // 停止异步读取,同步 drain 剩余(handler 可能没读完退出瞬间的尾部数据)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
                 debugLog("[AST] Subprocess timed out, killed")
                 return nil
             }
-
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            while let chunk = outputPipe.fileHandleForReading.availableData as Data?, !chunk.isEmpty {
+                outputLock.lock()
+                outputData.append(chunk)
+                outputLock.unlock()
+            }
             guard !outputData.isEmpty,
                   let json = try JSONSerialization.jsonObject(with: outputData) as? [String: Any]
             else {
@@ -180,7 +221,9 @@ enum ASTExtractorRunner {
                     kind: kind,
                     signature: dict["signature"] as? String,
                     docComment: dict["doc_comment"] as? String,
-                    visibility: dict["visibility"] as? String
+                    visibility: dict["visibility"] as? String,
+                    startLine: dict["start_line"] as? Int,
+                    endLine: dict["end_line"] as? Int,
                 )
             }
         } catch {

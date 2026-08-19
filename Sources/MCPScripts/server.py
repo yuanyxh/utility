@@ -405,7 +405,8 @@ def _search_symbols_fts(
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         sql = (
-            "SELECT s.name, s.kind, s.signature, s.file_path, s.visibility "
+            "SELECT s.name, s.kind, s.signature, s.file_path, s.visibility, "
+            "s.start_line, s.end_line "
             "FROM symbols s JOIN symbols_fts fts ON s.id = fts.rowid "
             "WHERE symbols_fts MATCH ?"
         )
@@ -424,6 +425,8 @@ def _search_symbols_fts(
                 "signature": r["signature"],
                 "file": r["file_path"],
                 "visibility": r["visibility"],
+                "startLine": r["start_line"],
+                "endLine": r["end_line"],
             }
             for r in conn.execute(sql, params).fetchall()
         ]
@@ -441,7 +444,7 @@ def _search_symbols_like(
     conn.row_factory = sqlite3.Row
     try:
         sql = (
-            "SELECT name, kind, signature, file_path, visibility "
+            "SELECT name, kind, signature, file_path, visibility, start_line, end_line "
             "FROM symbols WHERE (name LIKE ? OR signature LIKE ?)"
         )
         params: list[str] = [f"%{query}%", f"%{query}%"]
@@ -459,6 +462,8 @@ def _search_symbols_like(
                 "signature": r["signature"],
                 "file": r["file_path"],
                 "visibility": r["visibility"],
+                "startLine": r["start_line"],
+                "endLine": r["end_line"],
             }
             for r in conn.execute(sql, params).fetchall()
         ]
@@ -917,7 +922,7 @@ def tool_project_exports(db_path: str, path: str) -> dict:
         result_files = []
         for f in files:
             syms = conn.execute(
-                "SELECT name, kind, signature FROM symbols "
+                "SELECT name, kind, signature, start_line, end_line FROM symbols "
                 "WHERE file_path = ? AND (visibility = 'public' OR visibility IS NULL) "
                 "ORDER BY kind, name",
                 (f["path"],),
@@ -930,6 +935,8 @@ def tool_project_exports(db_path: str, path: str) -> dict:
                             "name": s["name"],
                             "kind": s["kind"],
                             "signature": s["signature"],
+                            "startLine": s["start_line"],
+                            "endLine": s["end_line"],
                         }
                         for s in syms
                     ],
@@ -939,7 +946,7 @@ def tool_project_exports(db_path: str, path: str) -> dict:
         return {"path": path, "isDirectory": True, "files": result_files}
     else:
         syms = conn.execute(
-            "SELECT name, kind, signature, visibility FROM symbols "
+            "SELECT name, kind, signature, visibility, start_line, end_line FROM symbols "
             "WHERE file_path = ? ORDER BY kind, name",
             (path,),
         ).fetchall()
@@ -952,6 +959,8 @@ def tool_project_exports(db_path: str, path: str) -> dict:
                     "name": s["name"],
                     "kind": s["kind"],
                     "signature": s["signature"],
+                    "startLine": s["start_line"],
+                    "endLine": s["end_line"],
                     "visibility": s["visibility"],
                 }
                 for s in syms

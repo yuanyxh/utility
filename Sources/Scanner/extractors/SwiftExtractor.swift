@@ -14,9 +14,11 @@ struct SwiftExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var currentDocComment: String?
-        var pendingFunc: (visibility: String?, signature: String, parenDepth: Int)?
+        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开,等待本行/后续行开 brace 落地
+        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
+        var pendingFunc: (visibility: String?, signature: String, parenDepth: Int, startLine: Int)?
 
-        for rawLine in lines {
+        for (lineIdx, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else {
                 pendingFunc = nil
@@ -37,38 +39,74 @@ struct SwiftExtractor: SymbolExtractor {
             if let pf = pendingFunc {
                 let combined = pf.signature + " " + trimmed
                 let newParen = pf.parenDepth
-                    + trimmed.filter { $0 == "(" }.count
-                    - trimmed.filter { $0 == ")" }.count
+                    + trimmed.count(where: { $0 == "(" })
+                    - trimmed.count(where: { $0 == ")" })
+
+                let lineOpen = trimmed.count(where: { $0 == "{" })
+                let lineClose = trimmed.count(where: { $0 == "}" })
+                let prev = braceDepth
+                braceDepth += lineOpen - lineClose
+                let nextDepth = braceDepth
 
                 if newParen <= 0 {
                     // function signature complete
                     let sig = combined.trimmingCharacters(in: .whitespaces)
                     if let s = Self.extractFuncSymbol(sig, visibility: pf.visibility,
                                                       docComment: currentDocComment,
-                                                      filePath: filePath)
+                                                      filePath: filePath,
+                                                      startLine: pf.startLine)
                     {
                         symbols.append(s)
+                        let idx = symbols.count - 1
+                        if lineOpen > 0 {
+                            if nextDepth == prev {
+                                symbols[idx].endLine = lineIdx + 1
+                            } else {
+                                bodyStack.append((symIdx: idx, bodyDepth: nextDepth))
+                            }
+                        } else {
+                            bodyStack.append((symIdx: idx, bodyDepth: nil))
+                        }
                     }
                     pendingFunc = nil
                 } else {
-                    pendingFunc = (pf.visibility, combined, newParen)
+                    pendingFunc = (pf.visibility, combined, newParen, pf.startLine)
                 }
-
-                // Update brace depth for this line but skip declaration matching
-                braceDepth += trimmed.filter { $0 == "{" }.count
-                braceDepth -= trimmed.filter { $0 == "}" }.count
                 continue
             }
 
             // ── update brace depth ──
-            let openBraces = trimmed.filter { $0 == "{" }.count
-            let closeBraces = trimmed.filter { $0 == "}" }.count
+            let openBraces = trimmed.count(where: { $0 == "{" })
+            let closeBraces = trimmed.count(where: { $0 == "}" })
             let prevDepth = braceDepth
             braceDepth += openBraces - closeBraces
+            let newDepth = braceDepth
+
+            // ── resolve symbol body end (brace depth fell below body start) ──
+            while let top = bodyStack.last {
+                if top.bodyDepth == nil {
+                    // 等待体在后续行打开:本行开 brace 则落地
+                    if openBraces > 0 {
+                        if newDepth == prevDepth {
+                            symbols[top.symIdx].endLine = lineIdx + 1
+                            bodyStack.removeLast()
+                        } else {
+                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
+                        }
+                    }
+                    break
+                }
+                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
+                    symbols[top.symIdx].endLine = lineIdx + 1
+                    bodyStack.removeLast()
+                } else {
+                    break
+                }
+            }
 
             // Only extract at file-level (depth 0) or inside a type (depth 1)
             guard prevDepth <= 1 else {
-                if braceDepth < prevDepth { currentDocComment = nil }
+                if newDepth < prevDepth { currentDocComment = nil }
                 continue
             }
 
@@ -79,10 +117,10 @@ struct SwiftExtractor: SymbolExtractor {
 
                 // Check if this is a func that continues on next line
                 if isFunc {
-                    let parenDepth = trimmed.filter { $0 == "(" }.count
-                        - trimmed.filter { $0 == ")" }.count
+                    let parenDepth = trimmed.count(where: { $0 == "(" })
+                        - trimmed.count(where: { $0 == ")" })
                     if parenDepth > 0 {
-                        pendingFunc = (captures.visibility, trimmed, parenDepth)
+                        pendingFunc = (captures.visibility, trimmed, parenDepth, lineIdx + 1)
                         continue
                     }
                 }
@@ -99,11 +137,28 @@ struct SwiftExtractor: SymbolExtractor {
                     kind: captures.keyword,
                     signature: sig,
                     docComment: currentDocComment,
-                    visibility: captures.visibility.isEmpty ? nil : captures.visibility
+                    visibility: captures.visibility.isEmpty ? nil : captures.visibility,
+                    startLine: lineIdx + 1,
                 ))
 
+                let idx = symbols.count - 1
+                if openBraces > 0 {
+                    if newDepth == prevDepth {
+                        // 本行开又合(单行体,如 func f() {})
+                        symbols[idx].endLine = lineIdx + 1
+                    } else {
+                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
+                    }
+                } else if Self.kindHasBody(captures.keyword) {
+                    // 体在后续行打开
+                    bodyStack.append((symIdx: idx, bodyDepth: nil))
+                } else {
+                    // 无体声明(var/let/typealias 等)
+                    symbols[idx].endLine = lineIdx + 1
+                }
+
                 currentDocComment = nil
-            } else if braceDepth < prevDepth {
+            } else if newDepth < prevDepth {
                 currentDocComment = nil
             }
         }
@@ -125,7 +180,8 @@ struct SwiftExtractor: SymbolExtractor {
 
     private static func extractFuncSymbol(_ sigLine: String, visibility: String?,
                                           docComment: String?,
-                                          filePath: String) -> SymbolRecord?
+                                          filePath: String,
+                                          startLine: Int) -> SymbolRecord?
     {
         guard let m = funcSigRegex.match(sigLine) else { return nil }
         let name = m[4]
@@ -135,8 +191,20 @@ struct SwiftExtractor: SymbolExtractor {
             kind: "func",
             signature: Self.trimTrailingBrace(sigLine),
             docComment: docComment,
-            visibility: visibility?.isEmpty == false ? visibility : nil
+            visibility: visibility?.isEmpty == false ? visibility : nil,
+            startLine: startLine,
         )
+    }
+
+    /// Whether a symbol kind has a brace body (so end extends past its start line).
+    private static func kindHasBody(_ kind: String) -> Bool {
+        switch kind {
+        case "class", "struct", "enum", "protocol", "extension", "actor", "macro",
+             "func", "subscript", "init", "deinit", "precedencegroup", "operator":
+            true
+        default:
+            false
+        }
     }
 
     /// Matches `func name(...` — the simpler version for already-known func lines.
@@ -170,20 +238,20 @@ struct SwiftExtractor: SymbolExtractor {
             let next = text.index(after: i)
 
             if inBlockComment {
-                if c == "*" && next < end && text[next] == "/" {
+                if c == "*", next < end, text[next] == "/" {
                     inBlockComment = false
                     i = text.index(after: next)
                 } else {
+                    // 保留换行,保证 cleaned 行数与原始一致(行号对齐)
+                    if c == "\n" || c == "\r" { result.append(c) }
                     i = next
                 }
                 continue
             }
 
             if inLineComment {
-                if c == "\n" {
-                    inLineComment = false
-                    result.append(c)
-                }
+                if c == "\n" || c == "\r" { result.append(c) }
+                if c == "\n" { inLineComment = false }
                 i = next
                 continue
             }
@@ -195,18 +263,20 @@ struct SwiftExtractor: SymbolExtractor {
                 }
                 if c == "\"" {
                     inString = false
+                } else if c == "\n" || c == "\r" {
+                    result.append(c)
                 }
                 i = next
                 continue
             }
 
-            if c == "/" && next < end && text[next] == "/" {
+            if c == "/", next < end, text[next] == "/" {
                 inLineComment = true
                 i = text.index(after: next)
                 continue
             }
 
-            if c == "/" && next < end && text[next] == "*" {
+            if c == "/", next < end, text[next] == "*" {
                 inBlockComment = true
                 i = text.index(after: next)
                 continue

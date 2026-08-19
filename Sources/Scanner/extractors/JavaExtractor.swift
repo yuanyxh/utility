@@ -18,8 +18,10 @@ struct JavaExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var lastAnnotation: String?
+        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开
+        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
-        for rawLine in lines {
+        for (lineIdx, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
 
@@ -34,10 +36,32 @@ struct JavaExtractor: SymbolExtractor {
             }
 
             // ── update brace depth ──
-            let openBraces = trimmed.filter { $0 == "{" }.count
-            let closeBraces = trimmed.filter { $0 == "}" }.count
+            let openBraces = trimmed.count(where: { $0 == "{" })
+            let closeBraces = trimmed.count(where: { $0 == "}" })
             let prevDepth = braceDepth
             braceDepth += openBraces - closeBraces
+            let newDepth = braceDepth
+
+            // ── resolve symbol body end (brace depth fell below body start) ──
+            while let top = bodyStack.last {
+                if top.bodyDepth == nil {
+                    if openBraces > 0 {
+                        if newDepth == prevDepth {
+                            symbols[top.symIdx].endLine = lineIdx + 1
+                            bodyStack.removeLast()
+                        } else {
+                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
+                        }
+                    }
+                    break
+                }
+                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
+                    symbols[top.symIdx].endLine = lineIdx + 1
+                    bodyStack.removeLast()
+                } else {
+                    break
+                }
+            }
 
             // Extract at file level (0) or inside class body (1)
             guard prevDepth <= 1 else {
@@ -52,11 +76,10 @@ struct JavaExtractor: SymbolExtractor {
                 let name = m[4]
 
                 let docComment = lastAnnotation // use last annotation as doc context
-                let sig: String?
-                if kind == "class" || kind == "interface" || kind == "enum" {
-                    sig = Self.buildTypeSig(name, rest: m[5])
+                let sig: String? = if kind == "class" || kind == "interface" || kind == "enum" {
+                    Self.buildTypeSig(name, rest: m[5])
                 } else {
-                    sig = nil
+                    nil
                 }
 
                 symbols.append(SymbolRecord(
@@ -65,8 +88,19 @@ struct JavaExtractor: SymbolExtractor {
                     kind: kind,
                     signature: sig,
                     docComment: docComment,
-                    visibility: visibility
+                    visibility: visibility,
+                    startLine: lineIdx + 1,
                 ))
+                let idx = symbols.count - 1
+                if openBraces > 0 {
+                    if newDepth == prevDepth {
+                        symbols[idx].endLine = lineIdx + 1
+                    } else {
+                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
+                    }
+                } else {
+                    bodyStack.append((symIdx: idx, bodyDepth: nil))
+                }
 
                 lastAnnotation = nil
                 continue
@@ -88,8 +122,19 @@ struct JavaExtractor: SymbolExtractor {
                     kind: "method",
                     signature: fullSig,
                     docComment: lastAnnotation,
-                    visibility: visibility
+                    visibility: visibility,
+                    startLine: lineIdx + 1,
                 ))
+                let idx = symbols.count - 1
+                if openBraces > 0 {
+                    if newDepth == prevDepth {
+                        symbols[idx].endLine = lineIdx + 1
+                    } else {
+                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
+                    }
+                } else {
+                    bodyStack.append((symIdx: idx, bodyDepth: nil))
+                }
 
                 lastAnnotation = nil
                 continue
@@ -116,7 +161,9 @@ struct JavaExtractor: SymbolExtractor {
                     kind: "field",
                     signature: sig,
                     docComment: lastAnnotation,
-                    visibility: visibility
+                    visibility: visibility,
+                    startLine: lineIdx + 1,
+                    endLine: lineIdx + 1,
                 ))
 
                 lastAnnotation = nil
@@ -172,7 +219,7 @@ struct JavaExtractor: SymbolExtractor {
         var sig = name
         // Extract generic type parameters
         if let m = try? NSRegularExpression(pattern: #"<([^>]*)>"#).firstMatch(
-            in: rest, range: NSRange(rest.startIndex..., in: rest)
+            in: rest, range: NSRange(rest.startIndex..., in: rest),
         ) {
             let range = m.range(at: 1)
             if range.location != NSNotFound {
@@ -215,20 +262,20 @@ struct JavaExtractor: SymbolExtractor {
             let next = text.index(after: i)
 
             if inBlockComment {
-                if c == "*" && next < end && text[next] == "/" {
+                if c == "*", next < end, text[next] == "/" {
                     inBlockComment = false
                     i = text.index(after: next)
                 } else {
+                    // 保留换行,保证 cleaned 行数与原始一致(行号对齐)
+                    if c == "\n" || c == "\r" { result.append(c) }
                     i = next
                 }
                 continue
             }
 
             if inLineComment {
-                if c == "\n" {
-                    inLineComment = false
-                    result.append(c)
-                }
+                if c == "\n" || c == "\r" { result.append(c) }
+                if c == "\n" { inLineComment = false }
                 i = next
                 continue
             }
@@ -238,18 +285,22 @@ struct JavaExtractor: SymbolExtractor {
                     i = text.index(after: next)
                     continue
                 }
-                if c == "\"" { inString = false }
+                if c == "\"" {
+                    inString = false
+                } else if c == "\n" || c == "\r" {
+                    result.append(c)
+                }
                 i = next
                 continue
             }
 
-            if c == "/" && next < end && text[next] == "/" {
+            if c == "/", next < end, text[next] == "/" {
                 inLineComment = true
                 i = text.index(after: next)
                 continue
             }
 
-            if c == "/" && next < end && text[next] == "*" {
+            if c == "/", next < end, text[next] == "*" {
                 inBlockComment = true
                 i = text.index(after: next)
                 continue

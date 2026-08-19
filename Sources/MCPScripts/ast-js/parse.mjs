@@ -16,7 +16,10 @@
 
 import * as babel from "@babel/parser";
 
-function symbol(name, kind, extra = {}) {
+function symbol(name, kind, extra = {}, loc = null) {
+  if (loc?.start) {
+    extra = { ...extra, start_line: loc.start.line, end_line: loc.end.line };
+  }
   return { name, kind, ...extra };
 }
 
@@ -161,7 +164,7 @@ function extractSymbols(node, _state = {}) {
           signature: sig,
           visibility: state.exportScope ? "export" : null,
           doc_comment: getDocComment(node.leadingComments || node.innerComments),
-        })
+        }, node.loc)
       );
       // For class, also extract methods
       if (node.body?.body) {
@@ -208,7 +211,7 @@ function extractSymbols(node, _state = {}) {
             signature: sig,
             visibility,
             doc_comment: getDocComment(node.leadingComments || node.innerComments),
-          })
+          }, decl.loc)
         );
       }
       break;
@@ -244,7 +247,7 @@ function extractSymbols(node, _state = {}) {
           signature: sig,
           visibility: state.exportScope ? "export" : null,
           doc_comment: getDocComment(node.leadingComments || node.innerComments),
-        })
+        }, node.loc)
       );
       break;
     }
@@ -255,7 +258,7 @@ function extractSymbols(node, _state = {}) {
         symbol(name, "enum", {
           visibility: state.exportScope ? "export" : null,
           doc_comment: getDocComment(node.leadingComments || node.innerComments),
-        })
+        }, node.loc)
       );
       break;
     }
@@ -267,7 +270,7 @@ function extractSymbols(node, _state = {}) {
         symbols.push(
           symbol(name, "namespace", {
             visibility: state.exportScope ? "export" : null,
-          })
+          }, node.loc)
         );
       }
       // Walk body
@@ -293,7 +296,7 @@ function extractSymbols(node, _state = {}) {
               signature: spec.exported?.name
                 ? localName + " as " + spec.exported.name
                 : localName,
-            })
+            }, node.loc)
           );
         }
       }
@@ -308,7 +311,7 @@ function extractSymbols(node, _state = {}) {
             visibility: "default",
             signature: buildSignature(decl, decl.type === "FunctionDeclaration" ? "function" : "class"),
             doc_comment: getDocComment(decl.leadingComments || decl.innerComments),
-          })
+          }, decl.loc)
         );
       } else if (decl.type === "FunctionDeclaration" || decl.type === "ClassExpression") {
         // Anonymous default
@@ -317,7 +320,7 @@ function extractSymbols(node, _state = {}) {
           symbol("default", kind, {
             visibility: "default",
             signature: buildSignature(decl, kind),
-          })
+          }, decl.loc)
         );
       } else if (decl.type === "AssignmentExpression" && decl.left?.name) {
         // export default name = value
@@ -331,7 +334,7 @@ function extractSymbols(node, _state = {}) {
         symbol(node.exported?.name || "*", "re-export", {
           visibility: "export",
           signature: "from " + (node.source?.value || ""),
-        })
+        }, node.loc)
       );
       break;
     }
@@ -351,7 +354,7 @@ function extractSymbols(node, _state = {}) {
           signature: sig,
           visibility: state.exportScope ? "export" : null,
           doc_comment: getDocComment(node.leadingComments),
-        })
+        }, node.loc)
       );
       break;
     }
@@ -367,7 +370,7 @@ function extractSymbols(node, _state = {}) {
         symbol(name, "property", {
           signature: sig,
           visibility: null,
-        })
+        }, node.loc)
       );
       break;
     }

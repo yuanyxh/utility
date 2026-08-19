@@ -77,6 +77,13 @@ final class ProjectDatabase {
             """)
         }
 
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "symbols") { t in
+                t.add(column: "start_line", .integer)
+                t.add(column: "end_line", .integer)
+            }
+        }
+
         return migrator
     }
 
@@ -141,7 +148,7 @@ final class ProjectDatabase {
             try Int.fetchOne(
                 db,
                 sql: "SELECT fail_count FROM failed_files WHERE path = ?",
-                arguments: [path]
+                arguments: [path],
             ) ?? 0
         }
     }
@@ -228,10 +235,29 @@ struct SymbolRecord: Codable, FetchableRecord, PersistableRecord {
     var signature: String?
     var docComment: String?
     var visibility: String?
+    var startLine: Int?
+    var endLine: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, filePath = "file_path", name, kind, signature,
-             docComment = "doc_comment", visibility
+             docComment = "doc_comment", visibility,
+             startLine = "start_line", endLine = "end_line"
+    }
+
+    /// 自定义 init:startLine/endLine 带默认值 nil,既有调用点(filePath:name:kind:...)
+    /// 无需改动即可编译;提取器能算出行号时显式传入。
+    init(filePath: String, name: String, kind: String, signature: String? = nil,
+         docComment: String? = nil, visibility: String? = nil,
+         startLine: Int? = nil, endLine: Int? = nil)
+    {
+        self.filePath = filePath
+        self.name = name
+        self.kind = kind
+        self.signature = signature
+        self.docComment = docComment
+        self.visibility = visibility
+        self.startLine = startLine
+        self.endLine = endLine
     }
 }
 

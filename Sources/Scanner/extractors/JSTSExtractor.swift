@@ -17,8 +17,10 @@ struct JSTSExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var currentDocComment: String?
+        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开
+        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
-        for rawLine in lines {
+        for (lineIdx, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
 
@@ -38,14 +40,36 @@ struct JSTSExtractor: SymbolExtractor {
 
             // ── strip strings for brace-depth tracking ──
             let stripped = Self.stripStrings(trimmed)
-            let openBraces = stripped.filter { $0 == "{" }.count
-            let closeBraces = stripped.filter { $0 == "}" }.count
+            let openBraces = stripped.count(where: { $0 == "{" })
+            let closeBraces = stripped.count(where: { $0 == "}" })
             let prevDepth = braceDepth
             braceDepth += openBraces - closeBraces
+            let newDepth = braceDepth
+
+            // ── resolve symbol body end (brace depth fell below body start) ──
+            while let top = bodyStack.last {
+                if top.bodyDepth == nil {
+                    if openBraces > 0 {
+                        if newDepth == prevDepth {
+                            symbols[top.symIdx].endLine = lineIdx + 1
+                            bodyStack.removeLast()
+                        } else {
+                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
+                        }
+                    }
+                    break
+                }
+                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
+                    symbols[top.symIdx].endLine = lineIdx + 1
+                    bodyStack.removeLast()
+                } else {
+                    break
+                }
+            }
 
             // Only extract at module level (depth 0)
             guard prevDepth == 0 else {
-                if braceDepth < prevDepth { currentDocComment = nil }
+                if newDepth < prevDepth { currentDocComment = nil }
                 continue
             }
 
@@ -66,11 +90,24 @@ struct JSTSExtractor: SymbolExtractor {
                     kind: kind,
                     signature: sig,
                     docComment: currentDocComment,
-                    visibility: visibility
+                    visibility: visibility,
+                    startLine: lineIdx + 1,
                 ))
+                let idx = symbols.count - 1
+                if openBraces > 0 {
+                    if newDepth == prevDepth {
+                        symbols[idx].endLine = lineIdx + 1
+                    } else {
+                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
+                    }
+                } else if Self.kindHasBody(kind) {
+                    bodyStack.append((symIdx: idx, bodyDepth: nil))
+                } else {
+                    symbols[idx].endLine = lineIdx + 1
+                }
 
                 currentDocComment = nil
-            } else if braceDepth < prevDepth {
+            } else if newDepth < prevDepth {
                 currentDocComment = nil
             }
         }
@@ -104,7 +141,7 @@ struct JSTSExtractor: SymbolExtractor {
             let next = line.index(after: i)
 
             if inString {
-                if c == "\\" && next < end {
+                if c == "\\", next < end {
                     i = line.index(after: next)
                     continue
                 }
@@ -121,13 +158,20 @@ struct JSTSExtractor: SymbolExtractor {
             }
 
             // Strip // rest of line so braces inside stringified code don't count
-            if c == "/" && next < end && line[next] == "/" { break }
+            if c == "/", next < end, line[next] == "/" { break }
 
             result.append(c)
             i = next
         }
 
         return result
+    }
+
+    /// Whether a declaration kind has a brace body (so end extends past its start line).
+    /// kind may carry async/default prefixes, so match by suffix.
+    private static func kindHasBody(_ kind: String) -> Bool {
+        kind.hasSuffix("function") || kind.hasSuffix("class")
+            || kind.hasSuffix("interface") || kind.hasSuffix("type")
     }
 
     private static func trimTrailingBrace(_ s: String) -> String {
