@@ -16,7 +16,7 @@
 - GRDB 本地 SQLite 存储
 - Vision OCR 屏幕区域识别
 - **MCP 记忆服务**：Mem0 + Qdrant 冷热双层记忆，通过 Python 子进程提供 MCP Tools
-- **项目符号扫描**：Swift/JS-TS/Python 正则提取 + FTS5 索引 + 文件监控
+- **项目符号扫描**：Swift/JS-TS/Python AST + 正则提取 + FTS5 索引 + 文件监控（符号含起止行号）
 
 ---
 

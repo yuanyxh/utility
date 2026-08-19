@@ -311,7 +311,7 @@ AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语
 - **热层**（Mem0 → Qdrant）：原始碎片记忆，自动提取/去重/冲突解决
 - **冷层**（Qdrant 独立集合）：已归档知识索引，定期衰减热度
 - **笔记搜索**：`grep` 兜底全文搜索本地 Markdown/TXT
-- **项目依赖图**：SQLite FTS5 索引 Swift/JS/Python 符号定义
+- **项目依赖图**：SQLite FTS5 索引 Swift/JS/Python 符号定义（含起止行号，可定位代码范围）
 
 **MCP Tools（通过 HTTP SSE 通道）：**
 | Tool | 功能 |
@@ -506,7 +506,7 @@ RSS (3 未读)  ▸ 抓取 RSS
 | 定时调度 | Timer + CronExpression |
 | MCP 协议 | mcp.server + StreamableHTTPServerTransport |
 | 记忆引擎 | Mem0（热层）+ fastembed + Qdrant（冷层） |
-| 项目扫描 | 正则 + FTS5 多语言符号提取（Swift/JS/Python/Java/Kotlin） |
+| 项目扫描 | AST + 正则 + FTS5 多语言符号提取（含符号起止行号，Swift/JS/Python/Java/Kotlin） |
 | 通知 | UNUserNotificationCenter / NSUserNotificationCenter |
 | 网速 | getifaddrs（POSIX 网卡字节计数） |
 | 登录项 | SMAppService |
