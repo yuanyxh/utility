@@ -447,22 +447,47 @@ def resolve_src(src_arg: str) -> tuple[str, str]:
         return src_path, f.read()
 
 
-def resolve_out(out_arg: str, src_path: str) -> str:
+MAX_TITLE_LEN = 60  # 文章标题用于文件名时截断上限(避免超长路径)
+
+
+def extract_title(article: str) -> str:
+    """从文章正文提取 Markdown 一级标题(# ...)，清理为合法文件名片段。
+
+    返回空串表示未找到标题(无一级标题行或标题为空)。仅认一级标题，
+    避免误取正文里的 ## 子标题。
+    """
+    for line in article.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            title = line[2:].strip()
+            if not title:
+                return ""
+            # 清理文件名非法字符(/ \ : * ? " < > |)，空格直接去除
+            title = re.sub(r'[\\/:*?"<>|]', "_", title)
+            title = re.sub(r"\s+", "", title).strip()
+            return title[:MAX_TITLE_LEN]
+    return ""
+
+
+def resolve_out(out_arg: str, src_path: str, article: str = "") -> str:
     """解析 --out：以 .md 结尾视为文件路径直接用；否则视为目录，按年/季度划分。
 
-    目录模式：<outDir>/<年>/<季度>/<主题>_<YYYYMMDD>.md
-    主题取素材文件名去 _facts 后缀(如 topic_facts.md → topic)，清理特殊字符。
-    约定：文章输出恒为 .md，故以 .md 结尾区分文件/目录两种形态。
+    目录模式：<outDir>/<年>/<季度>/<标题>_<YYYYMMDD>.md
+    标题优先取文章正文第一行 Markdown 一级标题(clean 后)，素材文件名去 _facts
+    后缀兜底(如 topic_facts.md → topic)。约定：文章输出恒为 .md，
+    故以 .md 结尾区分文件/目录两种形态。
     """
     if out_arg.endswith(".md"):
         return out_arg
 
     today = date.today()
     season = ["一季度", "二季度", "三季度", "四季度"][(today.month - 1) // 3]
-    base = os.path.splitext(os.path.basename(src_path))[0]
-    if base.endswith("_facts"):
-        base = base[: -len("_facts")]
-    base = re.sub(r"[^\w一-鿿]", "_", base).strip("_") or "article"
+    base = extract_title(article)
+    if not base:
+        base = os.path.splitext(os.path.basename(src_path))[0]
+        if base.endswith("_facts"):
+            base = base[: -len("_facts")]
+        base = re.sub(r"[^\w一-鿿]", "_", base).strip("_") or "article"
     out_dir = os.path.join(out_arg, str(today.year), season)
     os.makedirs(out_dir, exist_ok=True)
     return os.path.join(out_dir, f"{base}_{today.strftime('%Y%m%d')}.md")
@@ -604,7 +629,7 @@ MCP 挖到的一切记忆/项目信息，都只是「帮你读懂素材」的参
 
     hard, score, article, metrics = best
     if args.out:
-        out_path = resolve_out(args.out, src_path)
+        out_path = resolve_out(args.out, src_path, article)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(article)
         if hard:

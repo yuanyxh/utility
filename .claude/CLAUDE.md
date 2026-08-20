@@ -70,6 +70,11 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Java/Kotlin 用 regex 提取（无 AST 脚本），共享 `RegexMatch` 辅助结构（`ExtractorProtocol.swift`）
 - RegexMatch 原为 SwiftExtractor fileprivate，后提升至 ExtractorProtocol.swift internal 供所有提取器复用
 - 注意：macOS NSRegularExpression 使用 ICU 语法，不支持嵌套字符类（如 `[\], ]` 非法）
+- **符号含 start_line/end_line 行号**（1-based，v3 schema，ProjectDatabase alter symbols 加列；FTS external content 表不重建）——支持定位代码范围/跳转/框出。`SymbolRecord` 带默认值 nil 的自定义 init，不破坏既有调用
+- 正则提取器行号靠 **bodyStack 状态机**（带体 kind 栈，bodyDepth=nil 等待体后续行打开，brace-depth 回落定 end）；PythonExtractor 用缩进栈 `openDefs` + `lastContentLine`；EOF 收尾 end=lines.count
+- 三个 `stripCommentsAndStrings`（Swift/Java/Kotlin）在块注释/字符串分支**保留 \n\r**，修复跨行注释塌缩导致的行号错位（正则提取器行号准确的地基）
+- AST 脚本节点加 start_line/end_line：`ast_extractor.py` 全部节点；`parse.mjs` symbol() 用 loc 展开（VariableDeclaration 用 decl.loc）；Vue 行号偏移补偿 `offset=content[:m.start(2)].count("\n")+lead_newlines`
+- 坑：Swift 编译器对 `if top.bodyDepth == nil { break }` 后直接 `if newDepth < top.bodyDepth` 的流分析在部分文件失效，统一改 `if let bodyDepth = top.bodyDepth, newDepth < bodyDepth`（四提取器对齐）
 
 ### MCP 进程管理（MCPProcessManager）
 - 通过 Python 子进程运行 server.py，stderr 输出检测 readiness（"Application startup complete"）
@@ -101,6 +106,14 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - **OpenAI 格式适配**：`_detect_api_format()` 三步检测（顶层 system 数组→messages[0].role=="system"→tools 定义格式）
 - **OpenAI SSE 解析**：`_extract_usage_from_sse()` 归一化 `prompt_tokens→input_tokens`，`finish_reason→stop_reason`（stop→end_turn, tool_calls→tool_use, length→max_tokens）；`_extract_output_from_sse()` 读 `choices[0].delta.content`；`_extract_tool_name_from_sse()` 读 `choices[0].delta.tool_calls[0].function.name`
 - **系统提示词注入缓存控制**：Anthropic 格式注入不设 `cache_control`→不在缓存前缀；OpenAI 格式在原始内容最后一块设 `prompt_cache_breakpoint:{mode:"explicit"}`，注入在断点后→不在缓存中
+
+### gen-article 文章管线
+- 素材自动化 + 生成：`prepare_article_source.py`（从记忆库按五要素组织素材）+ `gen_article_generic.py`（claude -p 子进程生成真人博客风格中文技术文章）
+- 通过 AppDelegate 注册**手动任务**（菜单栏点击触发），配置在 `ArticleConfig`（config.yaml article 段）；`agentCli` 必须用**全路径** claude（见内部任务注册规则的环境坑）
+- 输出落 `Gen_Articles/articles/年/季度/`
+- 质量闭环：硬门槛 + 软得分 + 反馈迭代。`quality_check` 段长超 120 字为**硬门槛**（超长即废稿）；形式密度用**固定阈值**（列表 6 行/粗体 10 处/引用 3 处）
+- 关键坑：prepare/gen 的 claude prompt 原含「尽量多地调用 MCP 工具」，诱导多轮深挖上下文导致单次调用超时——限制「最多 3 次、一轮完成」；gen 超时 300s（180s 太紧，单次正常 126-180s 会误杀成功调用）
+- 提示词分层去重原则：**单一权威表述 + 指针**——每次反馈写作规则都同步写进 system 硬规则/硬性禁令/user/SCHEME_GENERIC 多处会造成重复膨胀（曾收敛删除 12% 字符且质量提升），约束重复但每个保留单一权威全文
 
 ### 共享 Python 日志模块（log_utils.py）
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`

@@ -14,6 +14,7 @@ triggers: ["registerInternalTask", "internal-task", "内置任务", "mcp-summary
     之后每次重启 / reload 配置都会重复触发一次（mcp-summary 曾因此每天跑多次）
   - disabled / 条件不满足时才 unregister
 - 所有环境变量通过内联 cmd 字符串传入，不使用 buildEnv()
+- **任务子进程环境坑**：`TaskExecConfig.toProcess()` 不设置环境变量，子进程完整继承 Utility.app（launchd 启动的 GUI 进程）的受限 PATH——**缺 homebrew 路径**。凡命令依赖 PATH 找可执行文件（如 claude）的任务，`agentCli`/cmd 必须写**全路径**（如 `/opt/homebrew/bin/claude`），否则运行时 `FileNotFoundError` 秒退。2026-08-19 gen-article 曾因此崩溃，default-config.yaml 模板与配置默认值已改为全路径
 
 示例模式（AppDelegate.swift，mcp-summary）：
 ```swift
