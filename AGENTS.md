@@ -146,6 +146,7 @@
 
 ### MCP 服务
 - server.py / summarize.py 在 `Sources/MCPScripts/` 目录，通过 `MCPProcessManager` 以子进程方式启动
+- **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
 - server.py 所有配置从环境变量读取（MCPProcessManager.buildEnv() 实时构建），不解析 sys.argv
 - 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
 - summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入

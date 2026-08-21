@@ -92,7 +92,11 @@ final class MCPProcessManager {
 
     // MARK: - Public API
 
-    func start() {
+    /// - Parameter reuseIfHealthy: 冷启动（app launch）时 true，端口已被健康 server 占用则复用
+    ///   （历史孤儿进程 reparent 到 launchd 后仍监听端口，新 spawn 必然绑定失败）。
+    ///   forceRestart/restart 传 false——那些场景用户期望真正重启应用新配置，
+    ///   若复用旧进程会导致新配置静默不生效。
+    func start(reuseIfHealthy: Bool = true) {
         guard mcpConfig?.enabled ?? false else {
             log("[MCP] Disabled by config, skipping")
             return
@@ -111,7 +115,33 @@ final class MCPProcessManager {
         }
 
         state = .initializing
+        // 端口已被健康 server 占用时复用，避免重复 spawn 触发端口竞争
+        if reuseIfHealthy, probeExistingServer() {
+            state = .running
+            log("[MCP] Reusing existing healthy server on port \(port)")
+            return
+        }
         launchProcess(serverPath: serverPath)
+    }
+
+    /// 探测端口是否已有健康的 MCP server（health endpoint 返回 status=ok 且 service 匹配）。
+    /// 健康则复用，否则由调用方 spawn 新实例。校验 service 防止误复用同端口其他服务。
+    private func probeExistingServer() -> Bool {
+        let url = URL(string: "http://127.0.0.1:\(port)/health")!
+        let sem = DispatchSemaphore(value: 0)
+        var healthy = false
+        URLSession.shared.dataTask(with: url) { data, _, err in
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (json["status"] as? String) == "ok",
+               (json["service"] as? String) == "mino-brain"
+            {
+                healthy = true
+            }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 2.0)
+        return healthy
     }
 
     /// 强制重启（配置重载时调用，无论当前状态如何）
@@ -125,7 +155,9 @@ final class MCPProcessManager {
         while let p = process, p.isRunning, .now() < deadline {
             Thread.sleep(forTimeInterval: 0.1)
         }
-        start()
+        // reuseIfHealthy: false —— 重启必须真正 spawn，若 probe 发现旧进程仍健康而复用，
+        // 新配置（port/qdrantPath/apiKey）不会生效，重载/手动重启变成空操作。
+        start(reuseIfHealthy: false)
     }
 
     func stop() {
@@ -328,7 +360,12 @@ final class MCPProcessManager {
         handle.readabilityHandler = { [weak self] handle in
             guard let self else { return }
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                // EOF：子进程已退出（或从未成功写入）。此时 fd 永远"可读"，
+                // 不清除 handler 会导致 fd_monitoring 队列无限触发，吃满 CPU。
+                handle.readabilityHandler = nil
+                return
+            }
 
             if !ready {
                 buffer.append(data)
