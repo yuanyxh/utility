@@ -998,7 +998,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     timeout=aiohttp.ClientTimeout(
                         total=300,
                         sock_connect=10,
-                        sock_read=30,
+                        sock_read=120,
                     ),
                 ) as upstream_resp:
                     latency_ms = int((time.monotonic() - start_time) * 1000)

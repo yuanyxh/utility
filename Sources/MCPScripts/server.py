@@ -1436,16 +1436,11 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
                         )
 
             if vector_results:
-                return {
-                    "results": vector_results,
-                    "count": len(vector_results),
-                    "total_chunks": total_chunks,
-                }
+                pass  # fall through to keyword merge below
         except Exception as e:
             logger.warning(f"[project_notes] vector search failed: {e}")
-            # Fall through to keyword search
 
-    # Fallback: keyword search (grep-lite)
+    # Keyword search (grep-lite) — 始终执行，精确匹配结果插到 vector 结果前面
     tokens = [t for t in query.split() if t]
     keyword_results: list[dict] = []
     seen_files: set[tuple[str, int]] = set()
@@ -1454,7 +1449,6 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
         text = r["chunk_text"]
         if not tokens or not any(t.lower() in text.lower() for t in tokens):
             continue
-        # Score: count how many tokens matched
         matched = sum(1 for t in tokens if t.lower() in text.lower())
         key = (r["file_path"], r["chunk_index"])
         if key in seen_files:
@@ -1470,11 +1464,23 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
         )
 
     keyword_results.sort(key=lambda x: -x["score"])
-    keyword_results = keyword_results[:limit]
+
+    if vector_results:
+        # 精确匹配插到 vector 结果前面（vector search 对中文/跨语言查询可能排不准）
+        seen_keys = {(r["file"], r["line"]) for r in vector_results}
+        exact_hits = [
+            r for r in keyword_results if (r["file"], r["line"]) not in seen_keys
+        ]
+        merged = exact_hits + vector_results
+        return {
+            "results": merged[:limit],
+            "count": len(merged[:limit]),
+            "total_chunks": total_chunks,
+        }
 
     return {
-        "results": keyword_results,
-        "count": len(keyword_results),
+        "results": keyword_results[:limit],
+        "count": len(keyword_results[:limit]),
         "total_chunks": total_chunks,
     }
 
