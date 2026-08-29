@@ -42,10 +42,36 @@ final class TokenProxyManager {
         return ""
     }
 
+    /// providers 序列化为 JSON 传给 Python（config.yaml modelProxy.providers）。
+    /// 为空时返回 nil，回退到旧单上游（MODEL_PROXY_URL）。
+    private func providersJSON() -> String? {
+        guard let providers = proxyConfig?.providers, !providers.isEmpty else { return nil }
+        struct Payload: Encodable {
+            let name: String
+            let url: String
+            let apiFormat: String
+            let apiKey: String
+            let models: [String]
+        }
+        let payload = providers.map {
+            Payload(
+                name: $0.name, url: $0.url,
+                apiFormat: $0.apiFormat.rawValue, apiKey: $0.apiKey,
+                models: $0.models,
+            )
+        }
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     private func buildEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["MODEL_PROXY_PORT"] = String(port)
-        env["MODEL_PROXY_URL"] = upstreamURL
+        if let providersJSON = providersJSON() {
+            env["MODEL_PROXY_PROVIDERS"] = providersJSON
+        } else {
+            env["MODEL_PROXY_URL"] = upstreamURL
+        }
         env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         env["PYTHONUNBUFFERED"] = "1"
 

@@ -194,6 +194,40 @@ mcp:
 ```
 </details>
 
+<details>
+<summary>模型代理（Token Proxy）</summary>
+
+本地反向代理，将 Claude Code 的 API 请求转发到上游 provider 并记录 token 用量。
+将 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 指向本代理即可接入。
+
+```yaml
+modelProxy:
+  # 是否启用模型代理
+  enabled: false
+  # 兼容：providers 为空时的单一上游地址
+  url: ""
+  # 本地代理监听端口
+  port: 8613
+  # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider；
+  # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
+  # apiFormat: anthropic | openai，客户端格式不同时自动做协议转换。
+  # apiKey: 转发时替换的 provider key，为空则透传客户端 key。
+  providers:
+    - name: deepseek
+      url: "https://api.deepseek.com/anthropic"
+      apiFormat: anthropic
+      apiKey: ""
+      models:
+        - deepseek-v4-flash
+    - name: mimo
+      url: "https://api.xiaomimimo.com/anthropic"
+      apiFormat: anthropic
+      apiKey: ""
+      models:
+        - mimo-v2.5-pro
+```
+</details>
+
 ---
 
 ## 快捷键一览

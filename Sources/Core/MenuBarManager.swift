@@ -7,7 +7,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
     private var mcpMenuItem: NSMenuItem!
-    private var tokenMenuItem: NSMenuItem!
+    private var proxyMenuItem: NSMenuItem!
     private var tasksMenuItem: NSMenuItem!
     private var clearItem: NSMenuItem!
     private var quitItem: NSMenuItem!
@@ -73,10 +73,10 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // ── Token ──
-        tokenMenuItem = NSMenuItem(title: tokenTitleText(), action: nil, keyEquivalent: "")
-        tokenMenuItem.submenu = NSMenu()
-        menu.addItem(tokenMenuItem)
+        // ── Proxy ──
+        proxyMenuItem = NSMenuItem(title: proxyTitleText(), action: nil, keyEquivalent: "")
+        proxyMenuItem.submenu = NSMenu()
+        menu.addItem(proxyMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -115,7 +115,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         debugLog("[MenuBar] menuWillOpen")
         refreshRSSItem()
         refreshMCPItem()
-        refreshTokenItem()
+        refreshProxyItem()
         refreshTasksItem()
     }
 
@@ -208,17 +208,36 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         return "\(dot) MCP"
     }
 
-    // MARK: - Token menu
+    // MARK: - Proxy menu
 
-    private func refreshTokenItem() {
+    private func refreshProxyItem() {
         let proxyEnabled = ConfigManager.shared.config.modelProxy?.enabled ?? false
         let state = TokenProxyManager.shared.state
         let sub = NSMenu()
 
         if proxyEnabled {
-            let stateItem = NSMenuItem(title: tokenStateText(state), action: nil, keyEquivalent: "")
+            let stateItem = NSMenuItem(title: proxyStateText(state), action: nil, keyEquivalent: "")
             stateItem.isEnabled = false
             sub.addItem(stateItem)
+
+            // providers 路由表：默认（providers[0]）勾选，点击切换默认
+            if let providers = ConfigManager.shared.config.modelProxy?.providers, !providers.isEmpty {
+                sub.addItem(NSMenuItem.separator())
+                let defaultName = providers.first?.name ?? ""
+                for provider in providers {
+                    let item = NSMenuItem(
+                        title: provider.models.isEmpty
+                            ? provider.name
+                            : "\(provider.name) · \(provider.models.joined(separator: ", "))",
+                        action: #selector(selectDefaultProvider(_:)),
+                        keyEquivalent: "",
+                    )
+                    item.target = self
+                    item.representedObject = provider.name
+                    item.state = provider.name == defaultName ? .on : .off
+                    sub.addItem(item)
+                }
+            }
 
             sub.addItem(NSMenuItem.separator())
 
@@ -232,10 +251,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
                 let inputK = Double(summary.input_tokens) / 1000
                 let outputK = Double(summary.output_tokens) / 1000
-                summaryItem.title = String(
-                    format: "Today: %.1fK in / %.1fK out",
-                    inputK, outputK,
-                )
+                summaryItem.title = L10n.Proxy.today(inputK, outputK)
 
                 if summary.total_requests > 0 {
                     sub.addItem(NSMenuItem.separator())
@@ -243,10 +259,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                         ? Double(summary.invalid_requests) / Double(summary.total_requests) * 100
                         : 0
                     let infoItem = NSMenuItem(
-                        title: String(
-                            format: "Requests: %d | Invalid: %d (%.0f%%)",
-                            summary.total_requests, summary.invalid_requests, invalidPct,
-                        ),
+                        title: L10n.Proxy.requests(summary.total_requests, summary.invalid_requests, invalidPct),
                         action: nil, keyEquivalent: "",
                     )
                     infoItem.isEnabled = false
@@ -254,29 +267,44 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 }
             }
         } else {
-            let disabledItem = NSMenuItem(title: L10n.Token.disabled, action: nil, keyEquivalent: "")
+            let disabledItem = NSMenuItem(title: L10n.Proxy.disabled, action: nil, keyEquivalent: "")
             disabledItem.isEnabled = false
             sub.addItem(disabledItem)
         }
 
-        tokenMenuItem.submenu = sub
+        proxyMenuItem.submenu = sub
     }
 
-    private func tokenStateText(_ state: TokenProxyManager.State) -> String {
+    private func proxyStateText(_ state: TokenProxyManager.State) -> String {
         switch state {
-        case .running: L10n.Token.stateRunning
-        case .stopped: L10n.Token.stateStopped
-        case .crashed: L10n.Token.stateCrashed
+        case .running: L10n.Proxy.stateRunning
+        case .stopped: L10n.Proxy.stateStopped
+        case .crashed: L10n.Proxy.stateCrashed
         }
     }
 
-    private func tokenTitleText() -> String {
+    private func proxyTitleText() -> String {
         let dot = switch TokenProxyManager.shared.state {
         case .running: "●"
         case .stopped: "○"
         case .crashed: "✕"
         }
-        return "\(dot) Token"
+        return "\(dot) Proxy"
+    }
+
+    /// 点击 provider 项 → 将其设为默认（移到 providers[0]）并重启代理
+    @objc private func selectDefaultProvider(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        do {
+            try ConfigManager.shared.setDefaultProvider(named: name)
+            TokenProxyManager.shared.forceRestart()
+            refreshProxyItem()
+        } catch {
+            debugLog("[MenuBar] set default provider failed: \(error)")
+            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
+                title: "Switch Default Failed", body: error.localizedDescription,
+            ))
+        }
     }
 
     // MARK: - EventBus subscription
@@ -293,7 +321,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         EventBus.shared.subscribe("token_proxy_state_changed") { [weak self] _ in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.tokenMenuItem?.title = self.tokenTitleText()
+                self.proxyMenuItem?.title = self.proxyTitleText()
             }
         }
     }
@@ -479,7 +507,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         launchAtLoginItem.title = L10n.Menu.launchAtLogin
         rssMenuItem.title = L10n.Menu.rss
         mcpMenuItem.title = mcpTitleText(MCPProcessManager.shared.state)
-        tokenMenuItem.title = tokenTitleText()
+        proxyMenuItem.title = proxyTitleText()
         tasksMenuItem.title = L10n.Menu.tasks
         clearItem.title = L10n.Menu.clearClipboard
         quitItem.title = L10n.Menu.quit

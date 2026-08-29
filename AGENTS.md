@@ -120,10 +120,13 @@
 - 翻译用序列计数器（`translationSeq`）拒绝 stale 回调
 
 ### 面板管理
-- `PanelManager.shared.show/close` 统一管理面板生命周期（不直接调 panel.show/close）
-- 失焦关闭走 `panelDidResignKey` → `PanelManager.shared.close(self)`
-- 面板间互调用 `PanelManager.shared.panel(id:)`，不走 AppDelegate
-- `hide(nil)` 由 PanelManager 在栈空时统一调用
+- 面板零引用 PanelManager，仅通过 EventBus 发 `PanelEvent.requestShow`/`requestClose` 事件
+- PanelManager 唯一订阅 + 唯一调 `showPanel`/`closePanel`
+- 栈结构 = 激活面板序，后入栈顶；同 ID 去重
+- `dispatchKey`：栈顶→底遍历可见面板，`handleKeyEvent` 返回 true 阻断下层
+- 失焦关闭：`didResignKeyNotification` → `DispatchQueue.main.async` 延迟到通知链完成再读 `NSApp.keyWindow`（防中间状态）
+- 栈空 → `NSApplication.shared.hide(nil)`
+- Stage 独立不入栈
 
 ### NSTableView
 - `selectionHighlightStyle = .none` + manual frame + cell 子类 layout

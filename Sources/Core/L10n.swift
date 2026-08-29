@@ -366,24 +366,32 @@ extension L10n {
     }
 }
 
-// MARK: - Token Proxy Strings
+// MARK: - Proxy Strings
 
 extension L10n {
-    enum Token {
+    enum Proxy {
         static var stateRunning: String {
-            string("menu.token_state_running")
+            string("menu.proxy_state_running")
         }
 
         static var stateStopped: String {
-            string("menu.token_state_stopped")
+            string("menu.proxy_state_stopped")
         }
 
         static var stateCrashed: String {
-            string("menu.token_state_crashed")
+            string("menu.proxy_state_crashed")
         }
 
         static var disabled: String {
-            string("menu.token_disabled")
+            string("menu.proxy_disabled")
+        }
+
+        static func today(_ inputK: Double, _ outputK: Double) -> String {
+            format("menu.proxy_today", inputK, outputK)
+        }
+
+        static func requests(_ total: Int, _ invalid: Int, _ pct: Double) -> String {
+            format("menu.proxy_requests", total, invalid, pct)
         }
     }
 }

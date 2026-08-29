@@ -112,10 +112,37 @@ public struct AIConfig: Codable {
 
 // MARK: - Model Proxy
 
+public enum ProxyAPIFormat: String, Codable {
+    case anthropic
+    case openai
+}
+
+/// 单个上游 provider（deepseek/mimo 等）。模型名列表即 /model 选择器
+/// 可选的模型（body.model 精确匹配即路由到此 provider）。
+public struct ProviderConfig: Codable {
+    var name: String = ""
+    var url: String = "" // 上游 API 地址（provider 自己的格式端点）
+    var apiFormat: ProxyAPIFormat = .anthropic // anthropic | openai
+    var apiKey: String = "" // 转发时替换的 provider key，为空则透传客户端 key
+    var models: [String] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        apiFormat = (try? c.decode(ProxyAPIFormat.self, forKey: .apiFormat)) ?? .anthropic
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
+    }
+}
+
 public struct ModelProxyConfig: Codable {
     var enabled: Bool = false
-    var url: String = "" // 上游 API 地址，为空则用 ai.baseURL
+    var url: String = "" // 兼容：providers 为空时的单一上游地址
     var port: Int = 8080 // 本地代理监听端口
+    /// providers 路由表，默认取第一个作为兜底（未匹配 model 时）
+    var providers: [ProviderConfig] = []
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -123,6 +150,7 @@ public struct ModelProxyConfig: Codable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? []
     }
 }
 

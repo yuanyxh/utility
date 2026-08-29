@@ -61,9 +61,10 @@
     "menu.mcp_state_crashed": "✕ Crashed",
     "notify.mcp_crashed_title": "MCP Service",
     "notify.mcp_crashed": "Crashed %ld times, stopped",
-    "menu.token_state_running": "● Running",
-    "menu.token_state_stopped": "○ Stopped",
-    "menu.token_state_crashed": "✕ Crashed",
-    "menu.token_today": "Today: %@ in / %@ out / %@",
-    "menu.token_disabled": "○ Token (Disabled)"
+    "menu.proxy_state_running": "● Running",
+    "menu.proxy_state_stopped": "○ Stopped",
+    "menu.proxy_state_crashed": "✕ Crashed",
+    "menu.proxy_today": "Today: %.1fK in / %.1fK out",
+    "menu.proxy_requests": "Requests: %ld | Invalid: %ld (%.0f%%)",
+    "menu.proxy_disabled": "○ Proxy (Disabled)"
 }

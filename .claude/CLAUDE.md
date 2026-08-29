@@ -85,7 +85,12 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 
 ### Token Proxy（token_proxy.py）
 - aiohttp 反向代理，拦截 Claude Code API 请求记录 token 用量
-- 路由 `/open/{path}` → 上游 `UPSTREAM_URL/{path}` 原样转发
+- **模型路由（providers）**：config.yaml `modelProxy.providers` 定义路由表（`ProviderConfig`：name/url/apiFormat/anthropic|openai/apiKey/models）。`body.model` 精确匹配某 provider.models → 该 provider（上游 model 用原值）；未匹配 → `providers[0]` 兜底（上游 model 用其 models[0]）。`MODEL_PROXY_PROVIDERS` env 由 Swift `TokenProxyManager.providersJSON()` 从 config 序列化；providers 为空回退旧单上游 `MODEL_PROXY_URL`（兼容）
+- **协议转换**：客户端 anthropic ↔ provider openai 时 `ProtocolConverter` 双向转换（request_anthropic_to_openai / request_openai_to_anthropic / response_openai_to_anthropic）
+- **鉴权 key 替换**：转发按 provider 替换 apiKey（openai 用 `Authorization: Bearer`，anthropic 用 `x-api-key`），为空则透传客户端 key
+- **网关模型发现**：`GET /open/v1/models` 返回 providers 全部模型（Anthropic models API 格式）。**限制（v2.1.193 实测）**：Claude Code 对发现结果做客户端硬过滤（`/^(claude|anthropic)/i`），第三方模型（deepseek/mimo 等）全被滤掉、`/model` 选择器列不出——`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` 仅对 claude/anthropic 前缀模型生效；且 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`（值 `"1"`/`"0"` 均 truthy）会在 bootstrap 拦截模型发现。**切换第三方模型的正确姿势：`/model <名字>` 直接输入**（如 `/model mimo-v2.5-pro`），走 i5t 服务器探测（max_tokens:1 验证请求到代理）→ 代理按 body.model 路由
+- **默认 provider 切换**：MenuBar「Proxy」菜单点击 provider 项 → `ConfigManager.setDefaultProvider`（移到 providers[0]）+ 持久化 + `TokenProxyManager.forceRestart()` 重启代理
+- 路由 `/open/{path}` → 上游 `UPSTREAM_URL/{path}` 原样转发（providers 为空时的兼容路径）
 - SSE 流式解析：`model` 在早期 chunk，`usage` 在最后 chunk，`stop_reason` 在 `delta.stop_reason`
 - LLM usage field resolver：自动发现不同 provider 的 usage 字段路径，缓存到 SQLite `usage_field_cache` 表
 - `cache_write_tokens` 恒为 0——deepseek/mimo 等 provider 的 usage 响应不含非零 `cache_creation_input_tokens`，resolver 路径已正确配置，属上游不返回（非解析缺陷）
@@ -105,7 +110,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - **工具名提取**：`tool_name` 字段记录工具调用名称（Bash/Read/Edit 等），SSE 流提取优先，请求体 assistant 消息兜底不要求请求含 `tools` 定义（仅需 `stop_reason == "tool_use"`）
 - **OpenAI 格式适配**：`_detect_api_format()` 三步检测（顶层 system 数组→messages[0].role=="system"→tools 定义格式）
 - **OpenAI SSE 解析**：`_extract_usage_from_sse()` 归一化 `prompt_tokens→input_tokens`，`finish_reason→stop_reason`（stop→end_turn, tool_calls→tool_use, length→max_tokens）；`_extract_output_from_sse()` 读 `choices[0].delta.content`；`_extract_tool_name_from_sse()` 读 `choices[0].delta.tool_calls[0].function.name`
-- **系统提示词注入缓存控制**：Anthropic 格式注入不设 `cache_control`→不在缓存前缀；OpenAI 格式在原始内容最后一块设 `prompt_cache_breakpoint:{mode:"explicit"}`，注入在断点后→不在缓存中
+- **规则注入（用户消息）**：`_inject_system_prompt` 从 `System_Prompts.md` 读取规则，从后往前找最后一条真实用户输入（role==user 且 content 为字符串 / 数组含 text 块，跳过 tool_result 消息），在其前插入 `---rule_start/---rule_end` 块。注入发生在代理转发时，Claude Code 上下文不含注入后 body，每轮只注入一份不累积；注入位置在末位真实用户输入前，天然在缓存前缀外，无需 `cache_control`/`prompt_cache_breakpoint`。返回 `(body_bytes, 命中索引)`，文件缺失 / 读取失败 / 未命中为 -1，未命中时记 `rule_inject_no_target` warning 防静默失效
 
 ### gen-article 文章管线
 - 素材自动化 + 生成：`prepare_article_source.py`（从记忆库按五要素组织素材）+ `gen_article_generic.py`（claude -p 子进程生成真人博客风格中文技术文章）
