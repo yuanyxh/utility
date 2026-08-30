@@ -3,6 +3,8 @@ import Foundation
 
 /// 管理 token_proxy.py 子进程生命周期。
 /// 在 MCP 启动后启动，崩溃自动重启，退出时停止。
+/// 进程生命周期（启动/崩溃重启/健康检查/停止）委托给 PythonDaemon；
+/// 本类只负责业务决策：State 语义、事件广播、配置读取、HTTP 查询 API。
 final class TokenProxyManager {
     static let shared = TokenProxyManager()
 
@@ -17,14 +19,7 @@ final class TokenProxyManager {
         }
     }
 
-    private var process: Process?
-    private var healthCheckTimer: Timer?
-    private var crashCount = 0
-    private var isStopping = false
-    private let lifecycleQueue = DispatchQueue(label: "token-proxy-lifecycle")
-
-    private let maxRestarts = 3
-    private let restartDelaySec: Double = 2.0
+    private var daemon: PythonDaemon?
 
     private var proxyConfig: ModelProxyConfig? {
         ConfigManager.shared.config.modelProxy
@@ -64,74 +59,51 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
-    private func buildEnv() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["MODEL_PROXY_PORT"] = String(port)
+    /// 脚本专属环境变量（公共部分由 PythonScriptRunner.baseEnvironment() 提供）。
+    /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
+    private var proxyEnvironment: [String: String] {
+        var overrides: [String: String] = [:]
+        overrides["MODEL_PROXY_PORT"] = String(port)
         if let providersJSON = providersJSON() {
-            env["MODEL_PROXY_PROVIDERS"] = providersJSON
+            overrides["MODEL_PROXY_PROVIDERS"] = providersJSON
         } else {
-            env["MODEL_PROXY_URL"] = upstreamURL
+            overrides["MODEL_PROXY_URL"] = upstreamURL
         }
-        env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
-        env["PYTHONUNBUFFERED"] = "1"
-
-        let ai = ConfigManager.shared.config.ai
-        if !ai.apiKey.isEmpty { env["DEEPSEEK_API_KEY"] = ai.apiKey }
-        if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
-        if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
-
-        if let mcp = ConfigManager.shared.config.mcp {
-            let notesDir = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-            env["NOTES_DIR"] = notesDir
-        }
-
-        return env
+        return PythonScriptRunner.environment(overrides: overrides)
     }
 
     // MARK: - Public
 
     func start() {
-        lifecycleQueue.async { [self] in
-            guard state == .stopped || state == .crashed else { return }
-            guard proxyConfig?.enabled == true else {
-                debugLog("[TokenProxy] Disabled by config")
-                return
-            }
-            guard !upstreamURL.isEmpty else {
-                debugLog("[TokenProxy] No upstream URL configured")
-                return
-            }
-            launchProcess()
+        guard state == .stopped || state == .crashed else { return }
+        guard proxyConfig?.enabled == true else {
+            debugLog("[TokenProxy] Disabled by config")
+            return
         }
+        guard !upstreamURL.isEmpty else {
+            debugLog("[TokenProxy] No upstream URL configured")
+            return
+        }
+        guard let daemon = ensureDaemon() else {
+            debugLog("[TokenProxy] token_proxy.py not found")
+            state = .crashed
+            return
+        }
+        daemon.start(reuseIfHealthy: false)
     }
 
     func stop() {
-        lifecycleQueue.async { [self] in
-            isStopping = true
-            healthCheckTimer?.invalidate()
-            healthCheckTimer = nil
-            process?.terminate()
-            process = nil
-            state = .stopped
-            debugLog("[TokenProxy] Stopped")
-        }
+        daemon?.stop()
     }
 
     func forceRestart() {
-        lifecycleQueue.async { [self] in
-            isStopping = true
-            healthCheckTimer?.invalidate()
-            healthCheckTimer = nil
-            process?.terminate()
-            process = nil
-            crashCount = 0
-            isStopping = false
-            state = .stopped
-
-            guard proxyConfig?.enabled == true else { return }
-            guard !upstreamURL.isEmpty else { return }
-            launchProcess()
+        guard proxyConfig?.enabled == true else { return }
+        guard !upstreamURL.isEmpty else { return }
+        guard let daemon = ensureDaemon() else {
+            state = .crashed
+            return
         }
+        daemon.forceRestart()
     }
 
     // MARK: - Query API（供菜单栏调用）
@@ -154,110 +126,52 @@ final class TokenProxyManager {
         }
     }
 
-    // MARK: - Internal
+    // MARK: - Daemon 装配
 
-    private func findScript() -> String? {
-        let candidates = [
-            Bundle.main.resourcePath.map { "\($0)/MCPScripts/token_proxy.py" },
-            #file.replacingOccurrences(of: #"/Sources/MCP/TokenProxyManager.swift"#, with: "/Sources/MCPScripts/token_proxy.py"),
-        ]
-        for case let path? in candidates {
-            if FileManager.default.fileExists(atPath: path) { return path }
+    private func ensureDaemon() -> PythonDaemon? {
+        if let daemon { return daemon }
+        guard let scriptPath = PythonScriptRunner.findScript(named: "token_proxy.py") else {
+            return nil
         }
-        // 回退：相对于当前文件往上找
-        let dir = (#file as NSString).deletingLastPathComponent
-        let rel = (dir as NSString).appendingPathComponent("../MCPScripts/token_proxy.py")
-        let resolved = NSString(string: rel).standardizingPath
-        return FileManager.default.fileExists(atPath: resolved) ? resolved : nil
+        let config = PythonDaemon.Config(
+            // token_proxy.py 路径固定，捕获即可；端口可能随配置重载变化，走闭包
+            scriptPath: { scriptPath },
+            port: { [weak self] in
+                self?.port ?? 8080
+            },
+            healthPath: "/health",
+            service: nil, // token_proxy 不校验 service 字段
+            readySignals: [], // 静默启动，直接健康检查
+            maxRestarts: 3,
+            restartDelaySec: 2.0,
+            environment: { [weak self] in
+                self?.proxyEnvironment ?? [:]
+            },
+            logTag: "TokenProxy",
+        )
+        let daemon = PythonDaemon(config: config)
+        daemon.onStateChange = { [weak self] daemonState in
+            self?.applyDaemonState(daemonState)
+        }
+        daemon.onMaxRestarts = { _ in
+            debugLog("[TokenProxy] Crashed (reached max restarts)")
+        }
+        self.daemon = daemon
+        return daemon
     }
 
-    private func launchProcess() {
-        guard let scriptPath = findScript() else {
-            debugLog("[TokenProxy] token_proxy.py not found")
+    /// 把 PythonDaemon 通用状态映射到 TokenProxy 自身 State 并广播。
+    /// TokenProxy 无 starting/restarting 中间态——启动中保持现状，直到 running。
+    private func applyDaemonState(_ daemonState: PythonDaemon.State) {
+        switch daemonState {
+        case .running:
+            state = .running
+        case .crashed:
             state = .crashed
-            return
+        case .stopped:
+            state = .stopped
+        case .starting, .restarting:
+            break
         }
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: MCPProcessManager.pythonVenvPath)
-        proc.arguments = [scriptPath]
-        proc.environment = buildEnv()
-
-        proc.terminationHandler = { [weak self] p in
-            guard let self else { return }
-            if isStopping { return }
-
-            if p.terminationReason == .uncaughtSignal {
-                crashCount += 1
-                debugLog("[TokenProxy] Crashed (\(crashCount)/\(maxRestarts))")
-                if crashCount >= maxRestarts {
-                    state = .crashed
-                    return
-                }
-                state = .stopped
-                DispatchQueue.main.asyncAfter(deadline: .now() + restartDelaySec) {
-                    self.lifecycleQueue.async { self.launchProcess() }
-                }
-            } else {
-                state = .stopped
-            }
-        }
-
-        do {
-            // 静默 stdout/stderr，避免 pipe buffer 问题
-            proc.standardOutput = FileHandle.nullDevice
-            proc.standardError = FileHandle.nullDevice
-
-            try proc.run()
-            process = proc
-            debugLog("[TokenProxy] Started (PID \(proc.processIdentifier))")
-            DispatchQueue.main.async { self.startHealthCheck() }
-        } catch {
-            debugLog("[TokenProxy] Failed to launch: \(error.localizedDescription)")
-            state = .crashed
-        }
-    }
-
-    private func startHealthCheck() {
-        healthCheckTimer?.invalidate()
-        let url = URL(string: "http://127.0.0.1:\(port)/health")!
-        var retries = 0
-        let maxRetries = 20
-
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-            guard let self else { return }
-            retries += 1
-            if retries > maxRetries {
-                debugLog("[TokenProxy] Health check timed out")
-                timer.invalidate()
-                state = .crashed
-                stop()
-                return
-            }
-
-            Task {
-                let healthy = await self.checkHealth(url: url)
-                guard !Task.isCancelled else { return }
-                if healthy {
-                    self.crashCount = 0
-                    self.state = .running
-                    timer.invalidate()
-                    debugLog("[TokenProxy] Server ready")
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func checkHealth(url: URL) async -> Bool {
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (json["status"] as? String) == "ok"
-            {
-                return true
-            }
-        } catch {}
-        return false
     }
 }

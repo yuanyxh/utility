@@ -76,12 +76,14 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - AST 脚本节点加 start_line/end_line：`ast_extractor.py` 全部节点；`parse.mjs` symbol() 用 loc 展开（VariableDeclaration 用 decl.loc）；Vue 行号偏移补偿 `offset=content[:m.start(2)].count("\n")+lead_newlines`
 - 坑：Swift 编译器对 `if top.bodyDepth == nil { break }` 后直接 `if newDepth < top.bodyDepth` 的流分析在部分文件失效，统一改 `if let bodyDepth = top.bodyDepth, newDepth < bodyDepth`（四提取器对齐）
 
-### MCP 进程管理（MCPProcessManager）
-- 通过 Python 子进程运行 server.py，stderr 输出检测 readiness（"Application startup complete"）
-- `waitForReady()`：捕获 stderr，等到就绪信号后再开始 HTTP 健康检查（/health endpoint）
+### Python 脚本统一入口（PythonScriptRunner + PythonDaemon）
+- **`PythonScriptRunner`**（Sources/MCP/PythonScriptRunner.swift）：所有 py 脚本的 venv 路径（`pythonVenvPath`）、脚本路径解析（`findScript`，bundle→dev fallback）、环境变量（`baseEnvironment` 公共 AI/路径 + `environment(overrides:)` 脚本专属）、shell 命令构造（`shellCommand`，TaskScheduler .sh 用）、一次性执行（`runCaptureOutput`，边读边存防 pipe 阻塞 + 超时 kill）统一收束于此
+- **`PythonDaemon`**（Sources/MCP/PythonDaemon.swift）：参数化常驻 Python 进程守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` 与 `TokenProxyManager` 共用。Config 通过闭包注入 `scriptPath`/`port`/`environment`——配置重载后 `forceRestart` 无需重建 daemon 即可应用新值；状态经 `onStateChange`/`onMaxRestarts` 回调上报，组合方自行映射自身 State enum 并广播
+- **MCPProcessManager**：server.py 业务编排——State 5 态/EventBus 广播/端口复用探测（service=="mino-brain" 校验）/pythonCheck 预检/崩溃通知；进程生命周期委托 PythonDaemon
+- 就绪检测：stderr 输出 "Application startup complete" / "Uvicorn running on"（readySignals）；token_proxy 静默启动直接健康检查
 - 无启动超时杀进程——`terminationHandler` 处理真实崩溃，`isStopping` 标志防止 stop() 误触重启
-- 环境变量由 `buildEnv()` 从 ConfigManager 实时读取，不缓存
 - Python venv 路径 `~/.config/utility/mcp-venv/bin/python3`
+- **健康检查必须 `async/await` + `@MainActor`**，不能用 `DispatchSemaphore`（阻塞主线程导致 URLSession 回调死锁）
 
 ### Token Proxy（token_proxy.py）
 - aiohttp 反向代理，拦截 Claude Code API 请求记录 token 用量
@@ -94,8 +96,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - SSE 流式解析：`model` 在早期 chunk，`usage` 在最后 chunk，`stop_reason` 在 `delta.stop_reason`
 - LLM usage field resolver：自动发现不同 provider 的 usage 字段路径，缓存到 SQLite `usage_field_cache` 表
 - `cache_write_tokens` 恒为 0——deepseek/mimo 等 provider 的 usage 响应不含非零 `cache_creation_input_tokens`，resolver 路径已正确配置，属上游不返回（非解析缺陷）
-- TokenProxyManager.swift：进程守护（lifecycleQueue + terminationHandler + health check）
-- 健康检查必须 `async/await` + `@MainActor`，不能用 `DispatchSemaphore`（阻塞主线程导致 URLSession 回调死锁）
+- TokenProxyManager.swift：业务编排——State 语义/EventBus 广播/providers 路由（providersJSON→MODEL_PROXY_PROVIDERS）；进程生命周期（lifecycleQueue + terminationHandler + health check）委托 `PythonDaemon`
 - `response_valid`：只有 `error` stop_reason 是无效，`max_tokens`/`end_turn`/`stop_sequence` 正常
 - 费用估算已移除（不准确），`estimated_cost_usd` 字段已从写入侧、API 与表结构整体移除
 - `session_id`/`project_path` 采集已废弃（Claude Code 请求 metadata 无此字段，全为空），`/usage/by_project` 端点与 Swift `ProjectCost` 已删除
@@ -130,7 +131,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Qdrant 冷层独立集合 `knowledge_base`
 - 热层初始化含 PostHog 遥测 SSL 握手，双重禁用：模块级 `posthog.disabled = True` + 环境变量 `MEM0_TELEMETRY=False`（后者更关键——mem0 的 `AnonymousTelemetry` 创建独立 PostHog 实例，不受 `posthog.disabled` 影响）
 - 热层惰性初始化：不在模块加载阶段执行，由 `_ensure_hot_memory()` 在首次工具调用时触发
-- `FASTEMBED_CACHE_PATH`（注意不是 `FASTEMBED_CACHE_DIR`）是 fastembed 读取的环境变量名，两处设置此变量：server.py 模块级 + Swift MCPProcessManager.buildEnv()
+- `FASTEMBED_CACHE_PATH`（注意不是 `FASTEMBED_CACHE_DIR`）是 fastembed 读取的环境变量名，两处设置此变量：server.py 模块级 + Swift `MCPProcessManager.serverEnvironment`（经 `PythonScriptRunner.environment(overrides:)` 注入）
 - `MEM0_CONFIG["embedder"]["config"]` 不支持 `cache_dir` 参数（`BaseEmbedderConfig` 不接受），依靠 `FASTEMBED_CACHE_PATH` 环境变量让 mem0 内部 fastembed 找到已有缓存
 - `tool_resource` 工具返回已注册 skill 的附属资源：path 必须位于 `references`/`agents`/`scripts` 之下，双重校验——normpath 语法层挡 `../` 穿越 + realpath 语义层解析 symlink 后仍须位于 skill 目录真实路径内（防附属目录内 symlink 指向外部文件泄露），读取用 realpath 结果避免 TOCTOU
 - `_scan_skills` 递归 os.walk：目录含 SKILL.md（Waza 式目录 skill）→ 跳过 `_SKILL_SKIP_DIRS` 子目录且只注册 SKILL.md 本身；无 SKILL.md 的普通目录 → 其内所有 .md（含附属子目录）照常注册

@@ -87,9 +87,12 @@
 | `TaskScheduler` | Timer + cron + 系统唤醒检测（含内部任务注册） |
 | `TaskExecutor` | 外部脚本执行（sh/js/py） |
 | `TaskStateDB` | GRDB 任务状态持久化 |
-| `MCPProcessManager` | Python server.py 子进程生命周期管理 + 健康检查 + 自动重启 + EventBus 状态广播 |
+| `MCPProcessManager` | Python server.py 服务编排：State 语义/EventBus 广播/端口复用探测/python 预检；进程生命周期委托 `PythonDaemon` |
+| `PythonScriptRunner` | py 脚本统一入口：venv 路径 / 脚本定位（bundle→dev fallback）/ env 构造（baseEnvironment+overrides）/ shell 命令 / 一次性执行（runCaptureOutput） |
+| `PythonDaemon` | 参数化常驻 Python 进程守护：启动/崩溃重启/健康检查/停止（`MCPProcessManager` 与 `TokenProxyManager` 共用） |
+| `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
-| `ASTExtractorRunner` | AST 批量提取调度（`ast_extractor.py --batch` + 单文件兜底） |
+| `ASTExtractorRunner` | AST 批量提取调度（`ast_extractor.py --batch` + 单文件兜底，经 `PythonScriptRunner.runCaptureOutput` 边读边存防 pipe 阻塞） |
 | `ProjectScanner` | 多语言符号提取器注册 → 批量 AST → 并发正则 → 批量 SQLite ↔ FTS5 索引 |
 | `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 |
 | `ManifestParser` | Package.swift / package.json / pyproject.toml 依赖解析 |
@@ -148,9 +151,11 @@
 - YAML key 必须与 struct property 名完全相同
 
 ### MCP 服务
-- server.py / summarize.py 在 `Sources/MCPScripts/` 目录，通过 `MCPProcessManager` 以子进程方式启动
+- server.py / summarize.py / token_proxy.py 在 `Sources/MCPScripts/` 目录，脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
+- 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
+- 一次性执行（ast_extractor.py batch/单文件）走 `PythonScriptRunner.runCaptureOutput`（边读边存避免 pipe buffer 阻塞 + 超时 kill）
 - **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
-- server.py 所有配置从环境变量读取（MCPProcessManager.buildEnv() 实时构建），不解析 sys.argv
+- server.py 所有配置从环境变量读取（`PythonScriptRunner.baseEnvironment()` 提供公共 AI/路径配置，脚本专属变量经 `environment(overrides:)` 注入——如 MCP_PORT/QDRANT_PATH/FASTEMBED_CACHE_PATH），实时构建，不解析 sys.argv
 - 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
 - summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入
 - summarize.py 防重复触发：单实例文件锁 + 距上次完整总结 < 6h 跳过；mcp-summary 注册时
@@ -217,11 +222,11 @@
 ## MCP 进程 pipe buffer 阻塞事故（2026-07-25）
 
 **现象**：MCP server.py 运行 4 天后 "失联"，端口 LISTEN 但 HTTP 请求全部超时。
-**根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（MCPProcessManager）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
+**根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（`PythonDaemon`，重构前为 MCPProcessManager 内联逻辑）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
 
 **修复**：
 - `Sources/MCPScripts/server.py` / `summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
-- `Sources/MCP/MCPProcessManager.swift`：启动检测通过后继续读取 pipe 并丢弃数据（双重保险）
+- `Sources/MCP/PythonDaemon.swift`：就绪信号检测通过后继续读取 pipe 并丢弃数据（双重保险）
 
 **症状识别**：
 - 进程旧（数天）、pipe stderr 有大量积压（`lsof -p PID` 看 SIZE/OFF 列）

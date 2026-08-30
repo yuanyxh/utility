@@ -90,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
         } else {
             // enabled 且配置可能已变：强制重启，所有新配置（port/qdrantPath/apiKey 等）
-            // 在 MCPProcessManager.buildEnv() 中实时读取
+            // 在 PythonScriptRunner.baseEnvironment() + serverEnvironment 中实时读取
             debugLog("[MCP] Restarting with new config...")
             MCPProcessManager.shared.forceRestart()
             updateMCPSummaryTask()
@@ -117,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard let mcp = ConfigManager.shared.config.mcp,
               mcp.summaryEnabled,
               mcp.enabled,
-              let scriptPath = MCPProcessManager.shared.findScript(named: "summarize.py")
+              let scriptPath = PythonScriptRunner.findScript(named: "summarize.py")
         else {
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
             debugLog("[MCP] Summary task disabled or unavailable")
@@ -133,20 +133,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let model = ai.model.isEmpty ? "deepseek-v4-flash" : ai.model
         let serverURL = "http://localhost:\(mcp.port)"
 
-        let python = MCPProcessManager.pythonVenvPath
-        var cmdParts = [
-            "DEEPSEEK_API_KEY=\(apiKey)",
-            "NOTES_DIR=\(notesDir)",
-            "SUMMARY_API_URL=\(baseURL)",
-            "SUMMARY_MODEL=\(model)",
-            "MEMORY_SERVER_URL=\(serverURL)",
-            "UTILITY_DATA_DIR=\(AppPaths.configDir.path)",
-            python, scriptPath,
-        ]
+        var args: [String] = []
         if mcp.summaryStatsOnly {
-            cmdParts.append("--stats-only")
+            args.append("--stats-only")
         }
-        let cmd = cmdParts.joined(separator: " ")
+        let cmd = PythonScriptRunner.shellCommand(
+            script: scriptPath,
+            arguments: args,
+            environmentOverrides: [
+                "DEEPSEEK_API_KEY": apiKey,
+                "NOTES_DIR": notesDir,
+                "SUMMARY_API_URL": baseURL,
+                "SUMMARY_MODEL": model,
+                "MEMORY_SERVER_URL": serverURL,
+                "UTILITY_DATA_DIR": AppPaths.configDir.path,
+            ],
+        )
 
         let task = TaskConfig(
             name: "mcp-summary",
@@ -167,8 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard article.enabled,
               let kbPath = ConfigManager.shared.config.mcp?.knowledgeBasePath,
               !kbPath.isEmpty,
-              let prepareScript = MCPProcessManager.shared.findScript(named: "prepare_article_source.py"),
-              let genScript = MCPProcessManager.shared.findScript(named: "gen_article_generic.py")
+              let prepareScript = PythonScriptRunner.findScript(named: "prepare_article_source.py"),
+              let genScript = PythonScriptRunner.findScript(named: "gen_article_generic.py")
         else {
             TaskScheduler.shared.unregisterInternalTask(named: "gen-article")
             debugLog("[Article] Task disabled or unavailable")
@@ -181,21 +183,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let soulPath = genDir + "/SOUL.md"
         let articlesDir = genDir + "/articles"
 
-        let python = MCPProcessManager.pythonVenvPath
         let agent = article.agentCli
-        let cmd = [
-            python, prepareScript,
-            "--topic", topicPath,
-            "--out", factsPath,
-            "--agent", "'\(agent)'",
-            "&&",
-            python, genScript,
-            "--soul", soulPath,
-            "--src", factsPath,
-            "--out", articlesDir,
-            "--retries", "\(article.retries)",
-            "--agent", "'\(agent)'",
-        ].joined(separator: " ")
+        let prepareCmd = PythonScriptRunner.shellCommand(
+            script: prepareScript,
+            arguments: ["--topic", topicPath, "--out", factsPath, "--agent", "'\(agent)'"],
+        )
+        let genCmd = PythonScriptRunner.shellCommand(
+            script: genScript,
+            arguments: [
+                "--soul", soulPath,
+                "--src", factsPath,
+                "--out", articlesDir,
+                "--retries", "\(article.retries)",
+                "--agent", "'\(agent)'",
+            ],
+        )
+        let cmd = prepareCmd + " && " + genCmd
 
         let task = TaskConfig(
             name: "gen-article",

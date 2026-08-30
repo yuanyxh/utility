@@ -2,18 +2,12 @@ import AppKit
 import Foundation
 
 /// Manages the Python MCP server subprocess lifecycle.
-/// Starts on app launch, restarts on crash (maxRetries), stops on app quit.
+/// Starts on app launch, restarts on crash (maxRestarts), stops on app quit.
 /// 所有配置从 ConfigManager 实时读取，不缓存旧值。
+/// 进程生命周期（启动/崩溃重启/健康检查/停止）委托给 PythonDaemon；
+/// 本类负责业务决策：State 语义、事件广播、复用探测、崩溃通知、python 预检。
 final class MCPProcessManager {
     static let shared = MCPProcessManager()
-
-    /// Path to the Python venv where MCP dependencies are installed.
-    /// Created by: `python3.12 -m venv ~/.config/utility/mcp-venv && pip install -r requirements.txt`
-    static let pythonVenvPath = (
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/utility/mcp-venv/bin/python3")
-            .path,
-    )
 
     enum State: String {
         case stopped, initializing, running, restarting, crashed
@@ -28,19 +22,12 @@ final class MCPProcessManager {
         }
     }
 
-    private var process: Process?
-    private var healthCheckTimer: Timer?
-    private var crashCount = 0
-    /// stop() 主动关闭时不触发重启
-    private var isStopping = false
+    private var daemon: PythonDaemon?
 
     // Pre-flight cache（config 层不缓存，但 python 检查结果缓存——python 版本不会动态变）
     private var cachedServerPath: String?
     private var pythonChecked = false
     private var pythonAvailable = false
-    /// Serial queue for process lifecycle (stop → start), prevents
-    /// a new process from launching while an old one is still dying.
-    private let lifecycleQueue = DispatchQueue(label: "mcp-process-lifecycle")
 
     /// 配置读取（实时，不缓存）
     private var mcpConfig: MCPConfig? {
@@ -59,27 +46,19 @@ final class MCPProcessManager {
         Double(mcpConfig?.restartDelayMs ?? 2000) / 1000.0
     }
 
-    /// 从 config 实时构建环境变量
-    private func buildEnv() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["MCP_PORT"] = String(port)
-        env["PYTHONUNBUFFERED"] = "1"
-        env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
-
-        // ai 配置
-        let ai = ConfigManager.shared.config.ai
-        if !ai.apiKey.isEmpty { env["DEEPSEEK_API_KEY"] = ai.apiKey }
-        if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
-        if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
+    /// 脚本专属环境变量（公共部分由 PythonScriptRunner.baseEnvironment() 提供）。
+    /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
+    private var serverEnvironment: [String: String] {
+        var overrides: [String: String] = [:]
+        overrides["MCP_PORT"] = String(port)
 
         // mcp 路径配置
         if let mcp = mcpConfig {
-            env["QDRANT_PATH"] = (mcp.qdrantPath as NSString).expandingTildeInPath
-            env["NOTES_DIR"] = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-            env["FASTEMBED_CACHE_PATH"] = (mcp.fastembedCacheDir as NSString).expandingTildeInPath
-            env["EMBEDDER_MODEL"] = mcp.embedderModel
+            overrides["QDRANT_PATH"] = (mcp.qdrantPath as NSString).expandingTildeInPath
+            overrides["FASTEMBED_CACHE_PATH"] = (mcp.fastembedCacheDir as NSString).expandingTildeInPath
+            overrides["EMBEDDER_MODEL"] = mcp.embedderModel
         }
-        return env
+        return PythonScriptRunner.environment(overrides: overrides)
     }
 
     /// 重置预检缓存（配置重载后调用，下次 start 重新检查）
@@ -87,7 +66,6 @@ final class MCPProcessManager {
         cachedServerPath = nil
         pythonChecked = false
         pythonAvailable = false
-        crashCount = 0
     }
 
     // MARK: - Public API
@@ -114,89 +92,33 @@ final class MCPProcessManager {
             return
         }
 
+        let daemon = ensureDaemon(scriptPath: serverPath)
         state = .initializing
         // 端口已被健康 server 占用时复用，避免重复 spawn 触发端口竞争
-        if reuseIfHealthy, probeExistingServer() {
-            state = .running
-            log("[MCP] Reusing existing healthy server on port \(port)")
-            return
-        }
-        launchProcess(serverPath: serverPath)
+        daemon.start(reuseIfHealthy: reuseIfHealthy)
     }
 
-    /// 探测端口是否已有健康的 MCP server（health endpoint 返回 status=ok 且 service 匹配）。
-    /// 健康则复用，否则由调用方 spawn 新实例。校验 service 防止误复用同端口其他服务。
-    private func probeExistingServer() -> Bool {
-        let url = URL(string: "http://127.0.0.1:\(port)/health")!
-        let sem = DispatchSemaphore(value: 0)
-        var healthy = false
-        URLSession.shared.dataTask(with: url) { data, _, err in
-            if let data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (json["status"] as? String) == "ok",
-               (json["service"] as? String) == "mino-brain"
-            {
-                healthy = true
-            }
-            sem.signal()
-        }.resume()
-        _ = sem.wait(timeout: .now() + 2.0)
-        return healthy
-    }
-
-    /// 强制重启（配置重载时调用，无论当前状态如何）
+    /// 强制重启（配置重载时调用，无论当前状态如何）。
+    /// 委托 PythonDaemon.forceRestart()：停旧进程 → 等死 → 真正 spawn。
+    /// port/scriptPath 经闭包实时读取，无需重建 daemon 即可应用新配置。
     func forceRestart() {
         log("[MCP] Force restart (config reload)")
-        stop()
         resetPrefetch()
-        // Wait for old process to fully release resources (Qdrant lock, port, etc.)
-        // before launching the new instance. stop() kills async so we poll here.
-        let deadline = DispatchTime.now() + 4.0
-        while let p = process, p.isRunning, .now() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
+        guard let daemon else {
+            log("[MCP] No daemon, cold start instead")
+            start(reuseIfHealthy: false)
+            return
         }
-        // reuseIfHealthy: false —— 重启必须真正 spawn，若 probe 发现旧进程仍健康而复用，
-        // 新配置（port/qdrantPath/apiKey）不会生效，重载/手动重启变成空操作。
-        start(reuseIfHealthy: false)
+        daemon.forceRestart()
     }
 
     func stop() {
-        isStopping = true
-        healthCheckTimer?.invalidate()
-        healthCheckTimer = nil
-        guard let proc = process else {
-            state = .stopped
-            return
-        }
-
-        proc.terminate()
-        state = .stopped
-
-        // Keep process reference until old process is confirmed dead,
-        // so a concurrent start() can wait for it before creating a
-        // new instance — prevents two processes sharing the same
-        // Qdrant migration dir / port / etc.
-        lifecycleQueue.async { [weak self] in
-            let deadline = DispatchTime.now() + 3.0
-            while proc.isRunning, .now() < deadline {
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-            if proc.isRunning {
-                kill(proc.processIdentifier, SIGKILL)
-                _ = 1
-            }
-            DispatchQueue.main.async {
-                // Only null out if still the same process (not a newer one)
-                if self?.process?.processIdentifier == proc.processIdentifier {
-                    self?.process = nil
-                }
-            }
-        }
+        daemon?.stop()
     }
 
     func restart() {
         stop()
-        start()
+        start(reuseIfHealthy: false)
     }
 
     // MARK: - Pre-flight checks
@@ -206,7 +128,7 @@ final class MCPProcessManager {
         pythonChecked = true
 
         // 1. Check if venv exists
-        let venvPython = Self.pythonVenvPath
+        let venvPython = PythonScriptRunner.pythonVenvPath
         guard FileManager.default.fileExists(atPath: venvPython) else {
             // 2. Check if Homebrew python3.12 is available
             let brewTask = Process()
@@ -262,174 +184,57 @@ final class MCPProcessManager {
     }
 
     private func findServerScript() -> String? {
-        findScript(named: "server.py")
+        PythonScriptRunner.findScript(named: "server.py")
     }
 
-    /// Resolve path to a script in MCPScripts bundle directory.
-    /// Checks bundle first (packaged app), then dev source directory.
-    func findScript(named name: String) -> String? {
-        // In SPM, resources are at Bundle.module.resourceURL
-        guard let resourceURL = Bundle.module.resourceURL else {
-            log("[MCP] No bundle resource URL")
-            return nil
+    // MARK: - Daemon 装配
+
+    /// 创建（或复用）PythonDaemon，挂接状态回调。
+    /// daemon 生命周期（启动/崩溃重启/健康检查/停止）由 PythonDaemon 自管。
+    private func ensureDaemon(scriptPath: String) -> PythonDaemon {
+        if let daemon { return daemon }
+
+        let config = PythonDaemon.Config(
+            scriptPath: { [weak self] in
+                self?.findServerScript() ?? scriptPath
+            },
+            port: { [weak self] in
+                self?.port ?? 9001
+            },
+            healthPath: "/health",
+            service: "mino-brain", // 校验 service 字段，防止误复用同端口其他服务
+            readySignals: ["Application startup complete", "Uvicorn running on"],
+            maxRestarts: maxRestarts,
+            restartDelaySec: restartDelaySec,
+            environment: { [weak self] in
+                self?.serverEnvironment ?? [:]
+            },
+            logTag: "MCP",
+        )
+        let daemon = PythonDaemon(config: config)
+        daemon.onStateChange = { [weak self] daemonState in
+            self?.applyDaemonState(daemonState)
         }
-
-        let scriptsDir = resourceURL.appendingPathComponent("MCPScripts")
-        let scriptPath = scriptsDir.appendingPathComponent(name).path
-
-        if FileManager.default.fileExists(atPath: scriptPath) {
-            return scriptPath
+        daemon.onMaxRestarts = { [weak self] _ in
+            self?.notifyCrash()
         }
-
-        // Fallback: development path (source directory)
-        let devBase = resourceURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let devPath = devBase.appendingPathComponent("MCPScripts/\(name)").path
-
-        if FileManager.default.fileExists(atPath: devPath) {
-            return devPath
-        }
-
-        return nil
+        self.daemon = daemon
+        return daemon
     }
 
-    // MARK: - Process lifecycle
-
-    private func launchProcess(serverPath: String) {
-        isStopping = false
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: Self.pythonVenvPath)
-        proc.arguments = [serverPath] // port via MCP_PORT env in buildEnv()
-
-        // 实时从 config 构建环境变量
-        proc.environment = buildEnv()
-
-        // Handle process exit
-        proc.terminationHandler = { [weak self] p in
-            guard let self else { return }
-            // stop() 主动关闭时不触发重启
-            if isStopping { return }
-
-            let reason = p.terminationReason
-            if reason == .uncaughtSignal {
-                crashCount += 1
-                log("[MCP] Process crashed (\(crashCount)/\(maxRestarts))")
-                if crashCount >= maxRestarts {
-                    state = .crashed
-                    notifyCrash()
-                    return
-                }
-                state = .restarting
-                DispatchQueue.main.asyncAfter(deadline: .now() + restartDelaySec) {
-                    self.launchProcess(serverPath: serverPath)
-                }
-            } else {
-                // Normal exit (exit(0) — shouldn't happen in server mode)
-                state = .stopped
-            }
-        }
-
-        do {
-            // Capture stderr 以检测 Uvicorn 启动完成信号
-            let stderrPipe = Pipe()
-            proc.standardError = stderrPipe
-
-            try proc.run()
-            process = proc
-            log("[MCP] Started (PID \(proc.processIdentifier))")
-
-            // 等待服务器输出启动完成信号后再健康检查
-            waitForReady(pipe: stderrPipe)
-        } catch {
-            log("[MCP] Failed to launch: \(error.localizedDescription)")
+    /// 把 PythonDaemon 通用状态映射到 MCP 自身 5 态 State 并广播。
+    private func applyDaemonState(_ daemonState: PythonDaemon.State) {
+        switch daemonState {
+        case .starting:
+            state = .initializing
+        case .running:
+            state = .running
+        case .restarting:
+            state = .restarting
+        case .crashed:
             state = .crashed
-        }
-    }
-
-    // MARK: - Startup readiness detection
-
-    /// Monitors process stderr for the server startup signal ("Application startup complete"
-    /// or "Uvicorn running on"), then begins health check polling.
-    /// Falls back to a timeout if the signal never arrives.
-    private func waitForReady(pipe: Pipe) {
-        let handle = pipe.fileHandleForReading
-        var buffer = Data()
-        var ready = false
-
-        handle.readabilityHandler = { [weak self] handle in
-            guard let self else { return }
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                // EOF：子进程已退出（或从未成功写入）。此时 fd 永远"可读"，
-                // 不清除 handler 会导致 fd_monitoring 队列无限触发，吃满 CPU。
-                handle.readabilityHandler = nil
-                return
-            }
-
-            if !ready {
-                buffer.append(data)
-                guard let output = String(data: buffer, encoding: .utf8) else { return }
-
-                if output.contains("Application startup complete") || output.contains("Uvicorn running on") {
-                    ready = true
-                    // 启动后仍保持读取管道，避免 pipe buffer 积满导致子进程 write() 阻塞
-                    DispatchQueue.main.async { [weak self] in
-                        self?.startHealthCheck()
-                    }
-                }
-            }
-            // ready 后继续读取并丢弃数据，防止 pipe buffer 写满阻塞子进程
-        }
-
-        // 不加超时杀死进程——服务器可能因网络/模型加载慢但最终会准备好
-        // 如果进程真正崩溃退出, terminationHandler 会处理重启
-    }
-
-    // MARK: - Health check
-
-    private func startHealthCheck() {
-        healthCheckTimer?.invalidate()
-        let url = URL(string: "http://127.0.0.1:\(port)/health")!
-        var retries = 0
-        let maxRetries = 20 // ~10s total wait (服务器已就绪，应该很快响应)
-
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
-            [weak self] timer in
-            guard let self else { return }
-
-            retries += 1
-            if retries > maxRetries {
-                log("[MCP] Health check timed out (server unresponsive)")
-                timer.invalidate()
-                state = .crashed
-                stop()
-                return
-            }
-
-            let sem = DispatchSemaphore(value: 0)
-            var healthy = false
-
-            URLSession.shared.dataTask(with: url) { data, _, err in
-                if let data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   (json["status"] as? String) == "ok"
-                {
-                    healthy = true
-                } else if let err {
-                    log("[MCP] Health check attempt \(retries): \(err.localizedDescription)")
-                }
-                sem.signal()
-            }.resume()
-
-            _ = sem.wait(timeout: .now() + 2.0)
-
-            if healthy {
-                crashCount = 0
-                state = .running
-                timer.invalidate()
-                log("[MCP] Server ready")
-            }
+        case .stopped:
+            state = .stopped
         }
     }
 
