@@ -6,18 +6,9 @@
   python3 summarize.py                    # 完整流程：统计报表 + AI 总结
   python3 summarize.py --stats-only       # 仅生成统计报表，跳过 AI 总结
 
-流程：
-1. 从 mino-brain REST API 获取过去 3 天记忆
-2. 阶段1 聚合：分批 LLM 按主题分类/合并去重/retain 评估（think disabled，带时间线演进），递归合并至收敛
-3. 阶段2 精炼：逐组提炼关键词 → 本地检索 Extracts → 判断归并已有笔记/新建 → think enable 生成正文
-4. 写入 Markdown（同标题 H1 段合并去重，异标题末尾新增一节）
-5. 同步写入冷层 Qdrant（按内容哈希去重，通过 REST API）
-6. 阶段3 规范提炼 → MCP/Skills/Rules/*.md
-7. 异常 → 写入流水线错误日志；阶段2 单组失败不中断整体
-
-防重复触发：
-- 单实例文件锁：同一时刻只允许一个实例运行
-- 最小间隔节流：与上次完整总结间隔 < 6 小时则跳过
+重构（2026-08-30，阶段3）：LLM/错误日志 → summary_llm.py；阶段3 规范提炼 →
+summary_rules.py；统计报表 → summary_stats.py；本入口保留核心流水线
+（记忆获取/聚合/精炼/写入/单实例节流）与 main()。
 """
 
 import argparse
@@ -34,31 +25,39 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
-import httpx
+from config import (
+    data_dir,
+    notes_dir,
+)
 from log_utils import (
     setup_logging as _log_setup,
-    write_error_log as _shared_write_error_log,
 )
+from summary_llm import (
+    _HTTP,
+    DEEPSEEK_API_KEY,
+    _llm_chat,
+    _parse_json_any,
+    write_error_log,
+)
+from summary_rules import _run_phase3
+from summary_stats import _generate_stats_report, _print_report_v2
 
-# CLI 参数解析
 _parser = argparse.ArgumentParser(description="Utility 记忆总结流水线")
+
 _parser.add_argument(
     "--stats-only", action="store_true", help="仅生成统计报表，跳过 AI 总结"
 )
+
 _args = _parser.parse_args()
+
 STATS_ONLY = _args.stats_only
 
 logger = _log_setup("summarize")
 
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "deepseek-v4-flash")
-SUMMARY_API_URL = os.environ.get("SUMMARY_API_URL", "https://api.deepseek.com")
-NOTES_DIR = Path(
-    os.environ.get("NOTES_DIR", os.path.expanduser("~/Documents/selfdata/notes"))
-)
-ERROR_LOG = NOTES_DIR / "流水线错误日志.jsonl"
+NOTES_DIR = Path(notes_dir())
+
 MEMORY_SERVER_URL = os.environ.get("MEMORY_SERVER_URL", "http://localhost:9001")
-COLD_READY = True
+
 SUMMARY_EXCLUDE_DIRS = {
     "Self_Data",
     "Works_Jobs",
@@ -67,41 +66,49 @@ SUMMARY_EXCLUDE_DIRS = {
     "Attachments",
     "Extracts",
 }
+
 SUMMARY_MEMORY_DAYS = 3
+
 SUMMARY_MEMORY_LIMIT = 200
+
 EXTRACTS_DIR = NOTES_DIR / "Extracts"
+
 SUMMARY_MIN_CONTENT_LEN = 150
-SUMMARY_LLM_TEMPERATURE = 0.1
-SUMMARY_LLM_TIMEOUT = 90
-SUMMARY_API_TIMEOUT = 10
+
 SUMMARY_GIT_TIMEOUT = 30
 
-# ── 阶段1 记忆聚合（先分类/合并/去重/时间线，递归收敛） ──
-AGGREGATE_BATCH_THRESHOLD = 60  # 记忆条数超过此值分批聚合
-AGGREGATE_BATCH_SIZE = 60  # 每批条数
-AGGREGATE_LLM_TEMPERATURE = 0.2  # 聚合允许归纳，比生成略高
-AGGREGATE_LLM_TIMEOUT = 120
-AGGREGATE_MAX_ROUNDS = 3  # 递归合并最大轮数（组数单调不增，必然收敛）
+AGGREGATE_BATCH_THRESHOLD = 60
 
-# ── 阶段2 检索驱动逐组精炼（关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成） ──
-SUMMARY_KEYWORD_MAX_TOKENS = 8192  # 关键词提炼
-SUMMARY_JUDGE_MAX_TOKENS = 8192  # 归并判断
-SUMMARY_GEN_MAX_TOKENS = 16384  # 最终生成（正文较长）
-SUMMARY_SEARCH_LIMIT = 5  # 检索返回命中上限
-SEARCH_MIN_TOKEN_LEN = 2  # 关键词最小长度，过滤通配词
-SUMMARY_KEYWORD_COUNT = 8  # 关键词数量上限
-SUMMARY_MERGE_CONTEXT_CHARS = 2000  # 归并判断/生成时截取上下文长度（facts 截断用）
-SUMMARY_MERGE_LOOKBACK_CHARS = 8000  # merge 生成时给 LLM 的目标笔记相关段落总长上限（防大文件前 2K 看不到文件尾既有段）
-SUMMARY_DUP_SIM_THRESHOLD = 0.7  # 归并内容相对既有段的「匹配覆盖率」超此值视为无增量，跳过（0.8 ratio→0.7 覆盖率，实测 ScanTextUtil 重复 0.767）
-# ── 预聚合（同目标同家族组）与微碎片兜底（方案 A+C 融合，2026-08-06） ──
-# 实测校准（真实 20 条未处理记忆 12 组）：同族组关键词集共享 ≥1 主题词（Jaccard 0.07-0.15），
-# 不相关同 target 组共享 0 词（Jaccard=0）；整文本相似度在族内/跨族区间重叠无阈值可分，
-# 故相关性判定弃相似度门、以「共享 ≥1 主题关键词 + Jaccard ≥ 0.05」为 AND 门（详见 _topical_related）。
-SUMMARY_TOPIC_JACCARD = 0.05  # 预聚合主题相关性：关键词 Jaccard 下限（≥1 共享词，8+8 词并集上限 16 → 恒 ≥0.0625）
-SUMMARY_FRAGMENT_LINE_MIN = 10  # 新建产物行数低于此值视为微碎片，回退归并到命中笔记
-# QC 空洞占位：正文含此类「写时无内容」表述即判低质不落盘。
-# 注意：排除「待补全/待补充/待完善/待确认」等 TODO 语义——那是已知缺口、
-# 后续可能新增的正常演进，不代表空洞（2026-08-06 用户修正）。
+AGGREGATE_BATCH_SIZE = 60
+
+AGGREGATE_LLM_TEMPERATURE = 0.2
+
+AGGREGATE_LLM_TIMEOUT = 120
+
+AGGREGATE_MAX_ROUNDS = 3
+
+SUMMARY_KEYWORD_MAX_TOKENS = 8192
+
+SUMMARY_JUDGE_MAX_TOKENS = 8192
+
+SUMMARY_GEN_MAX_TOKENS = 16384
+
+SUMMARY_SEARCH_LIMIT = 5
+
+SEARCH_MIN_TOKEN_LEN = 2
+
+SUMMARY_KEYWORD_COUNT = 8
+
+SUMMARY_MERGE_CONTEXT_CHARS = 2000
+
+SUMMARY_MERGE_LOOKBACK_CHARS = 8000
+
+SUMMARY_DUP_SIM_THRESHOLD = 0.7
+
+SUMMARY_TOPIC_JACCARD = 0.05
+
+SUMMARY_FRAGMENT_LINE_MIN = 10
+
 SUMMARY_PLACEHOLDER_PATTERNS = (
     "未详述",
     "未记录",
@@ -109,20 +116,18 @@ SUMMARY_PLACEHOLDER_PATTERNS = (
     "具体方案未",
 )
 
-# ── 记忆输入质量门（宁缺毋滥）：fetch 后、进 LLM 聚合前过滤 ──
-# 2026-08-06 升级为方案 E v5：截断占位串硬信号 + 中英文快照启发式 + LLM 3 票复核，
-# 取代原「过短 + 占位符命中」弱规则（SUMMARY_PLACEHOLDER_PATTERNS 仅保留给输出侧 QC）。
-# 验证：合成 5 批×100（35 低质/65 高质）漏拦 0 误伤 0；真实库 782 条回归误伤 0，
-# 抓回 5/6 已知漏拦（剩 1 条无特征一次性信息靠聚合层 retain=false 兜底，端到端无泄漏）。
-MEMORY_QUALITY_MIN_LEN = 15  # 正文去空白后长度下限，过短无信息量
-MEMORY_QUALITY_RESIDUAL_MIN = 12  # 非截断占位词命中后，残余中文实义字符下限
-MEMORY_QUALITY_HALF_MAX = 60  # 半词截断仅当整体去空白后仍短才 drop
-MEMORY_QUALITY_CN_SHORT_MAX = 50  # 中文短状态快照去空白后长度上限
-MEMORY_QUALITY_REVIEW_VOTES = 3  # LLM 复核投票次数（3 次全 drop 才 drop，防误伤）
-MEMORY_QUALITY_LLM_THREADS = 4  # 复核并发（降并发防 API 限流，实测 8 并发大量 ERR）
+MEMORY_QUALITY_MIN_LEN = 15
 
-# 截断占位串（17 变体）。全部以「保留/仅保留」连接，不匹配「导致内容截断，但已有信息
-# 被保留」这类描述句（描述句用「，但」）。v5 增补 notes 源实测 5 种未覆盖形态。
+MEMORY_QUALITY_RESIDUAL_MIN = 12
+
+MEMORY_QUALITY_HALF_MAX = 60
+
+MEMORY_QUALITY_CN_SHORT_MAX = 50
+
+MEMORY_QUALITY_REVIEW_VOTES = 3
+
+MEMORY_QUALITY_LLM_THREADS = 4
+
 QUALITY_TRUNC_PLACEHOLDERS = (
     "内容截断，保留已有信息",
     "内容截断，仅保留已有信息",
@@ -143,13 +148,13 @@ QUALITY_TRUNC_PLACEHOLDERS = (
     "内容截断，此处保留已有信息",
     "相关内容截断保留",
 )
-# 正则兜底：容忍括号/时/此处/无标点间隔的「截断…保留…信息」形态（compact 后匹配）
+
 _QUALITY_TRUNC_RE = re.compile(
     r"(?:内容|相关)?内容截断[（(]?[，,、]?(?:时|此处)?[）)]?仅?保留(?:已有|此)(?:信息|内容)"
 )
-# 非截断占位词（不含「待补全/待补充/待完善/待确认」等 TODO 语义——已知缺口后续演进）
+
 QUALITY_NONTRUNC_PLACEHOLDERS = ("未详述", "未记录", "未提供", "具体方案未")
-# 残余信息量计算时需剔除的占位子串
+
 QUALITY_PLACEHOLDER_SUBS = (
     "内容截断",
     "保留已有信息",
@@ -161,9 +166,13 @@ QUALITY_PLACEHOLDER_SUBS = (
 )
 
 _QUALITY_EMPTY_TITLE = re.compile(r"^[-*#]?\s*(?:\*\*)?[^：:]{2,40}(?:\*\*)?：\s*$")
+
 _QUALITY_HALF_TRUNC = re.compile(r"(?:\.{3,}$|Stre$|undefi$|lody_ses$|：$|->\s*$)")
+
 _QUALITY_HALF_CN = re.compile(r"(?:配置文|说明文|使用方|处理方|的具体|的详细)$")
+
 _QUALITY_USER_SNAPSHOT = re.compile(r"^(User|User's)\b", re.IGNORECASE)
+
 _QUALITY_CN_STATE_VERBS = (
     "完成",
     "测试",
@@ -176,59 +185,22 @@ _QUALITY_CN_STATE_VERBS = (
     "发布",
     "检查",
 )
+
 _QUALITY_QUOTE_PAIRS = [("“", "”"), ("「", "」"), ("『", "』"), ("'", "'"), ('"', '"')]
 
-# ── 已处理位掩码：metadata["processed"] 整数位，bit0=1 表示已被总结脚本成功处理 ──
 PROCESSED_FIELD = "processed"
+
 PROCESSED_BIT_SUMMARIZED = 1
 
-# ── 数据目录（脚本自身状态也放这里，与 Swift 数据同目录） ──
-UTILITY_DATA_DIR = Path(
-    os.environ.get("UTILITY_DATA_DIR", os.path.expanduser("~/.config/utility"))
-)
+UTILITY_DATA_DIR = Path(data_dir())
 
-# ── 单实例 / 节流保护 ──
 LOCK_FILE = UTILITY_DATA_DIR / "summarize.lock"
+
 LAST_RUN_FILE = UTILITY_DATA_DIR / "summarize_last_run"
-MIN_RUN_INTERVAL = 6 * 3600  # 与上次完整总结间隔不足 6 小时则跳过（防重复触发）
-COLD_SYNC_DB = UTILITY_DATA_DIR / "cold_sync.sqlite"  # 冷层去重记录
 
-# ── MCP 工具调用统计 ──
-STATS_DB = UTILITY_DATA_DIR / "tool_usage.sqlite"
-MCP_DIR = NOTES_DIR / "MCP"
-STATS_OUTPUT = MCP_DIR / "工具调用统计.md"
-STATS_DAYS = 15  # 报表显示最近天数
-STATS_RETENTION_DAYS = 90  # 数据保留天数
+MIN_RUN_INTERVAL = 6 * 3600
 
-# ── 阶段3 规范提炼（规则/规范类记忆 → MCP/Skills/Rules/*.md） ──
-SKILLS_RULES_DIR = MCP_DIR / "Skills" / "Rules"
-RULES_MIN_CANDIDATES = 3  # 本周期规则/规范类有效记忆少于该值则跳过提炼
-RULES_MAX_PER_FILE = 60  # 每规范文件条目上限，超出由 LLM 淘汰
-RULES_LLM_TEMPERATURE = 0.2  # 提炼允许归纳，与聚合一致
-RULES_LLM_TIMEOUT = 120
-# 多级规范：global 全局通用 + 各项目类型通用；LLM 判定不了的归入 global
-RULES_LEVELS = {
-    "global": "全局通用",
-    "web_frontend": "Web 前端",
-    "mobile": "移动端",
-    "macos_tool": "macOS 工具",
-    "backend": "后端/服务",
-}
-
-_HTTP = httpx.Client(timeout=SUMMARY_API_TIMEOUT)
-
-
-def write_error_log(msg: str, code: str = "UNKNOWN"):
-    try:
-        _shared_write_error_log(
-            str(ERROR_LOG),
-            {
-                "code": code,
-                "message": msg,
-            },
-        )
-    except Exception as e:
-        logger.error(f"Error log write failed: {e}")
+COLD_SYNC_DB = UTILITY_DATA_DIR / "cold_sync.sqlite"
 
 
 def _acquire_single_instance() -> bool:
@@ -243,7 +215,7 @@ def _acquire_single_instance() -> bool:
             os.close(fd)
             return False
     except Exception:
-        return True  # 锁不可用时放行，避免误阻断
+        return True
 
 
 def _throttle_ai_run() -> bool:
@@ -442,110 +414,6 @@ def git_commit(message: str, stage: str = ""):
         return False
 
 
-def _llm_chat(
-    prompt: str,
-    temperature: float | None = None,
-    timeout: float | None = None,
-    max_tokens: int | None = None,
-    disable_thinking: bool = False,
-    system_prompt: str | None = None,
-) -> str | None:
-    try:
-        messages: list[dict] = [{"role": "user", "content": prompt}]
-        if system_prompt:
-            messages.insert(0, {"role": "system", "content": system_prompt})
-        body = {
-            "model": SUMMARY_MODEL,
-            "messages": messages,
-            "temperature": (
-                temperature if temperature is not None else SUMMARY_LLM_TEMPERATURE
-            ),
-        }
-        # 聚合/文章生成等输出较大的阶段显式放宽 max_tokens，
-        # 否则 LLM 默认 4096 截断导致 JSON 解析失败（AGGREGATE_JSON 根因）
-        if max_tokens:
-            body["max_tokens"] = max_tokens
-        # deepseek-v4-flash 为推理模型：长 prompt 下 thinking 思考会吃光
-        # max_tokens，content 为空 → JSON 解析失败。聚合/生成阶段关思考，
-        # 让输出 token 全部用于 content（实测 thinking disabled + 16384 完整输出）
-        if disable_thinking:
-            body["thinking"] = {"type": "disabled"}
-        resp = _HTTP.post(
-            f"{SUMMARY_API_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-            timeout=timeout if timeout is not None else SUMMARY_LLM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.warning(f"LLM call failed: {e}")
-        return None
-
-
-def _parse_json_any(raw: str) -> dict | None:
-    raw = raw.strip()
-    m = re.search(r"```json\s*\n(.+?)\n\s*```", raw, re.DOTALL)
-    if not m:
-        m = re.search(r"```\s*\n(.+?)\n\s*```", raw, re.DOTALL)
-    if not m:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-    json_str = m.group(1) if m and m.lastindex else (m.group(0) if m else raw)
-    start, end = json_str.find("{"), json_str.rfind("}")
-    if start != -1 and end != -1:
-        json_str = json_str[start : end + 1]
-    try:
-        return json.loads(json_str, strict=False)
-    except json.decoder.JSONDecodeError:
-        fixed = re.sub(r",\s*([}\]])", r"\1", json_str)
-        try:
-            return json.loads(fixed, strict=False)
-        except json.decoder.JSONDecodeError:
-            # LLM 复制原文时可能把英文双引号原样带进字符串值且未转义 → 转义后重试
-            quoted = _escape_inline_quotes(fixed)
-            try:
-                return json.loads(quoted, strict=False)
-            except json.decoder.JSONDecodeError:
-                return None
-
-
-def _escape_inline_quotes(s: str) -> str:
-    """把字符串值内未转义的裸引号转义为 \\"（键结束/值结束引号不受影响）。"""
-    out = []
-    in_str = False
-    i = 0
-    n = len(s)
-    while i < n:
-        c = s[i]
-        if in_str:
-            if c == "\\":
-                out.append(c)
-                if i + 1 < n:
-                    out.append(s[i + 1])
-                    i += 2
-                    continue
-            elif c == '"':
-                j = i + 1
-                while j < n and s[j] in " \t":
-                    j += 1
-                if j < n and s[j] in ",}]:":
-                    in_str = False
-                    out.append(c)
-                else:
-                    out.append('\\"')
-            else:
-                out.append(c)
-        else:
-            if c == '"':
-                in_str = True
-            out.append(c)
-        i += 1
-    return "".join(out)
-
-
 def fetch_memories(today: date) -> list | None:
     try:
         three_days_ago = datetime.combine(
@@ -656,8 +524,6 @@ def _quality_rule_judge(text: str) -> tuple[str, str]:
     return "keep", "常规通过"
 
 
-# 方案 E LLM 复核 system 判据（SYSTEM_PROMPT_STRICT 移植；v5 移除内嵌测试样本原文防测试集调教）。
-# 用 system 角色承载判据（与验证一致的请求结构），user 只提供记忆材料。
 QUALITY_JUDGE_SYSTEM = """你是知识库记忆质量判定器。判断一条记忆是否值得进入 LLM 聚合沉淀（keep），还是应丢弃（drop）。
 
 DROP 的情形：
@@ -1661,269 +1527,6 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
     return results, stats
 
 
-def _parse_rules_entries(text: str) -> list[dict]:
-    """从规范文件正文解析条目列表。"""
-    entries = []
-    cur = None
-    for line in text.splitlines():
-        if line.startswith("### "):
-            if cur:
-                entries.append(cur)
-            cur = {
-                "title": line[4:].strip(),
-                "domain": "",
-                "norm": "",
-                "source": "",
-                "date": "",
-                "keywords": [],
-            }
-        elif cur:
-            if line.startswith("- 领域: "):
-                cur["domain"] = line[len("- 领域: ") :].strip()
-            elif line.startswith("- 规范: "):
-                cur["norm"] = line[len("- 规范: ") :].strip()
-            elif line.startswith("- 来源: "):
-                cur["source"] = line[len("- 来源: ") :].strip()
-            elif line.startswith("- 提炼于: "):
-                cur["date"] = line[len("- 提炼于: ") :].strip()
-            elif line.startswith("- 关键词: "):
-                cur["keywords"] = [
-                    k.strip()
-                    for k in re.split(r"[、,，]", line[len("- 关键词: ") :].strip())
-                    if k.strip()
-                ]
-    if cur:
-        entries.append(cur)
-    return entries
-
-
-def _render_rules_file(level: str, entries: list[dict]) -> str:
-    """渲染规范文件完整内容（frontmatter + 条目区）。
-
-    description 按规范级别定制触发语，供 _scan_skills 注册成 MCP 工具后，
-    大模型据此判断何时调用：
-    - global：行为约束 + 通用原则，涉及多领域 → 宽泛触发「操作前获取本行为规范」
-    - 项目类型：按「开始开发该类型项目时」触发
-    keywords 保留在正文条目作覆盖范围说明，不拼进 description（避免词堆）。
-    """
-    label = RULES_LEVELS[level]
-    if level == "global":
-        description = (
-            f"操作前，获取本行为规范；全局通用规范，共 {len(entries)} 条，"
-            f"适用于编码、审查、协作、总结等任何操作前的行为约束与通用原则。"
-        )
-    else:
-        description = (
-            f"当开始开发{label}项目时触发，获取{label}开发规范指南；"
-            f"{label}通用规范，共 {len(entries)} 条。"
-        )
-    lines = [
-        "---",
-        f"name: norms_{level}",
-        f"description: {description}",
-        "---",
-        "",
-        f"# {label}规范",
-        "",
-        f"> 由 summarize 阶段3 自动提炼维护。条目带来源可追溯，容量上限 "
-        f"{RULES_MAX_PER_FILE} 条。",
-        "",
-        "## 条目",
-        "",
-    ]
-    for e in entries:
-        lines.append(f"### {e['title']}")
-        lines.append(f"- 领域: {e.get('domain', '')}")
-        lines.append(f"- 规范: {e.get('norm', '')}")
-        if e.get("keywords"):
-            lines.append(f"- 关键词: {'、'.join(e['keywords'])}")
-        lines.append(f"- 来源: {e.get('source', '')}")
-        lines.append(f"- 提炼于: {e.get('date', '')}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _load_rules_entries(level: str) -> tuple[list[dict], Path]:
-    """读取指定级别规范文件的现有条目；文件不存在时返回空列表与目标路径。"""
-    path = SKILLS_RULES_DIR / f"norms_{level}.md"
-    if not path.exists():
-        return [], path
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as e:
-        logger.warning(f"读取规范文件失败 {path}: {e}")
-        return [], path
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) == 3:
-            text = parts[2]
-    return _parse_rules_entries(text), path
-
-
-def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
-    """容量超限时由 LLM 淘汰低复用价值条目，保留不超过上限。"""
-    if len(entries) <= RULES_MAX_PER_FILE:
-        return entries
-    item_list = "\n".join(
-        f"- [{i}] {e['title']}：{e.get('norm', '')[:80]}" for i, e in enumerate(entries)
-    )
-    prompt = f"""\
-规范文件「{RULES_LEVELS[level]}」条目超过上限 {RULES_MAX_PER_FILE} 条，需要淘汰复用价值最低的条目。
-
-现有条目：
-{item_list}
-
-要求：保留最有复用价值、最能指导行动的 {RULES_MAX_PER_FILE} 条，淘汰过时/低复用/重复的。
-
-返回 JSON：{{"keep_indexes": [保留的条目下标数组]}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    raw = _llm_chat(
-        prompt,
-        temperature=0.1,
-        timeout=RULES_LLM_TIMEOUT,
-        max_tokens=16384,
-        disable_thinking=True,
-    )
-    if not raw:
-        logger.warning(f"规范文件淘汰 LLM 调用失败，保留前 {RULES_MAX_PER_FILE} 条")
-        return entries[:RULES_MAX_PER_FILE]
-    parsed = _parse_json_any(raw)
-    keep = parsed.get("keep_indexes", []) if parsed else []
-    keep = [int(i) for i in keep if str(i).strip().isdigit()]
-    kept = [entries[i] for i in keep if 0 <= i < len(entries)]
-    if not kept:
-        logger.warning("淘汰结果为空，保留前 N 条兜底")
-        return entries[:RULES_MAX_PER_FILE]
-    return kept[:RULES_MAX_PER_FILE]
-
-
-def _run_phase3(groups: list[dict], today_str: str) -> dict:
-    """阶段3：从本周期聚合记忆中提炼"规则/规范类"规范，写入 MCP/Skills/Rules/*.md。
-
-    只提炼可复用、稳定、能指导行动的知识；偶遇 bug、一次性修复、
-    版本绑定 workaround 不提炼。本周期有效候选 < RULES_MIN_CANDIDATES 时跳过。
-    """
-    if not groups:
-        return {"skipped": "no_groups"}
-
-    facts_text = "\n".join(
-        f"- {g.get('topic', '')}：{g.get('facts', '')}" for g in groups
-    )
-
-    # 已有标题清单，供 LLM 提炼时避开重复
-    existing_titles = {}
-    for level in RULES_LEVELS:
-        entries, _ = _load_rules_entries(level)
-        existing_titles[level] = [e["title"] for e in entries]
-    titles_block = "\n".join(
-        f"[{level}] {'; '.join(titles)}" if titles else f"[{level}] （空）"
-        for level, titles in existing_titles.items()
-    )
-    level_labels = "\n".join(f"- {k}: {v}" for k, v in RULES_LEVELS.items())
-
-    prompt = f"""\
-你正在对一批"已聚合的长期记忆"做规范提炼。聚合内容里混有「偶遇 bug / 一次性修复」与
-「真正的规范 / 规则」两类。本次**只提炼后者**，宁缺毋滥。
-
-本周期聚合记忆：
-{facts_text}
-
-### 什么是"真正的规范"（可提炼）——四条判据，满足越多越值得提炼
-1. **主动约定**：事前制定的行为准则/约定，而不是踩坑后的补救措施
-2. **抽象通用**：换项目、换技术栈依然成立；删掉具体库名/字段名/版本号/报错信息后，这句话仍然说得通
-3. **反复出现**：同一经验在多个记忆、多个场景中重复沉淀过，而非单次偶遇
-4. **架构/原则**：属于架构决策、设计原则、工程流程约定（如分层解耦、单一职责、配置用常量、提交前验证）
-
-### 什么"不算规范"（绝不提炼）——以下情形一律丢弃
-- 从某个具体 bug 修复中得出的结论（如"某字段要同时判 IS NULL 和空串""某工具参数要先探测 schema"），即使能概括成一句话
-- 绑定具体报错信息/版本号/环境的一次性补救
-- 单次踩坑经验，未在多场景重复出现
-- 纯操作步骤记录
-
-### 判定技巧
-- 自问：如果从来没踩过那个坑，我还会主动说出这条规则吗？——不会 → 是踩坑教训，不是规范
-- 自问：去掉所有技术名词后，这句话还剩什么？——剩不下 → 不够抽象，丢弃
-
-### 提炼要求
-1. 提炼 0-5 条，宁缺毋滥，无法提炼则返回空数组
-2. 每条规范一句话说清、可行动、**不绑定任何具体技术细节**
-3. 每条规范给出 keywords：3-5 个触发关键词/场景（覆盖技术域、动作、对象等触发面），供工具描述生成"当 xxx 时触发"信号
-4. 级别 level 从以下选择，判定不了归入 global：
-{level_labels}
-
-### 避免重复
-已有标题清单（新规范标题不要与它们重复/高度重叠）：
-{titles_block}
-
-返回 JSON：{{"candidates": ["判定为规范类的记忆主题列表"], "norms": [{{"title": "标题", "level": "global", "summary": "可行动的规范", "keywords": ["触发关键词1", "触发关键词2", "触发关键词3"], "source": "来源记忆主题"}}]}}
-没有规范类内容时返回 {{"candidates": [], "norms": []}}。
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    raw = _llm_chat(
-        prompt,
-        temperature=RULES_LLM_TEMPERATURE,
-        timeout=RULES_LLM_TIMEOUT,
-        max_tokens=16384,
-        disable_thinking=True,
-    )
-    if not raw:
-        write_error_log("阶段3 规范提炼 LLM 调用失败", code="RULES_LLM")
-        return {"skipped": "llm_failed"}
-    parsed = _parse_json_any(raw)
-    if not parsed:
-        write_error_log(
-            f"阶段3 规范提炼 JSON 解析错误：\n{raw[:1000]}", code="RULES_JSON"
-        )
-        return {"skipped": "json_failed"}
-
-    candidates = parsed.get("candidates", []) or []
-    norms = parsed.get("norms", []) or []
-    # 门槛以实际提炼出的 norms 为准（candidates 是 LLM 自评主题列表，
-    # 一个主题可提炼多条规范，数量与 norms 天然不一致，不能作门槛依据）
-    if not norms:
-        logger.info("阶段3 跳过：无提炼出的规范条目")
-        return {"skipped": "no_norms"}
-    if len(norms) < RULES_MIN_CANDIDATES:
-        logger.info(f"阶段3 跳过：提炼出的规范 {len(norms)} < {RULES_MIN_CANDIDATES}")
-        return {"skipped": "norms_lt_min", "count": len(norms)}
-
-    updated = {}
-    for norm in norms:
-        title = str(norm.get("title", "")).strip()
-        level = str(norm.get("level", "global")).strip()
-        summary = str(norm.get("summary", "")).strip()
-        if not title or not summary:
-            continue
-        if level not in RULES_LEVELS:
-            level = "global"
-        entries, path = _load_rules_entries(level)
-        if any(e["title"] == title for e in entries):
-            logger.info(f"阶段3 跳过重复规范：{title}")
-            continue
-        # keywords 兼容 LLM 返回字符串（逗号分隔）或数组两种形态
-        kws = norm.get("keywords") or []
-        if isinstance(kws, str):
-            kws = re.split(r"[、,，]", kws)
-        keywords = [k.strip() for k in kws if str(k).strip()]
-        entries.append(
-            {
-                "title": title,
-                "domain": RULES_LEVELS[level],
-                "norm": summary,
-                "keywords": keywords,
-                "source": str(norm.get("source", "")).strip(),
-                "date": today_str,
-            }
-        )
-        entries = _trim_rules_entries(level, entries)
-        SKILLS_RULES_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(_render_rules_file(level, entries), encoding="utf-8")
-        updated[path.name] = updated.get(path.name, 0) + 1
-
-    logger.info(f"阶段3 完成：{updated}")
-    # 无实际写入时返回空字符串，main() 据此跳过 git_commit，避免空提交
-    return {"updated": ", ".join(f"{k}+{v}" for k, v in updated.items())}
-
-
 def _collect_tags(memories: list[dict]) -> list[str]:
     return list(set(t for m in memories for t in m.get("metadata", {}).get("tags", [])))
 
@@ -2137,164 +1740,6 @@ def _write_articles_v2(
             write_error_log(f"写入失败 {item.get('topic', '')!r}: {e}", code="WRITE")
             continue
     return updated
-
-
-def _get_stats_db_readonly() -> sqlite3.Connection | None:
-    """只读连接，用于报表生成。"""
-    if not STATS_DB.exists():
-        return None
-    try:
-        conn = sqlite3.connect(str(STATS_DB))
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.row_factory = sqlite3.Row
-        return conn
-    except Exception:
-        return None
-
-
-def _cleanup_old_stats() -> None:
-    """清理超过 STATS_RETENTION_DAYS 的旧数据。"""
-    try:
-        conn = sqlite3.connect(str(STATS_DB))
-        conn.execute("PRAGMA busy_timeout=5000")
-        cutoff = (date.today() - timedelta(days=STATS_RETENTION_DAYS)).isoformat()
-        conn.execute("DELETE FROM tool_calls WHERE called_at < ?", (cutoff,))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-
-def _generate_stats_report() -> None:
-    """生成 MCP 工具调用统计报表。"""
-    try:
-        _cleanup_old_stats()
-        conn = _get_stats_db_readonly()
-        if conn is None:
-            content = "# MCP 工具调用统计\n\n暂无数据。"
-            MCP_DIR.mkdir(parents=True, exist_ok=True)
-            STATS_OUTPUT.write_text(content, encoding="utf-8")
-            return
-
-        cutoff = (date.today() - timedelta(days=STATS_DAYS)).isoformat()
-        rows = conn.execute(
-            """SELECT date(called_at) as day, tool_name,
-                      COUNT(*) as calls,
-                      SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors,
-                      ROUND(AVG(duration_ms), 1) as avg_duration
-               FROM tool_calls
-               WHERE called_at >= ?
-               GROUP BY day, tool_name
-               ORDER BY day DESC, calls DESC""",
-            (cutoff,),
-        ).fetchall()
-        conn.close()
-
-        if not rows:
-            content = "# MCP 工具调用统计\n\n最近 15 天无调用记录。"
-            MCP_DIR.mkdir(parents=True, exist_ok=True)
-            STATS_OUTPUT.write_text(content, encoding="utf-8")
-            return
-
-        # 组装数据: {day: [(tool_name, calls, errors, avg_duration), ...]}
-        days: dict[str, list] = {}
-        total_calls = 0
-        total_errors = 0
-        for r in rows:
-            day = r["day"]
-            if day not in days:
-                days[day] = []
-            days[day].append(
-                (r["tool_name"], r["calls"], r["errors"], r["avg_duration"])
-            )
-            total_calls += r["calls"]
-            total_errors += r["errors"]
-
-        success_rate = (
-            round((total_calls - total_errors) / total_calls * 100, 1)
-            if total_calls > 0
-            else 100.0
-        )
-        day_count = len(days)
-        daily_avg = round(total_calls / day_count, 1) if day_count > 0 else 0
-
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        lines = [
-            "# MCP 工具调用统计\n",
-            f"> 更新于 {now_str}\n",
-            "## 📊 总览\n",
-            "| 指标 | 数值 |",
-            "|------|------|",
-            f"| 过去 {STATS_DAYS} 天总调用 | {total_calls} 次 |",
-            f"| 日均 | {daily_avg} 次 |",
-            f"| 成功率 | {success_rate}% |",
-            "",
-        ]
-
-        sorted_days = sorted(days.keys(), reverse=True)
-        for day in sorted_days:
-            tool_stats = days[day]
-            day_total = sum(t[1] for t in tool_stats)
-            day_errors = sum(t[2] for t in tool_stats)
-            max_calls = max(t[1] for t in tool_stats)
-            bar_width = 20
-
-            lines.append(f"## {day}（共 {day_total} 次）\n")
-            lines.append("| 工具 | 调用 | 错误 | 平均耗时 |")
-            lines.append("|:-----|:----|:----|:--------|")
-            for tool_name, calls, errors, avg_dur in tool_stats:
-                bar_len = max(1, round(calls / max_calls * bar_width))
-                bar = "█" * bar_len
-                dur_str = f"{avg_dur}ms" if avg_dur else "-"
-                lines.append(f"| {tool_name} | {bar} {calls} | {errors} | {dur_str} |")
-            lines.append("")
-
-        content = "\n".join(lines)
-        MCP_DIR.mkdir(parents=True, exist_ok=True)
-        STATS_OUTPUT.write_text(content, encoding="utf-8")
-        logger.info(
-            f"工具调用统计已写入: {STATS_OUTPUT} "
-            f"({day_count} 天, {total_calls} 次调用)"
-        )
-    except Exception as e:
-        logger.warning(f"工具调用统计生成失败: {e}")
-
-
-def _print_report_v2(
-    today_str: str,
-    memory_count: int,
-    updated_files: dict[str, str],
-    rules_updates: str = "",
-    refine_stats: dict | None = None,
-    agg_rounds: int = 0,
-    skipped_processed: int = 0,
-    skipped_quality: int = 0,
-):
-    print(f"📝 记忆总结报告 ({today_str})")
-    print(f"   本次处理事实: {memory_count} 条")
-    if skipped_processed or skipped_quality:
-        print(
-            f"   输入过滤: 已处理跳过 {skipped_processed}，"
-            f"低质丢弃 {skipped_quality}"
-        )
-    if refine_stats:
-        print(
-            f"   阶段2 精炼: {refine_stats['ok']} 成功"
-            f"（新建 {refine_stats['new']} / 归并 {refine_stats['merge']}），"
-            f"关键词失败 {refine_stats['kw_fail']}，生成失败 {refine_stats['gen_fail']}，"
-            f"过短 {refine_stats['too_short']}，"
-            f"占位低质 {refine_stats.get('too_low_quality', 0)}，"
-            f"重复跳过 {refine_stats.get('dup_skip', 0)}，"
-            f"检索命中 {len(refine_stats['hit_files'])}"
-        )
-    if agg_rounds:
-        print(f"   聚合收敛轮数: {agg_rounds}")
-    print(f"   写入文件: {len(updated_files)} 个")
-    for path, action in updated_files.items():
-        print(f"     {'📄' if action == '新建' else '📎'} {path} ({action})")
-    if rules_updates:
-        print(f"   📐 规范提炼: {rules_updates}")
-    print(f"   冷层同步: {'✓' if COLD_READY else '⚠️ 未启用'}")
 
 
 def main():

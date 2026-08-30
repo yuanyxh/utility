@@ -1,0 +1,703 @@
+"""token_proxy 的 token 用量记录层。
+
+从 token_proxy.py 拆分（2026-08-30，重构阶段2）：DB 初始化、usage 字段路径解析
+（UsageFieldResolver）、请求/响应上下文提取、usage 落库。代码原样搬移不改逻辑。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from datetime import datetime, timezone
+
+import aiohttp
+
+from config import data_dir, deepseek_api_key, summary_model, summary_api_url
+from log_utils import setup_logging
+
+# ---------------------------------------------------------------------------
+# 配置（与拆分前 token_proxy.py 一致）
+# ---------------------------------------------------------------------------
+
+DB_DIR = data_dir()
+DB_PATH = os.path.join(DB_DIR, "token_usage.sqlite")
+# LLM 配置（usage 字段路径解析用，见 UsageFieldResolver._ask_model）。
+# 默认空串做「未配置即禁用」守卫——不要用 config 的默认真实值（会带空 URL 发起调用）。
+LLM_API_URL = summary_api_url(default="")
+LLM_API_KEY = deepseek_api_key()
+LLM_MODEL = summary_model(default="")
+
+logger = setup_logging("token_proxy", json_format=True)
+
+
+def init_db():
+    os.makedirs(DB_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS api_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            request_type TEXT,
+            context_summary TEXT,
+            input_preview TEXT,
+            input_message_count INTEGER,
+            has_tool_result INTEGER DEFAULT 0,
+            output_preview TEXT,
+            output_type TEXT,
+            stop_reason TEXT,
+            response_valid INTEGER DEFAULT 1,
+            model TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            latency_ms INTEGER DEFAULT 0,
+            api_format TEXT,
+            request_level TEXT DEFAULT 'core',
+            tool_name TEXT,
+            parent_id INTEGER,
+            actual_user_input TEXT,
+            error_message TEXT
+        );
+        CREATE TABLE IF NOT EXISTS usage_field_cache (
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_path TEXT,
+            output_path TEXT,
+            cache_read_path TEXT,
+            cache_write_path TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (provider, model)
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level);
+    """)
+
+    # 迁移：为旧表添加新列（如果不存在）
+    cursor = conn.execute("PRAGMA table_info(api_usage)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "request_level" not in columns:
+        conn.execute(
+            "ALTER TABLE api_usage ADD COLUMN request_level TEXT DEFAULT 'core'"
+        )
+        conn.execute("ALTER TABLE api_usage ADD COLUMN tool_name TEXT")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN parent_id INTEGER")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN actual_user_input TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level)"
+        )
+        # 根据 stop_reason 回填 request_level
+        conn.execute(
+            "UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'"
+        )
+        conn.commit()
+    if "error_message" not in columns:
+        conn.execute("ALTER TABLE api_usage ADD COLUMN error_message TEXT")
+        conn.commit()
+
+    # 迁移：移除已废弃的三字段（session_id/project_path/estimated_cost_usd）
+    # 先 DROP 引用列的索引，再 DROP COLUMN（SQLite 约束）
+    if "session_id" in columns:
+        conn.execute("DROP INDEX IF EXISTS idx_api_usage_session")
+        conn.execute("ALTER TABLE api_usage DROP COLUMN session_id")
+    if "project_path" in columns:
+        conn.execute("DROP INDEX IF EXISTS idx_api_usage_project")
+        conn.execute("ALTER TABLE api_usage DROP COLUMN project_path")
+    if "estimated_cost_usd" in columns:
+        conn.execute("ALTER TABLE api_usage DROP COLUMN estimated_cost_usd")
+    conn.commit()
+
+    # 修正历史：首日中断（stop_reason 为空串 ''）被默认回填为 core，修正归入 process
+    # 当前写入逻辑对 stop_reason 空归 process，新数据不会产生该组合，幂等无害
+    conn.execute(
+        "UPDATE api_usage SET request_level = 'process' "
+        "WHERE request_level = 'core' AND (stop_reason IS NULL OR stop_reason = '')"
+    )
+    conn.commit()
+
+    # 三个月自动清理
+    conn.execute("DELETE FROM api_usage WHERE timestamp < datetime('now', '-3 months')")
+    conn.commit()
+    conn.close()
+
+
+class UsageFieldResolver:
+    """根据 provider/model 智能定位 usage 字段路径。
+
+    已知 provider 路径映射（避免 LLM 回调）：
+      - Anthropic/DeepSeek：usage.input_tokens / usage.output_tokens
+      - OpenAI：usage.prompt_tokens / usage.completion_tokens
+    """
+
+    # 已知字段路径（model name 前缀匹配 → paths dict）
+    _KNOWN_PATTERNS: list[tuple[str, dict]] = [
+        (
+            "anthropic",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "claude",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "deepseek",
+            {
+                "input_path": "usage.input_tokens",
+                "output_path": "usage.output_tokens",
+                "cache_read_path": "usage.cache_read_input_tokens",
+                "cache_write_path": "usage.cache_creation_input_tokens",
+            },
+        ),
+        (
+            "gpt",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "usage.prompt_tokens_details.cached_tokens",
+                "cache_write_path": "",
+            },
+        ),
+        (
+            "o1",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "",
+                "cache_write_path": "",
+            },
+        ),
+        (
+            "o3",
+            {
+                "input_path": "usage.prompt_tokens",
+                "output_path": "usage.completion_tokens",
+                "cache_read_path": "",
+                "cache_write_path": "",
+            },
+        ),
+    ]
+
+    def __init__(self):
+        self._cache: dict[tuple[str, str], dict] = {}
+
+    def _load_from_db(self, provider: str, model: str) -> dict | None:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            row = conn.execute(
+                "SELECT input_path, output_path, cache_read_path, cache_write_path "
+                "FROM usage_field_cache WHERE provider=? AND model=?",
+                (provider, model),
+            ).fetchone()
+            conn.close()
+            if row:
+                return {
+                    "input_path": row[0],
+                    "output_path": row[1],
+                    "cache_read_path": row[2],
+                    "cache_write_path": row[3],
+                }
+        except Exception:
+            pass
+        return None
+
+    def _save_to_db(self, provider: str, model: str, paths: dict):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute(
+                "INSERT OR REPLACE INTO usage_field_cache "
+                "(provider, model, input_path, output_path, cache_read_path, cache_write_path, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    provider,
+                    model,
+                    paths.get("input_path", ""),
+                    paths.get("output_path", ""),
+                    paths.get("cache_read_path", ""),
+                    paths.get("cache_write_path", ""),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    async def _ask_model(self, sample_response: dict) -> dict | None:
+        """调用主模型识别 usage 字段路径。"""
+        if not LLM_API_URL or not LLM_API_KEY:
+            return None
+
+        prompt = (
+            "Analyze this API response JSON and identify the exact field paths for token usage. "
+            "Return ONLY a JSON object with these keys: "
+            "input_path, output_path, cache_read_path, cache_write_path. "
+            "Each value is a dot-separated path like 'usage.input_tokens'. "
+            "If a field doesn't exist, use empty string.\n\n"
+            "Note: streaming SSE responses may nest usage under 'delta', "
+            "e.g. delta.usage.input_tokens. Use the ACTUAL structure in the sample.\n\n"
+            f"Response sample:\n{json.dumps(sample_response, indent=2)[:2000]}"
+        )
+
+        payload = {
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "max_tokens": 300,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LLM_API_KEY}",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{LLM_API_URL}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    # 提取 JSON
+                    start = content.index("{")
+                    end = content.rindex("}") + 1
+                    return json.loads(content[start:end])
+        except Exception as e:
+            logger.warning(
+                json.dumps({"msg": "usage_resolver_ask_failed", "error": str(e)})
+            )
+            return None
+
+    def _get_by_path(self, obj: dict, path: str):
+        """按 dot-separated path 取值。"""
+        if not path:
+            return None
+        parts = path.split(".")
+        cur = obj
+        for p in parts:
+            if isinstance(cur, dict) and p in cur:
+                cur = cur[p]
+            else:
+                return None
+        return cur
+
+    async def resolve(self, response_body: dict, provider: str = "default") -> dict:
+        """解析 usage 字段，返回 {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}。"""
+        model = response_body.get("model", "unknown")
+        key = (provider, model)
+
+        paths = self._cache.get(key) or self._load_from_db(provider, model)
+
+        if not paths:
+            # 尝试已知 pattern 匹配
+            for prefix, known_paths in self._KNOWN_PATTERNS:
+                if model.lower().startswith(prefix):
+                    paths = known_paths
+                    self._cache[key] = paths
+                    self._save_to_db(provider, model, paths)
+                    break
+
+        if not paths:
+            # 从 response body 的 usage 字段名自动探测
+            usage_data = response_body.get("usage", {})
+            if isinstance(usage_data, dict):
+                if "input_tokens" in usage_data:
+                    paths = {
+                        "input_path": "usage.input_tokens",
+                        "output_path": "usage.output_tokens",
+                        "cache_read_path": "usage.cache_read_input_tokens",
+                        "cache_write_path": "usage.cache_creation_input_tokens",
+                    }
+                elif "prompt_tokens" in usage_data:
+                    paths = {
+                        "input_path": "usage.prompt_tokens",
+                        "output_path": "usage.completion_tokens",
+                        "cache_read_path": "usage.prompt_tokens_details.cached_tokens",
+                        "cache_write_path": "",
+                    }
+            if paths:
+                self._cache[key] = paths
+                self._save_to_db(provider, model, paths)
+
+        if not paths:
+            # 首次遇到此 model，调用模型识别
+            paths = await self._ask_model(response_body)
+            if paths:
+                self._cache[key] = paths
+                self._save_to_db(provider, model, paths)
+                logger.info(
+                    json.dumps(
+                        {
+                            "msg": "usage_resolver_new_model",
+                            "model": model,
+                            "paths": paths,
+                        }
+                    )
+                )
+            else:
+                # 无法识别，返回零值
+                return self._zero_usage()
+
+        # 用缓存路径取值
+        usage = {
+            "input_tokens": self._safe_int(
+                self._get_by_path(response_body, paths.get("input_path", ""))
+            ),
+            "output_tokens": self._safe_int(
+                self._get_by_path(response_body, paths.get("output_path", ""))
+            ),
+            "cache_read_tokens": self._safe_int(
+                self._get_by_path(response_body, paths.get("cache_read_path", ""))
+            ),
+            "cache_write_tokens": self._safe_int(
+                self._get_by_path(response_body, paths.get("cache_write_path", ""))
+            ),
+        }
+
+        # 如果取到的值全为 0，可能是路径失效，刷新一次
+        if all(v == 0 for v in usage.values()):
+            refreshed_paths = await self._ask_model(response_body)
+            if refreshed_paths and refreshed_paths != paths:
+                self._cache[key] = refreshed_paths
+                self._save_to_db(provider, model, refreshed_paths)
+                usage = {
+                    "input_tokens": self._safe_int(
+                        self._get_by_path(
+                            response_body, refreshed_paths.get("input_path", "")
+                        )
+                    ),
+                    "output_tokens": self._safe_int(
+                        self._get_by_path(
+                            response_body, refreshed_paths.get("output_path", "")
+                        )
+                    ),
+                    "cache_read_tokens": self._safe_int(
+                        self._get_by_path(
+                            response_body, refreshed_paths.get("cache_read_path", "")
+                        )
+                    ),
+                    "cache_write_tokens": self._safe_int(
+                        self._get_by_path(
+                            response_body, refreshed_paths.get("cache_write_path", "")
+                        )
+                    ),
+                }
+                logger.info(
+                    json.dumps(
+                        {
+                            "msg": "usage_resolver_refreshed",
+                            "model": model,
+                            "new_paths": refreshed_paths,
+                        }
+                    )
+                )
+
+        return usage
+
+    @staticmethod
+    def _safe_int(val) -> int:
+        if val is None:
+            return 0
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _zero_usage() -> dict:
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+
+
+resolver = UsageFieldResolver()
+
+
+def _extract_user_text(content) -> str:
+    """从消息内容中提取纯文本，跳过各种 system-reminder 标签。
+
+    兼容 Anthropic（content list of blocks）和 OpenAI（content string）格式。
+    """
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        text_parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        content = " ".join(text_parts) if text_parts else ""
+    content_str = str(content)
+    # 跳过所有 system-reminder 类型的标签（包括 <system-reminder> 和 <local-command-caveat> 等）
+    while True:
+        start = content_str.find("<")
+        if start == -1:
+            break
+        end = content_str.find(">", start)
+        if end == -1:
+            break
+        tag = content_str[start : end + 1]
+        # 关闭标签
+        close_tag = f"</{tag[1:]}"
+        close_start = content_str.find(close_tag)
+        if close_start != -1:
+            close_end = close_start + len(close_tag)
+            content_str = content_str[:start] + content_str[close_end:].strip()
+        else:
+            content_str = content_str[:start] + content_str[end + 1 :].strip()
+    return content_str.strip()
+
+
+CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
+
+
+def extract_request_context(body: dict) -> dict:
+    """从 Claude Code 请求 body 提取上下文信息。"""
+    ctx = {
+        "request_type": "conversation",
+        "context_summary": "",
+        "input_preview": "",
+        "actual_user_input": "",
+        "input_message_count": 0,
+        "has_tool_result": 0,
+    }
+
+    messages = body.get("messages", [])
+    ctx["input_message_count"] = len(messages)
+
+    if body.get("tools"):
+        ctx["request_type"] = "tool_use"
+
+    # 检查是否有 tool_result（兼容两种格式）
+    for msg in messages:
+        if msg.get("role") == "tool":
+            ctx["has_tool_result"] = 1
+            ctx["request_type"] = "tool_result"
+            break
+        if isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    ctx["has_tool_result"] = 1
+                    ctx["request_type"] = "tool_result"
+                    break
+
+    # 提取最后一条 user message 作为 context_summary
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content_str = _extract_user_text(msg.get("content", ""))
+            ctx["context_summary"] = content_str[:100]
+            break
+
+    # input_preview: 所有 user messages 前 200 字拼接，跳过续接提示词
+    user_texts = []
+    for msg in messages:
+        if msg.get("role") == "user":
+            content_str = _extract_user_text(msg.get("content", ""))
+            # 跳过续接提示词
+            if content_str.startswith(CONTINUATION_PREFIX):
+                continue
+            # 跳过纯摘要内容
+            if content_str.strip().startswith("Summary:"):
+                continue
+            if content_str.strip():
+                user_texts.append(content_str[:200])
+    ctx["input_preview"] = " | ".join(user_texts)
+
+    # actual_user_input: 提取用户实际输入，跳过续接提示词和 system-reminder
+    actual_parts = []
+    for msg in messages:
+        if msg.get("role") == "user":
+            content_str = _extract_user_text(msg.get("content", ""))
+            # 跳过续接提示词
+            if content_str.startswith(CONTINUATION_PREFIX):
+                # 续接提示词后可能有实际用户输入，用 "Summary:" 分隔
+                summary_idx = content_str.find("Summary:")
+                if summary_idx != -1:
+                    # 续接提示词结束，后面是摘要
+                    continue
+                continue
+            # 跳过纯摘要内容（以 "Summary:" 开头）
+            if content_str.strip().startswith("Summary:"):
+                continue
+            if content_str.strip():
+                actual_parts.append(content_str[:500])
+    ctx["actual_user_input"] = " | ".join(actual_parts) if actual_parts else ""
+
+    return ctx
+
+
+def extract_response_context(usage_data: dict) -> dict:
+    """从 usage 数据提取响应上下文。"""
+    stop_reason = (
+        usage_data.get("stop_reason")
+        or (usage_data.get("delta") or {}).get("stop_reason")
+        or ""
+    )
+    # 只有 error 和空响应算无效，max_tokens/end_turn/stop_sequence 都是正常
+    response_valid = 0 if stop_reason == "error" else 1
+
+    # 提取错误信息
+    error_message = ""
+    if stop_reason == "error":
+        error_data = usage_data.get("error", {})
+        if isinstance(error_data, dict):
+            error_message = error_data.get("message", str(error_data))
+        elif isinstance(error_data, str):
+            error_message = error_data
+    elif usage_data.get("error"):
+        error_data = usage_data.get("error", {})
+        if isinstance(error_data, dict):
+            error_message = error_data.get("message", str(error_data))
+        elif isinstance(error_data, str):
+            error_message = error_data
+
+    return {
+        "output_type": "text",
+        "stop_reason": stop_reason,
+        "response_valid": response_valid,
+        "error_message": error_message,
+    }
+
+
+async def record_usage(
+    request_body: dict,
+    response_body: dict,
+    status: int,
+    latency_ms: int,
+    output_preview: str = "",
+    error_message: str = "",
+    tool_name_override: str = "",
+    api_format: str = "anthropic",
+):
+    """记录一次 API 调用的 token 用量。"""
+    if status != 200:
+        return
+
+    # 解析 usage
+    usage = await resolver.resolve(response_body)
+
+    # 提取上下文
+    req_ctx = extract_request_context(request_body)
+    resp_ctx = extract_response_context(response_body)
+
+    model = response_body.get("model", "unknown")
+    stop_reason = resp_ctx["stop_reason"]
+
+    # 使用 resp_ctx 中的 error_message（如果未提供）
+    if not error_message:
+        error_message = resp_ctx.get("error_message", "")
+
+    # 确定 request_level
+    request_level = "core" if stop_reason == "end_turn" else "process"
+
+    # 提取 tool_name：SSE 流提取优先 > 请求体 assistant 消息兜底
+    tool_name = tool_name_override
+    if not tool_name and stop_reason == "tool_use":
+        # 从请求中提取工具名称（兜底）
+        messages = request_body.get("messages", [])
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_name = block.get("name", "")
+                            break
+                if tool_name:
+                    break
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "request_type": req_ctx["request_type"],
+        "context_summary": req_ctx["context_summary"],
+        "input_preview": req_ctx["input_preview"],
+        "actual_user_input": req_ctx["actual_user_input"],
+        "input_message_count": req_ctx["input_message_count"],
+        "has_tool_result": req_ctx["has_tool_result"],
+        "output_preview": output_preview,
+        "output_type": resp_ctx["output_type"],
+        "stop_reason": stop_reason,
+        "response_valid": resp_ctx["response_valid"],
+        "model": model,
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "cache_read_tokens": usage["cache_read_tokens"],
+        "cache_write_tokens": usage["cache_write_tokens"],
+        "latency_ms": latency_ms,
+        "api_format": api_format,
+        "request_level": request_level,
+        "tool_name": tool_name,
+        "parent_id": None,
+        "error_message": error_message,
+    }
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.execute(
+            "INSERT INTO api_usage "
+            "(timestamp, request_type, context_summary, "
+            "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
+            "output_type, stop_reason, response_valid, model, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_write_tokens, "
+            "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record["timestamp"],
+                record["request_type"],
+                record["context_summary"],
+                record["input_preview"],
+                record["actual_user_input"],
+                record["input_message_count"],
+                record["has_tool_result"],
+                record["output_preview"],
+                record["output_type"],
+                record["stop_reason"],
+                record["response_valid"],
+                record["model"],
+                record["input_tokens"],
+                record["output_tokens"],
+                record["cache_read_tokens"],
+                record["cache_write_tokens"],
+                record["latency_ms"],
+                record["api_format"],
+                record["request_level"],
+                record["tool_name"],
+                record["parent_id"],
+                record["error_message"],
+            ),
+        )
+        record_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(
+            json.dumps(
+                {
+                    "msg": "usage_recorded",
+                    "model": model,
+                    "input_tokens": usage["input_tokens"],
+                    "output_tokens": usage["output_tokens"],
+                    "latency_ms": latency_ms,
+                    "request_level": request_level,
+                    "tool_name": tool_name,
+                }
+            )
+        )
+    except Exception as e:
+        logger.error(json.dumps({"msg": "usage_record_failed", "error": str(e)}))
