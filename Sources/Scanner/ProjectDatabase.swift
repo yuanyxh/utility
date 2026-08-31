@@ -3,13 +3,20 @@ import GRDB
 
 /// Manages `.utility/deps.sqlite` for a specific project directory.
 final class ProjectDatabase {
+    /// 依赖图数据库文件名（Scanner/FileWatcher/AgentRunner 共用单一权威）
+    static let depsFilename = "deps.sqlite"
+
     let dbQueue: DatabaseQueue
 
     init(projectPath: String) throws {
         let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
         try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
-        let dbPath = (utilityDir as NSString).appendingPathComponent("deps.sqlite")
-        dbQueue = try DatabaseQueue(path: dbPath)
+        let dbPath = (utilityDir as NSString).appendingPathComponent(Self.depsFilename)
+        // 多连接并发写 deps.sqlite（Scanner 全量 + FileWatcher 增量 + MCP 读），
+        // GRDB 默认 busyMode=.immediateError 锁冲突立即失败；改 .timeout(5) 等锁而非失败
+        var configuration = Configuration()
+        configuration.busyMode = .timeout(5)
+        dbQueue = try DatabaseQueue(path: dbPath, configuration: configuration)
         try migrator.migrate(dbQueue)
     }
 
@@ -148,7 +155,7 @@ final class ProjectDatabase {
             try Int.fetchOne(
                 db,
                 sql: "SELECT fail_count FROM failed_files WHERE path = ?",
-                arguments: [path],
+                arguments: [path]
             ) ?? 0
         }
     }

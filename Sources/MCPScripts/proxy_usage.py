@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
 from config import data_dir, deepseek_api_key, summary_model, summary_api_url
+from db import conn as dbconn
 from log_utils import setup_logging
 
 # ---------------------------------------------------------------------------
@@ -22,6 +23,11 @@ from log_utils import setup_logging
 
 DB_DIR = data_dir()
 DB_PATH = os.path.join(DB_DIR, "token_usage.sqlite")
+# api_usage 保留天数（约 3 个月），启动时清理超期记录
+API_USAGE_RETENTION_DAYS = 90
+# gateway_log 记录范围与保留期：非 2xx + 请求体 >=512KB 预警，保留 90 天
+GATEWAY_LOG_SIZE_THRESHOLD = 512 * 1024
+GATEWAY_LOG_RETENTION_DAYS = 90
 # LLM 配置（usage 字段路径解析用，见 UsageFieldResolver._ask_model）。
 # 默认空串做「未配置即禁用」守卫——不要用 config 的默认真实值（会带空 URL 发起调用）。
 LLM_API_URL = summary_api_url(default="")
@@ -70,6 +76,21 @@ def init_db():
             updated_at TEXT,
             PRIMARY KEY (provider, model)
         );
+        -- 网关层日志：记录非 2xx 响应与超大请求（middleware 写入）。
+        -- 区分 api_usage：api_usage 记成功请求的 token 用量；gateway_log 记被拒/失败/预警请求，
+        -- 解决 aiohttp 层 413 超限等 handler 不执行、无任何记录的排查盲区。
+        CREATE TABLE IF NOT EXISTS gateway_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            method TEXT,
+            path TEXT,
+            content_length INTEGER,
+            status_code INTEGER,
+            error_type TEXT,
+            error_message TEXT,
+            latency_ms INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_gateway_log_timestamp ON gateway_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp);
         CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level);
     """)
@@ -116,10 +137,53 @@ def init_db():
     )
     conn.commit()
 
-    # 三个月自动清理
-    conn.execute("DELETE FROM api_usage WHERE timestamp < datetime('now', '-3 months')")
+    # 三个月自动清理：cutoff 用与 timestamp 一致的 ISO 格式，避免 datetime('now') 空格格式在边界当天漏删
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=API_USAGE_RETENTION_DAYS)
+    ).isoformat()
+    conn.execute("DELETE FROM api_usage WHERE timestamp < ?", (cutoff,))
     conn.commit()
     conn.close()
+
+
+# 网关层日志：middleware 统一记录被拒/失败/超大请求，补 api_usage 的排查盲区。
+# api_usage 只记成功请求的 token 用量；aiohttp 层 413 超限等 handler 不执行时不落库。
+_gateway_log_write_count = 0
+
+
+def record_gateway_log(
+    method, path, content_length, status_code, error_type, error_message, latency_ms
+):
+    """写入网关日志：非 2xx 响应 + 超大请求体。保留 90 天，每 200 次写入删一次过期数据。"""
+    global _gateway_log_write_count
+    if status_code < 400 and (content_length or 0) < GATEWAY_LOG_SIZE_THRESHOLD:
+        return
+    try:
+        with dbconn(DB_PATH) as c:
+            c.execute(
+                "INSERT INTO gateway_log (timestamp, method, path, content_length, status_code, "
+                "error_type, error_message, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    method,
+                    path,
+                    content_length,
+                    status_code,
+                    error_type,
+                    error_message,
+                    latency_ms,
+                ),
+            )
+            _gateway_log_write_count += 1
+            if _gateway_log_write_count % 200 == 0:
+                cutoff = (
+                    datetime.now(timezone.utc)
+                    - timedelta(days=GATEWAY_LOG_RETENTION_DAYS)
+                ).isoformat()
+                c.execute("DELETE FROM gateway_log WHERE timestamp < ?", (cutoff,))
+    except Exception:
+        # 网关日志失败不影响主流程
+        pass
 
 
 class UsageFieldResolver:
@@ -193,13 +257,12 @@ class UsageFieldResolver:
 
     def _load_from_db(self, provider: str, model: str) -> dict | None:
         try:
-            conn = sqlite3.connect(DB_PATH)
-            row = conn.execute(
-                "SELECT input_path, output_path, cache_read_path, cache_write_path "
-                "FROM usage_field_cache WHERE provider=? AND model=?",
-                (provider, model),
-            ).fetchone()
-            conn.close()
+            with dbconn(DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT input_path, output_path, cache_read_path, cache_write_path "
+                    "FROM usage_field_cache WHERE provider=? AND model=?",
+                    (provider, model),
+                ).fetchone()
             if row:
                 return {
                     "input_path": row[0],
@@ -213,23 +276,21 @@ class UsageFieldResolver:
 
     def _save_to_db(self, provider: str, model: str, paths: dict):
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.execute(
-                "INSERT OR REPLACE INTO usage_field_cache "
-                "(provider, model, input_path, output_path, cache_read_path, cache_write_path, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    provider,
-                    model,
-                    paths.get("input_path", ""),
-                    paths.get("output_path", ""),
-                    paths.get("cache_read_path", ""),
-                    paths.get("cache_write_path", ""),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-            conn.commit()
-            conn.close()
+            with dbconn(DB_PATH) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO usage_field_cache "
+                    "(provider, model, input_path, output_path, cache_read_path, cache_write_path, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        provider,
+                        model,
+                        paths.get("input_path", ""),
+                        paths.get("output_path", ""),
+                        paths.get("cache_read_path", ""),
+                        paths.get("cache_write_path", ""),
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
         except Exception:
             pass
 
@@ -649,43 +710,41 @@ async def record_usage(
     }
 
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.execute(
-            "INSERT INTO api_usage "
-            "(timestamp, request_type, context_summary, "
-            "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
-            "output_type, stop_reason, response_valid, model, input_tokens, "
-            "output_tokens, cache_read_tokens, cache_write_tokens, "
-            "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                record["timestamp"],
-                record["request_type"],
-                record["context_summary"],
-                record["input_preview"],
-                record["actual_user_input"],
-                record["input_message_count"],
-                record["has_tool_result"],
-                record["output_preview"],
-                record["output_type"],
-                record["stop_reason"],
-                record["response_valid"],
-                record["model"],
-                record["input_tokens"],
-                record["output_tokens"],
-                record["cache_read_tokens"],
-                record["cache_write_tokens"],
-                record["latency_ms"],
-                record["api_format"],
-                record["request_level"],
-                record["tool_name"],
-                record["parent_id"],
-                record["error_message"],
-            ),
-        )
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        with dbconn(DB_PATH) as conn:
+            cursor = conn.execute(
+                "INSERT INTO api_usage "
+                "(timestamp, request_type, context_summary, "
+                "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
+                "output_type, stop_reason, response_valid, model, input_tokens, "
+                "output_tokens, cache_read_tokens, cache_write_tokens, "
+                "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record["timestamp"],
+                    record["request_type"],
+                    record["context_summary"],
+                    record["input_preview"],
+                    record["actual_user_input"],
+                    record["input_message_count"],
+                    record["has_tool_result"],
+                    record["output_preview"],
+                    record["output_type"],
+                    record["stop_reason"],
+                    record["response_valid"],
+                    record["model"],
+                    record["input_tokens"],
+                    record["output_tokens"],
+                    record["cache_read_tokens"],
+                    record["cache_write_tokens"],
+                    record["latency_ms"],
+                    record["api_format"],
+                    record["request_level"],
+                    record["tool_name"],
+                    record["parent_id"],
+                    record["error_message"],
+                ),
+            )
+            record_id = cursor.lastrowid
         logger.info(
             json.dumps(
                 {

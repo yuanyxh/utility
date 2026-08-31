@@ -21,6 +21,7 @@ import threading
 
 import numpy as np
 
+from db import conn as dbconn
 from log_utils import setup_logging
 from server_embed import _get_shared_embedder
 from synonyms import SYNONYM_MAP
@@ -121,47 +122,44 @@ def _search_symbols_fts(
 ) -> list[dict] | None:
     """Layer 1a: FTS5 symbol search. Returns None if FTS5 unavailable (degrade to LIKE)."""
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        sql = (
-            "SELECT s.name, s.kind, s.signature, s.file_path, s.visibility, "
-            "s.start_line, s.end_line "
-            "FROM symbols s JOIN symbols_fts fts ON s.id = fts.rowid "
-            "WHERE symbols_fts MATCH ?"
-        )
-        params: list[str] = [expanded]
-        if file_path:
-            sql += " AND s.file_path LIKE ?"
-            params.append(f"%{file_path}%")
-        if kind:
-            sql += " AND s.kind = ?"
-            params.append(kind)
-        sql += " ORDER BY rank LIMIT 30"
-        return [
-            {
-                "name": r["name"],
-                "kind": r["kind"],
-                "signature": r["signature"],
-                "file": r["file_path"],
-                "visibility": r["visibility"],
-                "startLine": r["start_line"],
-                "endLine": r["end_line"],
-            }
-            for r in conn.execute(sql, params).fetchall()
-        ]
+        with dbconn(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            sql = (
+                "SELECT s.name, s.kind, s.signature, s.file_path, s.visibility, "
+                "s.start_line, s.end_line "
+                "FROM symbols s JOIN symbols_fts fts ON s.id = fts.rowid "
+                "WHERE symbols_fts MATCH ?"
+            )
+            params: list[str] = [expanded]
+            if file_path:
+                sql += " AND s.file_path LIKE ?"
+                params.append(f"%{file_path}%")
+            if kind:
+                sql += " AND s.kind = ?"
+                params.append(kind)
+            sql += " ORDER BY rank LIMIT 30"
+            return [
+                {
+                    "name": r["name"],
+                    "kind": r["kind"],
+                    "signature": r["signature"],
+                    "file": r["file_path"],
+                    "visibility": r["visibility"],
+                    "startLine": r["start_line"],
+                    "endLine": r["end_line"],
+                }
+                for r in conn.execute(sql, params).fetchall()
+            ]
     except sqlite3.OperationalError:
         return None
-    finally:
-        conn.close()
 
 
 def _search_symbols_like(
     db_path: str, query: str, file_path: str, kind: str
 ) -> list[dict]:
     """Layer 1b: LIKE fallback when FTS5 is unavailable."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         sql = (
             "SELECT name, kind, signature, file_path, visibility, start_line, end_line "
             "FROM symbols WHERE (name LIKE ? OR signature LIKE ?)"
@@ -186,15 +184,12 @@ def _search_symbols_like(
             }
             for r in conn.execute(sql, params).fetchall()
         ]
-    finally:
-        conn.close()
 
 
 def _search_files(db_path: str, query: str) -> list[dict]:
     """Layer 2: Search files table by name or path."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         like = f"%{query}%"
         rows = conn.execute(
             "SELECT path, name, ext FROM files "
@@ -213,15 +208,12 @@ def _search_files(db_path: str, query: str) -> list[dict]:
             }
             for r in rows
         ]
-    finally:
-        conn.close()
 
 
 def _search_packages(db_path: str, query: str) -> list[dict]:
     """Layer 3: Search packages table by name or description."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         like = f"%{query}%"
         rows = conn.execute(
             "SELECT name, version, type, description FROM packages "
@@ -239,8 +231,6 @@ def _search_packages(db_path: str, query: str) -> list[dict]:
             }
             for r in rows
         ]
-    finally:
-        conn.close()
 
 
 def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | None]:
@@ -254,95 +244,93 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
     if emb is None:
         return [], None
 
-    conn = sqlite3.connect(db_path, timeout=5)
-    conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        with dbconn(db_path, timeout=5) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
 
-        # 创建 side-table（与 GRDB 管理的 symbols 表解耦）
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS symbol_embeddings (
-                symbol_id INTEGER PRIMARY KEY,
-                embedding BLOB NOT NULL
-            )
-        """)
-
-        # 找出没有 embedding 的 symbol，增量计算
-        missing = conn.execute(
-            """
-            SELECT s.id, s.name, s.signature, COALESCE(s.doc_comment, '') AS doc
-            FROM symbols s LEFT JOIN symbol_embeddings se ON s.id = se.symbol_id
-            WHERE se.symbol_id IS NULL
-            LIMIT ?
-        """,
-            (_MAX_VECTOR_ROWS,),
-        ).fetchall()
-
-        if missing:
-            batches = [missing[i : i + 32] for i in range(0, len(missing), 32)]
-            for batch in batches:
-                texts = []
-                for r in batch:
-                    text = r["name"]
-                    if r["signature"]:
-                        text += " " + r["signature"]
-                    if r["doc"]:
-                        text += " " + r["doc"]
-                    texts.append(text)
-
-                embeddings = list(emb.embed(texts))
-                for r, vec in zip(batch, embeddings):
-                    vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
-                    conn.execute(
-                        "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, embedding) VALUES (?, ?)",
-                        (r["id"], vec_bytes),
-                    )
-                conn.commit()
-
-        # 从 SQLite 读取所有 embedding
-        rows = conn.execute(
-            """
-            SELECT s.name, s.signature, s.file_path, se.embedding
-            FROM symbols s
-            JOIN symbol_embeddings se ON s.id = se.symbol_id
-            LIMIT ?
-        """,
-            (_MAX_VECTOR_ROWS,),
-        ).fetchall()
-
-        if not rows:
-            return [], None
-
-        symbols = []
-        vectors = []
-        for r in rows:
-            try:
-                vec = np.frombuffer(r["embedding"], dtype=np.float32).copy()
-                norm = np.linalg.norm(vec)
-                if norm < 1e-10:
-                    continue
-                vectors.append(vec / norm)
-                symbols.append(
-                    {
-                        "name": r["name"],
-                        "file": r["file_path"],
-                        "signature": r["signature"],
-                    }
+            # 创建 side-table（与 GRDB 管理的 symbols 表解耦）
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS symbol_embeddings (
+                    symbol_id INTEGER PRIMARY KEY,
+                    embedding BLOB NOT NULL
                 )
-            except Exception:
-                continue
+            """)
 
-        if not vectors:
-            return [], None
+            # 找出没有 embedding 的 symbol，增量计算
+            missing = conn.execute(
+                """
+                SELECT s.id, s.name, s.signature, COALESCE(s.doc_comment, '') AS doc
+                FROM symbols s LEFT JOIN symbol_embeddings se ON s.id = se.symbol_id
+                WHERE se.symbol_id IS NULL
+                LIMIT ?
+            """,
+                (_MAX_VECTOR_ROWS,),
+            ).fetchall()
 
-        return symbols, np.array(vectors, dtype=np.float32)
+            if missing:
+                batches = [missing[i : i + 32] for i in range(0, len(missing), 32)]
+                for batch in batches:
+                    texts = []
+                    for r in batch:
+                        text = r["name"]
+                        if r["signature"]:
+                            text += " " + r["signature"]
+                        if r["doc"]:
+                            text += " " + r["doc"]
+                        texts.append(text)
+
+                    embeddings = list(emb.embed(texts))
+                    for r, vec in zip(batch, embeddings):
+                        vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
+                        conn.execute(
+                            "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, embedding) VALUES (?, ?)",
+                            (r["id"], vec_bytes),
+                        )
+                    conn.commit()
+
+            # 从 SQLite 读取所有 embedding
+            rows = conn.execute(
+                """
+                SELECT s.name, s.signature, s.file_path, se.embedding
+                FROM symbols s
+                JOIN symbol_embeddings se ON s.id = se.symbol_id
+                LIMIT ?
+            """,
+                (_MAX_VECTOR_ROWS,),
+            ).fetchall()
+
+            if not rows:
+                return [], None
+
+            symbols = []
+            vectors = []
+            for r in rows:
+                try:
+                    vec = np.frombuffer(r["embedding"], dtype=np.float32).copy()
+                    norm = np.linalg.norm(vec)
+                    if norm < 1e-10:
+                        continue
+                    vectors.append(vec / norm)
+                    symbols.append(
+                        {
+                            "name": r["name"],
+                            "file": r["file_path"],
+                            "signature": r["signature"],
+                        }
+                    )
+                except Exception:
+                    continue
+
+            if not vectors:
+                return [], None
+
+            return symbols, np.array(vectors, dtype=np.float32)
 
     except Exception as e:
         logger.warning(f"[symbol_embeddings] init failed: {e}")
         return [], None
-    finally:
-        conn.close()
 
 
 def _search_vectors(db_path: str, query: str) -> list[dict]:
@@ -1035,35 +1023,34 @@ def tool_project_search(
 def tool_project_structure(db_path: str, subpath: str = "") -> dict:
     if not os.path.isfile(db_path):
         return {"error": f"Database not found: {db_path}"}
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
 
-    MAX_ITEMS = 200
+        MAX_ITEMS = 200
 
-    if subpath:
-        prefix = subpath.rstrip("/") + "/"
-        dirs = conn.execute(
-            "SELECT path, module_name, file_count, has_package_manifest "
-            "FROM directories WHERE path LIKE ? AND path NOT LIKE ? "
-            "ORDER BY path LIMIT ?",
-            (prefix + "%", prefix + "%/%", MAX_ITEMS + 1),
-        ).fetchall()
-        files = conn.execute(
-            "SELECT path, ext FROM files WHERE dir_path = ? ORDER BY path LIMIT ?",
-            (subpath, MAX_ITEMS + 1),
-        ).fetchall()
-    else:
-        dirs = conn.execute(
-            "SELECT path, module_name, file_count, has_package_manifest "
-            "FROM directories WHERE path NOT LIKE '%/%' "
-            "ORDER BY path LIMIT ?",
-            (MAX_ITEMS + 1,),
-        ).fetchall()
-        files = conn.execute(
-            "SELECT path, ext FROM files WHERE dir_path = '' ORDER BY path LIMIT ?",
-            (MAX_ITEMS + 1,),
-        ).fetchall()
-    conn.close()
+        if subpath:
+            prefix = subpath.rstrip("/") + "/"
+            dirs = conn.execute(
+                "SELECT path, module_name, file_count, has_package_manifest "
+                "FROM directories WHERE path LIKE ? AND path NOT LIKE ? "
+                "ORDER BY path LIMIT ?",
+                (prefix + "%", prefix + "%/%", MAX_ITEMS + 1),
+            ).fetchall()
+            files = conn.execute(
+                "SELECT path, ext FROM files WHERE dir_path = ? ORDER BY path LIMIT ?",
+                (subpath, MAX_ITEMS + 1),
+            ).fetchall()
+        else:
+            dirs = conn.execute(
+                "SELECT path, module_name, file_count, has_package_manifest "
+                "FROM directories WHERE path NOT LIKE '%/%' "
+                "ORDER BY path LIMIT ?",
+                (MAX_ITEMS + 1,),
+            ).fetchall()
+            files = conn.execute(
+                "SELECT path, ext FROM files WHERE dir_path = '' ORDER BY path LIMIT ?",
+                (MAX_ITEMS + 1,),
+            ).fetchall()
 
     result = {
         "directories": [
@@ -1090,20 +1077,19 @@ def tool_project_structure(db_path: str, subpath: str = "") -> dict:
 def tool_project_packages(db_path: str, pkg_type: str = "") -> dict:
     if not os.path.isfile(db_path):
         return {"error": f"Database not found: {db_path}"}
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    if pkg_type:
-        rows = conn.execute(
-            "SELECT name, version, type, description, source_url "
-            "FROM packages WHERE type = ? ORDER BY name",
-            (pkg_type,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT name, version, type, description, source_url "
-            "FROM packages ORDER BY type, name"
-        ).fetchall()
-    conn.close()
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        if pkg_type:
+            rows = conn.execute(
+                "SELECT name, version, type, description, source_url "
+                "FROM packages WHERE type = ? ORDER BY name",
+                (pkg_type,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, version, type, description, source_url "
+                "FROM packages ORDER BY type, name"
+            ).fetchall()
     return {
         "packages": [
             {
@@ -1122,61 +1108,59 @@ def tool_project_packages(db_path: str, pkg_type: str = "") -> dict:
 def tool_project_exports(db_path: str, path: str) -> dict:
     if not os.path.isfile(db_path):
         return {"error": f"Database not found: {db_path}"}
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    is_dir = conn.execute(
-        "SELECT 1 FROM directories WHERE path = ?", (path,)
-    ).fetchone()
-    if is_dir:
-        files = conn.execute(
-            "SELECT path, name, ext, sym_count FROM files WHERE dir_path = ? ORDER BY path",
-            (path,),
-        ).fetchall()
-        result_files = []
-        for f in files:
-            syms = conn.execute(
-                "SELECT name, kind, signature, start_line, end_line FROM symbols "
-                "WHERE file_path = ? AND (visibility = 'public' OR visibility IS NULL) "
-                "ORDER BY kind, name",
-                (f["path"],),
+    with dbconn(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        is_dir = conn.execute(
+            "SELECT 1 FROM directories WHERE path = ?", (path,)
+        ).fetchone()
+        if is_dir:
+            files = conn.execute(
+                "SELECT path, name, ext, sym_count FROM files WHERE dir_path = ? ORDER BY path",
+                (path,),
             ).fetchall()
-            result_files.append(
-                {
-                    "path": f["path"],
-                    "symbols": [
-                        {
-                            "name": s["name"],
-                            "kind": s["kind"],
-                            "signature": s["signature"],
-                            "startLine": s["start_line"],
-                            "endLine": s["end_line"],
-                        }
-                        for s in syms
-                    ],
-                }
-            )
-        conn.close()
-        return {"path": path, "isDirectory": True, "files": result_files}
-    else:
-        syms = conn.execute(
-            "SELECT name, kind, signature, visibility, start_line, end_line FROM symbols "
-            "WHERE file_path = ? ORDER BY kind, name",
-            (path,),
-        ).fetchall()
-        conn.close()
-        return {
-            "path": path,
-            "isDirectory": False,
-            "symbols": [
-                {
-                    "name": s["name"],
-                    "kind": s["kind"],
-                    "signature": s["signature"],
-                    "startLine": s["start_line"],
-                    "endLine": s["end_line"],
-                    "visibility": s["visibility"],
-                }
-                for s in syms
-            ],
-            "total": len(syms),
-        }
+            result_files = []
+            for f in files:
+                syms = conn.execute(
+                    "SELECT name, kind, signature, start_line, end_line FROM symbols "
+                    "WHERE file_path = ? AND (visibility = 'public' OR visibility IS NULL) "
+                    "ORDER BY kind, name",
+                    (f["path"],),
+                ).fetchall()
+                result_files.append(
+                    {
+                        "path": f["path"],
+                        "symbols": [
+                            {
+                                "name": s["name"],
+                                "kind": s["kind"],
+                                "signature": s["signature"],
+                                "startLine": s["start_line"],
+                                "endLine": s["end_line"],
+                            }
+                            for s in syms
+                        ],
+                    }
+                )
+            return {"path": path, "isDirectory": True, "files": result_files}
+        else:
+            syms = conn.execute(
+                "SELECT name, kind, signature, visibility, start_line, end_line FROM symbols "
+                "WHERE file_path = ? ORDER BY kind, name",
+                (path,),
+            ).fetchall()
+            return {
+                "path": path,
+                "isDirectory": False,
+                "symbols": [
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "signature": s["signature"],
+                        "startLine": s["start_line"],
+                        "endLine": s["end_line"],
+                        "visibility": s["visibility"],
+                    }
+                    for s in syms
+                ],
+                "total": len(syms),
+            }

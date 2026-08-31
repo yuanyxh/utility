@@ -73,7 +73,7 @@ public final class ClipboardWatcher {
             let plainText = htmlItem.string(forType: .string)
             let clip = ClipboardItem(
                 type: "html", content: html.data(using: .utf8) ?? Data(),
-                application: plainText ?? pasteboardOwner(),
+                application: plainText ?? pasteboardOwner()
             )
             try? storage.add(clip)
             return
@@ -86,7 +86,7 @@ public final class ClipboardWatcher {
             let clip = ClipboardItem(
                 type: "text",
                 content: str.data(using: .utf8) ?? Data(),
-                application: pasteboardOwner(),
+                application: pasteboardOwner()
             )
             try? storage.add(clip)
             return
@@ -103,7 +103,7 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["path": urls[0].path]) {
                 let clip = ClipboardItem(
                     type: "file", content: data,
-                    application: urls[0].lastPathComponent,
+                    application: urls[0].lastPathComponent
                 )
                 try? storage.add(clip)
             }
@@ -112,7 +112,7 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["paths": paths]) {
                 let clip = ClipboardItem(
                     type: "file_batch", content: data,
-                    application: L10n.Clipboard.fileCount(urls.count),
+                    application: L10n.Clipboard.fileCount(urls.count)
                 )
                 try? storage.add(clip)
             }
@@ -128,12 +128,35 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["path": fileURL.path]) {
                 let clip = ClipboardItem(
                     type: "file", content: data,
-                    application: filename,
+                    application: filename
                 )
                 try? storage.add(clip)
             }
         } catch {
             debugLog("[Clipboard] image write failed: \(error)")
+        }
+        // 保存成功后顺带清理过期图片缓存（保留期与剪贴板 maxDays 一致），移入废纸篓
+        cleanupOldClips()
+    }
+
+    /// 清理过期的剪贴板图片缓存（保留期与 clipboard.maxDays 一致），移入废纸篓
+    private func cleanupOldClips() {
+        let maxDays = ConfigManager.shared.config.clipboard.maxDays
+        let cutoff = Date().addingTimeInterval(-Double(maxDays * 86400))
+        let fm = FileManager.default
+        let dir = AppPaths.clipCacheDir
+        guard let files = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: []
+        ) else { return }
+        for file in files where file.pathExtension == "png" {
+            let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? .distantPast
+            if mtime < cutoff {
+                try? fm.trashItem(at: file, resultingItemURL: nil)
+                debugLog("[Clipboard] trash expired clip: \(file.lastPathComponent)")
+            }
         }
     }
 

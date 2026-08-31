@@ -17,9 +17,6 @@ enum AppPaths {
     /// ~/.config/utility/data.sqlite
     static let database: URL = configDir.appendingPathComponent("data.sqlite")
 
-    /// ~/.config/utility/token_usage.sqlite
-    static let tokenUsageDB: URL = configDir.appendingPathComponent("token_usage.sqlite")
-
     /// ~/.cache/utility/clip/
     static let clipCacheDir: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser

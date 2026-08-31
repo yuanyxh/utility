@@ -59,7 +59,7 @@ enum AgentRunner {
     @discardableResult
     private static func prepareDatabase(projectPath: String) throws -> String {
         let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
-        let dbPath = (utilityDir as NSString).appendingPathComponent("deps.sqlite")
+        let dbPath = (utilityDir as NSString).appendingPathComponent(ProjectDatabase.depsFilename)
         if !FileManager.default.fileExists(atPath: utilityDir) {
             try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
         }

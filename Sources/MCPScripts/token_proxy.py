@@ -7,6 +7,7 @@ usage 记录 → proxy_usage.py；本入口保留 providers 路由 + HTTP 端点
 """
 
 import asyncio
+import datetime
 import json
 import os
 import sqlite3
@@ -29,7 +30,8 @@ from proxy_protocol import (
     _inject_classifier_disabled,
     _inject_system_prompt,
 )
-from proxy_usage import DB_PATH, init_db, record_usage
+from proxy_usage import DB_PATH, init_db, record_gateway_log, record_usage
+from db import conn as dbconn
 
 # ---------------------------------------------------------------------------
 # 配置（专属 env；公共配置在 config.py，协议/usage 配置在各自子模块）
@@ -545,18 +547,17 @@ async def handle_health(request: web.Request) -> web.Response:
 async def handle_usage_summary(request: web.Request) -> web.Response:
     """今日用量摘要（供 Swift 查询）。"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        row = conn.execute("""
-            SELECT
-                COALESCE(SUM(input_tokens), 0),
-                COALESCE(SUM(output_tokens), 0),
-                COALESCE(SUM(cache_read_tokens), 0),
-                COUNT(*),
-                SUM(CASE WHEN response_valid = 0 THEN 1 ELSE 0 END)
-            FROM api_usage
-            WHERE timestamp >= date('now', 'start of day')
-        """).fetchone()
-        conn.close()
+        with dbconn(DB_PATH) as conn:
+            row = conn.execute("""
+                SELECT
+                    COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(cache_read_tokens), 0),
+                    COUNT(*),
+                    SUM(CASE WHEN response_valid = 0 THEN 1 ELSE 0 END)
+                FROM api_usage
+                WHERE timestamp >= date('now', 'start of day')
+            """).fetchone()
 
         return web.json_response(
             {
@@ -578,102 +579,147 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", "50"))
         offset = int(request.query.get("offset", "0"))
 
-        conn = sqlite3.connect(DB_PATH)
-        if level == "core":
-            # 只查询 end_turn（核心交换）
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, actual_user_input, input_preview, output_preview,
-                       input_tokens, output_tokens, stop_reason, latency_ms, model
-                FROM api_usage
-                WHERE stop_reason = 'end_turn'
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            """,
-                (limit, offset),
-            ).fetchall()
+        with dbconn(DB_PATH) as conn:
+            if level == "core":
+                # 只查询 end_turn（核心交换）
+                rows = conn.execute(
+                    """
+                    SELECT id, timestamp, actual_user_input, input_preview, output_preview,
+                           input_tokens, output_tokens, stop_reason, latency_ms, model
+                    FROM api_usage
+                    WHERE stop_reason = 'end_turn'
+                    ORDER BY timestamp DESC
+                    LIMIT ? OFFSET ?
+                """,
+                    (limit, offset),
+                ).fetchall()
 
-            result = []
-            for r in rows:
-                result.append(
-                    {
-                        "id": r[0],
-                        "timestamp": r[1],
-                        "user_input": r[2]
-                        or r[3],  # actual_user_input 优先，fallback 到 input_preview
-                        "output": r[4],
-                        "input_tokens": r[5],
-                        "output_tokens": r[6],
-                        "stop_reason": r[7],
-                        "latency_ms": r[8],
-                        "model": r[9],
-                    }
-                )
-        elif level == "process":
-            # 查询 tool_use 过程记录
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, tool_name, input_tokens, output_tokens,
-                       latency_ms, parent_id
-                FROM api_usage
-                WHERE stop_reason = 'tool_use'
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            """,
-                (limit, offset),
-            ).fetchall()
+                result = []
+                for r in rows:
+                    result.append(
+                        {
+                            "id": r[0],
+                            "timestamp": r[1],
+                            "user_input": r[2]
+                            or r[3],  # actual_user_input 优先，fallback 到 input_preview
+                            "output": r[4],
+                            "input_tokens": r[5],
+                            "output_tokens": r[6],
+                            "stop_reason": r[7],
+                            "latency_ms": r[8],
+                            "model": r[9],
+                        }
+                    )
+            elif level == "process":
+                # 查询 tool_use 过程记录
+                rows = conn.execute(
+                    """
+                    SELECT id, timestamp, tool_name, input_tokens, output_tokens,
+                           latency_ms, parent_id
+                    FROM api_usage
+                    WHERE stop_reason = 'tool_use'
+                    ORDER BY timestamp DESC
+                    LIMIT ? OFFSET ?
+                """,
+                    (limit, offset),
+                ).fetchall()
 
-            result = []
-            for r in rows:
-                result.append(
-                    {
-                        "id": r[0],
-                        "timestamp": r[1],
-                        "tool_name": r[2],
-                        "input_tokens": r[3],
-                        "output_tokens": r[4],
-                        "latency_ms": r[5],
-                        "parent_id": r[6],
-                    }
-                )
-        else:
-            # 查询所有
-            rows = conn.execute(
-                """
-                SELECT id, timestamp, request_level, input_preview, output_preview,
-                       input_tokens, output_tokens, stop_reason, latency_ms, tool_name
-                FROM api_usage
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            """,
-                (limit, offset),
-            ).fetchall()
+                result = []
+                for r in rows:
+                    result.append(
+                        {
+                            "id": r[0],
+                            "timestamp": r[1],
+                            "tool_name": r[2],
+                            "input_tokens": r[3],
+                            "output_tokens": r[4],
+                            "latency_ms": r[5],
+                            "parent_id": r[6],
+                        }
+                    )
+            else:
+                # 查询所有
+                rows = conn.execute(
+                    """
+                    SELECT id, timestamp, request_level, input_preview, output_preview,
+                           input_tokens, output_tokens, stop_reason, latency_ms, tool_name
+                    FROM api_usage
+                    ORDER BY timestamp DESC
+                    LIMIT ? OFFSET ?
+                """,
+                    (limit, offset),
+                ).fetchall()
 
-            result = []
-            for r in rows:
-                result.append(
-                    {
-                        "id": r[0],
-                        "timestamp": r[1],
-                        "level": r[2],
-                        "input": r[3],
-                        "output": r[4],
-                        "input_tokens": r[5],
-                        "output_tokens": r[6],
-                        "stop_reason": r[7],
-                        "latency_ms": r[8],
-                        "tool_name": r[9],
-                    }
-                )
+                result = []
+                for r in rows:
+                    result.append(
+                        {
+                            "id": r[0],
+                            "timestamp": r[1],
+                            "level": r[2],
+                            "input": r[3],
+                            "output": r[4],
+                            "input_tokens": r[5],
+                            "output_tokens": r[6],
+                            "stop_reason": r[7],
+                            "latency_ms": r[8],
+                            "tool_name": r[9],
+                        }
+                    )
 
-        conn.close()
         return web.json_response(result)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 
+# ---------------------------------------------------------------------------
+# 网关层日志：middleware 统一记录被拒/失败/超大请求，补 api_usage 的排查盲区。
+# 记录实现（record_gateway_log + 常量 + gateway_log 表）已归口 proxy_usage.py，
+# 本入口只保留 middleware 捕获异常并调用，不再重复维护连接样板。
+# ---------------------------------------------------------------------------
+
+@web.middleware
+async def gateway_log_middleware(request, handler):
+    """包裹所有路由：捕获异常（含 aiohttp 413 超限）并记录网关日志，不改变原有行为。"""
+    start = time.monotonic()
+    method = request.method
+    path = request.path
+    content_length = request.content_length or 0
+    status_code = 0
+    error_type = error_message = None
+    try:
+        resp = await handler(request)
+        status_code = resp.status
+    except web.HTTPException as e:
+        status_code = e.status
+        error_type = type(e).__name__
+        error_message = e.text
+        raise
+    except Exception as e:
+        status_code = 500
+        error_type = type(e).__name__
+        error_message = str(e)
+        raise
+    finally:
+        latency_ms = int((time.monotonic() - start) * 1000)
+        record_gateway_log(
+            method,
+            path,
+            content_length,
+            status_code,
+            error_type,
+            error_message,
+            latency_ms,
+        )
+    return resp
+
+
 def create_app() -> web.Application:
-    app = web.Application()
+    # aiohttp 默认 client_max_size 仅 1MB，Claude Code 请求体（含 CLAUDE.md/skills/MCP 工具定义）
+    # 超过后直接 413 "Maximum request body size exceeded"，转发到不了上游。
+    # 设 64MB 留余量，由客户端 32MB 检查兜底，代理不再成为瓶颈。
+    app = web.Application(client_max_size=64 * 1024 * 1024)
+    app.middlewares.append(gateway_log_middleware)
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)
