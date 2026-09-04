@@ -25,10 +25,18 @@ public func debugLog(_ msg: String) {
 // MARK: - 大小轮转
 
 private enum DebugLogRotate {
-    /// 触发轮转的文件大小阈值(字节)
-    static let maxSize: UInt64 = 10 * 1024 * 1024
+    /// 触发轮转的文件大小阈值(字节)，从配置读取
+    static var maxSize: UInt64 {
+        let configured = ConfigManager.shared.config.general.logMaxSize
+        return configured > 0 ? UInt64(configured) : 10 * 1024 * 1024
+    }
+
     /// 保留的备份份数(debug.log.1 ~ debug.log.N),最旧的 N 号备份会被删除
-    static let backupCount = 3
+    static var backupCount: Int {
+        let configured = ConfigManager.shared.config.general.logBackupCount
+        return configured > 0 ? configured : 3
+    }
+
     /// 串行化「轮转 + 写入」,避免多线程并发竞态
     static let lock = NSLock()
 }

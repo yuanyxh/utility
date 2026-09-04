@@ -105,10 +105,11 @@ public final class OpenAIClient {
     private let session: URLSession
     private let apiKey: String
 
-    public init(apiKey: String, timeout: TimeInterval = 120) {
+    /// timeout: 从配置读取，0 = 使用默认值 120s
+    public init(apiKey: String, timeout: TimeInterval = 0) {
         self.apiKey = apiKey
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForRequest = timeout > 0 ? timeout : 120
         config.httpMaximumConnectionsPerHost = 4
         session = URLSession(configuration: config)
     }

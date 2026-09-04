@@ -128,9 +128,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let trigger = "0 \(hour) * * *"
         let ai = ConfigManager.shared.config.ai
         let apiKey = ai.apiKey
-        let notesDir = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-        let baseURL = ai.baseURL.isEmpty ? "https://api.deepseek.com" : ai.baseURL
-        let model = ai.model.isEmpty ? "deepseek-v4-flash" : ai.model
+        let notesDir: String
+        if mcp.knowledgeBasePath.isEmpty {
+            notesDir = AppPaths.configDir.appendingPathComponent("notes").path
+        } else {
+            notesDir = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
+        }
+        let baseURL = ai.baseURL.isEmpty ? "" : ai.baseURL
+        let model = ai.model.isEmpty ? "" : ai.model
         let serverURL = "http://localhost:\(mcp.port)"
 
         var args: [String] = []

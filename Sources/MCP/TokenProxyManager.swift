@@ -25,8 +25,43 @@ final class TokenProxyManager {
         ConfigManager.shared.config.modelProxy
     }
 
+    /// 端口配置：0 = 自动检测可用端口
     private var port: Int {
-        proxyConfig?.port ?? 8080
+        let configured = proxyConfig?.port ?? 0
+        if configured > 0 {
+            return configured
+        }
+        // 自动检测：从 8613 开始探测（避免与 MCP 9001 冲突）
+        return detectAvailablePort(startingFrom: 8613)
+    }
+
+    /// 探测可用端口
+    private func detectAvailablePort(startingFrom startPort: Int) -> Int {
+        for port in startPort ..< startPort + 100 {
+            if isPortAvailable(port) {
+                return port
+            }
+        }
+        // 全部占用，返回第一个（让后续绑定报错）
+        return startPort
+    }
+
+    /// 检查端口是否可用
+    private func isPortAvailable(_ port: Int) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let socketfd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(socketfd) }
+
+        let bindResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                bind(socketfd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return bindResult == 0
     }
 
     /// 上游 API 地址：modelProxy.url → ai.baseURL
@@ -52,7 +87,7 @@ final class TokenProxyManager {
             Payload(
                 name: $0.name, url: $0.url,
                 apiFormat: $0.apiFormat.rawValue, apiKey: $0.apiKey,
-                models: $0.models,
+                models: $0.models
             )
         }
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
@@ -137,7 +172,7 @@ final class TokenProxyManager {
             // token_proxy.py 路径固定，捕获即可；端口可能随配置重载变化，走闭包
             scriptPath: { scriptPath },
             port: { [weak self] in
-                self?.port ?? 8080
+                self?.port ?? 8613 // 兜底值，正常流程不会到这
             },
             healthPath: "/health",
             service: nil, // token_proxy 不校验 service 字段
@@ -147,7 +182,7 @@ final class TokenProxyManager {
             environment: { [weak self] in
                 self?.proxyEnvironment ?? [:]
             },
-            logTag: "TokenProxy",
+            logTag: "TokenProxy"
         )
         let daemon = PythonDaemon(config: config)
         daemon.onStateChange = { [weak self] daemonState in

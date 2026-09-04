@@ -9,7 +9,9 @@ final class MCPClient {
     private let decoder = JSONDecoder()
 
     private init() {
-        let port = ConfigManager.shared.config.mcp?.port ?? 9001
+        let configured = ConfigManager.shared.config.mcp?.port ?? 0
+        // port=0 时使用默认值，正常流程 MCPProcessManager 已检测端口
+        let port = configured > 0 ? configured : 9001
         baseURL = "http://127.0.0.1:\(port)"
     }
 

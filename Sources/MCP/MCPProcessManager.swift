@@ -34,8 +34,43 @@ final class MCPProcessManager {
         ConfigManager.shared.config.mcp
     }
 
+    /// 端口配置：0 = 自动检测可用端口
     private var port: Int {
-        mcpConfig?.port ?? 9001
+        let configured = mcpConfig?.port ?? 0
+        if configured > 0 {
+            return configured
+        }
+        // 自动检测：从 9001 开始探测
+        return detectAvailablePort(startingFrom: 9001)
+    }
+
+    /// 探测可用端口
+    private func detectAvailablePort(startingFrom startPort: Int) -> Int {
+        for port in startPort ..< startPort + 100 {
+            if isPortAvailable(port) {
+                return port
+            }
+        }
+        // 全部占用，返回第一个（让后续绑定报错）
+        return startPort
+    }
+
+    /// 检查端口是否可用
+    private func isPortAvailable(_ port: Int) -> Bool {
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let socketfd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(socketfd) }
+
+        let bindResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                bind(socketfd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return bindResult == 0
     }
 
     private var maxRestarts: Int {
@@ -52,11 +87,33 @@ final class MCPProcessManager {
         var overrides: [String: String] = [:]
         overrides["MCP_PORT"] = String(port)
 
-        // mcp 路径配置
+        // MEMORY_SERVER_URL：summarize.py 用此变量访问 MCP 服务
+        overrides["MEMORY_SERVER_URL"] = "http://127.0.0.1:\(port)"
+
+        // mcp 路径配置（空字符串 = 使用默认路径）
         if let mcp = mcpConfig {
-            overrides["QDRANT_PATH"] = (mcp.qdrantPath as NSString).expandingTildeInPath
-            overrides["FASTEMBED_CACHE_PATH"] = (mcp.fastembedCacheDir as NSString).expandingTildeInPath
-            overrides["EMBEDDER_MODEL"] = mcp.embedderModel
+            // 空字符串 = 使用默认路径 ~/.utility/data/qdrant/
+            let qdrantPath: String = if mcp.qdrantPath.isEmpty {
+                AppPaths.configDir
+                    .appendingPathComponent("data/qdrant").path
+            } else {
+                (mcp.qdrantPath as NSString).expandingTildeInPath
+            }
+            overrides["QDRANT_PATH"] = qdrantPath
+
+            // 空字符串 = 使用默认路径 ~/.cache/utility/fastembed/
+            let fastembedCachePath: String = if mcp.fastembedCacheDir.isEmpty {
+                FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".cache/utility/fastembed").path
+            } else {
+                (mcp.fastembedCacheDir as NSString).expandingTildeInPath
+            }
+            overrides["FASTEMBED_CACHE_PATH"] = fastembedCachePath
+
+            // 空字符串 = 使用内置默认模型
+            if !mcp.embedderModel.isEmpty {
+                overrides["EMBEDDER_MODEL"] = mcp.embedderModel
+            }
         }
         return PythonScriptRunner.environment(overrides: overrides)
     }
@@ -199,7 +256,7 @@ final class MCPProcessManager {
                 self?.findServerScript() ?? scriptPath
             },
             port: { [weak self] in
-                self?.port ?? 9001
+                self?.port ?? 9001 // 兜底值，正常流程不会到这
             },
             healthPath: "/health",
             service: "mino-brain", // 校验 service 字段，防止误复用同端口其他服务
@@ -209,7 +266,7 @@ final class MCPProcessManager {
             environment: { [weak self] in
                 self?.serverEnvironment ?? [:]
             },
-            logTag: "MCP",
+            logTag: "MCP"
         )
         let daemon = PythonDaemon(config: config)
         daemon.onStateChange = { [weak self] daemonState in

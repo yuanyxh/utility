@@ -137,7 +137,8 @@ EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachm
 
 NOTE_EXTENSIONS = (".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml")
 
-DEFAULT_TIMEOUT = 60.0
+# 通过环境变量 SERVER_TIMEOUT 可覆盖（Swift 层从 GeneralConfig.httpTimeout 读取）
+DEFAULT_TIMEOUT = float(os.environ.get("SERVER_TIMEOUT", "60.0"))
 
 SUMMARY_LLM_MODEL = summary_model()
 
@@ -169,7 +170,8 @@ HOT_RETENTION_DAYS = 180
 
 ARCHIVE_INTERVAL_HOURS = 24
 
-DEFAULT_USER_ID = "yuanyxh"
+# 空字符串 = 由 Swift 层通过环境变量注入（传入当前系统用户名）
+DEFAULT_USER_ID = os.environ.get("UTILITY_USER_ID", "")
 
 CONTRADICTION_SIMILARITY_THRESHOLD = 0.8
 

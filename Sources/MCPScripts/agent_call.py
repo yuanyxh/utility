@@ -27,7 +27,8 @@ logger = setup_logging("agent_call")
 # 单次 agent 调用超时（秒）。不限制 MCP 检索轮次（保质量优先），
 # 深挖记忆库 + 写长文整体可能较久。25 分钟上限防「无限挂起」，
 # 超时杀进程并报错，避免任务挂起数小时。
-AGENT_TIMEOUT = 1500
+# 通过环境变量 AGENT_TIMEOUT 可覆盖（Swift 层从 GeneralConfig.aiTimeout 读取）
+AGENT_TIMEOUT = int(os.environ.get("AGENT_TIMEOUT", "1500"))
 
 
 def call_agent(

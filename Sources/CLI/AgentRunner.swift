@@ -77,11 +77,15 @@ enum AgentRunner {
 
     /// 清理 T 状态（stopped）的残留进程。允许多实例运行。
     private static func cleanupStaleAgents() throws {
+        // 动态获取当前进程路径，构造匹配模式
+        let currentPath = ProcessInfo.processInfo.arguments.first ?? "utility"
+        let matchPattern = "\(currentPath) -a"
+
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = [
             "-c",
-            "pgrep -f '/Applications/Utility.app/Contents/MacOS/utility -a' | grep -vx $$ | grep -vx $PPID",
+            "pgrep -f '\(matchPattern)' | grep -vx $$ | grep -vx $PPID",
         ]
         let pipe = Pipe()
         p.standardOutput = pipe
@@ -132,7 +136,7 @@ enum AgentRunner {
     private static func terminateChildAndExit(_ sig: Int32) {
         if childPID > 0 {
             kill(childPID, SIGTERM)
-            usleep(200_000)  // 给子进程退出时间，兜底强杀
+            usleep(200_000) // 给子进程退出时间，兜底强杀
             kill(childPID, SIGKILL)
         }
         Darwin.exit(128 + sig)

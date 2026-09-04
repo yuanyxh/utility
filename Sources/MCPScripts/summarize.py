@@ -57,7 +57,8 @@ logger = _log_setup("summarize")
 
 NOTES_DIR = Path(notes_dir())
 
-MEMORY_SERVER_URL = os.environ.get("MEMORY_SERVER_URL", "http://localhost:9001")
+# 空字符串 = 由 Swift 层通过环境变量注入，未注入时禁用相关功能
+MEMORY_SERVER_URL = os.environ.get("MEMORY_SERVER_URL", "")
 
 SUMMARY_EXCLUDE_DIRS = {
     "Self_Data",

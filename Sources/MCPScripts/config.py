@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import os
 
-# 公共默认值（与拆分前各文件硬编码一致）
-_DEFAULT_SUMMARY_MODEL = "deepseek-v4-flash"
-_DEFAULT_SUMMARY_API_URL = "https://api.deepseek.com"
-_DEFAULT_NOTES_DIR = "~/Documents/selfdata/notes"
-_DEFAULT_DATA_DIR = "~/.config/utility"
+# 空字符串 = 由 Swift 层通过环境变量注入，未注入时禁用相关功能
+_DEFAULT_SUMMARY_MODEL = ""
+_DEFAULT_SUMMARY_API_URL = ""
+_DEFAULT_NOTES_DIR = ""
+_DEFAULT_DATA_DIR = ""
 
 
 def get(key: str, default: str = "") -> str:
@@ -47,11 +47,17 @@ def summary_api_url(default: str = _DEFAULT_SUMMARY_API_URL) -> str:
 
 
 def notes_dir(default: str = _DEFAULT_NOTES_DIR) -> str:
-    return os.path.expanduser(get("NOTES_DIR", default))
+    raw = get("NOTES_DIR", default)
+    if not raw:
+        return ""
+    return os.path.expanduser(raw)
 
 
 def data_dir(default: str = _DEFAULT_DATA_DIR) -> str:
-    return os.path.expanduser(get("UTILITY_DATA_DIR", default))
+    raw = get("UTILITY_DATA_DIR", default)
+    if not raw:
+        return ""
+    return os.path.expanduser(raw)
 
 
 def summary_exclude_tags() -> set[str]:

@@ -39,15 +39,17 @@ public struct AppConfig: Codable {
 
 public struct MCPConfig: Codable {
     var enabled: Bool = true
-    var port: Int = 9001
+    /// 本地 MCP 服务端口，0 = 自动检测可用端口
+    var port: Int = 0
 
-    // 数据存储路径
-    var qdrantPath: String = "~/Documents/selfdata/database/qdrant_data"
-    var knowledgeBasePath: String = "~/Documents/selfdata/notes"
+    // 数据存储路径（空字符串 = 未配置，使用 ~./utility/ 推导）
+    var qdrantPath: String = ""
+    var knowledgeBasePath: String = ""
 
-    // fastembed 模型缓存
-    var fastembedCacheDir: String = "~/.cache/fastembed_cache"
-    var embedderModel: String = "sentence-transformers/all-MiniLM-L6-v2"
+    /// fastembed 模型缓存（空字符串 = 未配置，使用 ~/.cache/utility/fastembed/）
+    var fastembedCacheDir: String = ""
+    /// 空字符串 = 使用内置默认模型
+    var embedderModel: String = ""
 
     // 记忆生命周期
     var hotRetentionDays: Int = 180
@@ -58,7 +60,7 @@ public struct MCPConfig: Codable {
     var summaryHour: Int = 17
     var summaryStatsOnly: Bool = false
 
-    // 总结排除 tag（跳过含这些 tag 的记忆）
+    /// 总结排除 tag（跳过含这些 tag 的记忆）
     var excludeTags: [String] = []
 
     // 进程守护
@@ -70,11 +72,11 @@ public struct MCPConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
-        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 9001
-        qdrantPath = try c.decodeIfPresent(String.self, forKey: .qdrantPath) ?? "~/Documents/selfdata/database/qdrant_data"
-        knowledgeBasePath = try c.decodeIfPresent(String.self, forKey: .knowledgeBasePath) ?? "~/Documents/selfdata/notes"
-        fastembedCacheDir = try c.decodeIfPresent(String.self, forKey: .fastembedCacheDir) ?? "~/.cache/fastembed_cache"
-        embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? "sentence-transformers/all-MiniLM-L6-v2"
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
+        qdrantPath = try c.decodeIfPresent(String.self, forKey: .qdrantPath) ?? ""
+        knowledgeBasePath = try c.decodeIfPresent(String.self, forKey: .knowledgeBasePath) ?? ""
+        fastembedCacheDir = try c.decodeIfPresent(String.self, forKey: .fastembedCacheDir) ?? ""
+        embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? ""
         hotRetentionDays = try c.decodeIfPresent(Int.self, forKey: .hotRetentionDays) ?? 180
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
@@ -90,10 +92,31 @@ public struct MCPConfig: Codable {
 public struct GeneralConfig: Codable {
     var language: String = ""
 
+    /// 日志配置
+    /// 日志文件最大大小（字节），0 = 不限制
+    var logMaxSize: Int = 10 * 1024 * 1024
+    /// 日志备份数量
+    var logBackupCount: Int = 3
+
+    /// HTTP 超时配置
+    /// HTTP 请求默认超时（秒），0 = 不限制
+    var httpTimeout: TimeInterval = 30
+    /// HTTP 请求重试次数
+    var httpRetryCount: Int = 0
+
+    /// AI 客户端超时
+    /// AI API 请求超时（秒），0 = 不限制
+    var aiTimeout: TimeInterval = 120
+
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
+        logMaxSize = try c.decodeIfPresent(Int.self, forKey: .logMaxSize) ?? 10 * 1024 * 1024
+        logBackupCount = try c.decodeIfPresent(Int.self, forKey: .logBackupCount) ?? 3
+        httpTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .httpTimeout) ?? 30
+        httpRetryCount = try c.decodeIfPresent(Int.self, forKey: .httpRetryCount) ?? 0
+        aiTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .aiTimeout) ?? 120
     }
 }
 
@@ -143,7 +166,8 @@ public struct ProviderConfig: Codable {
 public struct ModelProxyConfig: Codable {
     var enabled: Bool = false
     var url: String = "" // 兼容：providers 为空时的单一上游地址
-    var port: Int = 8080 // 本地代理监听端口
+    /// 本地代理监听端口，0 = 自动检测可用端口
+    var port: Int = 0
     /// providers 路由表，默认取第一个作为兜底（未匹配 model 时）
     var providers: [ProviderConfig] = []
 
@@ -152,7 +176,7 @@ public struct ModelProxyConfig: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
-        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 8080
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
         providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? []
     }
 }
@@ -165,7 +189,8 @@ public struct ArticleConfig: Codable {
     var enabled: Bool = false
     /// agent CLI 命令模板（占位符 {system_prompt_file}/{prompt_file} 由脚本替换）。
     /// ⚠️ GUI/LaunchAgent 启动的子进程 PATH 不含用户工具目录，主命令须写绝对路径。
-    var agentCli: String = "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
+    /// 空字符串 = 未配置，启用时报错提示用户配置。
+    var agentCli: String = ""
     var retries: Int = 5
     /// 生成后启用 LLM-as-Judge 管道式评估（素材校验 + 文章二次检测）
     var judge: Bool = true
@@ -174,7 +199,7 @@ public struct ArticleConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
+        agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? ""
         retries = try c.decodeIfPresent(Int.self, forKey: .retries) ?? 5
         judge = try c.decodeIfPresent(Bool.self, forKey: .judge) ?? true
     }
@@ -354,7 +379,7 @@ public enum TaskExecConfig: Codable {
         case "py": self = .py(cmd)
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)",
+                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)"
             )
         }
     }

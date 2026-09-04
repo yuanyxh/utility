@@ -6,7 +6,8 @@ import Foundation
 /// - 非 2xx 状态码抛 HTTPError
 /// - retryCount > 0 时失败自动重试
 enum HTTP {
-    static let defaultUserAgent = "Utility/1.1 (macOS; +https://github.com/nousresearch/hermes-agent)"
+    /// 防反爬 UA，不含版本号和仓库信息
+    static let defaultUserAgent = "Utility (macOS)"
 
     struct Response {
         let data: Data
