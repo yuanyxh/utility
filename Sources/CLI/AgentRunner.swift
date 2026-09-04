@@ -9,10 +9,17 @@ import Foundation
 /// 4. Spawn agent subprocess with stdin/stdout/stderr passthrough
 /// 5. On agent exit → stop watcher → exit
 enum AgentRunner {
+    /// 当前 Agent 子进程 PID（供信号处理清理用）
+    static var childPID: Int32 = 0
+
     /// Entry point called from UtilityCLI.run().
     static func run(agentCommand: String, projectDir: String?) throws {
         let projectPath = projectDir.map { ($0 as NSString).expandingTildeInPath }
             ?? FileManager.default.currentDirectoryPath
+
+        // 0. 清理 T 状态（stopped）的残留进程
+        try cleanupStaleAgents()
+        installSignalHandlers()
 
         // 1. Ensure deps.sqlite exists
         let dbPath = try prepareDatabase(projectPath: projectPath)
@@ -66,6 +73,71 @@ enum AgentRunner {
         return dbPath
     }
 
+    // MARK: - 防重与信号处理
+
+    /// 清理 T 状态（stopped）的残留进程。允许多实例运行。
+    private static func cleanupStaleAgents() throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [
+            "-c",
+            "pgrep -f '/Applications/Utility.app/Contents/MacOS/utility -a' | grep -vx $$ | grep -vx $PPID",
+        ]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let pids = String(data: data, encoding: .utf8)?
+            .split(whereSeparator: \.isNewline).map(String.init) ?? []
+        guard !pids.isEmpty else { return }
+
+        for pid in pids {
+            if processState(pid: pid)?.contains("T") == true {
+                kill(Int32(pid) ?? 0, SIGKILL)
+                print("🧹 清理 AgentRunner 残留 (PID: \(pid))")
+            }
+        }
+    }
+
+    private static func processState(pid: String) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ps")
+        p.arguments = ["-o", "stat=", "-p", pid]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            return String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
+        }
+    }
+
+    /// 终端会话关闭（SIGHUP）/ 终止（SIGTERM）时清理子进程并退出，防孤儿残留。
+    private static func installSignalHandlers() {
+        signal(SIGHUP) { _ in
+            AgentRunner.terminateChildAndExit(SIGHUP)
+        }
+        signal(SIGTERM) { _ in
+            AgentRunner.terminateChildAndExit(SIGTERM)
+        }
+    }
+
+    private static func terminateChildAndExit(_ sig: Int32) {
+        if childPID > 0 {
+            kill(childPID, SIGTERM)
+            usleep(200_000)  // 给子进程退出时间，兜底强杀
+            kill(childPID, SIGKILL)
+        }
+        Darwin.exit(128 + sig)
+    }
+
     // MARK: - Agent spawn
 
     /// Spawn agent as a child process with full TUI passthrough.
@@ -101,6 +173,7 @@ enum AgentRunner {
 
         do {
             try process.run()
+            childPID = process.processIdentifier
 
             // Process default creates a new process group for the child, which puts it
             // in the background — reads from stdin get SIGTTIN → stopped (T state).
@@ -110,6 +183,7 @@ enum AgentRunner {
             kill(process.processIdentifier, SIGCONT)
 
             process.waitUntilExit()
+            childPID = 0
 
             // Restore ourselves as the terminal foreground process group
             tcsetpgrp(STDIN_FILENO, getpgrp())

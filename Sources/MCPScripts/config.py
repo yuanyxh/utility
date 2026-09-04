@@ -52,3 +52,9 @@ def notes_dir(default: str = _DEFAULT_NOTES_DIR) -> str:
 
 def data_dir(default: str = _DEFAULT_DATA_DIR) -> str:
     return os.path.expanduser(get("UTILITY_DATA_DIR", default))
+
+
+def summary_exclude_tags() -> set[str]:
+    """从环境变量 SUMMARY_EXCLUDE_TAGS 读取排除 tag 列表（逗号分隔）。"""
+    raw = get("SUMMARY_EXCLUDE_TAGS", "")
+    return {t.strip() for t in raw.split(",") if t.strip()}

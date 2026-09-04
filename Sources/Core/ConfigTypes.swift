@@ -58,6 +58,9 @@ public struct MCPConfig: Codable {
     var summaryHour: Int = 17
     var summaryStatsOnly: Bool = false
 
+    // 总结排除 tag（跳过含这些 tag 的记忆）
+    var excludeTags: [String] = []
+
     // 进程守护
     var maxRestarts: Int = 3
     var restartDelayMs: Int = 2000
@@ -164,6 +167,8 @@ public struct ArticleConfig: Codable {
     /// ⚠️ GUI/LaunchAgent 启动的子进程 PATH 不含用户工具目录，主命令须写绝对路径。
     var agentCli: String = "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
     var retries: Int = 5
+    /// 生成后启用 LLM-as-Judge 管道式评估（素材校验 + 文章二次检测）
+    var judge: Bool = true
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -171,6 +176,7 @@ public struct ArticleConfig: Codable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? "/opt/homebrew/bin/claude -p --output-format text --append-system-prompt-file {system_prompt_file}"
         retries = try c.decodeIfPresent(Int.self, forKey: .retries) ?? 5
+        judge = try c.decodeIfPresent(Bool.self, forKey: .judge) ?? true
     }
 }
 

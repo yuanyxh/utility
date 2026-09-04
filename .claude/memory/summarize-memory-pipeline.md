@@ -11,6 +11,7 @@ tags: [summarize, memory-pipeline, aggregate, refine, architecture]
 ## 关键机制
 - **数据源**：`fetch_memories()` 拉 `/api/memories/recent?since=<today-3d>&limit=200`（SUMMARY_MEMORY_DAYS=3, LIMIT=200）
 - **content 键**：REST API 返回的记忆正文在 `memory` 键（非 `content`），`_build_facts_text_v2` 用 `m.get('memory') or m.get('content')`——曾误读 content 键导致正文全空、LLM 编造（2026-08-04 修复，commit 1628e7f）
+- **tag 过滤（excludeTags）**：2026-09-04 新增，从 `config.yaml` 的 `mcp.excludeTags` 读取排除 tag 列表，含这些 tag 的记忆不进入总结。环境变量 `SUMMARY_EXCLUDE_TAGS`（逗号分隔）由 Swift 侧 `AppDelegate` 传入。函数 `_filter_by_tags()` 在 `_filter_processed()` 之后调用。
 - **阶段1 聚合（`_run_aggregate_v2`）**：分批聚合 + 递归合并（≤3 轮收敛，组数单调不增）；facts 带 `[MM-DD]` 日期前缀、组内按时间排序、关键节点标日期；retain 过滤抽 `_filter_retain`
 - **阶段2 逐组精炼（`_run_refine`）**：每组独立走「关键词提炼 → 检索 Extracts → 归并/新建判断 → think enable 生成」，单组失败不中断（写 `流水线错误日志.jsonl`）。`search_extracts` 纯 Python 大小写不敏感子串匹配，零外部依赖；`_decide_merge` 无命中直接新建、有命中调 LLM 判断，判断失败兜底 merge hits[0]
 - **merge 写入契约**：`_gen_merge` 返回 `{title, content}` 不含 target，`_run_refine` 的 merge 分支**必须补 `item["target"] = decision["target"]`** 供 `_write_articles_v2` 定位写入——曾漏补导致 33 个归并全部 KeyError（2026-08-06 修复）

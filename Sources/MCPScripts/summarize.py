@@ -28,6 +28,7 @@ from pathlib import Path
 from config import (
     data_dir,
     notes_dir,
+    summary_exclude_tags,
 )
 from log_utils import (
     setup_logging as _log_setup,
@@ -440,6 +441,35 @@ def _filter_processed(memories: list[dict]) -> list[dict]:
         if flags & PROCESSED_BIT_SUMMARIZED:
             continue
         kept.append(m)
+    return kept
+
+
+def _filter_by_tags(memories: list[dict]) -> list[dict]:
+    """跳过含排除 tag 的记忆（工作流/格式类，非技术知识）。
+
+    排除 tag 列表从环境变量 SUMMARY_EXCLUDE_TAGS 读取（逗号分隔），
+    或从 config.yaml 的 mcp.excludeTags 配置读取。
+    """
+    exclude = summary_exclude_tags()
+    if not exclude:
+        return memories
+    kept = []
+    skipped = 0
+    for m in memories:
+        tags = set(m.get("metadata", {}).get("tags", []))
+        if tags & exclude:
+            skipped += 1
+            logger.debug(
+                "tag 过滤跳过: tags=%s | %s",
+                tags & exclude,
+                str(m.get("memory", ""))[:50],
+            )
+        else:
+            kept.append(m)
+    if skipped:
+        logger.info(
+            f"tag 过滤跳过 {skipped} 条（排除 tag: {exclude}），剩余 {len(kept)} 条"
+        )
     return kept
 
 
@@ -1775,16 +1805,19 @@ def main():
         print("过去 3 天无新记忆，跳过总结")
         return
 
-    # 输入过滤：跳过已处理 + 质量门（宁缺毋滥），仅收集通过记忆的 id
+    # 输入过滤：跳过已处理 + 排除 tag + 质量门（宁缺毋滥），仅收集通过记忆的 id
     skipped_processed = len(recent_memories)
     recent_memories = _filter_processed(recent_memories)
     skipped_processed -= len(recent_memories)
+    skipped_tags = len(recent_memories)
+    recent_memories = _filter_by_tags(recent_memories)
+    skipped_tags -= len(recent_memories)
     skipped_quality = len(recent_memories)
     recent_memories = _filter_memory_quality(recent_memories)
     skipped_quality -= len(recent_memories)
-    if skipped_processed or skipped_quality:
+    if skipped_processed or skipped_tags or skipped_quality:
         logger.info(
-            f"输入过滤：已处理跳过 {skipped_processed}，低质丢弃 {skipped_quality}，"
+            f"输入过滤：已处理跳过 {skipped_processed}，tag 过滤跳过 {skipped_tags}，低质丢弃 {skipped_quality}，"
             f"剩余 {len(recent_memories)} 条"
         )
     consumed_ids = [m["id"] for m in recent_memories if m.get("id")]

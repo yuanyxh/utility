@@ -20,6 +20,10 @@ import shlex
 import subprocess
 import tempfile
 
+from log_utils import setup_logging
+
+logger = setup_logging("agent_call")
+
 # 单次 agent 调用超时（秒）。不限制 MCP 检索轮次（保质量优先），
 # 深挖记忆库 + 写长文整体可能较久。25 分钟上限防「无限挂起」，
 # 超时杀进程并报错，避免任务挂起数小时。
@@ -33,7 +37,13 @@ def call_agent(
 
     system 总是写入临时文件；user 若模板含 {prompt_file} 则写文件，
     否则经 stdin 传入。命令完全由模板决定，脚本不追加任何参数。
+
+    注意：agent CLI 应限制工具权限，只允许读取和 MCP 工具，禁止写文件。
     """
+    # 输出调试文件目录
+    debug_dir = os.path.expanduser("~/.cache/utility/agent_debug")
+    os.makedirs(debug_dir, exist_ok=True)
+
     with tempfile.NamedTemporaryFile(
         "w", suffix=".txt", delete=False, encoding="utf-8"
     ) as f:
@@ -54,8 +64,11 @@ def call_agent(
         else:
             stdin = user.encode("utf-8")
 
-        cmd = shlex.split(agent_template.format(**kwargs))
+        # 构建完整命令：模板
+        base_cmd = agent_template.format(**kwargs)
+        cmd = shlex.split(base_cmd)
         try:
+            logger.info("调用 agent CLI: cmd=%s", " ".join(cmd))
             proc = subprocess.run(
                 cmd,
                 input=stdin,
@@ -64,17 +77,34 @@ def call_agent(
                 timeout=AGENT_TIMEOUT,
             )
         except subprocess.TimeoutExpired:
+            logger.error("agent CLI 超时(%ds): cmd=%s", AGENT_TIMEOUT, " ".join(cmd))
             raise SystemExit(
                 f"[agent 错误] 超时({AGENT_TIMEOUT}s) 已终止 cmd={' '.join(cmd)}"
             )
         if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace")
+            logger.error(
+                "agent CLI 失败: exit=%d, stderr=%s", proc.returncode, stderr[:500]
+            )
             raise SystemExit(
-                f"[agent 错误] exit={proc.returncode} cmd={' '.join(cmd)}\n"
-                + proc.stderr.decode("utf-8", errors="replace")
+                f"[agent 错误] exit={proc.returncode} cmd={' '.join(cmd)}\n" + stderr
             )
         text = proc.stdout.decode("utf-8", errors="replace").strip()
         if not text:
+            logger.error("agent CLI 输出为空: cmd=%s", " ".join(cmd))
             raise SystemExit("[agent 错误] 输出为空")
+
+        # 保存调试文件
+        import time
+
+        timestamp = int(time.time())
+        debug_file = os.path.join(debug_dir, f"agent_output_{timestamp}.txt")
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(
+                f"[System Prompt]\n{system}\n\n[User Prompt]\n{user}\n\n[Output]\n{text}"
+            )
+        logger.info("agent CLI 输出: %d字符, 调试文件: %s", len(text), debug_file)
+
         return text
     finally:
         try:

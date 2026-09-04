@@ -137,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if mcp.summaryStatsOnly {
             args.append("--stats-only")
         }
+        let excludeTagsStr = mcp.excludeTags.joined(separator: ",")
         let cmd = PythonScriptRunner.shellCommand(
             script: scriptPath,
             arguments: args,
@@ -147,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 "SUMMARY_MODEL": model,
                 "MEMORY_SERVER_URL": serverURL,
                 "UTILITY_DATA_DIR": AppPaths.configDir.path,
+                "SUMMARY_EXCLUDE_TAGS": excludeTagsStr,
             ],
         )
 
@@ -188,17 +190,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             script: prepareScript,
             arguments: ["--topic", topicPath, "--out", factsPath, "--agent", "'\(agent)'"],
         )
+        let genArgs = [
+            "--soul", soulPath,
+            "--src", factsPath,
+            "--topic", "\"$TOPIC\"",
+            "--out", articlesDir,
+            "--retries", "\(article.retries)",
+        ] + (article.judge ? ["--judge"] : []) + ["--agent", "'\(agent)'"]
         let genCmd = PythonScriptRunner.shellCommand(
             script: genScript,
-            arguments: [
-                "--soul", soulPath,
-                "--src", factsPath,
-                "--out", articlesDir,
-                "--retries", "\(article.retries)",
-                "--agent", "'\(agent)'",
-            ],
+            arguments: genArgs,
         )
-        let cmd = prepareCmd + " && " + genCmd
+        // --topic 取 topic.md 全文（prepare 素材的主题来源），shell 定义变量后传给 gen
+        let cmd = prepareCmd + " && TOPIC=\"$(cat \"\(topicPath)\")\" && " + genCmd
 
         let task = TaskConfig(
             name: "gen-article",
