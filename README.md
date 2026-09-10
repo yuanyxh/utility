@@ -106,10 +106,6 @@ tasks:
       type: sh
       command: ~/.hermes/scripts/utility-rss-daily.sh
     enabled: true
-
-# ---------- AI 提示词模板 ----------
-prompts:
-  templates: {}
 ```
 
 ### 配置示例：接入不同 AI 服务

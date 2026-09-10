@@ -55,6 +55,23 @@ modelProxy:
       models:
         - mimo-v2.5-pro
 
+  # 智能路由：用 weak 模型分类任务，自动选择 strong/weak 模型。
+  # 不配置或 enabled=false 则保持手动切换行为。
+  router:
+    enabled: false
+    # tier 名 → 模型名映射（引用 providers 中已配置的模型）
+    tiers:
+      strong: deepseek-v4-flash
+      weak: mimo-v2.5-pro
+    # 分类器配置（用哪个 provider 做分类、重试策略）
+    classifier:
+      provider: deepseek      # 引用 providers 中的 name
+      max_retries: 3
+      retry_delay_ms: 500     # 重试间隔（毫秒）
+      timeout_ms: 10000       # 单次分类请求超时（毫秒）
+    # 分类失败 fallback tier
+    default_tier: weak
+
 # ---------- 文章生成 ----------
 article:
   enabled: false

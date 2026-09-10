@@ -7,10 +7,8 @@ usage 记录 → proxy_usage.py；本入口保留 providers 路由 + HTTP 端点
 """
 
 import asyncio
-import datetime
 import json
 import os
-import sqlite3
 import sys
 import time
 
@@ -44,6 +42,7 @@ UPSTREAM_URL = os.environ.get("MODEL_PROXY_URL", "")  # 兼容：providers 为�
 # 路由规则：body.model 精确匹配某 provider.models → 该 provider（上游 model 用原值）；
 # 未匹配 → providers[0] 兜底，上游 model 用其 models[0]。
 PROVIDERS_JSON = os.environ.get("MODEL_PROXY_PROVIDERS", "")
+ROUTER_JSON = os.environ.get("MODEL_PROXY_ROUTER", "")  # 智能路由配置（JSON env）
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -62,6 +61,32 @@ def _load_providers() -> list[dict]:
 
 
 PROVIDERS = _load_providers()
+
+
+def _load_router() -> dict:
+    """加载智能路由配置。"""
+    if not ROUTER_JSON:
+        return {}
+    try:
+        return json.loads(ROUTER_JSON)
+    except json.JSONDecodeError:
+        logger.warning(json.dumps({"msg": "router_json_invalid", "error": "bad JSON"}))
+        return {}
+
+
+ROUTER = _load_router()
+# tier 名 → 模型名映射（从 ROUTER.tiers 读取，配置在 config.yaml modelProxy.router.tiers）
+TIERS = ROUTER.get("tiers", {})
+
+CLASSIFY_PROMPT_TEMPLATE = """根据以下用户消息，判断任务类型。只输出 `strong` | `weak`，禁止任何偏好，禁止输出其他内容，否则退回重走。
+
+## 分类标准
+- strong：需要深度推理、多步分析、复杂调试、架构设计、创造性写作
+- weak：日常编码、简单问答、工具执行、文件操作、格式化、重复性任务
+
+## 用户消息
+{last_user_message}
+"""
 
 
 def _resolve_provider(model: str) -> tuple[dict, str]:
@@ -84,6 +109,228 @@ def _resolve_provider(model: str) -> tuple[dict, str]:
         "apiFormat": "anthropic",
         "apiKey": "",
     }, model
+
+
+# ---------------------------------------------------------------------------
+# 智能路由：weak 模型分类 → 两级 tier 路由
+# ---------------------------------------------------------------------------
+
+
+def _find_provider_by_name(name: str) -> dict | None:
+    """按 name 查找 provider（用于分类器配置引用 providers 中的某个）。"""
+    for p in PROVIDERS:
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def _extract_last_user_message(messages: list) -> str:
+    """提取最后一条 user 消息内容（截断 500 字），跳过 tool_result。"""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                texts = [b.get("text", "") for b in content if b.get("type") == "text"]
+                content = " ".join(texts)
+            return str(content)[:500]
+    return ""
+
+
+def _is_tool_result_only(messages: list) -> bool:
+    """判断最后一条 user 消息是否为纯 tool_result 回传（无文本内容）。
+
+    Claude Code 工具执行后发 tool_result 块回传结果，模型此时在做机械性信息消化，
+    不需要深度推理，直接走 weak 模型。
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # 所有块都是 tool_result → 纯工具回传
+                return all(b.get("type") == "tool_result" for b in content)
+            # 字符串内容 → 不是纯 tool_result
+            return False
+    return False
+
+
+async def _classify_anthropic(prompt: str, provider: dict, timeout_ms: int) -> str:
+    """Anthropic 格式分类请求。"""
+    url = f"{provider['url']}/messages"
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    api_key = provider.get("apiKey", "")
+    if api_key:
+        headers["x-api-key"] = api_key
+    body = {
+        "model": provider["models"][0],
+        "max_tokens": 10,
+        "thinking": {"type": "disabled"},  # 禁用 thinking，加速分类响应
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
+            data = await resp.json()
+            status = resp.status
+            content = data.get("content", [{}])
+            result = content[0].get("text", "").strip().lower() if content else ""
+            logger.info(json.dumps({
+                "msg": "classify_response",
+                "format": "anthropic",
+                "url": url,
+                "status": status,
+                "result": result,
+                "raw_preview": str(data)[:300],
+            }))
+            if result in ("strong", "weak"):
+                return result
+            raise ValueError(f"classify_invalid_response: status={status} result={result}")
+
+
+async def _classify_openai(prompt: str, provider: dict, timeout_ms: int) -> str:
+    """OpenAI 格式分类请求。"""
+    url = f"{provider['url']}/chat/completions"
+    headers = {"content-type": "application/json"}
+    api_key = provider.get("apiKey", "")
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+    body = {
+        "model": provider["models"][0],
+        "max_tokens": 10,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
+            data = await resp.json()
+            status = resp.status
+            choices = data.get("choices", [])
+            result = choices[0].get("message", {}).get("content", "").strip().lower() if choices else ""
+            logger.info(json.dumps({
+                "msg": "classify_response",
+                "format": "openai",
+                "url": url,
+                "status": status,
+                "result": result,
+                "raw_preview": str(data)[:300],
+            }))
+            if result in ("strong", "weak"):
+                return result
+            raise ValueError(f"classify_invalid_response: status={status} result={result}")
+
+
+async def _classify_task(request_body: dict) -> str | None:
+    """用 weak 模型分类任务。返回 'strong'/'weak'，失败返回 None。"""
+    classifier_cfg = ROUTER.get("classifier", {})
+    provider_name = classifier_cfg.get("provider", "")
+    provider = _find_provider_by_name(provider_name)
+    if not provider:
+        logger.warning(json.dumps({"msg": "classify_provider_not_found", "provider": provider_name}))
+        return None
+
+    messages = request_body.get("messages", [])
+    last_msg = _extract_last_user_message(messages)
+    if not last_msg:
+        return "weak"  # 无用户消息，直接走弱模型
+
+    prompt = CLASSIFY_PROMPT_TEMPLATE.format(last_user_message=last_msg)
+    api_format = provider.get("apiFormat", "anthropic")
+    timeout_ms = classifier_cfg.get("timeout_ms", 10000)
+    max_retries = classifier_cfg.get("max_retries", 3)
+    retry_delay = classifier_cfg.get("retry_delay_ms", 500) / 1000
+    provider_url = provider.get("url", "")
+    provider_model = provider.get("models", ["unknown"])[0]
+
+    logger.info(json.dumps({
+        "msg": "classify_request",
+        "provider": provider_name,
+        "url": f"{provider_url}/messages",
+        "model": provider_model,
+        "api_format": api_format,
+        "prompt_preview": prompt[:200],
+        "timeout_ms": timeout_ms,
+    }))
+
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            if api_format == "openai":
+                result = await _classify_openai(prompt, provider, timeout_ms)
+            else:
+                result = await _classify_anthropic(prompt, provider, timeout_ms)
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            logger.info(json.dumps({
+                "msg": "classify_result",
+                "provider": provider_name,
+                "result": result,
+                "latency_ms": latency_ms,
+                "attempt": attempt + 1,
+            }))
+            return result
+        except Exception as e:
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            logger.warning(json.dumps({
+                "msg": "classify_retry",
+                "provider": provider_name,
+                "attempt": attempt + 1,
+                "latency_ms": latency_ms,
+                "error": str(e),
+            }))
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+    logger.warning(json.dumps({
+        "msg": "classify_failed",
+        "provider": provider_name,
+        "max_retries": max_retries,
+    }))
+    return None  # 全部失败，fallback weak
+
+
+async def _route_by_tier(request_body: dict) -> tuple[dict, str] | None:
+    """智能路由入口。返回 (provider, model_name) 或 None（使用原始 _resolve_provider）。"""
+    if not ROUTER.get("enabled"):
+        return None
+
+    # 0. Classifier 候选直接走 weak（与 _is_classifier_candidate 同一逻辑源，消除 Two derivations）
+    if _is_classifier_candidate(request_body):
+        tier = ROUTER.get("default_tier", "weak")
+        model_name = TIERS.get(tier)
+        if model_name:
+            provider = _find_provider_for_model(model_name)
+            if provider:
+                return provider, model_name
+
+    # 0.5. 纯 tool_result 回传直接走 weak（机械性信息消化，不需要深度推理）
+    if _is_tool_result_only(request_body.get("messages", [])):
+        tier = ROUTER.get("default_tier", "weak")
+        model_name = TIERS.get(tier)
+        if model_name:
+            provider = _find_provider_for_model(model_name)
+            if provider:
+                return provider, model_name
+
+    # 1. LLM 分类
+    tier = await _classify_task(request_body)
+
+    # 2. 分类失败 fallback
+    if tier is None:
+        default_tier = ROUTER.get("default_tier", "weak")
+        logger.warning(json.dumps({"msg": "classify_fallback", "tier": default_tier}))
+        tier = default_tier
+
+    model_name = TIERS.get(tier)
+    if model_name:
+        provider = _find_provider_for_model(model_name)
+        if provider:
+            return provider, model_name
+    return None
+
+
+def _find_provider_for_model(model_name: str) -> dict | None:
+    """按模型名查找所属 provider。"""
+    for p in PROVIDERS:
+        if model_name in p.get("models", []):
+            return p
+    return None
 
 
 _logged_first_body: bool = False
@@ -114,10 +361,30 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # 检测客户端 API 格式（anthropic / openai）
     api_format = _detect_api_format(request_body)
 
-    # 按 body.model 路由 provider；未匹配 → 默认 provider 且上游 model 用其 models[0]
-    provider, upstream_model = _resolve_provider(request_body.get("model", ""))
+    # 智能路由：weak 模型分类 → 自动选择 strong/weak 模型
+    original_model = request_body.get("model", "")
+    tier_result = await _route_by_tier(request_body)
+    if tier_result:
+        # router 返回了 (provider, model_name) — 直接使用，跳过 _resolve_provider
+        provider, upstream_model = tier_result
+        request_body["model"] = upstream_model
+        logger.info(json.dumps({
+            "msg": "tier_classify",
+            "original_model": original_model,
+            "routed_model": upstream_model,
+            "provider": provider.get("name", ""),
+            "signals": {
+                "message_count": len(request_body.get("messages", [])),
+                "tool_count": len(request_body.get("tools", [])),
+                "has_thinking": "thinking" in request_body or "reasoning_effort" in request_body,
+            },
+        }))
+    else:
+        # router 未命中（disabled / 用户手动 /model）→ 走原有 _resolve_provider
+        provider, upstream_model = _resolve_provider(request_body.get("model", ""))
+        request_body["model"] = upstream_model
+
     provider_format = provider.get("apiFormat", "anthropic")
-    request_body["model"] = upstream_model
     body_bytes = json.dumps(request_body).encode()
 
     # 构建上游 URL

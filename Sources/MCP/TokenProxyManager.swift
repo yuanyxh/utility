@@ -94,6 +94,39 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
+    /// 路由配置序列化为 JSON 传给 Python（config.yaml modelProxy.router）。
+    private func routerJSON() -> String? {
+        guard let router = proxyConfig?.router, router.enabled else { return nil }
+        // 用原始 JSON 编码，保留 snake_case key
+        struct ClassifierPayload: Encodable {
+            let provider: String
+            let max_retries: Int
+            let retry_delay_ms: Int
+            let timeout_ms: Int
+        }
+        struct RouterPayload: Encodable {
+            let enabled: Bool
+            let tiers: [String: String]
+            let classifier: ClassifierPayload
+            let default_tier: String
+        }
+        let c = router.classifier
+        let classifier = ClassifierPayload(
+            provider: c.provider,
+            max_retries: c.maxRetries,
+            retry_delay_ms: c.retryDelayMs,
+            timeout_ms: c.timeoutMs
+        )
+        let payload = RouterPayload(
+            enabled: router.enabled,
+            tiers: router.tiers,
+            classifier: classifier,
+            default_tier: router.defaultTier
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// 脚本专属环境变量（公共部分由 PythonScriptRunner.baseEnvironment() 提供）。
     /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
     private var proxyEnvironment: [String: String] {
@@ -103,6 +136,9 @@ final class TokenProxyManager {
             overrides["MODEL_PROXY_PROVIDERS"] = providersJSON
         } else {
             overrides["MODEL_PROXY_URL"] = upstreamURL
+        }
+        if let routerJSON = routerJSON() {
+            overrides["MODEL_PROXY_ROUTER"] = routerJSON
         }
         return PythonScriptRunner.environment(overrides: overrides)
     }

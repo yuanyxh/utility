@@ -178,8 +178,59 @@ public struct ModelProxyConfig: Codable {
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
         providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? []
+        router = try c.decodeIfPresent(ModelRouterConfig.self, forKey: .router)
+    }
+
+    /// 智能路由配置（可选，不配置则保持手动切换行为）
+    var router: ModelRouterConfig?
+}
+
+/// 模型智能路由：用 weak 模型分类任务，自动选择 strong/weak 模型。
+public struct ModelRouterConfig: Codable {
+    var enabled: Bool = false
+    /// tier 名 → 模型名映射（如 {"strong":"mimo-v2.5-pro","weak":"deepseek-v4-flash"}）
+    var tiers: [String: String] = [:]
+    /// 分类器配置
+    var classifier: RouterClassifier = RouterClassifier()
+    /// 分类失败 fallback tier
+    var defaultTier: String = "weak"
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        tiers = try c.decodeIfPresent([String: String].self, forKey: .tiers) ?? [:]
+        classifier = try c.decodeIfPresent(RouterClassifier.self, forKey: .classifier) ?? RouterClassifier()
+        defaultTier = try c.decodeIfPresent(String.self, forKey: .defaultTier) ?? "weak"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, tiers, classifier, defaultTier
     }
 }
+
+/// 分类器配置：用哪个 provider 做分类、重试策略。
+public struct RouterClassifier: Codable {
+    /// 引用 providers 中的 name（如 "deepseek"）
+    var provider: String = ""
+    var maxRetries: Int = 3
+    var retryDelayMs: Int = 500
+    var timeoutMs: Int = 10000
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? ""
+        maxRetries = try c.decodeIfPresent(Int.self, forKey: .maxRetries) ?? 3
+        retryDelayMs = try c.decodeIfPresent(Int.self, forKey: .retryDelayMs) ?? 500
+        timeoutMs = try c.decodeIfPresent(Int.self, forKey: .timeoutMs) ?? 10000
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider, maxRetries, retryDelayMs, timeoutMs
+    }
+}
+
 
 // MARK: - Article
 
