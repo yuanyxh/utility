@@ -207,6 +207,28 @@
   这些常量正常链路上不可达，只在手写 env 或 Swift 漏字段时生效。缺字段必须记
   `router_config_missing` 告警——同一语义两个权威源、其中一个长期不执行，漂移就没人发现
 
+### 模型名回显（proxy_model_tag.py）
+
+把路由**实际选中**的模型名追加到助手回复末尾，解决「客户端 statusLine 显示的是自选
+model、看不出代理路由到了哪个上游」的问题。改这块要守住的边界：
+
+- **改动响应体长度就必须剔除 `content-length`**：从上游复制响应头时，若带上
+  `content-length`，客户端会按**旧长度**读取，把注入的尾段整段截掉。有 tagger 时交由
+  aiohttp 重新分帧。这个坑只在「上游确实返回了该头」时暴露——真实 Anthropic SSE 多为
+  chunked 所以线上不一定复现，**mock 上游必须带 content-length 才能测出来**
+- **`feed()` 与 `finish()` 两个出口都要写**：`message_delta` / `message_stop` 被暂存在
+  注入器里（因为只有 `message_delta` 带 `stop_reason`），漏写 `finish()` 的返回值等于
+  把流截断在 `content_block_stop`，客户端会一直等流结束
+- **注入用新增独立文本块，不改写已有块**：不依赖「最后一个块是文本块」的假设。在
+  tool_use 块上追加 `text_delta` 是非法事件；新增块的 index 取「已见最大 index + 1」，
+  index 由任意带 index 的事件推进（兼容省略 `content_block_start` 的网关）
+- **只注入 end_turn**：tool_use 轮的文本会进 agent loop 被模型回读，模型名混进去
+  既无意义又污染历史
+- **只注入 anthropic 输出格式**：注入体是 Anthropic 内容块。OpenAI 格式输出不注入
+  （无实际使用方，不值得再写一套流状态机）
+- 新增/修改注入逻辑后跑 `/tmp/test_model_tag.py`（单元，含跨 chunk 切分与流完整性）
+  与 `/tmp/e2e/tag_client.py`（端到端，含 fastpath 排除与 tool_use 零注入）
+
 ### 项目扫描
 - 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册
 - **提取流水线（三项优化）**：

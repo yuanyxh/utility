@@ -265,6 +265,19 @@ modelProxy:
 决策原因逐条记入 `token_usage.sqlite` 的 `route_tier` / `route_reason` / `profile_hash`
 三列，可用 `SELECT route_tier, route_reason, COUNT(*) FROM api_usage GROUP BY 1,2`
 核对路由行为。`enabled: false` 时行为与不启用本特性完全一致。
+
+**模型名回显**：客户端的模型指示器（statusLine、`/model`）显示的是你**请求的**模型，
+看不出代理实际路由到了哪个上游。路由接管时，代理会在每条**最终回复**末尾追加一行
+实际使用的模型名，例如：
+
+```
+任务完成。
+
+deepseek-v4-flash
+```
+
+只在 `end_turn` 的最终回复上追加——工具调用轮不追加（那一轮的文本会被模型回读，
+模型名混进去没有意义）。客户端不接代理、路由未接管、或响应是 OpenAI 格式时不追加。
 </details>
 
 ---

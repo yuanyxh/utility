@@ -30,7 +30,12 @@ from proxy_protocol import (
     _inject_classifier_disabled,
     _inject_system_prompt,
 )
-from proxy_router import ProfileStore, RouteDecision, build_router
+from proxy_model_tag import (
+    AnthropicSSETagger,
+    tag_json_response,
+    tag_message_dict,
+)
+from proxy_router import ProfileStore, Reason, RouteDecision, build_router
 from proxy_usage import DB_PATH, init_db, record_gateway_log, record_usage
 from db import conn as dbconn
 
@@ -351,15 +356,40 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         await asyncio.sleep(RETRY_DELAY)
                         continue
 
+                    # 模型名注入：把**实际路由到**的模型名写进助手回复末尾。
+                    # 客户端只能看到自己请求的 model（如 mimo-v2.5），路由改写到哪个
+                    # 上游模型此前不可见，这里是唯一的展示通道。
+                    # 只在「路由真的接管了」时开启——没接管说明用的就是客户端自己
+                    # 选的模型，用户无需被告知。classifier 快速路径是 Claude Code 的
+                    # safety 调用，不是用户的回复，排除。
+                    # 仅 anthropic 输出格式：注入体是 Anthropic 内容块。
+                    tagger = None
+                    if (
+                        api_format == "anthropic"
+                        and upstream_resp.status < 400
+                        and route is not None
+                        and route.provider is not None
+                        and route.reason != Reason.FASTPATH_CLASSIFIER
+                    ):
+                        tagger = AnthropicSSETagger(upstream_model)
+
                     # 流式转发响应
-                    response = web.StreamResponse(
-                        status=upstream_resp.status,
-                        headers={
+                    # 注入会让响应体比上游长：上游若带 content-length（一次性 JSON，
+                    # 或某些网关的 SSE），照抄过来客户端会按旧长度截断，把注入的尾段
+                    # 直接吃掉。有 tagger 时交由 aiohttp 重新分帧（HTTP/1.1 走 chunked）。
+                    forward_headers = {
+                        k: v
+                        for k, v in upstream_resp.headers.items()
+                        if k.lower() not in {"transfer-encoding", "content-encoding"}
+                    }
+                    if tagger is not None:
+                        forward_headers = {
                             k: v
-                            for k, v in upstream_resp.headers.items()
-                            if k.lower()
-                            not in {"transfer-encoding", "content-encoding"}
-                        },
+                            for k, v in forward_headers.items()
+                            if k.lower() != "content-length"
+                        }
+                    response = web.StreamResponse(
+                        status=upstream_resp.status, headers=forward_headers
                     )
                     await response.prepare(request)
 
@@ -401,16 +431,22 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         continue
                                     parts.extend(converter.feed(oc))
                                 if parts:
-                                    payload = "".join(parts).encode()
-                                    await response.write(payload)
-                                    collected_body.extend(payload)
+                                    raw = "".join(parts).encode()
+                                    # collected_body 收未注入的原始流：usage / 输出
+                                    # 预览的提取口径不被注入内容影响
+                                    collected_body.extend(raw)
+                                    await response.write(
+                                        tagger.feed(raw) if tagger else raw
+                                    )
                             # 收尾：content_block_stop / message_delta / message_stop
                             if not stream_error:
                                 tail = converter.finish()
                                 if tail:
-                                    payload = "".join(tail).encode()
-                                    await response.write(payload)
-                                    collected_body.extend(payload)
+                                    raw = "".join(tail).encode()
+                                    collected_body.extend(raw)
+                                    await response.write(
+                                        tagger.feed(raw) if tagger else raw
+                                    )
                         elif convert_resp and not is_sse:
                             # 非流式转换：先收完整 JSON body 再整体转换
                             raw_body = bytearray()
@@ -423,20 +459,56 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         resp_json
                                     )
                                 )
+                                if tagger is not None:
+                                    tag_message_dict(converted, tagger.model)
                                 payload = json.dumps(converted).encode()
                             except Exception as e:
                                 stream_error = f"convert_error: {e}"
                                 payload = bytes(raw_body)
                             await response.write(payload)
                             collected_body.extend(payload)
+                        elif tagger is not None and not is_sse:
+                            # 非流式直通：注入前需先解析 JSON，故整体缓冲。
+                            # 上游本就是一次性 JSON，不存在流式延迟损失。
+                            # tagger 只在 status < 400 时创建，故此处必为成功响应。
+                            buf = bytearray()
+                            async for chunk in upstream_resp.content.iter_any():
+                                buf.extend(chunk)
+                            collected_body.extend(buf)
+                            await response.write(
+                                tag_json_response(bytes(buf), tagger.model)
+                            )
                         else:
                             # 直通（同格式）
                             async for chunk in upstream_resp.content.iter_any():
-                                await response.write(chunk)
                                 # 收集 SSE chunks 以提取 usage；400 等错误响应为非 SSE JSON，
                                 # 也收集以记录响应体定位错误（临时增强）
                                 if is_sse or upstream_resp.status >= 400:
                                     collected_body.extend(chunk)
+                                if tagger is None:
+                                    await response.write(chunk)
+                                else:
+                                    out = tagger.feed(chunk)
+                                    if out:
+                                        await response.write(out)
+
+                        # 放行暂存的尾段事件（含注入）。必须在上面的流循环之后、
+                        # write_eof 之前——暂存的正是 message_delta / message_stop，
+                        # 不放行客户端会认为流没有结束。
+                        if tagger is not None and is_sse and not stream_error:
+                            tail_out = tagger.finish()
+                            if tail_out:
+                                await response.write(tail_out)
+                            if tagger.injected:
+                                logger.debug(
+                                    json.dumps(
+                                        {
+                                            "msg": "model_tag_injected",
+                                            "model": upstream_model,
+                                            "tier": route.tier,
+                                        }
+                                    )
+                                )
                     except (
                         ConnectionResetError,
                         BrokenPipeError,

@@ -104,6 +104,13 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
   - **classifier 快速路径**（`policy.classifierFastPath`，默认开）：结构上等同 Claude Code safety classifier 的请求（`_is_classifier_candidate`，单一事实源勿重新推导）直通 `defaultTier`，不建会话、不调分类器。这类请求 tools 为空且消息各异、指纹必然互不相同，走正常流程会为每条都发一次 LLM 分类调用，而它在工具批准的关键链路上
   - 诊断：`api_usage` 新增 `route_tier`/`route_reason`/`profile_hash` 三列（`ALTER TABLE` 幂等）+ `route_decision` 日志（结构化 reason，降档/保持/升档均可归因）
   - `router.enabled=false` 或未配置时 `build_router` 返回 None，走原 `_resolve_provider` 路径，行为与引入本特性前完全一致
+  - **模型名回显（`proxy_model_tag.py`）**：Claude Code 的 statusLine / `/model` 显示的是**客户端请求的** model（如 mimo-v2.5），路由实际改写到哪个上游模型此前不可见——代理知道真相却没有展示通道，故在响应末尾直接追加模型名（`AnthropicSSETagger`，形如 `"\n\ndeepseek-v4-flash"`，分隔符常量 `TAG_SEPARATOR`）
+    - **只在「路由真的接管了」时注入**（`route.provider is not None` 且 `reason != fastpath_classifier`），且仅 anthropic 输出格式。没接管说明用的就是客户端自选的模型，无需告知；classifier 快速路径是 Claude Code 的 safety 调用不是用户回复，排除
+    - **只注入 `stop_reason == end_turn`**（流式）／`stop_reason == "end_turn"`（非流式）。tool_use 轮不注入：那一轮的文本会进 agent loop 被模型回读，模型名混进去既无意义又污染历史
+    - **实现为追加独立文本块**（`content_block_start/delta/stop`，index 取已见最大 index + 1），不改写任何已有块——因此不依赖「最后一个块是文本块」这一假设（在 tool_use 块上追加 `text_delta` 是非法事件）。index 由**任意带 index 的事件**推进，不只是 `content_block_start`（部分兼容网关省略 start 事件）
+    - **注入时机靠「暂存尾段」实现**：`content_block_stop` 早于 `message_delta` 到达，而后者才带 `stop_reason`。故把 `message_delta` 起的事件暂存不写，流结束或出现非尾段事件时放行（命中 end_turn 则先注入）。`feed()` 与 `finish()` **两个出口都必须写**，否则丢的正是 `message_delta`/`message_stop`，客户端会认为流没结束
+    - ⚠️ **注入改变了响应体长度，必须剔除复制的 `content-length`**：上游若带该头（一次性 JSON，或某些网关的 SSE），照抄给客户端会按旧长度截断、把注入的尾段整段吃掉。有 tagger 时交由 aiohttp 重新分帧（HTTP/1.1 走 chunked）。**此坑已由 mock 上游复现并回归覆盖**
+    - `collected_body` 收**未注入**的原始流，usage / 输出预览的提取口径不受注入内容影响
 - **协议转换**：客户端 anthropic ↔ provider openai 时 `ProtocolConverter` 双向转换（request_anthropic_to_openai / request_openai_to_anthropic / response_openai_to_anthropic）
 - **鉴权 key 替换**：转发按 provider 替换 apiKey（openai 用 `Authorization: Bearer`，anthropic 用 `x-api-key`），为空则透传客户端 key
 - **网关模型发现**：`GET /open/v1/models` 返回 providers 全部模型（Anthropic models API 格式）。**限制（v2.1.193 实测）**：Claude Code 对发现结果做客户端硬过滤（`/^(claude|anthropic)/i`），第三方模型（deepseek/mimo 等）全被滤掉、`/model` 选择器列不出——`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` 仅对 claude/anthropic 前缀模型生效；且 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`（值 `"1"`/`"0"` 均 truthy）会在 bootstrap 拦截模型发现。**切换第三方模型的正确姿势：`/model <名字>` 直接输入**（如 `/model mimo-v2.5-pro`），走 i5t 服务器探测（max_tokens:1 验证请求到代理）→ 代理按 body.model 路由
