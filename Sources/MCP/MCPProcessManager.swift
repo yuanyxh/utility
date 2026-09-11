@@ -266,7 +266,7 @@ final class MCPProcessManager {
             environment: { [weak self] in
                 self?.serverEnvironment ?? [:]
             },
-            logTag: "MCP"
+            logTag: "MCP",
         )
         let daemon = PythonDaemon(config: config)
         daemon.onStateChange = { [weak self] daemonState in

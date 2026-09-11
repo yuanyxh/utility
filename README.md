@@ -221,7 +221,50 @@ modelProxy:
       apiKey: ""
       models:
         - mimo-v2.5-pro
+  # 分级路由（可选）：按任务分类选档位，用一个便宜模型跑重复劳动、强模型兜推理。
+  # 判据全部来自 Anthropic / OpenAI 协议字段，不依赖任何特定客户端。
+  router:
+    enabled: false
+    # 档位定义。数组顺序 = 强度从高到低（索引 0 最强）；model 须在 providers 中。
+    # description 会被拼进分类 prompt，因此加档（如 medium）只需改配置。
+    tiers:
+      - name: strong
+        model: deepseek-v4-flash
+        description: 需要深度推理、多步分析、复杂调试、架构设计
+      - name: weak
+        model: mimo-v2.5-pro
+        description: 日常编码、简单问答、工具执行、文件操作
+    classifier:
+      provider: deepseek        # 用哪个 provider 做分类（引用 providers 的 name）
+      maxRetries: 3
+      timeoutMs: 10000
+    defaultTier: weak           # 分类失败兜底档
+    policy:
+      # 每次切档都会让上游前缀缓存失效、以整个上下文重付一次 prefill，
+      # 所以此值要按 provider 的缓存折扣反推（Anthropic 量级 ≈12，deepseek ≈4.5）
+      switchCostTurns: 12
+      # 检查点间隔必须 ≥ switchCostTurns，否则弱档段撑不到回本、降档恒亏
+      checkpointInterval: 8     # 每 N 轮强制升档一次，0=禁用
+      readonlyTools: []         # 只读工具白名单；留空 = 永不降档（最保守）
+    profile:
+      enabled: true             # 同类 agent（子 agent 重复劳动）按历史免检
+      minSamples: 5
+      window: 50                # 真实滑动窗口，升级率与预期轮数都只取窗口内样本
 ```
+
+**两级策略**：一级按任务分类并缓存到**会话**（system + 工具集 + 最近一条真实用户
+消息的指纹）——整个 agent loop 命中同一档位，用户发出新指令时键随之变化、
+自动重新分类并解除升档锁定；二级在会话内按协议信号微调，且**档位只升不降**
+（除由只读工具白名单放行的至多一次降档）。子 agent 的 system prompt 与工具集与
+主 agent 不同，按其指纹自动分离统计，历史升级率低的一类任务直接免检走低档。
+
+降档需要同时满足：白名单非空、本轮工具全在白名单内、最近一次工具回传的
+`is_error` 全部为 `False`（协议未提供该字段时视为未知、不予放行）、预期剩余轮数
+够回本、历史工具调用配对完整。任何一条不满足都保持原档。
+
+决策原因逐条记入 `token_usage.sqlite` 的 `route_tier` / `route_reason` / `profile_hash`
+三列，可用 `SELECT route_tier, route_reason, COUNT(*) FROM api_usage GROUP BY 1,2`
+核对路由行为。`enabled: false` 时行为与不启用本特性完全一致。
 </details>
 
 ---

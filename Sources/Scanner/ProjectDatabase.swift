@@ -155,7 +155,7 @@ final class ProjectDatabase {
             try Int.fetchOne(
                 db,
                 sql: "SELECT fail_count FROM failed_files WHERE path = ?",
-                arguments: [path]
+                arguments: [path],
             ) ?? 0
         }
     }

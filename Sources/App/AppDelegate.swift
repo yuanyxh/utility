@@ -128,11 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let trigger = "0 \(hour) * * *"
         let ai = ConfigManager.shared.config.ai
         let apiKey = ai.apiKey
-        let notesDir: String
-        if mcp.knowledgeBasePath.isEmpty {
-            notesDir = AppPaths.configDir.appendingPathComponent("notes").path
+        let notesDir: String = if mcp.knowledgeBasePath.isEmpty {
+            AppPaths.configDir.appendingPathComponent("notes").path
         } else {
-            notesDir = (mcp.knowledgeBasePath as NSString).expandingTildeInPath
+            (mcp.knowledgeBasePath as NSString).expandingTildeInPath
         }
         let baseURL = ai.baseURL.isEmpty ? "" : ai.baseURL
         let model = ai.model.isEmpty ? "" : ai.model

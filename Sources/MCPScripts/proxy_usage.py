@@ -16,6 +16,7 @@ import aiohttp
 from config import data_dir, deepseek_api_key, summary_model, summary_api_url
 from db import conn as dbconn
 from log_utils import setup_logging
+from proxy_protocol import strip_injected_rules
 
 # ---------------------------------------------------------------------------
 # 配置（与拆分前 token_proxy.py 一致）
@@ -64,7 +65,10 @@ def init_db():
             tool_name TEXT,
             parent_id INTEGER,
             actual_user_input TEXT,
-            error_message TEXT
+            error_message TEXT,
+            route_tier TEXT,
+            route_reason TEXT,
+            profile_hash TEXT
         );
         CREATE TABLE IF NOT EXISTS usage_field_cache (
             provider TEXT NOT NULL,
@@ -115,6 +119,15 @@ def init_db():
         conn.commit()
     if "error_message" not in columns:
         conn.execute("ALTER TABLE api_usage ADD COLUMN error_message TEXT")
+        conn.commit()
+
+    # 迁移：分级路由诊断列（route_tier 档位 / route_reason 决策原因 / profile_hash
+    # 会话所属 agent 类型指纹）。是排查「为什么这轮走了这个模型」的唯一手段——
+    # 路由决策日志在 token_proxy.log 中滚动丢弃，这两列是可回溯的历史。
+    if "route_tier" not in columns:
+        conn.execute("ALTER TABLE api_usage ADD COLUMN route_tier TEXT")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN route_reason TEXT")
+        conn.execute("ALTER TABLE api_usage ADD COLUMN profile_hash TEXT")
         conn.commit()
 
     # 迁移：移除已废弃的三字段（session_id/project_path/estimated_cost_usd）
@@ -505,7 +518,10 @@ def _extract_user_text(content) -> str:
             if isinstance(b, dict) and b.get("type") == "text"
         ]
         content = " ".join(text_parts) if text_parts else ""
-    content_str = str(content)
+    # 先剥注入的规则块，**再**清标签：规则块在真实用户输入之前，若先跑标签清理，
+    # 规则正文里的尖括号可能把 `---rule_end` 一并吃掉，导致剥离函数找不到结束标记
+    # 而把块后面的真实用户输入一起丢弃。
+    content_str = strip_injected_rules(str(content))
     # 跳过所有 system-reminder 类型的标签（包括 <system-reminder> 和 <local-command-caveat> 等）
     while True:
         start = content_str.find("<")
@@ -646,6 +662,9 @@ async def record_usage(
     error_message: str = "",
     tool_name_override: str = "",
     api_format: str = "anthropic",
+    route_tier: str = "",
+    route_reason: str = "",
+    profile_hash: str = "",
 ):
     """记录一次 API 调用的 token 用量。"""
     if status != 200:
@@ -707,6 +726,9 @@ async def record_usage(
         "tool_name": tool_name,
         "parent_id": None,
         "error_message": error_message,
+        "route_tier": route_tier,
+        "route_reason": route_reason,
+        "profile_hash": profile_hash,
     }
 
     try:
@@ -717,8 +739,9 @@ async def record_usage(
                 "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
                 "output_type, stop_reason, response_valid, model, input_tokens, "
                 "output_tokens, cache_read_tokens, cache_write_tokens, "
-                "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "latency_ms, api_format, request_level, tool_name, parent_id, error_message, "
+                "route_tier, route_reason, profile_hash) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record["timestamp"],
                     record["request_type"],
@@ -742,6 +765,9 @@ async def record_usage(
                     record["tool_name"],
                     record["parent_id"],
                     record["error_message"],
+                    record["route_tier"],
+                    record["route_reason"],
+                    record["profile_hash"],
                 ),
             )
             record_id = cursor.lastrowid

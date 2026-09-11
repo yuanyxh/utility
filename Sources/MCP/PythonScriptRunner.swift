@@ -163,7 +163,7 @@ enum PythonScriptRunner {
     static func shellCommand(
         script: String,
         arguments: [String] = [],
-        environmentOverrides: [String: String] = [:]
+        environmentOverrides: [String: String] = [:],
     ) -> String {
         var parts: [String] = []
         // 排序保证输出稳定（KEY 顺序不影响 bash 语义）
@@ -185,7 +185,7 @@ enum PythonScriptRunner {
         scriptPath: String,
         arguments: [String],
         stdin: Data? = nil,
-        timeout: TimeInterval
+        timeout: TimeInterval,
     ) throws -> Data {
         guard let pythonPath = resolvePython() else {
             throw PythonProcessError.pythonUnavailable

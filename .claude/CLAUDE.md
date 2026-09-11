@@ -88,6 +88,22 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 ### Token Proxy（token_proxy.py）
 - aiohttp 反向代理，拦截 Claude Code API 请求记录 token 用量
 - **模型路由（providers）**：config.yaml `modelProxy.providers` 定义路由表（`ProviderConfig`：name/url/apiFormat/anthropic|openai/apiKey/models）。`body.model` 精确匹配某 provider.models → 该 provider（上游 model 用原值）；未匹配 → `providers[0]` 兜底（上游 model 用其 models[0]）。`MODEL_PROXY_PROVIDERS` env 由 Swift `TokenProxyManager.providersJSON()` 从 config 序列化；providers 为空回退旧单上游 `MODEL_PROXY_URL`（兼容）
+- **分级路由（router，2026-09-11）**：`MODEL_PROXY_ROUTER` env（Swift `TokenProxyManager.routerJSON()` 从 `modelProxy.router` 序列化；JSON 侧统一 snake_case，`tiers` 编码为**数组**保序——索引 0 最强，Dictionary 编码无序不能用）。新增两模块：`proxy_normalize.py`（请求归一化）+ `proxy_router.py`（策略状态机）
+  - **判据只允许来自协议契约**：工具失败 `tool_result.is_error`、打转 `tool_use.name`+入参、循环位置消息结构、agent 身份 `system`+`tools`。**禁止**匹配工具名（Read/Grep/Glob）、工具输出文本（BUILD SUCCEEDED/Traceback）、客户端注入标记（`<system-reminder>`/续接提示词）——这些会随客户端版本与语言失效并把代理绑死在单一客户端。内容层信号一律走配置正则（`escalatePatterns`，默认空）
+  - **切档成本模型（勿凭直觉改阈值）**：切档让上游前缀缓存失效、以整个上下文重付一次 prefill。设 Ps/Pw 为两档输入未命中价、c 为缓存折扣（命中/未命中，Anthropic≈0.10、deepseek≈0.26）：双向切档回本 `M* = 2 + [Pw + Ps(1-2c)] / [c(Ps-Pw)]`，**与上下文规模无关**，对价差极不敏感、对 c 极敏感（c=0.10 时 M*≈12，c=0.26 时 M*≈4.5）；单向降档仅需 2-3 轮
+  - **会话内 tier 单调不降**：降档只有一条通道且至多一次——要求「`readonlyTools` 非空 + 本轮所有 tool 都在白名单 + 最近 tool_result 的 `is_error` 全为 `False` + profile 预期剩余轮数 ≥ `switchCostTurns` + 历史配对完整」。升档由终止性信号触发：`is_error=True` / `stop_reason` 不在 `normalStopReasons` / 连续同名同参工具达 `loopStreak` / 距上次检查点达间隔 / 配置正则命中。**升档同样受「历史配对完整」检查**（换 provider/格式与降档同理），不通过则保持原档并记 `route_switch_blocked`
+  - **`checkpointInterval` 必须与 `switchCostTurns` 自洽**：检查点比回本线密，弱档段永远撑不到回本 → 降档恒亏。已降档会话的检查点间隔自动取 `max(checkpointInterval, switchCostTurns)` 并按「距上次检查点的轮数」计（不是 `turn % interval`，后者会漏触发）
+  - **`is_error` 三态**：True=失败 / False=确认成功 / **None=协议未提供**（OpenAI 的 `role:"tool"` 消息无该字段）。**None 不得当作 False**，否则降档会在缺失败信号时静默发生——这是本层最容易写错、后果最严重的一处
+  - 会话身份：`task_key` = system+tools+`keyParts` 指定分量（默认 `latest_user`——工具回传轮不算真实用户轮所以 loop 内恒定，用户发新指令才变化 → 自动分界、升档锁定随之解除；改用 `first_user` 则同一对话里追加指令不开新会话）。**出现未知分量时整组退回默认**，只剔除会让键退化成「每个 agent 类型一个常量键」。`profile_key` = system+tools 指纹（主/子 agent 天然隔离）
+  - **profile 统计是真滑动窗口**：`history` 为带 `maxlen` 的 deque，升级率与预期轮数都只取窗口内样本（不是「全生命周期比率 + 最近 N 条中位数」两个口径混用）；`_profiles` 有 `maxProfiles` 上限；表 `router_profile` 在会话淘汰与**进程停机**（SIGTERM/atexit → `finalize_all`）时落库，SQLite 写经 `asyncio.to_thread` 移出事件循环
+  - **分类器有总预算**（`classifier.totalBudgetMs`，默认 3000ms）：单次超时 × 重试次数会叠加在转发前的关键链路上；预算耗尽即走 `defaultTier`。`defaultTier` 由配置决定（模板默认 weak），是「失败时省钱还是保质量」的取舍
+  - **`decide(body, api_format)` 内部完成归一化**：归一化、快速路径判定、状态机全在同一 try 内——畸形请求体只会退化为「不接管」，不会让代理吐 500 且不转发
+  - **配置契约**：`proxy_router.CONTRACT_KEYS` 声明 Python 读取的全部键，与 `TokenProxyManager.routerJSON()` 的 `*Payload` 字段由 `scripts/check-router-config-contract.py` 交叉校验（读两侧真实源码，`--selftest` 反向验证检查器本身）。Python 侧 `FALLBACK_*` 是**兜底不是默认值**，缺字段记 `router_config_missing` 告警
+  - **路由决策在规则注入之前**（`handle_proxy`：163 检测格式 → 170 decide → 236 注入），所以注入块既不进指纹、也不会因改 `System_Prompts.md` 而重置会话
+  - **切档前配对检查**：历史中 tool_use 与 tool_result 配对不完整时拒绝切档（严格上游会 400，2026-09-10 已知故障模式）
+  - **classifier 快速路径**（`policy.classifierFastPath`，默认开）：结构上等同 Claude Code safety classifier 的请求（`_is_classifier_candidate`，单一事实源勿重新推导）直通 `defaultTier`，不建会话、不调分类器。这类请求 tools 为空且消息各异、指纹必然互不相同，走正常流程会为每条都发一次 LLM 分类调用，而它在工具批准的关键链路上
+  - 诊断：`api_usage` 新增 `route_tier`/`route_reason`/`profile_hash` 三列（`ALTER TABLE` 幂等）+ `route_decision` 日志（结构化 reason，降档/保持/升档均可归因）
+  - `router.enabled=false` 或未配置时 `build_router` 返回 None，走原 `_resolve_provider` 路径，行为与引入本特性前完全一致
 - **协议转换**：客户端 anthropic ↔ provider openai 时 `ProtocolConverter` 双向转换（request_anthropic_to_openai / request_openai_to_anthropic / response_openai_to_anthropic）
 - **鉴权 key 替换**：转发按 provider 替换 apiKey（openai 用 `Authorization: Bearer`，anthropic 用 `x-api-key`），为空则透传客户端 key
 - **网关模型发现**：`GET /open/v1/models` 返回 providers 全部模型（Anthropic models API 格式）。**限制（v2.1.193 实测）**：Claude Code 对发现结果做客户端硬过滤（`/^(claude|anthropic)/i`），第三方模型（deepseek/mimo 等）全被滤掉、`/model` 选择器列不出——`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` 仅对 claude/anthropic 前缀模型生效；且 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`（值 `"1"`/`"0"` 均 truthy）会在 bootstrap 拦截模型发现。**切换第三方模型的正确姿势：`/model <名字>` 直接输入**（如 `/model mimo-v2.5-pro`），走 i5t 服务器探测（max_tokens:1 验证请求到代理）→ 代理按 body.model 路由
@@ -102,7 +118,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `session_id`/`project_path` 采集已废弃（Claude Code 请求 metadata 无此字段，全为空），`/usage/by_project` 端点与 Swift `ProjectCost` 已删除
 - 用户设置 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 使请求经代理转发
 - **分层记录模式**：`request_level` 字段区分 `core`（end_turn，最终回复）和 `process`（tool_use，工具调用）
-- **输入过滤**：`actual_user_input` 跳过续接提示词（"This session is being continued..."）和 `<system-reminder>` 标签
+- **输入过滤**：`actual_user_input` 跳过续接提示词（"This session is being continued..."）和 `<system-reminder>` 标签，并**剥离注入的规则块**（`proxy_protocol.strip_injected_rules`，标记常量 `RULE_START_MARK`/`RULE_END_MARK` 由注入方唯一定义）。剥离必须**早于**标签清理——规则正文里的尖括号若先把 `---rule_end` 吃掉，剥离函数找不到结束标记会把块后面的真实用户输入一并丢弃。注入块可达数千字符而摘取上限只有 100~500，不剥离则三个字段看到的全是守则开头
 - **错误记录**：`error_message` 字段存储 API 错误；SSE 流中断（ConnectionReset/BrokenPipe/RuntimeError/Cancelled）时记录异常类型与信息
 - **超时配置**：`total=300s`（5 分钟），`sock_connect=10s`，`sock_read=30s`，捕获 `ConnectionResetError`/`BrokenPipeError`/`asyncio.CancelledError`
 - **503 瞬时重试**：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"）时等待 0.5s 重试，最多 3 次（`proxy_retry` 日志）。根因：Claude Code 的 safety classifier 调用撞上上游 503 会导致 Bash 被拦截（2026-08-04 诊断：1090 请求中 25 个 503≈2.3%，latency 300-1300ms 快速拒绝，非超时）

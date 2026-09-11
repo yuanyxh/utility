@@ -13,6 +13,11 @@ import os
 from config import notes_dir
 from log_utils import setup_logging
 
+# 「如何读 Anthropic system 字段」的单一权威实现在归一化层，此处复用，
+# 避免同一事实两处推导（system 结构扩展时只改一处）。
+# 依赖方向：proxy_protocol → proxy_normalize（后者只依赖标准库，无环）。
+from proxy_normalize import system_to_text as _system_to_text
+
 # ---------------------------------------------------------------------------
 # 配置（与拆分前 token_proxy.py 一致）
 # ---------------------------------------------------------------------------
@@ -23,21 +28,42 @@ SYSTEM_PROMPTS_FILE = os.path.join(NOTES_DIR, "MCP", "System_Prompts.md")
 logger = setup_logging("token_proxy", json_format=True)
 
 
+#: 规则注入块的首尾标记。由注入方（本模块）定义，剥离方（proxy_usage 的用量
+#: 摘取）复用同一常量——避免「注入用什么标记」与「剥离认什么标记」两处推导。
+RULE_START_MARK = "---rule_start"
+RULE_END_MARK = "---rule_end"
+
+
+def strip_injected_rules(text: str) -> str:
+    """剥离 `_inject_system_prompt` 注入的规则块，保留其余用户文本。
+
+    注入块是一整份 `System_Prompts.md`（可达数千字符），而用量记录的摘取上限
+    只有 100~500 字符——不剥离的话 `context_summary` / `input_preview` /
+    `actual_user_input` 三个字段看到的全是守则开头，真正的用户输入被整个挤出。
+
+    支持剥离多块；未闭合的块丢弃到结尾（防残留半块）。
+    """
+    if not text or RULE_START_MARK not in text:
+        return text
+    out: list[str] = []
+    rest = text
+    while True:
+        i = rest.find(RULE_START_MARK)
+        if i < 0:
+            out.append(rest)
+            break
+        out.append(rest[:i])
+        j = rest.find(RULE_END_MARK, i + len(RULE_START_MARK))
+        if j < 0:
+            break  # 块未闭合 → 丢弃剩余部分，不把半块规则当用户输入
+        rest = rest[j + len(RULE_END_MARK) :]
+    return "".join(out).strip()
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _system_to_text(system) -> str:
-    """Anthropic system（string 或 text block 数组）→ 纯文本。"""
-    if isinstance(system, str):
-        return system
-    if isinstance(system, list):
-        return "\n".join(
-            b.get("text", "")
-            for b in system
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return ""
 
 
 class ProtocolConverter:
@@ -556,7 +582,9 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
             continue
         target_index = i
         # 注入规则
-        rule_block = "---rule_start\n" + _sys_prompt_content + "\n---rule_end\n\n"
+        rule_block = (
+            f"{RULE_START_MARK}\n" + _sys_prompt_content + f"\n{RULE_END_MARK}\n\n"
+        )
         if isinstance(content, str):
             msg["content"] = rule_block + content
         elif isinstance(content, list):

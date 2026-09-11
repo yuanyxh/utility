@@ -55,36 +55,100 @@ modelProxy:
       models:
         - mimo-v2.5-pro
 
-  # 智能路由：用 weak 模型分类任务，自动选择 strong/weak 模型。
-  # 不配置或 enabled=false 则保持手动切换行为。
+  # 分级路由：按任务分类选择档位，会话内「单调不降」。
+  # 不配置或 enabled=false 则保持手动切换行为（行为与引入本特性前完全一致）。
+  #
+  # 键名 camelCase / snake_case 两种写法都认（Yams 的 YAMLDecoder 不做键名转换，
+  # 因此解码侧对每个键都显式登记了两种拼写）。下面统一用 camelCase。
+  #
+  # 判据全部来自 Anthropic / OpenAI 协议字段（工具失败走 tool_result.is_error、
+  # 打转走工具名+入参、循环位置走消息结构），不含任何客户端产品实现细节，
+  # 因此可服务任意 agent 客户端与任意 OpenAI/Anthropic 格式请求。
   router:
     enabled: false
-    # tier 名 → 模型名映射（引用 providers 中已配置的模型）
+    # 档位定义。**数组顺序 = 强度从高到低**（索引 0 最强）。
+    # description 会被拼进分类 prompt，因此新增档位（如 medium）只需改配置。
+    # model 必须在上面 providers 的某个 models 列表里。
     tiers:
-      strong: deepseek-v4-flash
-      weak: mimo-v2.5-pro
-    # 分类器配置（用哪个 provider 做分类、重试策略）
+      - name: strong
+        model: deepseek-v4-flash
+        description: 需要深度推理、多步分析、复杂调试、架构设计
+      - name: weak
+        model: mimo-v2.5
+        description: 日常编码、简单问答、工具执行、文件操作
+    # 分类器配置
     classifier:
-      provider: deepseek      # 引用 providers 中的 name
-      max_retries: 3
-      retry_delay_ms: 500     # 重试间隔（毫秒）
-      timeout_ms: 10000       # 单次分类请求超时（毫秒）
-    # 分类失败 fallback tier
-    default_tier: weak
+      provider: deepseek        # 引用 providers 中的 name
+      maxRetries: 3
+      retryDelayMs: 500         # 重试间隔（毫秒）
+      timeoutMs: 10000          # 单次分类请求超时（毫秒）
+      # 分类器**总**时间预算（毫秒）。单次超时 × 重试次数会全部叠加在转发前的
+      # 关键链路上，故设总闸：预算耗尽即放弃分类走兜底档，不把请求卡死。
+      totalBudgetMs: 3000
+      # 分类 prompt 模板，支持 {tier_lines} 与 {last_user_message} 占位；
+      # 留空则用内置默认模板
+      promptTemplate: ''
+    # 分类失败 / 无分类器时的兜底档名；留空则取最后一档（最弱）
+    defaultTier: weak
 
-# ---------- 文章生成 ----------
-article:
-  enabled: false
-  # agent CLI 命令模板，占位符 {system_prompt_file}/{prompt_file} 由脚本替换。
-  # ⚠️ GUI/LaunchAgent 启动的任务子进程 PATH 不含 /opt/homebrew/bin 等用户工具目录，
-  # agent 主命令必须写绝对路径（如 /opt/homebrew/bin/claude），否则启动即失败。
-  # 空字符串 = 未配置，启用时报错提示用户配置。
-  agentCli: ''
-  # 生成后自动验证，硬门槛不满足自动重跑次数
-  retries: 5
-  # 生成后启用 LLM-as-Judge 管道式评估（素材校验 + 文章二次检测）
-  judge: true
+    policy:
+      # 结构判定的非 agent 请求（stream 为假 + 无 tools + messages ≤ 2，即 Claude Code
+      # 的 safety classifier 调用）直通兜底档，不建会话、不调分类器。
+      # 关闭它会让每条 classifier 请求多一次 LLM 分类调用，而该路径在工具批准的关键链路上。
+      classifierFastPath: true
+      # 双向切档回本轮数。定量依据：设 Ps/Pw 为两档输入未命中价、c 为缓存折扣
+      # （命中价/未命中价，Anthropic≈0.10、deepseek≈0.26），则
+      #   M* = 2 + [Pw + Ps(1-2c)] / [c(Ps-Pw)]
+      # 该式与上下文规模无关，对价差极不敏感、对 c 极敏感：
+      # c=0.10 时 M*≈12，c=0.26 时 M*≈4.5。按你的 provider 实际折扣反推。
+      switchCostTurns: 12
+      # 连续同名同参工具调用达到此数即判定打转 → 升档
+      loopStreak: 3
+      # 连续多少轮工具失败才升档。1 = 单次失败即升档（不推荐：is_error 是客户端按
+      # 「非零退出」判定的，grep 无匹配 / diff 有差异 / test 失败都会被标 true）
+      escalateErrorStreak: 2
+      # 每 N 轮强制升档一次（is_error 不可用时的主力兜底），0 = 禁用。
+      # 按「距上次检查点的轮数」计，不是绝对轮次；已降档的会话自动抬到
+      # switchCostTurns，保证弱档段撑得到回本，否则降档恒亏（见下）。
+      checkpointInterval: 8
+      # 内容层兜底正则（仅当 provider 不返回 is_error 时才需要）
+      escalatePatterns: []
+      # 只读工具白名单。**默认空 = 永不允许降档**（对通用 agent 最保守）；
+      # 填了才启用降档，且必须同时满足「已确认无失败」与「剩余轮数够回本」。
+      readonlyTools: []
+      # 正常终止原因；留空用协议默认 {end_turn, tool_use, stop_sequence}
+      normalStopReasons: []
+      # 切档前要求工具调用配对完整（防严格上游 400，已知故障模式）
+      requirePairedHistory: true
 
+    # 会话身份。合法分量：system / tools / first_user / latest_user / profile。
+    # 默认 latest_user：工具回传轮不算真实用户轮，所以整个 agent loop 内它恒定，
+    # 而用户发出新指令时它变化 → 自动分界、升档锁定随之解除。
+    # 换成 first_user 更抗客户端注入的中间用户轮，但同一对话里追加指令不再开新会话。
+    # ⚠️ 出现未知分量时整组退回默认（不会只剔除该项——那会让键退化成
+    #    「每个 agent 类型一个常量键」，所有会话共用一个状态）。
+    conversation:
+      keyParts: [system, tools, latest_user]
+      # 0 = 不限制会话数（与 ttlSeconds: 0 表示不过期一致）
+      maxSessions: 512
+      ttlSeconds: 7200
+
+    # agent 类型先验：profile_key = system+tools 指纹。子 agent 的 system prompt
+    # 与裁剪过的工具集与主 agent 天然不同，自动隔离，无需客户端配合。
+    # 历史升级率低于阈值的 profile 直接按先验档起步并跳过 LLM 分类——
+    # 重复劳动任务「第一次学、之后免检」。
+    profile:
+      enabled: true
+      minSamples: 5
+      # 真实滑动窗口：所有派生值（升级率、预期轮数）都只取窗口内样本，
+      # 不是「全生命周期比率 + 最近 N 条中位数」这种混用两个口径。
+      window: 50
+      upgradeRateThreshold: 0.1
+      priorTier: ''             # 留空 = 最低档
+      # 内存中保留的 profile 条目上限（有界，防本机任意进程驱动无界增长）
+      maxProfiles: 256
+
+# ---------- MCP ----------
 mcp:
   enabled: true
   # 本地 MCP 服务端口，0 = 自动检测可用端口
@@ -122,6 +186,7 @@ clipboard:
   - KeychainAccess
   hotkey: cmd+shift+c
   pollInterval: 0.3
+
 translation:
   hotkey: option+d
   hotkeyOCR: option+s
@@ -130,9 +195,10 @@ translation:
   firstLang: zh
   secondLang: en
   prompt: ''
+
 stage:
   moveOnDragOut: true
-# ------------------------------------------------------------------
+
 # 定时任务
 tasks: []
   # - name: 日报提醒
@@ -146,6 +212,6 @@ tasks: []
   #     type: sh
   #     command: rm -rf /tmp/myapp-*
 
-# ---------- MCP 记忆服务 ----------
+# ---------- RSS ----------
 rss:
   feeds: []
