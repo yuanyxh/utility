@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import os
+import threading
+from collections import OrderedDict
 
+import numpy as np
 from fastembed import TextEmbedding
 
 from log_utils import setup_logging
@@ -54,3 +57,45 @@ def _get_shared_embedder():
         except Exception as e:
             logger.warning(f"Shared embedder init failed (retry on next call): {e}")
     return _shared_embedder
+
+
+# ---------------------------------------------------------------------------
+# 查询向量缓存
+# ---------------------------------------------------------------------------
+
+#: 查询嵌入 LRU 容量（条）。0 表示不缓存。
+_QUERY_CACHE_SIZE = int(os.environ.get("EMBED_QUERY_CACHE_SIZE", "64"))
+_query_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+_query_cache_lock = threading.Lock()
+
+
+def embed_query(text: str) -> np.ndarray | None:
+    """嵌入单个查询串，带小容量 LRU。embedder 不可用时返回 None。
+
+    同一轮 agent 常对同一 query 并发调用多个检索工具（recall / project_notes /
+    project_search 都在提示里被要求「并行调用」），此前各自独立嵌入一次查询。
+    查询嵌入是纯函数、单条约 45ms，缓存可消除这类重复计算。
+    注意 mem0 内部走它自己的 embedder，不经过本函数，那一路无法共享。
+
+    返回 float32 ndarray。**调用方只读**——缓存里存的就是这个对象本身。
+    """
+    emb = _get_shared_embedder()
+    if emb is None:
+        return None
+
+    if _QUERY_CACHE_SIZE > 0:
+        with _query_cache_lock:
+            hit = _query_cache.get(text)
+            if hit is not None:
+                _query_cache.move_to_end(text)
+                return hit
+
+    vec = np.asarray(list(emb.embed([text]))[0], dtype=np.float32)
+
+    if _QUERY_CACHE_SIZE > 0:
+        with _query_cache_lock:
+            _query_cache[text] = vec
+            _query_cache.move_to_end(text)
+            while len(_query_cache) > _QUERY_CACHE_SIZE:
+                _query_cache.popitem(last=False)
+    return vec

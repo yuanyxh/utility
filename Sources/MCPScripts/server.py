@@ -26,7 +26,6 @@ import sys
 import time
 import asyncio
 import anyio
-import subprocess
 import sqlite3
 import httpx
 from datetime import datetime, timedelta
@@ -68,6 +67,7 @@ from server_embed import (
     EMBEDDER_DIMS,
     FASTEMBED_CACHE_DIR,
     _get_shared_embedder,
+    embed_query,
 )
 from server_search import (
     tool_project_search,
@@ -333,14 +333,30 @@ async def _ensure_hot_memory() -> bool:
     return False
 
 
+def _notes_snippet(text: str, needle: str, max_lines: int = 3) -> str:
+    """取前 max_lines 条含 needle 的行，格式与原 `grep -inF -m <max_lines>` 一致。
+
+    输出形如 `12:foo\\n45:bar`（行号:行内容，换行连接）；无命中返回空串。
+    """
+    if not needle:
+        return ""
+    hits: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if needle in line.lower():
+            hits.append(f"{line_no}:{line}")
+            if len(hits) >= max_lines:
+                break
+    return "\n".join(hits)
+
+
 def search_cold_layer(
     query: str, limit: int = 5, include_archived: bool = False
 ) -> list[dict]:
     results = []
-    emb = _get_shared_embedder() if qdrant else None
-    if qdrant and emb:
+    qvec = embed_query(query) if qdrant else None
+    if qdrant and qvec is not None:
         try:
-            vec = list(emb.embed(query))[0].tolist()
+            vec = qvec.tolist()
             qfilter = None
             if not include_archived:
                 qfilter = Filter(
@@ -375,6 +391,9 @@ def search_cold_layer(
     tokens = [t for t in query.split() if t]
     if not tokens:
         tokens = [query]
+    needles = [t.lower() for t in tokens]
+    head = needles[0]
+
     try:
         for root, dirs, files in os.walk(NOTES_DIR):
             dirs[:] = [
@@ -386,41 +405,28 @@ def search_cold_layer(
                 path = os.path.join(root, f)
                 rel = os.path.relpath(path, NOTES_DIR)
                 try:
-                    any_match = False
-                    for token in tokens:
-                        r = subprocess.run(
-                            ["grep", "-iFq", token, path],
-                            capture_output=True,
-                            timeout=DEFAULT_TIMEOUT,
-                        )
-                        if r.returncode == 0:
-                            any_match = True
-                            break
-                    if not any_match:
-                        continue
-                    r = subprocess.run(
-                        ["grep", "-inF", "-m", "3", tokens[0], path],
-                        capture_output=True,
-                        text=True,
-                        timeout=DEFAULT_TIMEOUT,
-                    )
-                    snippet = r.stdout.strip() if r.returncode == 0 else rel
-                    results.append(
-                        {
-                            "id": f"notes:{rel}",
-                            "content": snippet,
-                            "source_file": rel,
-                            "created_at": "",
-                            "type": "notes",
-                            "score": 0.5 + (len(tokens) / 100),
-                            "layer": "notes",
-                            "heat_score": DEFAULT_HEAT_SCORE,
-                        }
-                    )
-                except subprocess.TimeoutExpired:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        text = fh.read()
+                except OSError:
                     continue
-                except Exception:
+                # 任一词命中即算命中（等价于原 grep -iFq 的短路语义）。
+                # 原实现用 subprocess 逐文件逐词起 grep 进程，454 个文件 × N 词
+                # 实测 2.4s(N=1) / 4.5s(N=2) / 7.5s(N=4)，是 recall 的最大单项开销。
+                low = text.lower()
+                if not any(n in low for n in needles):
                     continue
+                results.append(
+                    {
+                        "id": f"notes:{rel}",
+                        "content": _notes_snippet(text, head) or rel,
+                        "source_file": rel,
+                        "created_at": "",
+                        "type": "notes",
+                        "score": 0.5 + (len(tokens) / 100),
+                        "layer": "notes",
+                        "heat_score": DEFAULT_HEAT_SCORE,
+                    }
+                )
     except Exception as e:
         logger.warning(f"Notes search failed: {e}")
     results.sort(key=_heat_sort_key, reverse=True)
@@ -709,11 +715,12 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
     if not hot_memory:
         return
     try:
+        # 不传 rerank：MEM0_CONFIG 未配置 reranker，mem0 内部条件
+        # `if rerank and self.reranker` 恒假 —— 传了是空操作，徒增误导。
         similar_raw = hot_memory.search(
             content,
             top_k=CONTRADICTION_TOP_K,
             threshold=0.0,
-            rerank=True,
             filters={"user_id": DEFAULT_USER_ID},
         )
         similar_list = (
@@ -1233,12 +1240,13 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
     results = []
     if hot_memory:
         try:
+            # 不传 rerank：MEM0_CONFIG 未配置 reranker，mem0 内部条件
+            # `if rerank and self.reranker` 恒假 —— 传了是空操作，徒增误导。
             hot_raw = hot_memory.search(
                 query,
                 filters={"user_id": DEFAULT_USER_ID},
                 top_k=limit,
                 threshold=0.0,
-                rerank=True,
             )
             hot = hot_raw if isinstance(hot_raw, list) else hot_raw.get("results", [])
             for r in hot:

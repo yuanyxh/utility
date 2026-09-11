@@ -75,6 +75,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 三个 `stripCommentsAndStrings`（Swift/Java/Kotlin）在块注释/字符串分支**保留 \n\r**，修复跨行注释塌缩导致的行号错位（正则提取器行号准确的地基）
 - AST 脚本节点加 start_line/end_line：`ast_extractor.py` 全部节点；`parse.mjs` symbol() 用 loc 展开（VariableDeclaration 用 decl.loc）；Vue 行号偏移补偿 `offset=content[:m.start(2)].count("\n")+lead_newlines`
 - 坑：Swift 编译器对 `if top.bodyDepth == nil { break }` 后直接 `if newDepth < top.bodyDepth` 的流分析在部分文件失效，统一改 `if let bodyDepth = top.bodyDepth, newDepth < bodyDepth`（四提取器对齐）
+- **向量检索的符号缓存键必须用业务字段，不能用 `symbols.id`**：全量扫描 `clearAll()` 与 `batchWriteFiles()` 都「先删后插」，同一符号每次重扫都拿到新自增 id；以 id 为键的 `symbol_embeddings` 会全部失效（曾 67438 行 0 行有效、占 132MB），下次向量检索重算全部符号（实测 349s）。现键 = `sha1(file_path|name|kind|signature|doc_comment)` = embedding 输入字段本身，**改这条必须保证键覆盖全部输入字段**
 
 ### Python 脚本统一入口（PythonScriptRunner + PythonDaemon）
 - **`PythonScriptRunner`**（Sources/MCP/PythonScriptRunner.swift）：所有 py 脚本的 venv 路径（`pythonVenvPath`）、脚本路径解析（`findScript`，bundle→dev fallback）、环境变量（`baseEnvironment` 公共 AI/路径 + `environment(overrides:)` 脚本专属）、shell 命令构造（`shellCommand`，TaskScheduler .sh 用）、一次性执行（`runCaptureOutput`，边读边存防 pipe 阻塞 + 超时 kill）统一收束于此

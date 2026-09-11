@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import threading
@@ -23,7 +24,7 @@ import numpy as np
 
 from db import conn as dbconn
 from log_utils import setup_logging
-from server_embed import _get_shared_embedder
+from server_embed import _get_shared_embedder, embed_query
 from synonyms import SYNONYM_MAP
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,8 @@ PROJECT_MARKER_FILE_SUFFIXES = (".csproj", ".sln")
 PROJECT_MARKER_DIR_SUFFIXES = (".xcodeproj", ".xcworkspace")
 _MAX_VECTOR_CACHE = 3
 _MAX_VECTOR_ROWS = 50000
+# 单次喂给 embedder 的文本条数（ONNX 推理分批，避免一次性构造过大的 batch）
+_EMBED_BATCH_SIZE = 32
 _symbol_embeddings: dict[str, tuple[list[dict], np.ndarray | None]] = {}
 _note_cache_lock = threading.Lock()
 
@@ -233,12 +236,82 @@ def _search_packages(db_path: str, query: str) -> list[dict]:
         ]
 
 
+def _symbol_cache_key(
+    file_path: str, name: str, kind: str, signature: str, doc: str
+) -> str:
+    """符号的稳定缓存键 —— 由「定义 embedding 输入的那些字段」派生。
+
+    刻意不用 `symbols.id`：该列是 GRDB 的 AUTOINCREMENT，而两条写入路径都会让
+    同一个符号拿到新 id —— ProjectScanner 全量扫描经 `clearAll()` 先
+    `DELETE FROM symbols` 再重插；batchWriteFiles 先按 file_path 删再重插。
+    以 id 为键时每次重扫所有 embedding 立即失效（实测边表 67438 行、有效 0 行、
+    占 132MB），下一次向量检索被迫重算全部符号（实测 349s）。
+
+    改用业务字段后，符号本身没变则重扫不触发重算；任一参与 embedding 文本的
+    字段变了，键随之改变、自然重算 —— 键即输入，不存在脏读。
+    """
+    raw = "\x1f".join((file_path, name, kind, signature, doc))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _ensure_symbol_embeddings_schema(conn: sqlite3.Connection) -> None:
+    """建边表；旧版按 symbol_id 建的边表直接丢弃重建。
+
+    旧行以 id 为键，无法映射到新的业务键；embedding 是纯派生数据（随时可重算），
+    丢弃的代价只是一次重算，留着则是永不复用的空间泄漏。
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(symbol_embeddings)")}
+    if cols and "sym_key" not in cols:
+        logger.info(
+            "[symbol_embeddings] dropping legacy symbol_id-keyed table "
+            "(derived data, recomputed on demand)"
+        )
+        conn.execute("DROP TABLE symbol_embeddings")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS symbol_embeddings (
+            sym_key TEXT PRIMARY KEY,
+            embedding BLOB NOT NULL
+        )
+    """)
+
+
+def _load_symbol_embeddings(conn: sqlite3.Connection) -> dict[str, bytes]:
+    """读出全部 embedding（稳定键 → BLOB）。"""
+    return {
+        row["sym_key"]: row["embedding"]
+        for row in conn.execute("SELECT sym_key, embedding FROM symbol_embeddings")
+    }
+
+
+def _prune_symbol_embeddings(
+    conn: sqlite3.Connection,
+    cached: dict[str, bytes],
+    live_keys: set[str],
+    truncated: bool,
+) -> None:
+    """删除不再被任何符号引用的 embedding，避免边表随重扫无界增长。"""
+    if truncated:
+        # 符号查询被 LIMIT 截断时 live_keys 不完整，清理会误删仍有效的行
+        return
+    stale = cached.keys() - live_keys
+    if not stale:
+        return
+    conn.executemany(
+        "DELETE FROM symbol_embeddings WHERE sym_key = ?", [(k,) for k in stale]
+    )
+    conn.commit()
+    for k in stale:
+        cached.pop(k, None)
+    logger.info(f"[symbol_embeddings] pruned {len(stale)} stale rows")
+
+
 def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | None]:
     """Persist symbol embeddings in SQLite, lazily fill missing ones.
 
-    1. Creates/uses symbol_embeddings side-table in deps.sqlite
-    2. Detects symbols without embeddings and computes them incrementally
-    3. Returns (symbols_list, embedding_matrix)
+    1. Creates/uses the symbol_embeddings side-table in deps.sqlite
+    2. Computes embeddings only for symbols whose stable key is absent
+    3. Prunes keys no longer referenced by any symbol
+    4. Returns (symbols_list, embedding_matrix)
     """
     emb = _get_shared_embedder()
     if emb is None:
@@ -249,88 +322,113 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+            _ensure_symbol_embeddings_schema(conn)
 
-            # 创建 side-table（与 GRDB 管理的 symbols 表解耦）
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS symbol_embeddings (
-                    symbol_id INTEGER PRIMARY KEY,
-                    embedding BLOB NOT NULL
-                )
-            """)
-
-            # 找出没有 embedding 的 symbol，增量计算
-            missing = conn.execute(
-                """
-                SELECT s.id, s.name, s.signature, COALESCE(s.doc_comment, '') AS doc
-                FROM symbols s LEFT JOIN symbol_embeddings se ON s.id = se.symbol_id
-                WHERE se.symbol_id IS NULL
-                LIMIT ?
-            """,
-                (_MAX_VECTOR_ROWS,),
-            ).fetchall()
-
-            if missing:
-                batches = [missing[i : i + 32] for i in range(0, len(missing), 32)]
-                for batch in batches:
-                    texts = []
-                    for r in batch:
-                        text = r["name"]
-                        if r["signature"]:
-                            text += " " + r["signature"]
-                        if r["doc"]:
-                            text += " " + r["doc"]
-                        texts.append(text)
-
-                    embeddings = list(emb.embed(texts))
-                    for r, vec in zip(batch, embeddings):
-                        vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
-                        conn.execute(
-                            "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, embedding) VALUES (?, ?)",
-                            (r["id"], vec_bytes),
-                        )
-                    conn.commit()
-
-            # 从 SQLite 读取所有 embedding
+            # 多取一行判断是否被 LIMIT 截断（截断时不可做孤儿清理）
             rows = conn.execute(
                 """
-                SELECT s.name, s.signature, s.file_path, se.embedding
-                FROM symbols s
-                JOIN symbol_embeddings se ON s.id = se.symbol_id
+                SELECT file_path, name, kind, signature, doc_comment
+                FROM symbols
                 LIMIT ?
             """,
-                (_MAX_VECTOR_ROWS,),
+                (_MAX_VECTOR_ROWS + 1,),
             ).fetchall()
+            truncated = len(rows) > _MAX_VECTOR_ROWS
+            rows = rows[:_MAX_VECTOR_ROWS]
 
             if not rows:
+                # 符号表为空 → 边表里全是孤儿，清干净再返回。
+                # 这里必须显式清理：下面的正常路径才走到 _prune_symbol_embeddings，
+                # 直接 return 会让「项目变空」这一情形永久留下无效 embedding。
+                _prune_symbol_embeddings(
+                    conn, _load_symbol_embeddings(conn), set(), False
+                )
                 return [], None
 
-            symbols = []
-            vectors = []
+            entries: list[tuple[str, str, sqlite3.Row]] = []
             for r in rows:
+                sig = r["signature"] or ""
+                doc = r["doc_comment"] or ""
+                key = _symbol_cache_key(
+                    r["file_path"], r["name"], r["kind"], sig, doc
+                )
+                text = r["name"]
+                if sig:
+                    text += " " + sig
+                if doc:
+                    text += " " + doc
+                entries.append((key, text, r))
+
+            cached = _load_symbol_embeddings(conn)
+
+            # 只补齐缺失的：键与 embedding 输入一一对应，命中即无需重算
+            missing = [e for e in entries if e[0] not in cached]
+            if missing:
+                batches = [
+                    missing[i : i + _EMBED_BATCH_SIZE]
+                    for i in range(0, len(missing), _EMBED_BATCH_SIZE)
+                ]
+                for batch in batches:
+                    vectors = list(emb.embed([e[1] for e in batch]))
+                    for (key, _text, _row), vec in zip(batch, vectors):
+                        conn.execute(
+                            "INSERT OR REPLACE INTO symbol_embeddings "
+                            "(sym_key, embedding) VALUES (?, ?)",
+                            (key, np.asarray(vec, dtype=np.float32).tobytes()),
+                        )
+                    conn.commit()
+                cached = _load_symbol_embeddings(conn)
+
+            _prune_symbol_embeddings(conn, cached, {e[0] for e in entries}, truncated)
+
+            symbols: list[dict] = []
+            vectors_list: list[np.ndarray] = []
+            for key, _text, r in entries:
+                blob = cached.get(key)
+                if blob is None:
+                    continue
                 try:
-                    vec = np.frombuffer(r["embedding"], dtype=np.float32).copy()
-                    norm = np.linalg.norm(vec)
-                    if norm < 1e-10:
-                        continue
-                    vectors.append(vec / norm)
-                    symbols.append(
-                        {
-                            "name": r["name"],
-                            "file": r["file_path"],
-                            "signature": r["signature"],
-                        }
-                    )
+                    vec = np.frombuffer(blob, dtype=np.float32).copy()
                 except Exception:
                     continue
+                norm = np.linalg.norm(vec)
+                if norm < 1e-10:
+                    continue
+                vectors_list.append(vec / norm)
+                symbols.append(
+                    {
+                        "name": r["name"],
+                        "file": r["file_path"],
+                        "signature": r["signature"],
+                    }
+                )
 
-            if not vectors:
+            if not vectors_list:
                 return [], None
 
-            return symbols, np.array(vectors, dtype=np.float32)
+            return symbols, np.array(vectors_list, dtype=np.float32)
 
     except Exception as e:
         logger.warning(f"[symbol_embeddings] init failed: {e}")
         return [], None
+
+
+def _symbols_signature(db_path: str) -> tuple[int, int] | None:
+    """符号表的廉价变更指纹 `(行数, MAX(id))`，用于判定内存向量缓存是否失效。
+
+    刻意**不**用 DB 文件的 mtime/size：库跑在 WAL 模式下，提交只写 `-wal` 文件，
+    主库文件的 mtime/size 纹丝不动（实测确认），以它为判据会永远认为「没变」。
+    两列都取是因为：全量重扫会清空重插、换新 id（MAX 增大），纯删除则只有行数变。
+    表不存在等异常返回 None，调用方回退到「无缓存」路径。
+    """
+    try:
+        with dbconn(db_path, timeout=5) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(id), -1) FROM symbols"
+            ).fetchone()
+        return (row[0], row[1])
+    except Exception:
+        return None
 
 
 def _search_vectors(db_path: str, query: str) -> list[dict]:
@@ -339,26 +437,31 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
     Persists embeddings in SQLite (symbol_embeddings side-table) so cold
     starts read from disk (~70ms) instead of recomputing from scratch (~110s).
     Missing embeddings are filled lazily on next query.
-    In-memory cache keeps subsequent calls fast.
+    In-memory cache keeps subsequent calls fast, keyed by a cheap signature of
+    the symbols table so an external rescan invalidates it (otherwise a rescan
+    would leave the cache serving removed/renamed symbols' stale paths).
     """
     try:
-        # Lazy-load from SQLite + cache in memory
-        if db_path not in _symbol_embeddings:
+        # Lazy-load from SQLite + cache in memory；用符号表指纹判定失效
+        sig = _symbols_signature(db_path)
+        cached = _symbol_embeddings.get(db_path)
+        if cached is None or cached[2] != sig:
             symbols, emb_matrix = _ensure_symbol_embeddings(db_path)
             # 淘汰最旧缓存
             while len(_symbol_embeddings) >= _MAX_VECTOR_CACHE:
                 oldest = next(iter(_symbol_embeddings))
                 logger.info(f"[vector] evicting cached embeddings for: {oldest}")
                 del _symbol_embeddings[oldest]
-            _symbol_embeddings[db_path] = (symbols, emb_matrix)
+            _symbol_embeddings[db_path] = (symbols, emb_matrix, sig)
 
-        symbols, emb_matrix = _symbol_embeddings[db_path]
+        symbols, emb_matrix = _symbol_embeddings[db_path][:2]
         if emb_matrix is None or len(symbols) == 0:
             return []
 
-        # Encode query + normalize
-        emb = _get_shared_embedder()
-        query_emb = list(emb.embed([query]))[0]
+        # Encode query + normalize（走共享查询缓存）
+        query_emb = embed_query(query)
+        if query_emb is None:
+            return []
         qnorm = np.linalg.norm(query_emb)
         if qnorm < 1e-10:
             return []
@@ -553,6 +656,14 @@ def _get_note_db(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _embed_in_batches(emb, texts: list[str]) -> list:
+    """分批推理，输出顺序与输入严格一一对应。"""
+    out: list = []
+    for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+        out.extend(emb.embed(texts[i : i + _EMBED_BATCH_SIZE]))
+    return out
+
+
 def _ensure_note_cache(
     project_path: str,
 ) -> tuple[sqlite3.Connection, str, int]:
@@ -564,15 +675,12 @@ def _ensure_note_cache(
 
     conn = _get_note_db(db_path)
 
-    # 快速跳过：项目目录 mtime 未变 → 无需扫描
-    try:
-        last_build = conn.execute("SELECT MAX(mtime) FROM chunks").fetchone()[0]
-        project_mtime = os.stat(project_path).st_mtime
-        if last_build is not None and project_mtime <= last_build:
-            total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            return conn, db_path, total_chunks
-    except (sqlite3.DatabaseError, OSError):
-        pass
+    # 这里曾用「项目根目录 mtime <= 缓存中 .md 的最大 mtime」做快速跳过，但两者
+    # 语义不同：前者是项目【根目录】的 mtime（只在直接子项增删时变化），后者是缓存
+    # 里各 .md 文件的 mtime（最后一次写入时间）。失真双向发生——改深层已有文件
+    # 不触发重扫（返回陈旧结果），根目录有增删则触发全量重扫。
+    # 改为始终扫描 + 逐文件 diff：实测 453 个 .md 的扫描仅 7ms，而失效判定一旦
+    # 出错就是全量重新 embedding（平均 6.3s、最坏 150s）。扫描成本可以忽略。
 
     # 序列化重建：同时多个请求到来时只跑一次 embedding（ONNX 推理阻塞且内存密集）
     _note_cache_lock.acquire()
@@ -611,34 +719,61 @@ def _ensure_note_cache(
                     "[project_notes] embedder unavailable, skipping embedding"
                 )
 
+            # 阶段1：读文件、切块（纯只读，不碰库 —— 读失败的文件直接跳过，
+            # 库里旧行原样保留，不留「删了旧行却没写新行」的空窗）
+            prepared: list[tuple[dict, list[dict]]] = []
             for mf in changed:
                 try:
-                    conn.execute(
-                        "DELETE FROM chunks WHERE file_path = ?", (mf["path"],)
-                    )
                     with open(
                         mf["path"], "r", encoding="utf-8", errors="replace"
                     ) as fh:
                         text = fh.read()
-                    chunks = _chunk_md_text(text, mf["path"])
-                    if not chunks:
-                        continue
+                except Exception as e:
+                    logger.warning(f"[project_notes] error reading {mf['path']}: {e}")
+                    continue
+                chunks = _chunk_md_text(text, mf["path"])
+                if chunks:
+                    prepared.append((mf, chunks))
 
-                    total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-                    if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
-                        logger.warning(
-                            f"[project_notes] {project_path}: "
-                            f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
-                        )
-                        chunks = chunks[: NOTE_MAX_CHUNKS_PER_PROJECT - total]
-                        if not chunks:
-                            continue
+            # 阶段2：按全局配额裁剪（保持 NOTE_MAX_CHUNKS_PER_PROJECT 上限语义）。
+            # 基线要把待重写文件的旧 chunk 扣掉 —— 它们在阶段4会被整文件替换。
+            total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            for mf, _chunks in prepared:
+                total -= conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE file_path = ?", (mf["path"],)
+                ).fetchone()[0]
+            accepted: list[tuple[dict, list[dict]]] = []
+            for mf, chunks in prepared:
+                if total + len(chunks) > NOTE_MAX_CHUNKS_PER_PROJECT:
+                    logger.warning(
+                        f"[project_notes] {project_path}: "
+                        f"truncating at {NOTE_MAX_CHUNKS_PER_PROJECT} chunks"
+                    )
+                    chunks = chunks[: NOTE_MAX_CHUNKS_PER_PROJECT - total]
+                if not chunks:
+                    continue
+                accepted.append((mf, chunks))
+                total += len(chunks)
 
-                    if emb is not None:
-                        texts = [c["chunk_text"] for c in chunks]
-                        embeddings = list(emb.embed(texts))
-                        for c, vec in zip(chunks, embeddings):
-                            vec_bytes = np.asarray(vec, dtype=np.float32).tobytes()
+            # 阶段3：对全部待嵌入文本统一分批推理。逐文件调用会把 Python↔ONNX 的
+            # 往返次数放大到文件数量级，合批后只与总条数有关。
+            vectors: list = []
+            if emb is not None:
+                texts = [c["chunk_text"] for _mf, chunks in accepted for c in chunks]
+                vectors = _embed_in_batches(emb, texts)
+
+            # 阶段4：写回（vectors 与 accepted 展平后的顺序一一对应）。
+            # 单文件的「删旧行 + 插新行」在同一事务内提交，保持原子性。
+            cursor = 0
+            for mf, chunks in accepted:
+                try:
+                    conn.execute(
+                        "DELETE FROM chunks WHERE file_path = ?", (mf["path"],)
+                    )
+                    for c in chunks:
+                        vec = vectors[cursor] if cursor < len(vectors) else None
+                        cursor += 1
+                        if vec is not None:
                             conn.execute(
                                 "INSERT OR REPLACE INTO chunks "
                                 "VALUES (?,?,?,?,?,?,?)",
@@ -649,12 +784,11 @@ def _ensure_note_cache(
                                     c["line_start"],
                                     mf["mtime"],
                                     mf["size"],
-                                    vec_bytes,
+                                    np.asarray(vec, dtype=np.float32).tobytes(),
                                 ),
                             )
-                    else:
-                        # No embedder: store without embedding (keyword fallback later)
-                        for c in chunks:
+                        else:
+                            # No embedder: store without embedding (keyword fallback later)
                             conn.execute(
                                 "INSERT OR REPLACE INTO chunks "
                                 "(file_path, chunk_index, chunk_text, line_start, mtime, file_size) "
@@ -670,9 +804,7 @@ def _ensure_note_cache(
                             )
                     conn.commit()
                 except Exception as e:
-                    logger.warning(
-                        f"[project_notes] error processing {mf['path']}: {e}"
-                    )
+                    logger.warning(f"[project_notes] error writing {mf['path']}: {e}")
                     conn.rollback()
                     continue
 
@@ -789,13 +921,12 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     if not rows:
         return {"results": [], "count": 0, "total_chunks": total_chunks}
 
-    # Try vector search first
-    emb = _get_shared_embedder()
+    # Try vector search first（走共享查询缓存）
+    query_vec = embed_query(query)
     vector_results: list[dict] = []
 
-    if emb is not None:
+    if query_vec is not None:
         try:
-            query_vec = list(emb.embed([query]))[0].astype(np.float32)
             qnorm = np.linalg.norm(query_vec)
             if qnorm > 1e-10:
                 query_vec = query_vec / qnorm
