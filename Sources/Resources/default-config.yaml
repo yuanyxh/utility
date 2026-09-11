@@ -37,6 +37,9 @@ modelProxy:
   url: ''
   # 本地代理监听端口，0 = 自动检测可用端口
   port: 0
+  # 代理进程崩溃后的最大重启次数 / 重启前等待毫秒数（与 mcp 段同义）
+  maxRestarts: 3
+  restartDelayMs: 2000
   # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider（上游 model 用原值）；
   # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
   # apiFormat: anthropic | openai，客户端格式不同时做协议转换。

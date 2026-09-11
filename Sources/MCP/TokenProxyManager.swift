@@ -25,43 +25,28 @@ final class TokenProxyManager {
         ConfigManager.shared.config.modelProxy
     }
 
-    /// 端口配置：0 = 自动检测可用端口
-    private var port: Int {
+    /// 自动检测出的端口（仅 `port` 配置为 0 时使用）。
+    ///
+    /// **必须缓存**：端口探测是 bind 测试，而代理起来之后自己就占着这个端口，
+    /// 再探测会跳过它返回下一个（8613 → 8614）。原先这里是「每次访问都重新探测」
+    /// 的 computed property，导致 `fetchTodaySummary()` 在代理运行时必定打错端口、
+    /// 菜单栏今日用量恒为空。
+    private var cachedPort: Int?
+    private let portLock = NSLock()
+
+    /// 本次运行实际使用的端口。服务端（daemon 启动参数与环境变量）与查询方
+    /// （`fetchTodaySummary`）共用同一来源，保证两侧一致。
+    var currentPort: Int {
         let configured = proxyConfig?.port ?? 0
-        if configured > 0 {
-            return configured
-        }
-        // 自动检测：从 8613 开始探测（避免与 MCP 9001 冲突）
-        return detectAvailablePort(startingFrom: 8613)
-    }
+        // 显式配置的端口永远权威，不走缓存——用户改配置后应当立即生效
+        if configured > 0 { return configured }
 
-    /// 探测可用端口
-    private func detectAvailablePort(startingFrom startPort: Int) -> Int {
-        for port in startPort ..< startPort + 100 {
-            if isPortAvailable(port) {
-                return port
-            }
-        }
-        // 全部占用，返回第一个（让后续绑定报错）
-        return startPort
-    }
-
-    /// 检查端口是否可用
-    private func isPortAvailable(_ port: Int) -> Bool {
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(port).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-
-        let socketfd = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(socketfd) }
-
-        let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                bind(socketfd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return bindResult == 0
+        portLock.lock()
+        defer { portLock.unlock() }
+        if let cachedPort { return cachedPort }
+        let detected = PortProbe.detectAvailable(startingFrom: PortProbe.Base.tokenProxy)
+        cachedPort = detected
+        return detected
     }
 
     /// 上游 API 地址：modelProxy.url → ai.baseURL
@@ -82,6 +67,14 @@ final class TokenProxyManager {
             let apiFormat: String
             let apiKey: String
             let models: [String]
+
+            // JSON 侧统一 snake_case，与 routerJSON() 的配置块保持一致
+            // （Python `proxy_provider.py` 按该命名解析）。属性名保持 Swift 惯例。
+            enum CodingKeys: String, CodingKey {
+                case name, url, models
+                case apiFormat = "api_format"
+                case apiKey = "api_key"
+            }
         }
         let payload = providers.map {
             Payload(
@@ -204,7 +197,7 @@ final class TokenProxyManager {
     /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
     private var proxyEnvironment: [String: String] {
         var overrides: [String: String] = [:]
-        overrides["MODEL_PROXY_PORT"] = String(port)
+        overrides["MODEL_PROXY_PORT"] = String(currentPort)
         if let providersJSON = providersJSON() {
             overrides["MODEL_PROXY_PROVIDERS"] = providersJSON
         } else {
@@ -261,7 +254,11 @@ final class TokenProxyManager {
     }
 
     func fetchTodaySummary() async -> TodaySummary {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/usage/summary") else { return TodaySummary() }
+        // 必须用 currentPort（缓存值）：用每次重新探测的端口，代理运行时会因
+        // 自己占着 8613 而探测到 8614，请求打不到自己的查询端点。
+        guard let url = URL(string: "http://127.0.0.1:\(currentPort)/usage/summary") else {
+            return TodaySummary()
+        }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode(TodaySummary.self, from: data)
@@ -277,22 +274,27 @@ final class TokenProxyManager {
         guard let scriptPath = PythonScriptRunner.findScript(named: "token_proxy.py") else {
             return nil
         }
-        let config = PythonDaemon.Config(
+        var config = PythonDaemon.Config(
             // token_proxy.py 路径固定，捕获即可；端口可能随配置重载变化，走闭包
             scriptPath: { scriptPath },
             port: { [weak self] in
-                self?.port ?? 8613 // 兜底值，正常流程不会到这
+                // 兜底值与 PortProbe.Base.tokenProxy 同源，避免两处字面量各自漂移
+                self?.currentPort ?? PortProbe.Base.tokenProxy
             },
             healthPath: "/health",
             service: nil, // token_proxy 不校验 service 字段
             readySignals: [], // 静默启动，直接健康检查
-            maxRestarts: 3,
-            restartDelaySec: 2.0,
             environment: { [weak self] in
                 self?.proxyEnvironment ?? [:]
             },
             logTag: "TokenProxy",
         )
+        // 崩溃重启参数与 mcp 段同义，从配置读——此前写死 3 / 2.0，与
+        // MCPProcessManager 读配置的行为不一致，改一处忘另一处就会分叉
+        if let proxy = proxyConfig {
+            config.maxRestarts = proxy.maxRestarts
+            config.restartDelaySec = Double(proxy.restartDelayMs) / 1000.0
+        }
         let daemon = PythonDaemon(config: config)
         daemon.onStateChange = { [weak self] daemonState in
             self?.applyDaemonState(daemonState)

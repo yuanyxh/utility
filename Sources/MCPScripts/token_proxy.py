@@ -32,9 +32,12 @@ from proxy_protocol import (
 )
 from proxy_model_tag import (
     AnthropicSSETagger,
+    OpenAITagInserter,
     tag_json_response,
     tag_message_dict,
+    tag_openai_message,
 )
+from proxy_provider import api_format_of, api_key_of, missing_keys
 from proxy_router import ProfileStore, Reason, RouteDecision, build_router
 from proxy_usage import DB_PATH, init_db, record_gateway_log, record_usage
 from db import conn as dbconn
@@ -54,18 +57,43 @@ ROUTER_JSON = os.environ.get("MODEL_PROXY_ROUTER", "")  # 智能路由配置（J
 
 logger = setup_logging("token_proxy", json_format=True)
 
+#: 后台任务的强引用池。asyncio 的事件循环对 create_task 只持**弱引用**，
+#: fire-and-forget 用法下任务可能在跑完前就被 GC 回收，表现为用量记录随机
+#: 丢失（官方文档明确要求保存引用）。完成回调负责及时释放。
+_BACKGROUND_TASKS: set = set()
+
 
 def _load_providers() -> list[dict]:
     if not PROVIDERS_JSON:
         return []
     try:
         parsed = json.loads(PROVIDERS_JSON)
-        return [p for p in parsed if isinstance(p, dict) and p.get("url")]
     except json.JSONDecodeError:
         logger.warning(
             json.dumps({"msg": "providers_json_invalid", "error": "bad JSON"})
         )
         return []
+
+    # 缺键的 provider 无法路由到预期模型。不在装载时报出来，它就只表现为
+    # 「请求被静默转发到 providers[0]」——看起来像路由逻辑出错，实际是配置面断裂。
+    out: list[dict] = []
+    for p in parsed:
+        if not isinstance(p, dict) or not p.get("url"):
+            continue
+        absent = missing_keys(p)
+        if absent:
+            logger.warning(
+                json.dumps(
+                    {
+                        "msg": "provider_config_missing",
+                        "provider": p.get("name", ""),
+                        "keys": absent,
+                        "effect": "该 provider 可能无法路由到预期模型",
+                    }
+                )
+            )
+        out.append(p)
+    return out
 
 
 PROVIDERS = _load_providers()
@@ -178,16 +206,20 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         provider, upstream_model = route.provider, route.model
         request_body["model"] = upstream_model
         # 每条决策都带结构化 reason，保证降档 / 保持 / 升档均可归因
-        logger.info(json.dumps({
-            "msg": "route_decision",
-            "tier": route.tier,
-            "reason": route.reason,
-            "original_model": original_model,
-            "routed_model": upstream_model,
-            "provider": provider.get("name", ""),
-            "turn_index": route.turn_index,
-            "detail": route.detail,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "msg": "route_decision",
+                    "tier": route.tier,
+                    "reason": route.reason,
+                    "original_model": original_model,
+                    "routed_model": upstream_model,
+                    "provider": provider.get("name", ""),
+                    "turn_index": route.turn_index,
+                    "detail": route.detail,
+                }
+            )
+        )
     else:
         # 未接管（禁用 / 出错 / 档位模型未配置）→ 走原有 _resolve_provider
         provider, upstream_model = _resolve_provider(request_body.get("model", ""))
@@ -195,7 +227,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         if route is not None:
             logger.info(json.dumps({"msg": "route_skipped", "reason": route.reason}))
 
-    provider_format = provider.get("apiFormat", "anthropic")
+    provider_format = api_format_of(provider)
     body_bytes = json.dumps(request_body).encode()
 
     # 构建上游 URL
@@ -309,7 +341,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     for k, v in request.headers.items():
         if k.lower() not in skip_headers:
             headers[k] = v
-    api_key = provider.get("apiKey", "")
+    api_key = api_key_of(provider)
     if api_key:
         headers.pop("x-api-key", None)
         headers.pop("authorization", None)
@@ -365,29 +397,37 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     # 仅 anthropic 输出格式：注入体是 Anthropic 内容块。
                     tagger = None
                     if (
-                        api_format == "anthropic"
-                        and upstream_resp.status < 400
+                        upstream_resp.status < 400
                         and route is not None
                         and route.provider is not None
                         and route.reason != Reason.FASTPATH_CLASSIFIER
                     ):
-                        tagger = AnthropicSSETagger(upstream_model)
+                        if api_format == "anthropic":
+                            tagger = AnthropicSSETagger(upstream_model)
+                        elif api_format == "openai":
+                            tagger = OpenAITagInserter(upstream_model)
 
                     # 流式转发响应
-                    # 注入会让响应体比上游长：上游若带 content-length（一次性 JSON，
-                    # 或某些网关的 SSE），照抄过来客户端会按旧长度截断，把注入的尾段
-                    # 直接吃掉。有 tagger 时交由 aiohttp 重新分帧（HTTP/1.1 走 chunked）。
+                    #
+                    # content-encoding 与 content-length 必须**一起**剔除，二者是一对：
+                    # aiohttp 客户端默认 auto_decompress，转发出去的 body 已经不是上游
+                    # 声明的那份字节了。只剔 content-encoding 而不剔 content-length，
+                    # 等于把压缩前的长度谎报给客户端——要么按旧长度截断，要么协议错误。
+                    #
+                    # 模型名注入会额外加长响应体，是同一类问题的第二个来源：上游若带
+                    # content-length，照抄会按旧长度截断、把注入的尾段整段吃掉。
+                    #
+                    # 剔除后交由 aiohttp 重新分帧（HTTP/1.1 走 chunked）。
                     forward_headers = {
                         k: v
                         for k, v in upstream_resp.headers.items()
-                        if k.lower() not in {"transfer-encoding", "content-encoding"}
-                    }
-                    if tagger is not None:
-                        forward_headers = {
-                            k: v
-                            for k, v in forward_headers.items()
-                            if k.lower() != "content-length"
+                        if k.lower()
+                        not in {
+                            "transfer-encoding",
+                            "content-encoding",
+                            "content-length",
                         }
+                    }
                     response = web.StreamResponse(
                         status=upstream_resp.status, headers=forward_headers
                     )
@@ -474,10 +514,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             buf = bytearray()
                             async for chunk in upstream_resp.content.iter_any():
                                 buf.extend(chunk)
+                            # 收集原始数据（一次，不重复）
                             collected_body.extend(buf)
-                            await response.write(
-                                tag_json_response(bytes(buf), tagger.model)
+                            # 按输出格式选择追加方式
+                            tag_fn = (
+                                tag_json_response
+                                if api_format == "anthropic"
+                                else tag_openai_message
                             )
+                            await response.write(tag_fn(bytes(buf), tagger.model))
                         else:
                             # 直通（同格式）
                             async for chunk in upstream_resp.content.iter_any():
@@ -564,7 +609,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             stop_reason = usage_data.get("stop_reason", "") or ""
                         if not stop_reason and converter is not None:
                             stop_reason = converter.stop_reason or ""
-                        if not stop_reason and (upstream_resp.status >= 400 or stream_error):
+                        if not stop_reason and (
+                            upstream_resp.status >= 400 or stream_error
+                        ):
                             stop_reason = "error"
                         ROUTER.on_response(route.task_key, stop_reason)
 
@@ -601,7 +648,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         error_message = str(error_data)
                             except (json.JSONDecodeError, UnicodeDecodeError):
                                 pass
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             record_usage(
                                 record_request_body,
                                 usage_data,
@@ -617,6 +664,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 profile_hash=route.profile_key if route else "",
                             )
                         )
+                        _BACKGROUND_TASKS.add(task)
+                        task.add_done_callback(_BACKGROUND_TASKS.discard)
 
                     logger.info(
                         json.dumps(
@@ -766,7 +815,9 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
                             "id": r[0],
                             "timestamp": r[1],
                             "user_input": r[2]
-                            or r[3],  # actual_user_input 优先，fallback 到 input_preview
+                            or r[
+                                3
+                            ],  # actual_user_input 优先，fallback 到 input_preview
                             "output": r[4],
                             "input_tokens": r[5],
                             "output_tokens": r[6],
@@ -842,6 +893,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
 # 记录实现（record_gateway_log + 常量 + gateway_log 表）已归口 proxy_usage.py，
 # 本入口只保留 middleware 捕获异常并调用，不再重复维护连接样板。
 # ---------------------------------------------------------------------------
+
 
 @web.middleware
 async def gateway_log_middleware(request, handler):

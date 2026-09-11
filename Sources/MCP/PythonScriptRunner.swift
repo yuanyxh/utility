@@ -13,15 +13,21 @@ enum PythonScriptRunner {
     /// Path to the Python venv where MCP dependencies are installed.
     /// 自动探测系统 Python 版本，构造对应的 venv 路径。
     /// Created by: `python3.X -m venv ~/.config/utility/mcp-venv && pip install -r requirements.txt`
-    static var pythonVenvPath: String {
+    /// 惰性解析一次并缓存。
+    ///
+    /// 解析过程要 spawn 一个子进程（`/usr/bin/env python3 --version`）并同步等它
+    /// 退出，而本属性被 `resolvePython`、`shellCommand`、`pythonCheck` 等多处调用
+    /// ——做成每次重新解析的 computed property，会让每处调用都白付一次进程创建
+    /// 与阻塞等待。venv 路径在进程生命周期内不会变化，缓存是安全的。
+    static let pythonVenvPath: String = resolveVenvPath()
+
+    private static func resolveVenvPath() -> String {
         let venvDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/utility/mcp-venv")
             .path
 
         // 探测系统 Python 版本（如 python3.12）
-        let pythonVersion = detectPythonVersion()
-
-        if let version = pythonVersion {
+        if let version = detectPythonVersion() {
             // 尝试精确版本路径：~/.config/utility/mcp-venv/bin/python3.12
             let versionedPath = "\(venvDir)/bin/python\(version)"
             if FileManager.default.fileExists(atPath: versionedPath) {

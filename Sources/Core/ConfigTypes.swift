@@ -168,6 +168,10 @@ public struct ModelProxyConfig: Codable {
     var port: Int = 0
     /// providers 路由表，默认取第一个作为兜底（未匹配 model 时）
     var providers: [ProviderConfig] = []
+    /// 代理进程崩溃后的最大重启次数（与 mcp 段同义）
+    var maxRestarts: Int = 3
+    /// 崩溃后重启前的等待毫秒数（与 mcp 段同义）
+    var restartDelayMs: Int = 2000
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -176,6 +180,8 @@ public struct ModelProxyConfig: Codable {
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
         providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? []
+        maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
+        restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
         router = try c.decodeIfPresent(ModelRouterConfig.self, forKey: .router)
     }
 

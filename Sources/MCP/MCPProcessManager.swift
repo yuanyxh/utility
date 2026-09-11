@@ -34,43 +34,27 @@ final class MCPProcessManager {
         ConfigManager.shared.config.mcp
     }
 
-    /// 端口配置：0 = 自动检测可用端口
-    private var port: Int {
+    /// 自动检测出的端口（仅 `port` 配置为 0 时使用）。
+    ///
+    /// **必须缓存**：端口探测是 bind 测试，而 MCP 服务起来之后自己就占着这个
+    /// 端口，再探测会跳过它返回下一个（9001 → 9002）。原先这里是「每次访问都
+    /// 重新探测」的 computed property，于是运行期任何一次读取都会拿到漂移值。
+    private var cachedPort: Int?
+    private let portLock = NSLock()
+
+    /// 本次运行实际使用的端口。服务端（daemon 的启动参数与环境变量）与消费方
+    /// （`MCPClient`、用量查询）都从这里读，保证两侧指向同一个端口。
+    var currentPort: Int {
         let configured = mcpConfig?.port ?? 0
-        if configured > 0 {
-            return configured
-        }
-        // 自动检测：从 9001 开始探测
-        return detectAvailablePort(startingFrom: 9001)
-    }
+        // 显式配置的端口永远权威，不走缓存——用户改配置后应当立即生效
+        if configured > 0 { return configured }
 
-    /// 探测可用端口
-    private func detectAvailablePort(startingFrom startPort: Int) -> Int {
-        for port in startPort ..< startPort + 100 {
-            if isPortAvailable(port) {
-                return port
-            }
-        }
-        // 全部占用，返回第一个（让后续绑定报错）
-        return startPort
-    }
-
-    /// 检查端口是否可用
-    private func isPortAvailable(_ port: Int) -> Bool {
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(port).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-
-        let socketfd = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(socketfd) }
-
-        let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                bind(socketfd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return bindResult == 0
+        portLock.lock()
+        defer { portLock.unlock() }
+        if let cachedPort { return cachedPort }
+        let detected = PortProbe.detectAvailable(startingFrom: PortProbe.Base.mcp)
+        cachedPort = detected
+        return detected
     }
 
     private var maxRestarts: Int {
@@ -85,10 +69,10 @@ final class MCPProcessManager {
     /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
     private var serverEnvironment: [String: String] {
         var overrides: [String: String] = [:]
-        overrides["MCP_PORT"] = String(port)
+        overrides["MCP_PORT"] = String(currentPort)
 
         // MEMORY_SERVER_URL：summarize.py 用此变量访问 MCP 服务
-        overrides["MEMORY_SERVER_URL"] = "http://127.0.0.1:\(port)"
+        overrides["MEMORY_SERVER_URL"] = "http://127.0.0.1:\(currentPort)"
 
         // mcp 路径配置（空字符串 = 使用默认路径）
         if let mcp = mcpConfig {
@@ -190,7 +174,8 @@ final class MCPProcessManager {
             // 2. Check if Homebrew python3.12 is available
             let brewTask = Process()
             brewTask.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            brewTask.arguments = ["bash", "-c", "command -v python3.12"]
+            // 探测任意 python3，不写死小版本：用户装 3.13 时找 python3.12 会误报未安装
+            brewTask.arguments = ["bash", "-c", "command -v python3"]
             let brewPipe = Pipe()
             brewTask.standardOutput = brewPipe
             brewTask.standardError = FileHandle.nullDevice
@@ -204,14 +189,14 @@ final class MCPProcessManager {
             }
 
             if brewPython == nil {
-                let msg = "请安装 Python 3.12：brew install python"
+                let msg = "请安装 Python 3：brew install python"
                 log("[MCP] ❌ \(msg)")
                 notify("MCP 环境检查", msg)
             } else {
                 let reqPath = "Sources/MCPScripts/requirements.txt"
                 let steps = """
                 创建虚拟环境：
-                  python3.12 -m venv ~/.config/utility/mcp-venv
+                  python3 -m venv ~/.config/utility/mcp-venv
                   ~/.config/utility/mcp-venv/bin/pip install -r \(reqPath)
                 """
                 log("[MCP] ❌ 虚拟环境未就绪\n\(steps)")
@@ -256,7 +241,8 @@ final class MCPProcessManager {
                 self?.findServerScript() ?? scriptPath
             },
             port: { [weak self] in
-                self?.port ?? 9001 // 兜底值，正常流程不会到这
+                // 兜底值与 PortProbe.Base.mcp 同源，避免两处字面量各自漂移
+                self?.currentPort ?? PortProbe.Base.mcp
             },
             healthPath: "/health",
             service: "mino-brain", // 校验 service 字段，防止误复用同端口其他服务

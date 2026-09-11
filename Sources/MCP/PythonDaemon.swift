@@ -5,7 +5,18 @@ import Foundation
 /// 通用生命周期骨架（MCPProcessManager / TokenProxyManager 共用的部分收束于此）。
 /// 业务决策（State enum 语义、事件广播、复用探测、崩溃通知、config 读取时机）仍由
 /// 组合方负责——Daemon 通过 `onStateChange` / `onMaxRestarts` 回调上报，组合方自行映射。
-final class PythonDaemon {
+/// - Note: 标注 `@unchecked Sendable` 的依据（不是「反正能编过」）：
+///   - `process` / `crashCount` / `isStopping` / `state`：由 `lifecycleQueue` 独占，
+///     所有写入点都在该队列上（`launchProcess` / `stopSync` / `terminationHandler`
+///     的派发块 / 健康检查的两个收敛点）
+///   - `healthCheckTimer`：由主线程独占——`Timer` 必须挂在有 runloop 的线程上，
+///     lifecycleQueue 没有 runloop，它天然不属于该队列
+///   - `onStateChange` / `onMaxRestarts`：初始化后只赋值一次，此后只读
+///   - `config`：`let`，不可变
+///
+///   `DispatchQueue.async` 的闭包是 `@Sendable`，不标注的话每处捕获 self 都会报
+///   `SendableClosureCaptures`；告警噪声会淹掉真正的新告警。
+final class PythonDaemon: @unchecked Sendable {
     struct Config {
         /// 脚本路径（闭包：配置重载后 forceRestart 无需重建 daemon 即可应用新路径）
         var scriptPath: () -> String
@@ -20,6 +31,11 @@ final class PythonDaemon {
         var readySignals: [String] = []
         var maxRestarts = 3
         var restartDelaySec: TimeInterval = 2.0
+        /// 健康检查轮询上限（次数），默认 20 × 0.5s ≈ 10s。依赖重的服务
+        /// （加载模型、建索引）可能更慢，组合方可按需抬高，不必改这里的常量。
+        var healthCheckMaxRetries = 20
+        /// 健康检查轮询间隔（秒）
+        var healthCheckIntervalSec: TimeInterval = 0.5
         /// 实时从 config 构建环境变量（不缓存）
         var environment: () -> [String: String]
         var logTag = "PythonDaemon"
@@ -30,10 +46,16 @@ final class PythonDaemon {
         case stopped, starting, running, restarting, crashed
     }
 
+    /// 状态。写入点全部收敛到 `lifecycleQueue` 与主线程（见各处 `state = …`），
+    /// 但回调的消费方还有主线程假设——那里会更新菜单栏、发通知。统一在主线程
+    /// 投递回调，避免 UI 从后台队列被更新。
     private(set) var state: State = .stopped {
         didSet {
             guard oldValue != state else { return }
-            onStateChange?(state)
+            let changed = state
+            DispatchQueue.main.async { [weak self] in
+                self?.onStateChange?(changed)
+            }
         }
     }
 
@@ -41,6 +63,9 @@ final class PythonDaemon {
     var onStateChange: ((State) -> Void)?
     /// 崩溃达上限回调（组合方决定通知/停止）
     var onMaxRestarts: ((Int) -> Void)?
+
+    /// 就绪信号探测的缓冲上限（字节），超出时只保留尾部。
+    private static let readyBufferLimit = 64 * 1024
 
     private var process: Process?
     private var healthCheckTimer: Timer?
@@ -67,15 +92,15 @@ final class PythonDaemon {
         guard let url = URL(string: "http://127.0.0.1:\(config.port())\(config.healthPath)") else {
             return false
         }
+        // 这里在 lifecycleQueue（后台队列）上同步等待，不是在主线程——
+        // URLSession 的回调走自己的 delegate 队列，不依赖主 runloop，
+        // 因此不会出现 CLAUDE.md 里记的那类主线程死锁。主线程上的健康轮询
+        // 走异步版 checkHealth。
         let sem = DispatchSemaphore(value: 0)
         var healthy = false
         URLSession.shared.dataTask(with: url) { [config] data, _, _ in
-            if let data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (json["status"] as? String) == "ok",
-               config.service == nil || (json["service"] as? String) == config.service
-            {
-                healthy = true
+            if let data {
+                healthy = isHealthyBody(data, service: config.service)
             }
             sem.signal()
         }.resume()
@@ -129,8 +154,12 @@ final class PythonDaemon {
     /// stop 的同步实现（在 lifecycleQueue 内执行）。
     private func stopSync() {
         isStopping = true
-        healthCheckTimer?.invalidate()
-        healthCheckTimer = nil
+        // healthCheckTimer 在主线程（runloop）上创建，这里保持同一线程失效与置空，
+        // 避免跨队列读写这个引用本身
+        DispatchQueue.main.async { [weak self] in
+            self?.healthCheckTimer?.invalidate()
+            self?.healthCheckTimer = nil
+        }
 
         guard let proc = process else {
             state = .stopped
@@ -164,25 +193,36 @@ final class PythonDaemon {
 
         proc.terminationHandler = { [weak self] p in
             guard let self else { return }
-            // stop() 主动关闭时不触发重启
-            if isStopping { return }
-
             let reason = p.terminationReason
-            if reason == .uncaughtSignal {
-                crashCount += 1
-                debugLog("[\(config.logTag)] Process crashed (\(crashCount)/\(config.maxRestarts))")
-                if crashCount >= config.maxRestarts {
-                    state = .crashed
-                    onMaxRestarts?(config.maxRestarts)
-                    return
+            // 本闭包由系统在自己的队列上回调，而 isStopping / crashCount / state
+            // 都由 lifecycleQueue 独占（stopSync 与 launchProcess 也在那里写）。
+            // 全部收敛回该队列再读写，消除这组无同步竞争。
+            lifecycleQueue.async { [weak self] in
+                guard let self else { return }
+                // stop() 主动关闭时不触发重启
+                if self.isStopping { return }
+
+                if reason == .uncaughtSignal {
+                    self.crashCount += 1
+                    let count = self.crashCount
+                    debugLog(
+                        "[\(self.config.logTag)] Process crashed (\(count)/\(self.config.maxRestarts))"
+                    )
+                    if count >= self.config.maxRestarts {
+                        self.state = .crashed
+                        DispatchQueue.main.async {
+                            self.onMaxRestarts?(self.config.maxRestarts)
+                        }
+                        return
+                    }
+                    self.state = .restarting
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.config.restartDelaySec) {
+                        self.lifecycleQueue.async { self.launchProcess() }
+                    }
+                } else {
+                    // Normal exit
+                    self.state = .stopped
                 }
-                state = .restarting
-                DispatchQueue.main.asyncAfter(deadline: .now() + config.restartDelaySec) {
-                    self.lifecycleQueue.async { self.launchProcess() }
-                }
-            } else {
-                // Normal exit
-                state = .stopped
             }
         }
 
@@ -228,6 +268,12 @@ final class PythonDaemon {
 
             if !ready {
                 buffer.append(data)
+                // 就绪前必须有上限：子进程若持续输出却永不发就绪信号（例如依赖
+                // 缺失后反复打印错误），无界的 buffer 会一直吃内存。保留尾部——
+                // 信号总是出现在最近的输出里。
+                if buffer.count > Self.readyBufferLimit {
+                    buffer = Data(buffer.suffix(Self.readyBufferLimit))
+                }
                 guard let output = String(data: buffer, encoding: .utf8) else { return }
 
                 if config.readySignals.contains(where: { output.contains($0) }) {
@@ -250,17 +296,24 @@ final class PythonDaemon {
             return
         }
         var retries = 0
-        let maxRetries = 20 // ~10s total wait
+        let maxRetries = config.healthCheckMaxRetries
 
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+        healthCheckTimer = Timer.scheduledTimer(
+            withTimeInterval: config.healthCheckIntervalSec, repeats: true
+        ) { [weak self] timer in
             guard let self else { return }
 
             retries += 1
             if retries > maxRetries {
                 debugLog("[\(config.logTag)] Health check timed out (unresponsive)")
                 timer.invalidate()
-                state = .crashed
-                stopSync()
+                // stopSync 操作 process / isStopping，必须在 lifecycleQueue 上执行
+                // ——Timer 回调在主线程，直接调用会与 launchProcess 竞争
+                lifecycleQueue.async { [weak self] in
+                    guard let self else { return }
+                    self.state = .crashed
+                    self.stopSync()
+                }
                 return
             }
 
@@ -268,8 +321,12 @@ final class PythonDaemon {
                 guard let self, !Task.isCancelled else { return }
                 let healthy = await checkHealth(url: url)
                 if healthy {
-                    crashCount = 0
-                    state = .running
+                    // crashCount 与 state 都由 lifecycleQueue 独占，回到该队列收敛
+                    lifecycleQueue.async { [weak self] in
+                        guard let self else { return }
+                        self.crashCount = 0
+                        self.state = .running
+                    }
                     timer.invalidate()
                     debugLog("[\(config.logTag)] Server ready")
                 }
@@ -281,13 +338,23 @@ final class PythonDaemon {
     private func checkHealth(url: URL) async -> Bool {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (json["status"] as? String) == "ok",
-               config.service == nil || (json["service"] as? String) == config.service
-            {
-                return true
-            }
-        } catch {}
+            return isHealthyBody(data, service: config.service)
+        } catch {
+            return false
+        }
+    }
+}
+
+/// 健康响应判定。两个消费方（复用探测 `probeExistingServer` 与轮询检查
+/// `checkHealth`）共用同一判据。
+///
+/// 抽出来的理由不是省几行：判据分散时两处容易漂移——一处放宽、一处收紧，
+/// 就会出现「复用了既有进程，却一直判定未就绪」这种只在单个入口复现的状态。
+private func isHealthyBody(_ data: Data, service: String?) -> Bool {
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          (json["status"] as? String) == "ok"
+    else {
         return false
     }
+    return service == nil || (json["service"] as? String) == service
 }

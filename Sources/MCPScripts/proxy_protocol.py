@@ -64,6 +64,53 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# ---------------------------------------------------------------------------
+# 协议常量
+# ---------------------------------------------------------------------------
+
+#: OpenAI `finish_reason` → Anthropic `stop_reason` 的映射。**单一权威定义**，
+#: 流式转换 / 非流式转换 / SSE usage 提取三处共用。
+#:
+#: 分头维护会让同一次上游响应在不同路径上得出不同结论：曾出现 content_filter
+#: 只在记录层的表里有映射，两个转换层都缺，于是 `mapping.get(finish, "end_turn")`
+#: 把「内容被过滤」当成「正常结束」——客户端看到 end_turn，路由层也据此认定
+#: 正常终止，异常信号整个丢失，而数据库里却如实写着 content_filter。
+FINISH_REASON_MAP: dict[str, str] = {
+    "stop": "end_turn",
+    "tool_calls": "tool_use",
+    "length": "max_tokens",
+    "content_filter": "content_filter",
+}
+
+#: 转换层遇到未知 finish_reason 时的兜底——必须是 Anthropic 的合法枚举值，
+#: 否则客户端会因非法 stop_reason 拒绝整个响应。
+FALLBACK_STOP_REASON = "end_turn"
+
+
+def _tool_choice_anthropic_to_openai(choice):
+    """Anthropic tool_choice → OpenAI tool_choice。
+
+    Anthropic: {"type": "auto"|"any"|"tool"|"none"[, "name": ...]}
+    OpenAI:    "auto"|"required"|"none" | {"type":"function","function":{"name":...}}
+    """
+    if not isinstance(choice, dict):
+        return choice
+    ctype = choice.get("type")
+    if ctype == "any":
+        return "required"
+    if ctype == "tool":
+        return {"type": "function", "function": {"name": choice.get("name", "")}}
+    return ctype or "auto"
+
+
+def _tool_choice_openai_to_anthropic(choice):
+    """OpenAI tool_choice → Anthropic tool_choice（上一个函数的逆向）。"""
+    if isinstance(choice, str):
+        return {"type": {"required": "any", "none": "none"}.get(choice, "auto")}
+    if isinstance(choice, dict):
+        fn = choice.get("function") or {}
+        return {"type": "tool", "name": fn.get("name", "")}
+    return choice
 
 
 class ProtocolConverter:
@@ -81,8 +128,12 @@ class ProtocolConverter:
             out["temperature"] = body["temperature"]
         if body.get("top_p") is not None:
             out["top_p"] = body["top_p"]
-        if body.get("stop") is not None:
-            out["stop"] = body["stop"]
+        # Anthropic 的停止序列字段是 `stop_sequences`（数组），OpenAI 对应 `stop`。
+        # 此处曾读 `stop`——Anthropic 请求体里没有该键，转换恒不生效（静默丢配置）。
+        if body.get("stop_sequences") is not None:
+            out["stop"] = body["stop_sequences"]
+        if body.get("tool_choice") is not None:
+            out["tool_choice"] = _tool_choice_anthropic_to_openai(body["tool_choice"])
 
         system_text = _system_to_text(body.get("system"))
         messages: list[dict] = []
@@ -188,6 +239,11 @@ class ProtocolConverter:
             out["max_tokens"] = body["max_tokens"]
         if body.get("temperature") is not None:
             out["temperature"] = body["temperature"]
+        if body.get("top_p") is not None:
+            out["top_p"] = body["top_p"]
+        # OpenAI `stop` ↔ Anthropic `stop_sequences`：两侧字段名不同，必须显式转换
+        if body.get("stop") is not None:
+            out["stop_sequences"] = body["stop"]
 
         system_text = ""
         messages: list[dict] = []
@@ -263,6 +319,8 @@ class ProtocolConverter:
                             ),
                         }
                     )
+        if body.get("tool_choice") is not None:
+            out["tool_choice"] = _tool_choice_openai_to_anthropic(body["tool_choice"])
         return out
 
     @staticmethod
@@ -288,11 +346,6 @@ class ProtocolConverter:
                     "input": inp,
                 }
             )
-        stop_map = {
-            "stop": "end_turn",
-            "tool_calls": "tool_use",
-            "length": "max_tokens",
-        }
         usage = resp.get("usage", {})
         return {
             "id": resp.get("id", "msg_proxy"),
@@ -300,7 +353,9 @@ class ProtocolConverter:
             "role": "assistant",
             "model": resp.get("model", ""),
             "content": content_blocks,
-            "stop_reason": stop_map.get(choice.get("finish_reason"), "end_turn"),
+            "stop_reason": FINISH_REASON_MAP.get(
+                choice.get("finish_reason"), FALLBACK_STOP_REASON
+            ),
             "stop_sequence": None,
             "usage": {
                 "input_tokens": usage.get("prompt_tokens", 0),
@@ -430,12 +485,7 @@ class OpenAIToAnthropicStream:
                     )
 
             if finish:
-                mapping = {
-                    "stop": "end_turn",
-                    "tool_calls": "tool_use",
-                    "length": "max_tokens",
-                }
-                self.stop_reason = mapping.get(finish, "end_turn")
+                self.stop_reason = FINISH_REASON_MAP.get(finish, FALLBACK_STOP_REASON)
 
         if chunk.get("usage"):
             u = chunk["usage"]
@@ -455,16 +505,22 @@ class OpenAIToAnthropicStream:
                     {"type": "content_block_stop", "index": block_idx},
                 )
             )
+        # input_tokens 必须在这里补发：OpenAI 的 prompt_tokens 只在流的最后一个
+        # chunk 才出现，而 message_start 早就发出去了（那时只能写 0）。只发
+        # output_tokens 会让客户端（Claude Code 的 statusLine）永远显示 input 为 0。
         events.append(
             _sse_event(
                 "message_delta",
                 {
                     "type": "message_delta",
                     "delta": {
-                        "stop_reason": self.stop_reason or "end_turn",
+                        "stop_reason": self.stop_reason or FALLBACK_STOP_REASON,
                         "stop_sequence": None,
                     },
-                    "usage": {"output_tokens": self.usage.get("output_tokens", 0)},
+                    "usage": {
+                        "input_tokens": self.usage.get("input_tokens", 0),
+                        "output_tokens": self.usage.get("output_tokens", 0),
+                    },
                 },
             )
         )
@@ -480,10 +536,13 @@ def _detect_api_format(body: dict) -> str:
     if messages and messages[0].get("role") == "system":
         return "openai"
     tools = body.get("tools", [])
-    if tools:
-        if "inputSchema" in tools[0]:
+    if tools and isinstance(tools[0], dict):
+        # Anthropic 的工具定义字段是 `input_schema`（snake_case）。此处曾误写成
+        # `inputSchema`（那是 MCP tools/list 的拼写，不属于任何一种 API 格式），
+        # 使这个分支永不命中、退化成死代码，只靠末尾的 anthropic 兜底「碰巧正确」。
+        if "input_schema" in tools[0]:
             return "anthropic"
-        if isinstance(tools[0], dict) and tools[0].get("type") == "function":
+        if tools[0].get("type") == "function":
             return "openai"
     return "anthropic"
 
@@ -645,14 +704,9 @@ def _extract_usage_from_sse(
                 if choices:
                     fr = choices[0].get("finish_reason")
                     if fr:
-                        # 映射 OpenAI finish_reason → 统一 stop_reason
-                        _map = {
-                            "stop": "end_turn",
-                            "tool_calls": "tool_use",
-                            "length": "max_tokens",
-                            "content_filter": "content_filter",
-                        }
-                        detected_stop_reason = _map.get(fr, fr)
+                        # 统一映射表（见 FINISH_REASON_MAP）。未知值保留原样：
+                        # 记录层要如实落库，不能把未知原因伪装成 end_turn。
+                        detected_stop_reason = FINISH_REASON_MAP.get(fr, fr)
 
             if "usage" in chunk:
                 last_usage = chunk

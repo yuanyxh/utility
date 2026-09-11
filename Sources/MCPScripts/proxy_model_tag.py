@@ -4,14 +4,20 @@
 mimo-v2.5），而分级路由把请求转发给的是另一个上游模型（如 deepseek-v4-flash）。
 代理知道真相，却没有向客户端展示的通道。因此由代理在响应末尾直接追加模型名。
 
-设计边界（刻意的，勿擅自扩大）：
-- **只处理 Anthropic 格式响应**。Claude Code 走 anthropic；OpenAI 格式输出不注入
-  （两种流式协议的事件模型差异大，为它再写一套状态机不划算，且无实际使用方）。
-- **只处理 `stop_reason == end_turn`**。工具轮（tool_use）不注入：那一轮的文本会
-  进入 agent loop 的上下文被模型回读，模型名混进去既无意义又污染历史。
-- **实现为追加一个独立文本块**，不改写任何已有 content block。因此不依赖
-  「最后一个块是文本块」这一假设（tool_use 块上追加 text_delta 是非法事件），
-  也不需要知道已有块的类型。
+支持 Anthropic 与 OpenAI 两种响应格式：
+- **Anthropic**：追加一个**独立文本 content_block**（start/delta/stop 三事件），
+  Claude Code 把它当助手回复的一部分展示，但不进入下一轮模型上下文。
+- **OpenAI**：追加一个 **delta.content 文本块**（在 `[DONE]` 前），会作为普通
+  文本追加到助手回复末尾，下一轮请求中模型会回读这段文本——这是有意为之：
+  路由切换后模型名混入上下文的代价远小于「用户永远不知道实际用了什么模型」
+  的信息损失。
+
+通用约束（两种格式共用）：
+- **只处理 `stop_reason == end_turn`**。工具轮（tool_use/tool_calls）不注入：
+  那一轮的文本会进入 agent loop 的上下文被模型回读，模型名混进去既无意义又
+  污染历史。
+- **只在「路由真的接管了」时注入**。没接管说明用的就是客户端自己选的模型，
+  用户无需被告知。classifier 快速路径是 Claude Code 的 safety 调用，排除。
 """
 
 from __future__ import annotations
@@ -24,11 +30,10 @@ import re
 # 常量
 # ---------------------------------------------------------------------------
 
-#: 注入文本与模型名之间的分隔。模型名独占一行，避免和正文末句黏在一起；
-#: 出参形如 `"\n\ndeepseek-v4-flash"`。
+#: 注入文本与模型名之间的分隔。模型名独占一行，避免和正文末句黏在一起。
 TAG_SEPARATOR = "\n\n"
 
-# Anthropic SSE 事件类型（只列出本模块关心的）
+# SSE 事件类型（只列出本模块关心的）
 EV_CONTENT_BLOCK_START = "content_block_start"
 EV_MESSAGE_DELTA = "message_delta"
 EV_MESSAGE_STOP = "message_stop"
@@ -45,6 +50,28 @@ _TYPE_RE = re.compile(r'"type"\s*:\s*"([A-Za-z_]+)"')
 _STOP_RE = re.compile(r'"stop_reason"\s*:\s*(?:"([^"]*)"|(null))')
 _INDEX_RE = re.compile(r'"index"\s*:\s*(\d+)')
 _PROBE_LIMIT = 256
+
+
+# ---------------------------------------------------------------------------
+# SSE 事件切分（Anthropic 与 OpenAI 共用）
+# ---------------------------------------------------------------------------
+
+
+def _take_sse_event(buffer: str) -> tuple[str | None, str]:
+    """切出缓冲里第一条完整 SSE 事件（含结尾空行）；不完整返回 None。
+
+    SSE 规范允许 CRLF 行尾。只认 `\\n\\n` 的话，CRLF 上游会永远切不出事件
+    ——不报错，只是整个流都堆在缓冲里直到结束，静默退化成「不流式」。
+    """
+    lf = buffer.find("\n\n")
+    crlf = buffer.find("\r\n\r\n")
+    if crlf >= 0 and (lf < 0 or crlf + 2 <= lf):
+        cut = crlf + 4
+    elif lf >= 0:
+        cut = lf + 2
+    else:
+        return None, buffer
+    return buffer[:cut], buffer[cut:]
 
 
 def _event_type(raw: str) -> str:
@@ -80,6 +107,11 @@ def _sse_event(name: str, payload: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+# ---------------------------------------------------------------------------
+# Anthropic 格式注入
+# ---------------------------------------------------------------------------
+
+
 class AnthropicSSETagger:
     """在 Anthropic SSE 流的末尾注入模型名文本块。
 
@@ -107,7 +139,7 @@ class AnthropicSSETagger:
         self._rest += self._decoder.decode(chunk)
         out: list[str] = []
         while True:
-            raw = self._take_event()
+            raw, self._rest = _take_sse_event(self._rest)
             if raw is None:
                 break
             out.extend(self._consume(raw))
@@ -127,22 +159,9 @@ class AnthropicSSETagger:
             self._held = []
         return "".join(out).encode()
 
-    def _take_event(self) -> str | None:
-        """切出缓冲里第一条完整 SSE 事件（含结尾空行）；不完整返回 None。
-
-        SSE 规范允许 CRLF 行尾。只认 `\\n\\n` 的话，CRLF 上游会永远切不出事件
-        ——不报错，只是整个流都堆在缓冲里直到结束，静默退化成「不流式」。
-        """
-        lf = self._rest.find("\n\n")
-        crlf = self._rest.find("\r\n\r\n")
-        if crlf >= 0 and (lf < 0 or crlf + 2 <= lf):
-            cut = crlf + 4
-        elif lf >= 0:
-            cut = lf + 2
-        else:
-            return None
-        raw, self._rest = self._rest[:cut], self._rest[cut:]
-        return raw
+    @property
+    def injected(self) -> bool:
+        return self._injected
 
     # -- 状态机 -----------------------------------------------------------
 
@@ -156,7 +175,7 @@ class AnthropicSSETagger:
             out.extend(self._held)
             self._held = []
 
-        # 任何带 index 的事件都推进「下一个可用 index」（见 _block_index 注释）
+        # 任何带 index 的事件都推进「下一个可用 index」
         idx = _block_index(raw)
         if idx >= 0:
             self._next_index = max(self._next_index, idx + 1)
@@ -191,13 +210,15 @@ class AnthropicSSETagger:
                     "delta": {"type": "text_delta", "text": TAG_SEPARATOR + self.model},
                 },
             ),
-            _sse_event("content_block_stop", {"type": "content_block_stop", "index": idx}),
+            _sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": idx}
+            ),
         ]
 
-    @property
-    def injected(self) -> bool:
-        """是否真的注入过（供日志观测，防静默失效）。"""
-        return self._injected
+
+# ---------------------------------------------------------------------------
+# Anthropic 格式非流式注入
+# ---------------------------------------------------------------------------
 
 
 def tag_message_dict(data: object, model: str) -> dict | None:
@@ -227,3 +248,116 @@ def tag_json_response(body: bytes, model: str) -> bytes:
         return json.dumps(data, ensure_ascii=False).encode()
     except (TypeError, ValueError):
         return body
+
+
+# ---------------------------------------------------------------------------
+# OpenAI 格式注入
+# ---------------------------------------------------------------------------
+
+
+class OpenAITagInserter:
+    """在 OpenAI SSE 流的 `[DONE]` 标记前注入模型名文本块。
+
+    与 `AnthropicSSETagger` 的设计差异：
+    - Anthropic 注入是**独立 content_block**，客户端把它当作助手回复的一部分
+      展示，但**不进入**下一轮模型的上下文（content_block 有明确语义边界）。
+    - OpenAI 注入是**普通 delta.content**，会作为文本直接追加到助手回复末尾，
+      下一轮请求中模型**会回读**这段文本——这是有意为之：路由切换后模型名
+      混入上下文的代价远小于「用户永远不知道实际用了什么模型」的信息损失。
+    """
+
+    def __init__(self, model: str):
+        self.model = model
+        self._rest = ""  # 跨 chunk 未凑齐空行的残段
+        self._injected = False
+        #: 上游 chunk 的公共元数据（id / object / created），注入事件复用它们，
+        #: 避免发出一条字段残缺的 chunk——严格的客户端会拒绝或解析失败。
+        self._meta: dict = {}
+
+    def feed(self, chunk: bytes) -> bytes:
+        """喂入上游 SSE 字节，返回应写往客户端的字节。"""
+        self._rest += chunk.decode("utf-8", errors="replace")
+        out: list[str] = []
+        while True:
+            raw, self._rest = _take_sse_event(self._rest)
+            if raw is None:
+                break
+            self._remember_meta(raw)
+            # OpenAI 的结束标记是 `data: [DONE]`（一个独立的 SSE 事件）
+            if "data: [DONE]" in raw and not self._injected:
+                inject = self._make_inject_event()
+                out.append(inject)
+                self._injected = True
+            out.append(raw)
+        return "".join(out).encode()
+
+    def _remember_meta(self, raw: str) -> None:
+        """从一条 SSE 事件里记住 chunk 公共元数据（只扫前缀，不做全量解析）。"""
+        for line in raw.splitlines():
+            if not line.startswith("data: "):
+                continue
+            payload = line[6:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                obj = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                for key in ("id", "object", "created"):
+                    if key in obj:
+                        self._meta[key] = obj[key]
+            return
+
+    def finish(self) -> bytes:
+        """上游流结束：放行残段；如果 [DONE] 没到则兜底注入。"""
+        rest = self._rest
+        self._rest = ""
+        if not self._injected and rest.strip():
+            inject = self._make_inject_event()
+            self._injected = True
+            return (inject + rest).encode()
+        return rest.encode() if rest else b""
+
+    @property
+    def injected(self) -> bool:
+        return self._injected
+
+    def _make_inject_event(self) -> str:
+        """生成承载模型名的 delta 事件（一条 data 行）。
+
+        复用上游 chunk 的 id/object/created，只把 model 换成**实际路由到的**
+        上游模型名——那正是本模块要向客户端展示的信息，不能被上游回显的
+        请求模型名盖回去。
+        """
+        data = dict(self._meta)
+        data["model"] = self.model
+        data.setdefault("object", "chat.completion.chunk")
+        data["choices"] = [
+            {
+                "index": 0,
+                "delta": {"content": TAG_SEPARATOR + self.model},
+                "finish_reason": None,
+            }
+        ]
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def tag_openai_message(body: bytes, model: str) -> bytes:
+    """非流式 OpenAI 响应：在 choices[0].message.content 末尾追加模型名。
+
+    不满足注入条件时原样返回，**不改动入参**。
+    """
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body
+    choices = data.get("choices") or []
+    if not choices:
+        return body
+    msg = choices[0].get("message") or {}
+    content = msg.get("content")
+    if not isinstance(content, str) or not content:
+        return body
+    msg["content"] = content + TAG_SEPARATOR + model
+    return json.dumps(data, ensure_ascii=False).encode()

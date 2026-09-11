@@ -200,8 +200,11 @@ modelProxy:
   enabled: false
   # 兼容：providers 为空时的单一上游地址
   url: ""
-  # 本地代理监听端口
+  # 本地代理监听端口，0 = 自动检测可用端口
   port: 8613
+  # 代理进程崩溃后的最大重启次数 / 重启前等待毫秒数
+  maxRestarts: 3
+  restartDelayMs: 2000
   # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider；
   # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
   # apiFormat: anthropic | openai，客户端格式不同时自动做协议转换。

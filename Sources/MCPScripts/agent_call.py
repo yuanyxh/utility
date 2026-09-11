@@ -19,6 +19,7 @@ import os
 import shlex
 import subprocess
 import tempfile
+import time
 
 from log_utils import setup_logging
 
@@ -29,6 +30,20 @@ logger = setup_logging("agent_call")
 # 超时杀进程并报错，避免任务挂起数小时。
 # 通过环境变量 AGENT_TIMEOUT 可覆盖（Swift 层从 GeneralConfig.aiTimeout 读取）
 AGENT_TIMEOUT = int(os.environ.get("AGENT_TIMEOUT", "1500"))
+
+
+def _render_template(template: str, values: dict) -> str:
+    """只替换**已登记**的占位符，其余花括号原样保留。
+
+    不能用 `str.format`：命令模板是用户配置项（ArticleConfig.agentCli），里面
+    完全可能出现 JSON 参数（`--mcp-config {"mcpServers":{}}`）或 shell 变量
+    （`${HOME}`）。format 会把它们当作字段名去解析，直接抛 KeyError
+    （实测：`KeyError: '"mcpServers"'`），任务连启动都做不到。
+    """
+    out = template
+    for key, val in values.items():
+        out = out.replace("{" + key + "}", val)
+    return out
 
 
 def call_agent(
@@ -66,7 +81,7 @@ def call_agent(
             stdin = user.encode("utf-8")
 
         # 构建完整命令：模板
-        base_cmd = agent_template.format(**kwargs)
+        base_cmd = _render_template(agent_template, kwargs)
         cmd = shlex.split(base_cmd)
         try:
             logger.info("调用 agent CLI: cmd=%s", " ".join(cmd))
@@ -96,8 +111,6 @@ def call_agent(
             raise SystemExit("[agent 错误] 输出为空")
 
         # 保存调试文件
-        import time
-
         timestamp = int(time.time())
         debug_file = os.path.join(debug_dir, f"agent_output_{timestamp}.txt")
         with open(debug_file, "w", encoding="utf-8") as f:

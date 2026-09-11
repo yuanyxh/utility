@@ -40,7 +40,9 @@ import aiohttp
 from db import conn as dbconn
 from log_utils import setup_logging
 from proxy_protocol import _is_classifier_candidate
+from proxy_provider import api_format_of, api_key_of
 from proxy_normalize import (
+    API_ANTHROPIC,
     API_OPENAI,
     DEFAULT_KEY_PARTS,
     KEY_PART_NAMES,
@@ -86,7 +88,6 @@ DEFAULT_CLASSIFY_PROMPT_TEMPLATE = """根据以下用户消息归类。可选类
 # 中间用户轮，但同一对话里追加指令不再开新会话（升档锁定会保持到会话结束）。
 
 
-
 #: 双向切档回本轮数兜底值。实际应按 provider 缓存折扣反推（见模块 docstring）。
 FALLBACK_SWITCH_COST_TURNS = 12
 
@@ -107,6 +108,10 @@ FALLBACK_CHECKPOINT_INTERVAL = 8
 #: 必须有一个总闸：预算耗尽即放弃分类走兜底档，绝不把 3×timeout 全压在请求上。
 FALLBACK_CLASSIFIER_TOTAL_BUDGET_MS = 3000
 
+FALLBACK_CLASSIFIER_MAX_RETRIES = 3
+FALLBACK_CLASSIFIER_RETRY_DELAY_MS = 500
+FALLBACK_CLASSIFIER_TIMEOUT_MS = 10000
+
 FALLBACK_MAX_SESSIONS = 512
 FALLBACK_TTL_SECONDS = 7200
 FALLBACK_PROFILE_MIN_SAMPLES = 5
@@ -122,6 +127,16 @@ PATTERN_MATCH_LIMIT = 4096
 #: 协议层定义的正常终止原因（Anthropic stop_reason 枚举；OpenAI 侧已由
 #: _extract_usage_from_sse 映射为同一套值）。其余视为异常 → 升档。
 NORMAL_STOP_REASONS = frozenset({"end_turn", "tool_use", "stop_sequence"})
+
+#: 分类器请求的上游 endpoint，按 provider 的 apiFormat 选择。
+#:
+#: 与主转发路径是两套构造：主转发是 `{provider.url}/{path}`，path 由客户端请求
+#: 透传；分类器是代理自己发起的请求，没有客户端 path 可沿用，必须显式给出终点。
+#: provider.url 仍是 base（可含版本段或网关前缀），此处只拼协议规定的资源路径。
+CLASSIFIER_ENDPOINT = {
+    API_ANTHROPIC: "/messages",
+    API_OPENAI: "/chat/completions",
+}
 
 #: 本模块从 MODEL_PROXY_ROUTER 读取的**全部**键，按 JSON 分组。
 #:
@@ -235,7 +250,13 @@ def _compile_patterns(raw) -> list[re.Pattern]:
             out.append(re.compile(p))
         except (re.error, TypeError) as e:
             logger.warning(
-                json.dumps({"msg": "router_pattern_invalid", "pattern": str(p), "error": str(e)})
+                json.dumps(
+                    {
+                        "msg": "router_pattern_invalid",
+                        "pattern": str(p),
+                        "error": str(e),
+                    }
+                )
             )
     return out
 
@@ -266,32 +287,42 @@ class RouterConfig:
         # 键用小写，值仍为配置里的原始名（对外输出保持原样）。
         self.tier_rank = {t.name.lower(): i for i, t in enumerate(self.tiers)}
 
-        self.default_tier = self.canonical_tier(cfg.get("default_tier", "")) or self.weakest
+        self.default_tier = (
+            self.canonical_tier(cfg.get("default_tier", "")) or self.weakest
+        )
 
         clf = cfg.get("classifier") or {}
         self.classifier_provider = clf.get("provider", "")
         self.classifier_prompt_template = clf.get("prompt_template", "")
-        self.classifier_max_retries = int(clf.get("max_retries", 3))
-        self.classifier_retry_delay_ms = int(clf.get("retry_delay_ms", 500))
-        self.classifier_timeout_ms = int(clf.get("timeout_ms", 10000))
+        self.classifier_max_retries = int(
+            clf.get("max_retries", FALLBACK_CLASSIFIER_MAX_RETRIES)
+        )
+        self.classifier_retry_delay_ms = int(
+            clf.get("retry_delay_ms", FALLBACK_CLASSIFIER_RETRY_DELAY_MS)
+        )
+        self.classifier_timeout_ms = int(
+            clf.get("timeout_ms", FALLBACK_CLASSIFIER_TIMEOUT_MS)
+        )
         self.classifier_total_budget_ms = int(
             clf.get("total_budget_ms", FALLBACK_CLASSIFIER_TOTAL_BUDGET_MS)
         )
 
         pol = cfg.get("policy") or {}
         self.classifier_fast_path = bool(pol.get("classifier_fast_path", True))
-        self.switch_cost_turns = int(pol.get("switch_cost_turns", FALLBACK_SWITCH_COST_TURNS))
+        self.switch_cost_turns = int(
+            pol.get("switch_cost_turns", FALLBACK_SWITCH_COST_TURNS)
+        )
         self.loop_streak = int(pol.get("loop_streak", FALLBACK_LOOP_STREAK))
         self.escalate_error_streak = max(
             1, int(pol.get("escalate_error_streak", FALLBACK_ESCALATE_ERROR_STREAK))
         )
-        self.checkpoint_interval = int(pol.get("checkpoint_interval", FALLBACK_CHECKPOINT_INTERVAL))
+        self.checkpoint_interval = int(
+            pol.get("checkpoint_interval", FALLBACK_CHECKPOINT_INTERVAL)
+        )
         self.escalate_patterns = _compile_patterns(pol.get("escalate_patterns"))
         self.readonly_tools = {t for t in (pol.get("readonly_tools") or []) if t}
         normal = pol.get("normal_stop_reasons")
-        self.normal_stop_reasons = (
-            frozenset(normal) if normal else NORMAL_STOP_REASONS
-        )
+        self.normal_stop_reasons = frozenset(normal) if normal else NORMAL_STOP_REASONS
         self.require_paired_history = bool(pol.get("require_paired_history", True))
 
         conv = cfg.get("conversation") or {}
@@ -301,7 +332,9 @@ class RouterConfig:
 
         prof = cfg.get("profile") or {}
         self.profile_enabled = bool(prof.get("enabled", True))
-        self.profile_min_samples = int(prof.get("min_samples", FALLBACK_PROFILE_MIN_SAMPLES))
+        self.profile_min_samples = int(
+            prof.get("min_samples", FALLBACK_PROFILE_MIN_SAMPLES)
+        )
         self.profile_window = max(1, int(prof.get("window", FALLBACK_PROFILE_WINDOW)))
         self.profile_upgrade_threshold = float(
             prof.get("upgrade_rate_threshold", FALLBACK_PROFILE_UPGRADE_THRESHOLD)
@@ -517,7 +550,8 @@ class ProfileStore:
         try:
             with dbconn(self._db_path) as c:
                 existing = {
-                    r[1] for r in c.execute("PRAGMA table_info(router_profile)").fetchall()
+                    r[1]
+                    for r in c.execute("PRAGMA table_info(router_profile)").fetchall()
                 }
                 # 本表由同一次改动引入、从未随版本发布，且只存可重建的策略状态，
                 # 因此旧形态直接重建即可，不做迁移脚手架；重建行为显式记日志。
@@ -532,13 +566,11 @@ class ProfileStore:
                         )
                     )
                     c.execute("DROP TABLE router_profile")
-                c.execute(
-                    """CREATE TABLE IF NOT EXISTS router_profile (
+                c.execute("""CREATE TABLE IF NOT EXISTS router_profile (
                         profile_hash TEXT PRIMARY KEY,
                         history TEXT,
                         updated_at TEXT
-                    )"""
-                )
+                    )""")
             self._ready = True
         except Exception as e:
             logger.warning(
@@ -567,7 +599,9 @@ class ProfileStore:
                     pass
                 out[key] = stats
         except Exception as e:
-            logger.warning(json.dumps({"msg": "router_profile_load_failed", "error": str(e)}))
+            logger.warning(
+                json.dumps({"msg": "router_profile_load_failed", "error": str(e)})
+            )
         return out
 
     def save_many(self, items: list[tuple[str, ProfileStats]]) -> None:
@@ -590,7 +624,9 @@ class ProfileStore:
                     ],
                 )
         except Exception as e:
-            logger.warning(json.dumps({"msg": "router_profile_save_failed", "error": str(e)}))
+            logger.warning(
+                json.dumps({"msg": "router_profile_save_failed", "error": str(e)})
+            )
 
 
 class Router:
@@ -733,7 +769,9 @@ class Router:
             return await self._decide(turns, body, api_format)
         except Exception as e:  # 代理主链路不可被路由缺陷打断
             logger.warning(
-                json.dumps({"msg": "router_exception", "error": f"{type(e).__name__}: {e}"})
+                json.dumps(
+                    {"msg": "router_exception", "error": f"{type(e).__name__}: {e}"}
+                )
             )
             return RouteDecision(None, Reason.ROUTER_ERROR)
 
@@ -785,12 +823,16 @@ class Router:
                 # 已在高档锁定：信号保留在 detail 里可观测，但不再重复记升档——
                 # 否则「已锁定」的每一轮都会报 escalate_*，升档计数虚高、归因失真。
                 return self._emit(
-                    state, task_key, idx, Reason.HOLD_LOCKED, {"signal": reason, **detail}
+                    state,
+                    task_key,
+                    idx,
+                    Reason.HOLD_LOCKED,
+                    {"signal": reason, **detail},
                 )
             target = cfg.strongest
-            changes_tier = (
-                target and cfg.tier_rank.get(target.lower(), 99) < cfg.tier_rank.get(state.tier.lower(), 99)
-            )
+            changes_tier = target and cfg.tier_rank.get(
+                target.lower(), 99
+            ) < cfg.tier_rank.get(state.tier.lower(), 99)
             if changes_tier:
                 # 升档同样要换 provider/格式，与降档共享同一道前置检查：
                 # 历史里存在无配对 tool_use 时切档会被严格上游 400（已知故障模式）。
@@ -862,18 +904,41 @@ class Router:
                 # 的主路径，不会再取这把锁）
                 self._open_locks.pop(task_key, None)
                 return self._emit(
-                    existing, task_key, idx, Reason.HOLD_CONCURRENT_JOIN, {"joined": True}
+                    existing,
+                    task_key,
+                    idx,
+                    Reason.HOLD_CONCURRENT_JOIN,
+                    {"joined": True},
                 )
             decision = await self._open_locked(task_key, profile_key, turns, idx, now)
             self._open_locks.pop(task_key, None)
             return decision
 
     def _evict_open_locks(self) -> None:
-        """锁表必须有界：每个 task_key 一把锁，不设限会随会话数无界增长。"""
+        """锁表必须有界：每个 task_key 一把锁，不设限会随会话数无界增长。
+
+        淘汰的代价是那个键的单飞失效（同一 task_key 的并发请求会各发一次分类、
+        多付一次延迟与 token）。这比无界增长轻，但**必须可观测**——否则「分类被
+        重复调用」这件事在日志里无迹可寻，只会表现为偶发的额外延迟。
+        """
+        if self.config.max_sessions <= 0:
+            return
         overflow = len(self._open_locks) - self.config.max_sessions
-        if self.config.max_sessions > 0 and overflow > 0:
-            for key in list(self._open_locks.keys())[:overflow]:
-                self._open_locks.pop(key, None)
+        if overflow <= 0:
+            return
+        dropped = list(self._open_locks.keys())[:overflow]
+        for key in dropped:
+            self._open_locks.pop(key, None)
+        logger.warning(
+            json.dumps(
+                {
+                    "msg": "router_open_lock_evicted",
+                    "dropped": len(dropped),
+                    "remaining": len(self._open_locks),
+                    "effect": "被淘汰键的并发会话创建不再单飞，可能重复调用分类器",
+                }
+            )
+        )
 
     async def _open_locked(
         self,
@@ -898,7 +963,10 @@ class Router:
         if prior_ok:
             tier = cfg.profile_prior_tier or cfg.default_tier
             reason = Reason.SESSION_NEW_PROFILE_PRIOR
-            detail = {"profile_samples": stats.sessions, "upgrade_rate": round(stats.upgrade_rate, 3)}
+            detail = {
+                "profile_samples": stats.sessions,
+                "upgrade_rate": round(stats.upgrade_rate, 3),
+            }
         else:
             classified = await self._classify(turns)
             if classified:
@@ -952,7 +1020,10 @@ class Router:
             }
 
         # 3. 上一轮响应终止原因异常（max_tokens 截断 / error 等）
-        if state.last_stop_reason and state.last_stop_reason not in cfg.normal_stop_reasons:
+        if (
+            state.last_stop_reason
+            and state.last_stop_reason not in cfg.normal_stop_reasons
+        ):
             return Reason.ESCALATE_STOP_REASON, {"stop_reason": state.last_stop_reason}
 
         # 4. 内容层兜底正则：仅当 provider 不返回 is_error 时才有意义，默认空。
@@ -1003,7 +1074,11 @@ class Router:
             if not ok:
                 logger.warning(
                     json.dumps(
-                        {"msg": "route_switch_blocked", "reason": why, "direction": "downgrade"}
+                        {
+                            "msg": "route_switch_blocked",
+                            "reason": why,
+                            "direction": "downgrade",
+                        }
                     )
                 )
                 return False, Reason.HOLD_SWITCH_UNSAFE, {"pairing": why}
@@ -1014,7 +1089,9 @@ class Router:
         calls = [b for t in turns for b in t.tool_calls]
         if not calls:
             return False, Reason.HOLD_NOT_READONLY, {"calls": 0}
-        outside = sorted({b.tool_name for b in calls if b.tool_name not in cfg.readonly_tools})
+        outside = sorted(
+            {b.tool_name for b in calls if b.tool_name not in cfg.readonly_tools}
+        )
         if outside:
             return False, Reason.HOLD_NOT_READONLY, {"outside": outside[:5]}
 
@@ -1032,21 +1109,33 @@ class Router:
         stats = self._profiles.get(profile_key)
         expected = stats.expected_turns() if stats else None
         if expected is None:
-            return False, Reason.HOLD_NO_EXPECTED_TURNS, {"session_turns": session_turns}
+            return (
+                False,
+                Reason.HOLD_NO_EXPECTED_TURNS,
+                {"session_turns": session_turns},
+            )
         remaining = expected - session_turns
         if remaining < cfg.switch_cost_turns:
-            return False, Reason.HOLD_INSUFFICIENT_REMAINING, {
-                "expected_turns": expected,
-                "session_turns": session_turns,
-                "remaining": remaining,
-                "threshold": cfg.switch_cost_turns,
-            }
+            return (
+                False,
+                Reason.HOLD_INSUFFICIENT_REMAINING,
+                {
+                    "expected_turns": expected,
+                    "session_turns": session_turns,
+                    "remaining": remaining,
+                    "threshold": cfg.switch_cost_turns,
+                },
+            )
 
-        return True, Reason.DOWNGRADE_READONLY, {
-            "session_turns": session_turns,
-            "expected_turns": expected,
-            "readonly_tools": len(cfg.readonly_tools),
-        }
+        return (
+            True,
+            Reason.DOWNGRADE_READONLY,
+            {
+                "session_turns": session_turns,
+                "expected_turns": expected,
+                "readonly_tools": len(cfg.readonly_tools),
+            },
+        )
 
     # -- 响应侧回填 --------------------------------------------------------
 
@@ -1090,7 +1179,7 @@ class Router:
             return None
 
         prompt = self._build_classify_prompt(user_text[:500])
-        api_format = provider.get("apiFormat", "anthropic")
+        api_format = api_format_of(provider)
         # 总预算闸：单次超时 × 重试次数会全部叠加在转发前的关键链路上，
         # 必须有一个总上限。预算耗尽即放弃分类走兜底档，不把请求卡死。
         deadline = time.monotonic() + max(0, cfg.classifier_total_budget_ms) / 1000
@@ -1102,9 +1191,13 @@ class Router:
             attempt_timeout = min(cfg.classifier_timeout_ms, remaining_ms)
             try:
                 if api_format == API_OPENAI:
-                    result = await self._classify_openai(prompt, provider, attempt_timeout)
+                    result = await self._classify_openai(
+                        prompt, provider, attempt_timeout
+                    )
                 else:
-                    result = await self._classify_anthropic(prompt, provider, attempt_timeout)
+                    result = await self._classify_anthropic(
+                        prompt, provider, attempt_timeout
+                    )
                 canonical = cfg.canonical_tier(result)
                 if canonical:
                     logger.info(
@@ -1142,7 +1235,13 @@ class Router:
                     "provider": cfg.classifier_provider,
                     "max_retries": cfg.classifier_max_retries,
                     "budget_ms": cfg.classifier_total_budget_ms,
-                    "elapsed_ms": int((time.monotonic() - (deadline - cfg.classifier_total_budget_ms / 1000)) * 1000),
+                    "elapsed_ms": int(
+                        (
+                            time.monotonic()
+                            - (deadline - cfg.classifier_total_budget_ms / 1000)
+                        )
+                        * 1000
+                    ),
                 }
             )
         )
@@ -1151,10 +1250,14 @@ class Router:
     async def _classify_anthropic(
         self, prompt: str, provider: dict, timeout_ms: int
     ) -> str:
-        url = f"{provider['url']}/messages"
-        headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
-        if provider.get("apiKey"):
-            headers["x-api-key"] = provider["apiKey"]
+        url = f"{provider['url']}{CLASSIFIER_ENDPOINT[API_ANTHROPIC]}"
+        headers = {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        api_key = api_key_of(provider)
+        if api_key:
+            headers["x-api-key"] = api_key
         body = {
             "model": provider["models"][0],
             "max_tokens": 10,
@@ -1163,7 +1266,9 @@ class Router:
         }
         timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
+            async with session.post(
+                url, json=body, headers=headers, timeout=timeout
+            ) as resp:
                 data = await resp.json()
                 content = data.get("content") or [{}]
                 return content[0].get("text", "").strip().lower()
@@ -1172,10 +1277,11 @@ class Router:
         self, prompt: str, provider: dict, timeout_ms: int
     ) -> str:
         cfg = self.config
-        url = f"{provider['url']}/chat/completions"
+        url = f"{provider['url']}{CLASSIFIER_ENDPOINT[API_OPENAI]}"
         headers = {"content-type": "application/json"}
-        if provider.get("apiKey"):
-            headers["authorization"] = f"Bearer {provider['apiKey']}"
+        api_key = api_key_of(provider)
+        if api_key:
+            headers["authorization"] = f"Bearer {api_key}"
         body = {
             "model": provider["models"][0],
             "max_tokens": 10,
@@ -1183,12 +1289,16 @@ class Router:
         }
         timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
+            async with session.post(
+                url, json=body, headers=headers, timeout=timeout
+            ) as resp:
                 data = await resp.json()
                 choices = data.get("choices") or []
                 if not choices:
                     return ""
-                return (choices[0].get("message") or {}).get("content", "").strip().lower()
+                return (
+                    (choices[0].get("message") or {}).get("content", "").strip().lower()
+                )
 
     # -- 输出 -------------------------------------------------------------
 
@@ -1206,7 +1316,13 @@ class Router:
         if provider is None or not model:
             # 档位模型在 providers 中不存在——不接管，回落原路径（防静默改错模型）
             logger.warning(
-                json.dumps({"msg": "route_model_unresolved", "tier": state.tier, "model": model})
+                json.dumps(
+                    {
+                        "msg": "route_model_unresolved",
+                        "tier": state.tier,
+                        "model": model,
+                    }
+                )
             )
             return RouteDecision(None, Reason.TIER_UNRESOLVED, task_key=task_key)
         return RouteDecision(

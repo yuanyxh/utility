@@ -349,9 +349,7 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
             for r in rows:
                 sig = r["signature"] or ""
                 doc = r["doc_comment"] or ""
-                key = _symbol_cache_key(
-                    r["file_path"], r["name"], r["kind"], sig, doc
-                )
+                key = _symbol_cache_key(r["file_path"], r["name"], r["kind"], sig, doc)
                 text = r["name"]
                 if sig:
                     text += " " + sig

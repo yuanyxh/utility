@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -504,8 +505,28 @@ class UsageFieldResolver:
 resolver = UsageFieldResolver()
 
 
+#: 需要从用户文本中剔除的**已登记**客户端注入标签。
+#:
+#: 只按名剔除，不再把任意 `<...>` 当标签：用户输入里出现比较运算符（`if x < y
+#: and y > z`）或 HTML 片段时，通用标签清理会把中间整段吃掉——实测
+#: `'if x < y and y > z: pass'` 被清成 `'if x z: pass'`，日志字段严重失真。
+CLIENT_INJECTED_TAGS = (
+    "system-reminder",
+    "local-command-caveat",
+    "local-command-stdout",
+    "command-name",
+    "command-message",
+    "command-args",
+)
+
+_TAG_RE = re.compile(
+    r"</?(?:" + "|".join(re.escape(t) for t in CLIENT_INJECTED_TAGS) + r")\b[^>]*>",
+    re.IGNORECASE,
+)
+
+
 def _extract_user_text(content) -> str:
-    """从消息内容中提取纯文本，跳过各种 system-reminder 标签。
+    """从消息内容中提取纯文本，跳过已登记的客户端注入标签。
 
     兼容 Anthropic（content list of blocks）和 OpenAI（content string）格式。
     """
@@ -522,24 +543,8 @@ def _extract_user_text(content) -> str:
     # 规则正文里的尖括号可能把 `---rule_end` 一并吃掉，导致剥离函数找不到结束标记
     # 而把块后面的真实用户输入一起丢弃。
     content_str = strip_injected_rules(str(content))
-    # 跳过所有 system-reminder 类型的标签（包括 <system-reminder> 和 <local-command-caveat> 等）
-    while True:
-        start = content_str.find("<")
-        if start == -1:
-            break
-        end = content_str.find(">", start)
-        if end == -1:
-            break
-        tag = content_str[start : end + 1]
-        # 关闭标签
-        close_tag = f"</{tag[1:]}"
-        close_start = content_str.find(close_tag)
-        if close_start != -1:
-            close_end = close_start + len(close_tag)
-            content_str = content_str[:start] + content_str[close_end:].strip()
-        else:
-            content_str = content_str[:start] + content_str[end + 1 :].strip()
-    return content_str.strip()
+    # 仅剔除已登记标签（含开闭标签），其余文本原样保留
+    return _TAG_RE.sub("", content_str).strip()
 
 
 CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
@@ -602,13 +607,8 @@ def extract_request_context(body: dict) -> dict:
     for msg in messages:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
-            # 跳过续接提示词
+            # 跳过续接提示词（其正文是上一轮摘要，不是用户输入）
             if content_str.startswith(CONTINUATION_PREFIX):
-                # 续接提示词后可能有实际用户输入，用 "Summary:" 分隔
-                summary_idx = content_str.find("Summary:")
-                if summary_idx != -1:
-                    # 续接提示词结束，后面是摘要
-                    continue
                 continue
             # 跳过纯摘要内容（以 "Summary:" 开头）
             if content_str.strip().startswith("Summary:"):

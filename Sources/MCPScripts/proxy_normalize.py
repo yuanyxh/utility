@@ -478,7 +478,9 @@ def build_fingerprints(
     # 分类只做一次、轮次跨无关任务累积、检查点变成全局计数。宁可回到已知良好的
     # 缺省组合，也不接受一个语义已经变质的键。
     effective = [
-        p for p in (key_parts if not unknown else DEFAULT_KEY_PARTS) if p in KEY_PART_NAMES
+        p
+        for p in (key_parts if not unknown else DEFAULT_KEY_PARTS)
+        if p in KEY_PART_NAMES
     ] or ["profile"]
     ordered = [parts[p] for p in effective]
     return _digest(*ordered), profile_key, unknown

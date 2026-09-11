@@ -4,16 +4,21 @@ import Foundation
 final class MCPClient {
     static let shared = MCPClient()
 
-    private let baseURL: String
+    /// 本地 loopback 查询超时（秒）。本机服务，正常响应在毫秒级。
+    private static let requestTimeout: TimeInterval = 5
+
     private let session = URLSession.shared
     private let decoder = JSONDecoder()
 
-    private init() {
-        let configured = ConfigManager.shared.config.mcp?.port ?? 0
-        // port=0 时使用默认值，正常流程 MCPProcessManager 已检测端口
-        let port = configured > 0 ? configured : 9001
-        baseURL = "http://127.0.0.1:\(port)"
+    /// 服务地址。**每次读取都向 MCPProcessManager 要**，不在 init 时固化：
+    /// 原先此处独立推导端口（`配置值 > 0 ? 配置值 : 9001`），与 MCPProcessManager
+    /// 的自动探测构成两处推导——配置为 0（默认值）且 9001 被占用时，服务实际监听
+    /// 9002，而这里仍请求 9001，所有项目检索请求都会失败。
+    private var baseURL: String {
+        "http://127.0.0.1:\(MCPProcessManager.shared.currentPort)"
     }
+
+    private init() {}
 
     // MARK: - Tools
 
@@ -52,7 +57,7 @@ final class MCPClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(body)
-        req.timeoutInterval = 5
+        req.timeoutInterval = Self.requestTimeout
 
         let (data, response) = try await session.data(for: req)
 
