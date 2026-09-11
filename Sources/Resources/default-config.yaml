@@ -110,11 +110,13 @@ modelProxy:
       # 每 N 轮强制升档一次（is_error 不可用时的主力兜底），0 = 禁用。
       # 按「距上次检查点的轮数」计，不是绝对轮次；已降档的会话自动抬到
       # switchCostTurns，保证弱档段撑得到回本，否则降档恒亏（见下）。
-      checkpointInterval: 8
+      checkpointInterval: 30
       # 内容层兜底正则（仅当 provider 不返回 is_error 时才需要）
       escalatePatterns: []
       # 只读工具白名单。**默认空 = 永不允许降档**（对通用 agent 最保守）；
       # 填了才启用降档，且必须同时满足「已确认无失败」与「剩余轮数够回本」。
+      # 降档判定检查整个会话历史中的全部工具调用：只要有任何一个非只读工具，
+      # 降档即被阻断。因此只填真正的只读工具（Bash/Edit/Write 等写操作工具不入此列）。
       readonlyTools: []
       # 正常终止原因；留空用协议默认 {end_turn, tool_use, stop_sequence}
       normalStopReasons: []
@@ -170,7 +172,6 @@ mcp:
   # 每日总结（由 TaskScheduler 触发 summarize.py）
   summaryEnabled: true
   summaryHour: 17
-  summaryStatsOnly: false  # true=仅统计报表，跳过 AI 总结
 
   # 总结排除 tag：含这些 tag 的记忆不进入知识库沉淀（工作流/格式类，非技术知识）
   excludeTags:

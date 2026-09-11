@@ -6,7 +6,11 @@ tags: [summarize, memory-pipeline, aggregate, refine, architecture]
 # summarize.py 记忆沉淀流水线
 
 ## 背景
-每日 17:00 定时（summaryHour:17）将热层 mem0 记忆沉淀为 notes 仓库 `Extracts/*.md` 总结文章，同时写入 Qdrant 冷层 `knowledge_base`。主流程（2026-08-06 重构后）：`main()` → `_acquire_single_instance` → `_generate_stats_report` → `_throttle_ai_run` → fetch → `_run_aggregate_v2` → `_run_refine` → `_write_articles_v2` → `_run_phase3` → git_commit×2。
+每日 17:00 定时（summaryHour:17）将热层 mem0 记忆沉淀为 notes 仓库 `Extracts/*.md` 总结文章，同时写入 Qdrant 冷层 `knowledge_base`。主流程（2026-08-06 重构后）：`main()` → `_acquire_single_instance` → `_throttle_ai_run` → fetch → `_run_aggregate_v2` → `_run_refine` → `_write_articles_v2` → `_run_phase3` → git_commit×2。
+
+> 2026-09-11：「MCP 工具调用统计」功能（`_generate_stats_report` + `server.py` 的 `_record_tool_call` +
+> `--stats-only`/`summaryStatsOnly` 配置 + `tool_usage.sqlite` + notes/MCP/工具调用统计.md）已**全链路移除**。
+> `summary_stats.py` 现仅保留终端报告打印 `_print_report_v2`。
 
 ## 关键机制
 - **数据源**：`fetch_memories()` 拉 `/api/memories/recent?since=<today-3d>&limit=200`（SUMMARY_MEMORY_DAYS=3, LIMIT=200）

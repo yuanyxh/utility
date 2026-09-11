@@ -58,7 +58,6 @@ public struct MCPConfig: Codable {
     // 每日总结
     var summaryEnabled: Bool = true
     var summaryHour: Int = 17
-    var summaryStatsOnly: Bool = false
 
     /// 总结排除 tag（跳过含这些 tag 的记忆）
     var excludeTags: [String] = []
@@ -81,7 +80,6 @@ public struct MCPConfig: Codable {
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
-        summaryStatsOnly = try c.decodeIfPresent(Bool.self, forKey: .summaryStatsOnly) ?? false
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
     }

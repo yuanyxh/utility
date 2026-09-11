@@ -137,14 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let model = ai.model.isEmpty ? "" : ai.model
         let serverURL = "http://localhost:\(mcp.port)"
 
-        var args: [String] = []
-        if mcp.summaryStatsOnly {
-            args.append("--stats-only")
-        }
         let excludeTagsStr = mcp.excludeTags.joined(separator: ",")
         let cmd = PythonScriptRunner.shellCommand(
             script: scriptPath,
-            arguments: args,
             environmentOverrides: [
                 "DEEPSEEK_API_KEY": apiKey,
                 "NOTES_DIR": notesDir,

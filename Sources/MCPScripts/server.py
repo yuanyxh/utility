@@ -26,7 +26,6 @@ import sys
 import time
 import asyncio
 import anyio
-import sqlite3
 import httpx
 from datetime import datetime, timedelta
 
@@ -60,7 +59,6 @@ from config import (
     summary_model,
     summary_api_url,
     notes_dir,
-    data_dir,
 )
 from server_embed import (
     EMBEDDER_MODEL,
@@ -182,11 +180,6 @@ SERVER_NAME = "mino-brain"
 SERVER_VERSION = "1.0.0"
 
 MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
-
-STATS_DB = os.path.join(
-    data_dir(),
-    "tool_usage.sqlite",
-)
 
 
 def _patch_mem0_fastembed():
@@ -1065,56 +1058,6 @@ async def handle_list_tools() -> list[Tool]:
     return tools
 
 
-_stats_db_conn: sqlite3.Connection | None = None
-
-
-def _get_stats_db() -> sqlite3.Connection:
-    global _stats_db_conn
-    if _stats_db_conn is not None:
-        return _stats_db_conn
-    os.makedirs(os.path.dirname(STATS_DB), exist_ok=True)
-    conn = sqlite3.connect(STATS_DB)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("""CREATE TABLE IF NOT EXISTS tool_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tool_name TEXT NOT NULL,
-            called_at TEXT NOT NULL,
-            duration_ms REAL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'success',
-            error_message TEXT DEFAULT ''
-        )""")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_stats_called_at ON tool_calls(called_at)"
-    )
-    _stats_db_conn = conn
-    return conn
-
-
-def _record_tool_call(
-    tool_name: str,
-    duration_ms: float,
-    status: str = "success",
-    error_message: str = "",
-) -> None:
-    try:
-        conn = _get_stats_db()
-        conn.execute(
-            "INSERT INTO tool_calls (tool_name, called_at, duration_ms, status, error_message) VALUES (?, ?, ?, ?, ?)",
-            (
-                tool_name,
-                datetime.now().isoformat(),
-                round(duration_ms, 1),
-                status,
-                error_message,
-            ),
-        )
-        conn.commit()
-    except Exception:
-        pass
-
-
 HANDLERS: dict[str, callable] = {}
 
 
@@ -1559,30 +1502,22 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
-    _start = time.time()
     try:
         handler = HANDLERS.get(name)
         if handler:
-            result = await handler(arguments)
-            _record_tool_call(name, (time.time() - _start) * 1000, "success")
-            return result
+            return await handler(arguments)
         skills = _scan_skills()
         if name in skills:
-            _record_tool_call(name, (time.time() - _start) * 1000, "success")
             return [TextContent(type="text", text=skills[name]["content"])]
         normalized = _normalize_name(name)
         if normalized in skills:
-            _record_tool_call(name, (time.time() - _start) * 1000, "success")
             return [TextContent(type="text", text=skills[normalized]["content"])]
-        _record_tool_call(name, (time.time() - _start) * 1000, "error", "unknown tool")
         return [
             TextContent(
                 type="text", text=json.dumps({"error": f"Unknown tool: {name}"})
             )
         ]
     except Exception as e:
-        elapsed = (time.time() - _start) * 1000
-        _record_tool_call(name, elapsed, "error", str(e))
         logger.error(f"Error in {name}: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 

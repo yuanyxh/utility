@@ -2,6 +2,9 @@
 
 > 状态：设计已实施（2026-08-06），代码在 `Sources/MCPScripts/summarize.py`。
 > 运行时管线与已知隐患见 `.claude/memory/summarize-memory-pipeline.md`；架构设计记忆见 MCP 记忆库（tag: summarize architecture）。
+>
+> ⚠️ 2026-09-11 更新：本文提到的 `_generate_stats_report`（MCP 工具调用统计）与 `--stats-only`
+> 已在后续版本中**全链路移除**，下方流程图中对应的两步不再存在。文档其余内容仍为当时的真实记录，保留作历史沉淀。
 
 ## Context
 

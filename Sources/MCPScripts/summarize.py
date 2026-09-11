@@ -3,15 +3,13 @@
 记忆总结流水线 — 由 Utility TaskScheduler 触发（非 server.py 调度）
 
 用法：
-  python3 summarize.py                    # 完整流程：统计报表 + AI 总结
-  python3 summarize.py --stats-only       # 仅生成统计报表，跳过 AI 总结
+  python3 summarize.py                    # 完整流程：AI 总结
 
 重构（2026-08-30，阶段3）：LLM/错误日志 → summary_llm.py；阶段3 规范提炼 →
-summary_rules.py；统计报表 → summary_stats.py；本入口保留核心流水线
+summary_rules.py；终端报告打印 → summary_stats.py；本入口保留核心流水线
 （记忆获取/聚合/精炼/写入/单实例节流）与 main()。
 """
 
-import argparse
 import difflib
 import os
 import json
@@ -41,17 +39,7 @@ from summary_llm import (
     write_error_log,
 )
 from summary_rules import _run_phase3
-from summary_stats import _generate_stats_report, _print_report_v2
-
-_parser = argparse.ArgumentParser(description="Utility 记忆总结流水线")
-
-_parser.add_argument(
-    "--stats-only", action="store_true", help="仅生成统计报表，跳过 AI 总结"
-)
-
-_args = _parser.parse_args()
-
-STATS_ONLY = _args.stats_only
+from summary_stats import _print_report_v2
 
 logger = _log_setup("summarize")
 
@@ -1776,13 +1764,6 @@ def _write_articles_v2(
 def main():
     if not _acquire_single_instance():
         print("⚠️ 已有 summarize 实例在运行，跳过本次")
-        return
-
-    # 工具调用统计报表独立于总结流程，每次 summarize 运行都生成
-    _generate_stats_report()
-
-    if STATS_ONLY:
-        logger.info("--stats-only 模式，跳过 AI 总结")
         return
 
     if not DEEPSEEK_API_KEY:
