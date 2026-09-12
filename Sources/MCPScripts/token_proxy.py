@@ -662,6 +662,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 route_tier=(route.tier or "") if route else "",
                                 route_reason=route.reason if route else "",
                                 profile_hash=route.profile_key if route else "",
+                                route_detail=route.detail if route else None,
                             )
                         )
                         _BACKGROUND_TASKS.add(task)

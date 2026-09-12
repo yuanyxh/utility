@@ -246,6 +246,8 @@ modelProxy:
       switchCostTurns: 12
       # 检查点间隔必须 ≥ switchCostTurns，否则弱档段撑不到回本、降档恒亏
       checkpointInterval: 8     # 每 N 轮强制升档一次，0=禁用
+      # 降档判定回看的工具调用次数（尾部 N 次，反映「当前段」而非全量历史）
+      downgradeWindow: 8
       readonlyTools: []         # 只读工具白名单；留空 = 永不降档（最保守）
     profile:
       enabled: true             # 同类 agent（子 agent 重复劳动）按历史免检
@@ -253,19 +255,26 @@ modelProxy:
       window: 50                # 真实滑动窗口，升级率与预期轮数都只取窗口内样本
 ```
 
-**两级策略**：一级按任务分类并缓存到**会话**（system + 工具集 + 最近一条真实用户
-消息的指纹）——整个 agent loop 命中同一档位，用户发出新指令时键随之变化、
-自动重新分类并解除升档锁定；二级在会话内按协议信号微调，且**档位只升不降**
-（除由只读工具白名单放行的至多一次降档）。子 agent 的 system prompt 与工具集与
-主 agent 不同，按其指纹自动分离统计，历史升级率低的一类任务直接免检走低档。
+**两级策略**：一级按任务分类并缓存到**会话**（system + 工具集 + **首条**真实用户
+消息的指纹）——整个对话命中同一档位，中途的反馈确认、决策回复（「A 吧」「继续」）
+不会触发重新分类；二级在会话内按**段性质**双向切换：纯只读段降档、写操作段升回，
+且可多次往复。子 agent 的 system prompt 与工具集与主 agent 不同，按其指纹自动
+分离统计，历史升级率低的一类任务直接免检走低档。
 
-降档需要同时满足：白名单非空、本轮工具全在白名单内、最近一次工具回传的
-`is_error` 全部为 `False`（协议未提供该字段时视为未知、不予放行）、预期剩余轮数
-够回本、历史工具调用配对完整。任何一条不满足都保持原档。
+会话键用 `first_user` 而非 `latest_user`：后者让每次用户发言都开新会话，同一任务
+内的确认/决策回复被当成独立新任务重新分类，任务执行段的档位与初始判定脱节。
+代价是同一对话里换新任务不再自动重分类，由上述「段性质」切换补上。
 
-决策原因逐条记入 `token_usage.sqlite` 的 `route_tier` / `route_reason` / `profile_hash`
-三列，可用 `SELECT route_tier, route_reason, COUNT(*) FROM api_usage GROUP BY 1,2`
-核对路由行为。`enabled: false` 时行为与不启用本特性完全一致。
+降档需要同时满足：白名单非空、最近 `downgradeWindow` 次工具调用全在白名单内、
+最近一次工具回传的 `is_error` 全部为 `False`（协议未提供该字段时视为未知、不予
+放行）、预期剩余轮数够回本、历史工具调用配对完整。任何一条不满足都保持原档。
+降档后若窗口内出现非只读工具（进入写操作段），立即升回强档——降档的前提失效了。
+
+决策原因逐条记入 `token_usage.sqlite` 的 `route_tier` / `route_reason` /
+`profile_hash` / `route_detail` 四列（`route_detail` 存决策明细 JSON，如降档被拦时
+的 `outside` 工具列表），可用
+`SELECT route_tier, route_reason, COUNT(*) FROM api_usage GROUP BY 1,2` 核对路由行为。
+`enabled: false` 时行为与不启用本特性完全一致。
 
 **模型名回显**：客户端的模型指示器（statusLine、`/model`）显示的是你**请求的**模型，
 看不出代理实际路由到了哪个上游。路由接管时，代理会在每条**最终回复**末尾追加一行

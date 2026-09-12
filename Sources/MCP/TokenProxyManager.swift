@@ -114,6 +114,7 @@ final class TokenProxyManager {
             let loop_streak: Int
             let escalate_error_streak: Int
             let checkpoint_interval: Int
+            let downgrade_window: Int
             let escalate_patterns: [String]
             let readonly_tools: [String]
             let normal_stop_reasons: [String]
@@ -158,6 +159,7 @@ final class TokenProxyManager {
             loop_streak: pol.loopStreak,
             escalate_error_streak: pol.escalateErrorStreak,
             checkpoint_interval: pol.checkpointInterval,
+            downgrade_window: pol.downgradeWindow,
             escalate_patterns: pol.escalatePatterns,
             readonly_tools: pol.readonlyTools,
             normal_stop_reasons: pol.normalStopReasons,

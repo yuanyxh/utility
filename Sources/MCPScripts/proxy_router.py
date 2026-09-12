@@ -53,6 +53,7 @@ from proxy_normalize import (
     latest_tool_results,
     last_real_user_text,
     normalize_turns,
+    recent_tool_names,
     tool_call_streak,
     turn_index,
 )
@@ -112,6 +113,11 @@ FALLBACK_CLASSIFIER_MAX_RETRIES = 3
 FALLBACK_CLASSIFIER_RETRY_DELAY_MS = 500
 FALLBACK_CLASSIFIER_TIMEOUT_MS = 10000
 
+#: 降档判定回看的工具调用次数。**不是**「全量历史」——那会让用过一次 Bash 的
+#: 会话永久无法降档（真实 Agent 会话必然含 Bash），降档通道 100% 失效。
+#: 详见 _check_downgrade 的窗口化说明。
+FALLBACK_DOWNGRADE_WINDOW = 8
+
 FALLBACK_MAX_SESSIONS = 512
 FALLBACK_TTL_SECONDS = 7200
 FALLBACK_PROFILE_MIN_SAMPLES = 5
@@ -160,6 +166,7 @@ CONTRACT_KEYS: dict[str, tuple[str, ...]] = {
         "loop_streak",
         "escalate_error_streak",
         "checkpoint_interval",
+        "downgrade_window",
         "escalate_patterns",
         "readonly_tools",
         "normal_stop_reasons",
@@ -197,6 +204,9 @@ class Reason:
     ESCALATE_STOP_REASON = "escalate_stop_reason"
     ESCALATE_CHECKPOINT = "escalate_checkpoint"
     ESCALATE_PATTERN = "escalate_pattern"
+    #: 降档前提失效：窗口内出现非只读工具 → 已进入写操作段，升回强档。
+    #: 与上面几条不同，它是**段性质驱动**的（不是失败信号），因此不锁定会话。
+    ESCALATE_WRITE_RESUMED = "escalate_write_resumed"
 
     DOWNGRADE_READONLY = "downgrade_readonly"
 
@@ -205,8 +215,12 @@ class Reason:
     #: 并发请求撞上同 task_key 的会话创建，直接并入既有会话（单飞）
     HOLD_CONCURRENT_JOIN = "hold_concurrent_join"
     HOLD_ALREADY_WEAKEST = "hold_already_weakest"
+    #: 保留供历史日志查询。自降档改为「段性质驱动、会话内可多次」后不再产生。
     HOLD_ALREADY_DOWNGRADED = "hold_already_downgraded"
-    HOLD_NOT_READONLY = "hold_not_readonly"
+    HOLD_NO_READONLY_TOOLS = "hold_no_readonly_tools"
+    HOLD_NO_TOOL_CALLS = "hold_no_tool_calls"
+    HOLD_NON_READONLY_TOOLS = "hold_non_readonly_tools"
+    HOLD_NOT_READONLY = "hold_not_readonly"  # 兼容旧日志，保持历史 reason 可查询
     HOLD_NO_EXPECTED_TURNS = "hold_no_expected_turns"
     HOLD_INSUFFICIENT_REMAINING = "hold_insufficient_remaining"
     HOLD_SWITCH_UNSAFE = "hold_switch_unsafe"
@@ -318,6 +332,9 @@ class RouterConfig:
         )
         self.checkpoint_interval = int(
             pol.get("checkpoint_interval", FALLBACK_CHECKPOINT_INTERVAL)
+        )
+        self.downgrade_window = max(
+            1, int(pol.get("downgrade_window", FALLBACK_DOWNGRADE_WINDOW))
         )
         self.escalate_patterns = _compile_patterns(pol.get("escalate_patterns"))
         self.readonly_tools = {t for t in (pol.get("readonly_tools") or []) if t}
@@ -443,7 +460,13 @@ class SessionState:
     turns: int = 0
     #: 会话诞生时的全局 turn_index，用于把全局轮数折算为会话内轮数。
     start_turn: int = 0
+    #: **当前段**是否由降档通道得到。降档置 True、升回置 False——它不是
+    #: 「曾经降过档」的一次性标记，而是「此刻处在弱档段」的状态位：
+    #:   1. 决定检查点间隔（降档态要抬到回本线，见 checkpoint_interval_for）
+    #:   2. 触发「降档前提失效 → 升回」判据（见 _check_escalation）
     downgraded: bool = False
+    #: 是否因失败信号锁定在强档。**不再是会话级不可逆**——降档成功即解除。
+    #: 语义收窄为「本段有失败/异常，别再降回来」，只用于抑制重复记升档。
     locked: bool = False
     escalated: bool = False
     #: 上一次检查点升档时的**会话内**轮次。检查点按「距上次检查点的轮数」触发，
@@ -857,15 +880,22 @@ class Router:
                             {"pairing": why, "signal": reason, **detail},
                         )
                 state.tier = target
-            state.locked = True
+            # 段性质驱动的升档（写操作恢复）**不锁定**——它随段性质变化，之后
+            # 还可能再次降档；只有失败类信号才锁定（语义是「这个任务卡住了，
+            # 别再降回来」）。锁定在这里的含义变了：不再是会话级不可逆。
+            state.locked = reason != Reason.ESCALATE_WRITE_RESUMED
             state.escalated = True
+            # 升回强档即脱离降档态，检查点间隔随之回到默认
+            state.downgraded = False
             return self._emit(state, task_key, idx, reason, detail)
 
-        # 2) 降档判定（唯一通道，会话内至多一次）
-        if state.locked:
-            return self._emit(state, task_key, idx, Reason.HOLD_LOCKED)
-        if state.downgraded:
-            return self._emit(state, task_key, idx, Reason.HOLD_ALREADY_DOWNGRADED)
+        # 2) 降档判定（段性质驱动，会话内可多次）
+        #
+        # 不再有「会话内至多一次」和「升档后锁定」两道闸——它们的前提是
+        # 「会话 = 任务」，而 first_user 锚定后会话 = 整个对话、内含多个任务，
+        # 那两道闸会让「升过一次档」的对话此后所有只读段都无法降档。
+        # 防抖改由 _check_downgrade 自身的条件承担：窗口纯只读 + 全部确认
+        # 成功 + 剩余轮数够回本，再加下面「降档后重置检查点基准」撑满回本线。
         if state.tier == cfg.weakest:
             return self._emit(state, task_key, idx, Reason.HOLD_ALREADY_WEAKEST)
 
@@ -876,6 +906,8 @@ class Router:
             return self._emit(state, task_key, idx, reason, detail)
         state.tier = cfg.weakest
         state.downgraded = True
+        # 降档即解除升档锁定，否则一次失败升档会让后续所有只读段都降不下来
+        state.locked = False
         # 降档即重置检查点基准，使弱档段至少跑满回本线才可能被强制升回
         state.last_checkpoint_turn = state.turns
         return self._emit(state, task_key, idx, reason, detail)
@@ -996,6 +1028,19 @@ class Router:
     ) -> tuple[str, dict] | None:
         cfg = self.config
 
+        # 0. 降档前提失效 → 升回。降档的前提是「窗口内纯只读」；一旦窗口里出现
+        #    非只读工具，那个前提就不成立了——此时继续留在弱档，等于用弱模型做
+        #    写操作。没有这条，档位降下去就只能等检查点（默认 30 轮）才回来，
+        #    同一对话里的「读几个文件」和「重构」会双双停在弱档。
+        if state.downgraded:
+            window_names = recent_tool_names(turns, cfg.downgrade_window)
+            outside = sorted(n for n in window_names if n not in cfg.readonly_tools)
+            if outside:
+                return Reason.ESCALATE_WRITE_RESUMED, {
+                    "outside": outside[:10],
+                    "window": cfg.downgrade_window,
+                }
+
         # 1. 工具失败——协议级字段，Anthropic 侧由 Claude Code 等客户端必填。
         #    **要求连续失败**：`is_error` 是客户端对「非零退出」的判定，Bash 的
         #    grep 无匹配 / diff 有差异 / test 失败都算，单次就升档会把会话永久
@@ -1085,15 +1130,32 @@ class Router:
 
         # 只读工具白名单为空 = 永不允许降档（通用 agent 的最保守默认）
         if not cfg.readonly_tools:
-            return False, Reason.HOLD_NOT_READONLY, {"readonly_tools": 0}
-        calls = [b for t in turns for b in t.tool_calls]
-        if not calls:
-            return False, Reason.HOLD_NOT_READONLY, {"calls": 0}
-        outside = sorted(
-            {b.tool_name for b in calls if b.tool_name not in cfg.readonly_tools}
-        )
+            return False, Reason.HOLD_NO_READONLY_TOOLS, {"readonly_tools": 0}
+
+        # 窗口化判定：只看最近 window 轮的工具调用，反映"当前段"性质。
+        # 全量历史会让「曾经用过一次 Bash」的会话永久出局（真实 Agent 会话
+        # 必然含 Bash），导致降档通道 100% 失效。8 轮窗口在实践上是安全的
+        # ——探索阶段的 Bash 调用不会永久阻挡后续的纯只读段降档。
+        window_names = recent_tool_names(turns, cfg.downgrade_window)
+        if not window_names:
+            return (
+                False,
+                Reason.HOLD_NO_TOOL_CALLS,
+                {
+                    "calls": 0,
+                    "window": cfg.downgrade_window,
+                },
+            )
+        outside = sorted(n for n in window_names if n not in cfg.readonly_tools)
         if outside:
-            return False, Reason.HOLD_NOT_READONLY, {"outside": outside[:5]}
+            return (
+                False,
+                Reason.HOLD_NON_READONLY_TOOLS,
+                {
+                    "outside": outside[:10],
+                    "window": cfg.downgrade_window,
+                },
+            )
 
         # 失败信号必须全部为「确认成功」。is_error 为 None（协议未提供）属未知，
         # 不可当作成功——这是本模块最容易写错的一处。

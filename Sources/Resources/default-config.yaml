@@ -114,12 +114,17 @@ modelProxy:
       # 按「距上次检查点的轮数」计，不是绝对轮次；已降档的会话自动抬到
       # switchCostTurns，保证弱档段撑得到回本，否则降档恒亏（见下）。
       checkpointInterval: 30
+      # 降档判定回看的工具调用次数。取尾部 N 次，反映「当前段」而非全量历史。
+      # 调大更保守、调小更激进。**不要设成很大来「回到全量历史」**：全量会让
+      # 用过一次 Bash 的会话永久无法降档（真实 Agent 会话必然含 Bash），
+      # 实测使降档通道 100% 失效（122 次尝试 0 次放行）。
+      downgradeWindow: 8
       # 内容层兜底正则（仅当 provider 不返回 is_error 时才需要）
       escalatePatterns: []
       # 只读工具白名单。**默认空 = 永不允许降档**（对通用 agent 最保守）；
       # 填了才启用降档，且必须同时满足「已确认无失败」与「剩余轮数够回本」。
-      # 降档判定检查整个会话历史中的全部工具调用：只要有任何一个非只读工具，
-      # 降档即被阻断。因此只填真正的只读工具（Bash/Edit/Write 等写操作工具不入此列）。
+      # 判定只看最近 downgradeWindow 次工具调用：那段全是只读工具才可能降档。
+      # 因此只填真正的只读工具（Bash/Edit/Write 等写操作工具不入此列）。
       readonlyTools: []
       # 正常终止原因；留空用协议默认 {end_turn, tool_use, stop_sequence}
       normalStopReasons: []
@@ -127,13 +132,17 @@ modelProxy:
       requirePairedHistory: true
 
     # 会话身份。合法分量：system / tools / first_user / latest_user / profile。
-    # 默认 latest_user：工具回传轮不算真实用户轮，所以整个 agent loop 内它恒定，
-    # 而用户发出新指令时它变化 → 自动分界、升档锁定随之解除。
-    # 换成 first_user 更抗客户端注入的中间用户轮，但同一对话里追加指令不再开新会话。
+    # 默认 first_user：锚定**整个对话**——同一对话内的多次用户交互（反馈确认、
+    # 决策回复、追加指令）共享一个会话，档位不会因为一句「A 吧」被重新分类。
+    # 早先默认用 latest_user，它让每次用户发言都开新会话，同一任务内的确认/
+    # 决策回复被当成独立新任务重新分类（实测一段连续 9 次请求的对话被判成
+    # 9 个新会话、9 次 weak），任务执行段的档位与初始判定脱节。
+    # 代价：同一对话里换新任务不再自动重分类，由「段性质」驱动的会话内双向
+    # 切换补上——纯只读段降档、写操作段升回（可多次）。
     # ⚠️ 出现未知分量时整组退回默认（不会只剔除该项——那会让键退化成
     #    「每个 agent 类型一个常量键」，所有会话共用一个状态）。
     conversation:
-      keyParts: [system, tools, latest_user]
+      keyParts: [system, tools, first_user]
       # 0 = 不限制会话数（与 ttlSeconds: 0 表示不过期一致）
       maxSessions: 512
       ttlSeconds: 7200

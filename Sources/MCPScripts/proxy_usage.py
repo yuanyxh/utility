@@ -130,6 +130,12 @@ def init_db():
         conn.execute("ALTER TABLE api_usage ADD COLUMN route_reason TEXT")
         conn.execute("ALTER TABLE api_usage ADD COLUMN profile_hash TEXT")
         conn.commit()
+    # 迁移：路由决策明细列。降档被拦时记 outside 工具列表；升档时记触发信号名。
+    # 路由日志在 token_proxy.log 中滚动丢弃，detail 列是排查「为什么不降档」的
+    # 唯一持久手段——没有它，3 个 hold_not_readonly 返回点无法从数据侧区分。
+    if "route_detail" not in columns:
+        conn.execute("ALTER TABLE api_usage ADD COLUMN route_detail TEXT")
+        conn.commit()
 
     # 迁移：移除已废弃的三字段（session_id/project_path/estimated_cost_usd）
     # 先 DROP 引用列的索引，再 DROP COLUMN（SQLite 约束）
@@ -665,6 +671,7 @@ async def record_usage(
     route_tier: str = "",
     route_reason: str = "",
     profile_hash: str = "",
+    route_detail: dict | None = None,
 ):
     """记录一次 API 调用的 token 用量。"""
     if status != 200:
@@ -729,6 +736,7 @@ async def record_usage(
         "route_tier": route_tier,
         "route_reason": route_reason,
         "profile_hash": profile_hash,
+        "route_detail": json.dumps(route_detail) if route_detail else None,
     }
 
     try:
@@ -740,8 +748,8 @@ async def record_usage(
                 "output_type, stop_reason, response_valid, model, input_tokens, "
                 "output_tokens, cache_read_tokens, cache_write_tokens, "
                 "latency_ms, api_format, request_level, tool_name, parent_id, error_message, "
-                "route_tier, route_reason, profile_hash) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "route_tier, route_reason, profile_hash, route_detail) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record["timestamp"],
                     record["request_type"],
@@ -768,6 +776,7 @@ async def record_usage(
                     record["route_tier"],
                     record["route_reason"],
                     record["profile_hash"],
+                    record["route_detail"],
                 ),
             )
             record_id = cursor.lastrowid

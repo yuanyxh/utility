@@ -325,6 +325,20 @@ def latest_tool_results(turns: list[NormalizedTurn]) -> list[NormalizedBlock]:
 STREAK_SCAN_LIMIT = 16
 
 
+def recent_tool_names(turns: list[NormalizedTurn], window: int) -> set[str]:
+    """最近 `window` 次工具调用里出现的工具名集合。
+
+    本层只提供「取尾部 N 条的工具名」这一通用查询，**不持有窗口大小**——
+    那是策略决策，权威在 `proxy_router.RouterConfig.downgrade_window`。
+    在这里再放一个默认值会让同一个阈值有两个来源，改一处忘另一处就分叉。
+    """
+    all_calls = [b for t in turns for b in t.tool_calls]
+    if not all_calls or window <= 0:
+        return set()
+    tail = all_calls[-window:]
+    return {b.tool_name for b in tail if b.tool_name}
+
+
 def tool_call_streak(turns: list[NormalizedTurn]) -> int:
     """末尾连续同名同参工具调用次数（打转检测，纯协议字段）。
 
@@ -442,9 +456,17 @@ def tools_fingerprint(body: dict) -> str:
 #: task_key 支持的键分量。取值必须来自本集合。
 KEY_PART_NAMES = ("system", "tools", "first_user", "latest_user", "profile")
 
-#: 缺省键分量：`latest_user` 保证 loop 内稳定（工具回传轮不是真实用户轮），
-#: 同时用户发出新指令即自动分界、升档锁定随之解除。
-DEFAULT_KEY_PARTS = ("system", "tools", "latest_user")
+#: 缺省键分量：`first_user` 锚定**整个对话**——同一对话内的多次用户交互
+#:（反馈确认、决策回复、追加指令）共享一个会话，档位不会因为一句「A 吧」而被
+#: 重新分类。
+#:
+#: 为什么不用 `latest_user`：它让每次用户发言都开新会话，于是同一任务内的
+#: 「反馈确认」「决策回复」被当成独立的新任务重新分类（实测：一段连续 9 次
+#: 请求的对话被判成 9 个新会话、9 次 weak），任务执行段的档位与初始判定脱节。
+#:
+#: 代价：同一对话里换新任务不再自动重新分类。这条由「段性质」驱动的会话内
+#: 双向切换补上——纯只读段降档、写操作段升回，见 `proxy_router._check_escalation`。
+DEFAULT_KEY_PARTS = ("system", "tools", "first_user")
 
 
 def build_fingerprints(

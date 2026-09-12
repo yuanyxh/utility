@@ -352,6 +352,10 @@ public struct RouterPolicy: Codable {
     var escalateErrorStreak: Int = 2
     /// 每 N 轮强制升档一次（is_error 不可用时的主力兜底），0 = 禁用
     var checkpointInterval: Int = 8
+    /// 降档判定回看的**工具调用次数**。取尾部 N 次，反映「当前段」的工具性质，
+    /// 而非全量历史——全量会让用过一次 Bash 的会话永久无法降档（真实 Agent 会话
+    /// 必然含 Bash），使降档通道 100% 失效。调大更保守，调小更激进。
+    var downgradeWindow: Int = 8
     /// 内容层兜底正则（仅当 provider 不返回 is_error 时才需要），默认空
     var escalatePatterns: [String] = []
     /// 只读工具白名单，**默认空 = 永不允许降档**（通用 agent 的最保守默认）
@@ -368,6 +372,7 @@ public struct RouterPolicy: Codable {
         loopStreak = decodeAny(decoder, Int.self, keys: ["loopStreak", "loop_streak"]) ?? 3
         escalateErrorStreak = decodeAny(decoder, Int.self, keys: ["escalateErrorStreak", "escalate_error_streak"]) ?? 2
         checkpointInterval = decodeAny(decoder, Int.self, keys: ["checkpointInterval", "checkpoint_interval"]) ?? 8
+        downgradeWindow = decodeAny(decoder, Int.self, keys: ["downgradeWindow", "downgrade_window"]) ?? 8
         escalatePatterns = decodeAny(decoder, [String].self, keys: ["escalatePatterns", "escalate_patterns"]) ?? []
         readonlyTools = decodeAny(decoder, [String].self, keys: ["readonlyTools", "readonly_tools"]) ?? []
         normalStopReasons = decodeAny(decoder, [String].self, keys: ["normalStopReasons", "normal_stop_reasons"]) ?? []
@@ -377,7 +382,7 @@ public struct RouterPolicy: Codable {
     enum CodingKeys: String, CodingKey {
         case classifierFastPath
         case switchCostTurns, loopStreak, escalateErrorStreak
-        case checkpointInterval, escalatePatterns
+        case checkpointInterval, downgradeWindow, escalatePatterns
         case readonlyTools, normalStopReasons, requirePairedHistory
     }
 }
