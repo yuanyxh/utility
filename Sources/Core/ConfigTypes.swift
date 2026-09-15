@@ -90,6 +90,9 @@ public struct MCPConfig: Codable {
 public struct GeneralConfig: Codable {
     var language: String = ""
 
+    /// 是否启用系统代理。启用时自动读取 macOS 系统代理设置
+    var proxyEnabled: Bool = false
+
     /// 日志配置
     /// 日志文件最大大小（字节），0 = 不限制
     var logMaxSize: Int = 10 * 1024 * 1024
@@ -110,6 +113,7 @@ public struct GeneralConfig: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
+        proxyEnabled = try c.decodeIfPresent(Bool.self, forKey: .proxyEnabled) ?? false
         logMaxSize = try c.decodeIfPresent(Int.self, forKey: .logMaxSize) ?? 10 * 1024 * 1024
         logBackupCount = try c.decodeIfPresent(Int.self, forKey: .logBackupCount) ?? 3
         httpTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .httpTimeout) ?? 30
@@ -216,7 +220,7 @@ private struct AnyKey: CodingKey {
 }
 
 private func decodeAny<T: Decodable>(
-    _ decoder: Decoder, _: T.Type, keys: [String],
+    _ decoder: Decoder, _: T.Type, keys: [String]
 ) -> T? {
     guard let c = try? decoder.container(keyedBy: AnyKey.self) else { return nil }
     for name in keys {
@@ -640,7 +644,7 @@ public enum TaskExecConfig: Codable {
         case "py": self = .py(cmd)
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)",
+                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)"
             )
         }
     }

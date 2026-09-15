@@ -7,7 +7,7 @@ final class MCPClient {
     /// 本地 loopback 查询超时（秒）。本机服务，正常响应在毫秒级。
     private static let requestTimeout: TimeInterval = 5
 
-    private let session = URLSession.shared
+    private let session = URLSessionManager.shared.directSession
     private let decoder = JSONDecoder()
 
     /// 服务地址。**每次读取都向 MCPProcessManager 要**，不在 init 时固化：

@@ -98,7 +98,7 @@ final class PythonDaemon: @unchecked Sendable {
         // 走异步版 checkHealth。
         let sem = DispatchSemaphore(value: 0)
         var healthy = false
-        URLSession.shared.dataTask(with: url) { [config] data, _, _ in
+        URLSessionManager.shared.directSession.dataTask(with: url) { [config] data, _, _ in
             if let data {
                 healthy = isHealthyBody(data, service: config.service)
             }
@@ -337,7 +337,7 @@ final class PythonDaemon: @unchecked Sendable {
     @MainActor
     private func checkHealth(url: URL) async -> Bool {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await URLSessionManager.shared.directSession.data(from: url)
             return isHealthyBody(data, service: config.service)
         } catch {
             return false

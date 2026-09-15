@@ -44,7 +44,7 @@ public struct OpenAIChatRequest: Codable {
         reasoningEffort: String? = nil,
         presencePenalty: Double? = nil,
         frequencyPenalty: Double? = nil,
-        stream: Bool = false,
+        stream: Bool = false
     ) {
         self.model = model
         self.messages = messages
@@ -104,14 +104,13 @@ public struct OpenAIChatResponse: Codable {
 public final class OpenAIClient {
     private let session: URLSession
     private let apiKey: String
+    private let timeout: TimeInterval
 
     /// timeout: 从配置读取，0 = 使用默认值 120s
     public init(apiKey: String, timeout: TimeInterval = 0) {
         self.apiKey = apiKey
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = timeout > 0 ? timeout : 120
-        config.httpMaximumConnectionsPerHost = 4
-        session = URLSession(configuration: config)
+        self.timeout = timeout > 0 ? timeout : 120
+        session = URLSessionManager.shared.session
     }
 
     // MARK: - Request builder
@@ -124,6 +123,7 @@ public final class OpenAIClient {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.timeoutInterval = timeout
 
         let encoder = JSONEncoder()
         #if DEBUG
@@ -139,7 +139,7 @@ public final class OpenAIClient {
     public func chat(
         request req: OpenAIChatRequest,
         baseURL: String,
-        completion: @escaping (Result<OpenAIChatResponse, Error>) -> Void,
+        completion: @escaping (Result<OpenAIChatResponse, Error>) -> Void
     ) -> URLSessionDataTask? {
         let urlRequest: URLRequest
         do {
@@ -205,7 +205,7 @@ public final class OpenAIClient {
         request req: OpenAIChatRequest,
         baseURL: String,
         onToken: @escaping (String) -> Void,
-        onComplete: @escaping (Result<Void, Error>) -> Void,
+        onComplete: @escaping (Result<Void, Error>) -> Void
     ) -> URLSessionDataTask? {
         let urlRequest: URLRequest
         do {
@@ -217,10 +217,11 @@ public final class OpenAIClient {
 
         let parser = SSEParser()
         let delegate = StreamDelegate(parser: parser, onToken: onToken, onComplete: onComplete)
+        let streamConfig = URLSessionManager.shared.session.configuration.copy() as! URLSessionConfiguration
         let streamSession = URLSession(
-            configuration: .default,
+            configuration: streamConfig,
             delegate: delegate,
-            delegateQueue: nil,
+            delegateQueue: nil
         )
         let task = streamSession.dataTask(with: urlRequest)
         // 保持 session 引用，防止 task 未 retain 时 session 被提前释放
@@ -242,7 +243,7 @@ public final class OpenAIClient {
         init(
             parser: SSEParser,
             onToken: @escaping (String) -> Void,
-            onComplete: @escaping (Result<Void, Error>) -> Void,
+            onComplete: @escaping (Result<Void, Error>) -> Void
         ) {
             self.parser = parser
             self.onToken = onToken
@@ -253,7 +254,7 @@ public final class OpenAIClient {
             _: URLSession,
             dataTask _: URLSessionDataTask,
             didReceive response: URLResponse,
-            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
         ) {
             guard let httpResponse = response as? HTTPURLResponse else {
                 complete(.failure(OpenAIError.invalidResponse))
@@ -273,7 +274,7 @@ public final class OpenAIClient {
                 data, onToken: onToken,
                 onComplete: { [weak self] in
                     self?.complete(.success(()))
-                },
+                }
             )
         }
 

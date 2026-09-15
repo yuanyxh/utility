@@ -55,7 +55,7 @@ enum HTTP {
                     }
                 }
 
-                let (data, response) = try await URLSession.shared.data(for: req)
+                let (data, response) = try await URLSessionManager.shared.session.data(for: req)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw HTTPError.invalidResponse
                 }
@@ -66,7 +66,7 @@ enum HTTP {
                 return Response(
                     data: data,
                     statusCode: httpResponse.statusCode,
-                    headers: httpResponse.allHeaderFields,
+                    headers: httpResponse.allHeaderFields
                 )
             } catch {
                 lastError = error
@@ -81,7 +81,7 @@ enum HTTP {
 
     static func get(
         url: URL,
-        configure: (inout RequestConfig) -> Void = { _ in },
+        configure: (inout RequestConfig) -> Void = { _ in }
     ) async throws -> Response {
         var cfg = RequestConfig(method: .get, url: url)
         configure(&cfg)
@@ -91,7 +91,7 @@ enum HTTP {
     static func post(
         url: URL,
         body: Data? = nil,
-        configure: (inout RequestConfig) -> Void = { _ in },
+        configure: (inout RequestConfig) -> Void = { _ in }
     ) async throws -> Response {
         var cfg = RequestConfig(method: .post, url: url, body: body)
         configure(&cfg)

@@ -68,8 +68,8 @@ final class TokenProxyManager {
             let apiKey: String
             let models: [String]
 
-            // JSON 侧统一 snake_case，与 routerJSON() 的配置块保持一致
-            // （Python `proxy_provider.py` 按该命名解析）。属性名保持 Swift 惯例。
+            /// JSON 侧统一 snake_case，与 routerJSON() 的配置块保持一致
+            /// （Python `proxy_provider.py` 按该命名解析）。属性名保持 Swift 惯例。
             enum CodingKeys: String, CodingKey {
                 case name, url, models
                 case apiFormat = "api_format"
@@ -80,7 +80,7 @@ final class TokenProxyManager {
             Payload(
                 name: $0.name, url: $0.url,
                 apiFormat: $0.apiFormat.rawValue, apiKey: $0.apiKey,
-                models: $0.models,
+                models: $0.models
             )
         }
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
@@ -150,7 +150,7 @@ final class TokenProxyManager {
             max_retries: c.maxRetries,
             retry_delay_ms: c.retryDelayMs,
             timeout_ms: c.timeoutMs,
-            total_budget_ms: c.totalBudgetMs,
+            total_budget_ms: c.totalBudgetMs
         )
         let pol = router.policy
         let policy = PolicyPayload(
@@ -163,13 +163,13 @@ final class TokenProxyManager {
             escalate_patterns: pol.escalatePatterns,
             readonly_tools: pol.readonlyTools,
             normal_stop_reasons: pol.normalStopReasons,
-            require_paired_history: pol.requirePairedHistory,
+            require_paired_history: pol.requirePairedHistory
         )
         let conv = router.conversation
         let conversation = ConversationPayload(
             key_parts: conv.keyParts,
             max_sessions: conv.maxSessions,
-            ttl_seconds: conv.ttlSeconds,
+            ttl_seconds: conv.ttlSeconds
         )
         let prof = router.profile
         let profile = ProfilePayload(
@@ -178,7 +178,7 @@ final class TokenProxyManager {
             window: prof.window,
             upgrade_rate_threshold: prof.upgradeRateThreshold,
             prior_tier: prof.priorTier,
-            max_profiles: prof.maxProfiles,
+            max_profiles: prof.maxProfiles
         )
         let payload = RouterPayload(
             enabled: router.enabled,
@@ -189,7 +189,7 @@ final class TokenProxyManager {
             default_tier: router.defaultTier,
             policy: policy,
             conversation: conversation,
-            profile: profile,
+            profile: profile
         )
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -262,7 +262,7 @@ final class TokenProxyManager {
             return TodaySummary()
         }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await URLSessionManager.shared.directSession.data(from: url)
             return try JSONDecoder().decode(TodaySummary.self, from: data)
         } catch {
             return TodaySummary()
@@ -289,7 +289,7 @@ final class TokenProxyManager {
             environment: { [weak self] in
                 self?.proxyEnvironment ?? [:]
             },
-            logTag: "TokenProxy",
+            logTag: "TokenProxy"
         )
         // 崩溃重启参数与 mcp 段同义，从配置读——此前写死 3 / 2.0，与
         // MCPProcessManager 读配置的行为不一致，改一处忘另一处就会分叉
