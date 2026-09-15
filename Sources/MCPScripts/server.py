@@ -116,8 +116,13 @@ SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
+#: recall 默认返回条数。工具 schema 的 default 与运行时兜底共用此常量——
+#: 两处各写一份字面量会漂移成「schema 声明 8、实际取 10」，客户端按声明
+#: 省略 limit 时拿到的条数与它看到的不一致。
+DEFAULT_RECALL_LIMIT = 8
+
 TOOL_DEFAULTS: dict[str, str] = {
-    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。content: 记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。多条内容请用 remember_batch。",
+    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。content: 记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按三要素组织——场景(项目/上下文)、决策(怎么做/选)、演进(当前状态/后续变化), 缺的要素省略不硬凑。多条内容请用 remember_batch。",
     "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
     "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
@@ -869,7 +874,11 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索查询"},
-                    "limit": {"type": "integer", "default": 10},
+                    "limit": {
+                        "type": "integer",
+                        "default": DEFAULT_RECALL_LIMIT,
+                        "description": "最大返回结果数",
+                    },
                     "include_archived": {"type": "boolean", "default": False},
                 },
                 "required": ["query"],
@@ -1178,7 +1187,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
 @_register("recall")
 async def _handle_recall(arguments: dict) -> list[TextContent]:
     query = arguments["query"]
-    limit = arguments.get("limit", 10)
+    limit = arguments.get("limit", DEFAULT_RECALL_LIMIT)
     include_archived = arguments.get("include_archived", False)
     results = []
     if hot_memory:

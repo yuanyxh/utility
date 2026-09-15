@@ -39,7 +39,15 @@ from proxy_model_tag import (
 )
 from proxy_provider import api_format_of, api_key_of, missing_keys
 from proxy_router import ProfileStore, Reason, RouteDecision, build_router
-from proxy_usage import DB_PATH, init_db, record_gateway_log, record_usage
+from proxy_usage import (
+    DB_PATH,
+    TOOL_OUTPUT_DB_PATH,
+    init_db,
+    init_tool_output_db,
+    record_gateway_log,
+    record_usage,
+    extract_tool_outputs,
+)
 from db import conn as dbconn
 
 # ---------------------------------------------------------------------------
@@ -648,6 +656,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         error_message = str(error_data)
                             except (json.JSONDecodeError, UnicodeDecodeError):
                                 pass
+                        # 工具输出（最新一轮 tool_result）随 usage 一并入库。
+                        # 两表分属不同库文件，只有在这里才能拿到 api_usage 自增 id，
+                        # 分开写会让 api_usage_id 恒为 NULL，成本归因分析断链。
+                        # 覆盖范围与 api_usage 完全一致（usage 解析失败/非 200 时两表
+                        # 都不记），故 JOIN 不会有孤立行——这是有意对齐，不是遗漏。
+                        tool_outputs = extract_tool_outputs(
+                            record_request_body, api_format=api_format
+                        )
                         task = asyncio.create_task(
                             record_usage(
                                 record_request_body,
@@ -663,6 +679,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 route_reason=route.reason if route else "",
                                 profile_hash=route.profile_key if route else "",
                                 route_detail=route.detail if route else None,
+                                tool_outputs=tool_outputs,
                             )
                         )
                         _BACKGROUND_TASKS.add(task)
@@ -958,6 +975,7 @@ def main():
         sys.exit(1)
 
     init_db()
+    init_tool_output_db()
     logger.info(
         json.dumps(
             {
@@ -966,6 +984,7 @@ def main():
                 "upstream": UPSTREAM_URL,
                 "providers": [p.get("name", "") for p in PROVIDERS],
                 "db": DB_PATH,
+                "tool_output_db": TOOL_OUTPUT_DB_PATH,
             }
         )
     )

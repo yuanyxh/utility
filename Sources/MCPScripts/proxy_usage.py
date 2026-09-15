@@ -17,6 +17,7 @@ import aiohttp
 from config import data_dir, deepseek_api_key, summary_model, summary_api_url
 from db import conn as dbconn
 from log_utils import setup_logging
+from proxy_normalize import _result_text as result_text
 from proxy_protocol import strip_injected_rules
 
 # ---------------------------------------------------------------------------
@@ -25,8 +26,12 @@ from proxy_protocol import strip_injected_rules
 
 DB_DIR = data_dir()
 DB_PATH = os.path.join(DB_DIR, "token_usage.sqlite")
+# tool_output_log 独立库（与 token_usage.sqlite 同目录、独立管理）
+TOOL_OUTPUT_DB_PATH = os.path.join(DB_DIR, "tool_output.sqlite")
 # api_usage 保留天数（约 3 个月），启动时清理超期记录
 API_USAGE_RETENTION_DAYS = 90
+# tool_output_log 保留天数（短期，用于形态分析）
+TOOL_OUTPUT_RETENTION_DAYS = 5
 # gateway_log 记录范围与保留期：非 2xx + 请求体 >=512KB 预警，保留 90 天
 GATEWAY_LOG_SIZE_THRESHOLD = 512 * 1024
 GATEWAY_LOG_RETENTION_DAYS = 90
@@ -162,6 +167,37 @@ def init_db():
         datetime.now(timezone.utc) - timedelta(days=API_USAGE_RETENTION_DAYS)
     ).isoformat()
     conn.execute("DELETE FROM api_usage WHERE timestamp < ?", (cutoff,))
+    conn.commit()
+    conn.close()
+
+
+def init_tool_output_db():
+    """初始化 tool_output_log 独立库（5 天保留）。"""
+    os.makedirs(DB_DIR, exist_ok=True)
+    conn = sqlite3.connect(TOOL_OUTPUT_DB_PATH)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS tool_output_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            api_usage_id INTEGER,
+            timestamp TEXT NOT NULL,
+            tool_name TEXT,
+            tool_call_id TEXT,
+            output_text TEXT,
+            output_size INTEGER,
+            output_lines INTEGER,
+            is_error INTEGER,
+            stop_reason TEXT,
+            model TEXT,
+            route_tier TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_output_timestamp ON tool_output_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_tool_output_tool_name ON tool_output_log(tool_name);
+    """)
+    # 五天自动清理
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=TOOL_OUTPUT_RETENTION_DAYS)
+    ).isoformat()
+    conn.execute("DELETE FROM tool_output_log WHERE timestamp < ?", (cutoff,))
     conn.commit()
     conn.close()
 
@@ -659,6 +695,174 @@ def extract_response_context(usage_data: dict) -> dict:
     }
 
 
+def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict]:
+    """从请求体提取最新一轮 tool_result 的全部工具输出。
+
+    只提取最近一轮 tool_result——历史 tool_result 已在前序请求中记录过，
+    每次请求携带完整消息历史但旧 tool_result 不重复记录。
+
+    输出文本用 `proxy_normalize._result_text` 提取（工具回传内容的权威实现），
+    **不做任何清洗**——这是形态分析的数据源，注入规则剥离与客户端标签剔除都会
+    让「文件里恰好含 `<system-reminder>`」这类内容失真。规则注入只作用于最后一条
+    真实用户消息，不会落在 tool_result 块上，故此处本就不需要剥离。
+
+    返回列表，每项包含：tool_name, tool_call_id, output_text, output_size,
+    output_lines, is_error。
+    """
+    messages = body.get("messages", [])
+    if not messages:
+        return []
+
+    tool_results = []
+
+    if api_format == "openai":
+        # OpenAI: role="tool" 是独立消息，从后往前找连续的 tool 消息
+        for msg in reversed(messages):
+            if msg.get("role") != "tool":
+                break
+            text = result_text(msg.get("content", ""))
+            tool_results.append(
+                {
+                    "tool_name": _resolve_openai_tool_name(messages, msg),
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "output_text": text,
+                    "output_size": len(text.encode("utf-8")),
+                    "output_lines": text.count("\n") + 1 if text else 0,
+                    "is_error": None,  # OpenAI 无 is_error 字段
+                }
+            )
+        tool_results.reverse()  # 恢复时间正序
+    else:
+        # Anthropic: role=user 消息内含 type=="tool_result" 内容块
+        # 从后往前找最后一个含 tool_result 的 user 消息
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            blocks = [
+                b
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            ]
+            if not blocks:
+                continue
+            # 向上找配对的 tool_use 获取工具名
+            tool_names = _resolve_tool_names(messages, blocks)
+            for b in blocks:
+                text = result_text(b.get("content", ""))
+                is_err = b.get("is_error")
+                tool_results.append(
+                    {
+                        "tool_name": tool_names.get(b.get("tool_use_id", ""), ""),
+                        "tool_call_id": b.get("tool_use_id", ""),
+                        "output_text": text,
+                        "output_size": len(text.encode("utf-8")),
+                        "output_lines": text.count("\n") + 1 if text else 0,
+                        # 三态：True=失败 / False=确认成功 / None=协议未提供
+                        "is_error": (
+                            1 if is_err is True else (0 if is_err is False else None)
+                        ),
+                    }
+                )
+            break  # 只处理最后一个含 tool_result 的 user 消息
+
+    return tool_results
+
+
+def _resolve_openai_tool_name(messages: list[dict], tool_msg: dict) -> str:
+    """OpenAI tool 消息 → 配对的 tool_call 函数名。
+
+    OpenAI 的 role="tool" 消息不带工具名，需按 tool_call_id 回查 assistant
+    消息里的 tool_calls。
+    """
+    call_id = tool_msg.get("tool_call_id", "")
+    if not call_id:
+        return ""
+    for msg in reversed(messages):
+        for tc in msg.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("id") == call_id:
+                fn = tc.get("function") or {}
+                return fn.get("name", "") if isinstance(fn, dict) else ""
+    return ""
+
+
+def _resolve_tool_names(
+    messages: list[dict], tool_result_blocks: list[dict]
+) -> dict[str, str]:
+    """从消息历史中查找 tool_result 配对的 tool_use 工具名。
+
+    返回 {tool_use_id: tool_name} 映射。
+    """
+    needed_ids = {
+        b.get("tool_use_id", "") for b in tool_result_blocks if b.get("tool_use_id")
+    }
+    if not needed_ids:
+        return {}
+
+    names: dict[str, str] = {}
+    for msg in reversed(messages):
+        if len(names) == len(needed_ids):
+            break
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "tool_use":
+                continue
+            bid = block.get("id", "")
+            if bid in needed_ids and bid not in names:
+                names[bid] = block.get("name", "")
+    return names
+
+
+def record_tool_outputs(
+    tool_outputs: list[dict],
+    api_usage_id: int | None = None,
+    stop_reason: str = "",
+    model: str = "",
+    route_tier: str = "",
+):
+    """将工具输出写入 tool_output_log 独立库。
+
+    与 api_usage 分属两个库文件，无法共用一个事务，故单独开连接写入。
+    写入失败只记日志不影响主流程——工具输出是分析素材，不该拖垮用量记录。
+    """
+    if not tool_outputs:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with dbconn(TOOL_OUTPUT_DB_PATH) as c:
+            c.executemany(
+                "INSERT INTO tool_output_log "
+                "(api_usage_id, timestamp, tool_name, tool_call_id, output_text, "
+                "output_size, output_lines, is_error, stop_reason, model, route_tier) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        api_usage_id,
+                        now,
+                        t.get("tool_name", ""),
+                        t.get("tool_call_id", ""),
+                        t.get("output_text", ""),
+                        t.get("output_size", 0),
+                        t.get("output_lines", 0),
+                        t.get("is_error"),
+                        stop_reason,
+                        model,
+                        route_tier,
+                    )
+                    for t in tool_outputs
+                ],
+            )
+    except Exception as e:
+        logger.error(json.dumps({"msg": "tool_output_record_failed", "error": str(e)}))
+
+
 async def record_usage(
     request_body: dict,
     response_body: dict,
@@ -672,8 +876,14 @@ async def record_usage(
     route_reason: str = "",
     profile_hash: str = "",
     route_detail: dict | None = None,
+    tool_outputs: list[dict] | None = None,
 ):
-    """记录一次 API 调用的 token 用量。"""
+    """记录一次 API 调用的 token 用量。
+
+    可选 `tool_outputs`（由 `extract_tool_outputs` 产出）一并写入 tool_output_log，
+    并带上本行的 `api_usage_id`——两表分属不同库文件，只能在这里拿到自增 id，
+    拆成两个后台任务写会让该列恒为 NULL，工具输出体积与 token 用量的关联分析就断了。
+    """
     if status != 200:
         return
 
@@ -793,5 +1003,15 @@ async def record_usage(
                 }
             )
         )
+
+        # 工具输出落库：带 api_usage_id 关联，供「输出体积 ↔ token 用量」交叉分析
+        if tool_outputs:
+            record_tool_outputs(
+                tool_outputs,
+                api_usage_id=record_id,
+                stop_reason=stop_reason,
+                model=model,
+                route_tier=route_tier,
+            )
     except Exception as e:
         logger.error(json.dumps({"msg": "usage_record_failed", "error": str(e)}))
