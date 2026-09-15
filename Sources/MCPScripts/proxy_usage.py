@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -172,7 +173,13 @@ def init_db():
 
 
 def init_tool_output_db():
-    """初始化 tool_output_log 独立库（5 天保留）。"""
+    """初始化 tool_output_log 独立库（5 天保留）。
+
+    列说明：
+    - output_text_raw：原始输出（代理过滤前的真实值），用于 delta 分析
+    - output_text：代理实际发送的内容（当前无过滤时等于 raw，过滤上线后分化）
+    - session_key：system+tools+first_user 的哈希，聚合同一会话内总 token 消耗
+    """
     os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(TOOL_OUTPUT_DB_PATH)
     conn.executescript("""
@@ -183,16 +190,34 @@ def init_tool_output_db():
             tool_name TEXT,
             tool_call_id TEXT,
             output_text TEXT,
+            output_text_raw TEXT,
             output_size INTEGER,
             output_lines INTEGER,
             is_error INTEGER,
             stop_reason TEXT,
             model TEXT,
-            route_tier TEXT
+            route_tier TEXT,
+            session_key TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_tool_output_timestamp ON tool_output_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_tool_output_tool_name ON tool_output_log(tool_name);
     """)
+
+    # 迁移：为旧库添加新列（幂等）。列名是硬编码字面量，非外部输入。
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(tool_output_log)").fetchall()
+    }
+    for col in ("output_text_raw", "session_key"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE tool_output_log ADD COLUMN {col} TEXT")
+
+    # session_key 的索引必须建在迁移**之后**：旧库要先补上该列，否则
+    # 「CREATE INDEX 引用不存在的列」会让初始化直接抛异常、代理起不来。
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_output_session ON tool_output_log(session_key)"
+    )
+    conn.commit()
+
     # 五天自动清理
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=TOOL_OUTPUT_RETENTION_DAYS)
@@ -589,7 +614,77 @@ def _extract_user_text(content) -> str:
     return _TAG_RE.sub("", content_str).strip()
 
 
+#: 续接提示词前缀——其正文是上一轮摘要，不是用户输入，会话标识与用户输入提取都要跳过。
 CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
+
+#: 会话标识的 system 前缀截断上限（与 proxy_normalize.SYSTEM_PREFIX_LIMIT 同量级）。
+#: 长 system 每请求重算 SHA256 的成本随会话增长，截断不影响「同类 agent 归一组」的判别力。
+SESSION_SYSTEM_LIMIT = 4096
+
+#: 会话标识的首条用户指令截断上限。首条指令是任务的锚，后续反馈/确认轮不影响。
+SESSION_FIRST_USER_LIMIT = 2048
+
+
+def compute_session_key(body: dict) -> str:
+    """请求体 → 会话标识（SHA256 前 12 位 hex）。
+
+    语义：同一 system + tools + 首条用户指令 = 同一会话。用于聚合会话级总 token
+    消耗，衡量「过滤是否真的省钱」——单次省 token 不等于总任务成本降低（截断导致
+    模型重读文件、轮次增加，总成本可能反升）。
+
+    与 `proxy_router.build_fingerprints` 的 task_key 同构但独立实现：recording 层
+    不依赖路由层（router 可能被配置禁用，此时仍要能聚合会话）。
+    """
+    parts: list[str] = []
+
+    # system：**两种协议都要读**，不能只看顶层字段。
+    # Anthropic 的 system 是顶层字段（string 或 text block 数组）；OpenAI 没有
+    # 该字段，system 是 messages[0] 里 role="system" 的一条消息。只读顶层会让
+    # OpenAI 请求的 system 恒为空——不同 agent（主/子 agent 的 system 不同）
+    # 的会话键退化成同一个，聚合分析直接失真。
+    system = body.get("system", "")
+    if not system:
+        for msg in body.get("messages", []):
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                system = msg.get("content", "")
+                break
+    if isinstance(system, list):
+        system = "\n".join(
+            b.get("text", "")
+            for b in system
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    if system:
+        parts.append(str(system)[:SESSION_SYSTEM_LIMIT])
+
+    # tools：按名排序消除客户端排序差异
+    tool_names = []
+    for t in body.get("tools") or []:
+        if not isinstance(t, dict):
+            continue
+        fn = t.get("function")
+        if isinstance(fn, dict):
+            tool_names.append(fn.get("name", ""))
+        else:
+            tool_names.append(t.get("name", ""))
+    parts.append("\x01".join(sorted(n for n in tool_names if n)))
+
+    # first_user：跳过续接提示词（其正文是上一轮摘要，不是用户指令）
+    for msg in body.get("messages", []):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        text = _extract_user_text(msg.get("content", ""))
+        if text.startswith(CONTINUATION_PREFIX):
+            continue
+        if text:
+            parts.append(text[:SESSION_FIRST_USER_LIMIT])
+            break
+
+    h = hashlib.sha256()
+    for p in parts:
+        h.update(p.encode("utf-8", errors="replace"))
+        h.update(b"\x00")
+    return h.hexdigest()[:12]
 
 
 def extract_request_context(body: dict) -> dict:
@@ -726,6 +821,7 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
                     "tool_name": _resolve_openai_tool_name(messages, msg),
                     "tool_call_id": msg.get("tool_call_id", ""),
                     "output_text": text,
+                    "output_text_raw": text,  # 无过滤时与 output_text 一致
                     "output_size": len(text.encode("utf-8")),
                     "output_lines": text.count("\n") + 1 if text else 0,
                     "is_error": None,  # OpenAI 无 is_error 字段
@@ -758,6 +854,7 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
                         "tool_name": tool_names.get(b.get("tool_use_id", ""), ""),
                         "tool_call_id": b.get("tool_use_id", ""),
                         "output_text": text,
+                        "output_text_raw": text,  # 无过滤时与 output_text 一致
                         "output_size": len(text.encode("utf-8")),
                         "output_lines": text.count("\n") + 1 if text else 0,
                         # 三态：True=失败 / False=确认成功 / None=协议未提供
@@ -825,6 +922,7 @@ def record_tool_outputs(
     stop_reason: str = "",
     model: str = "",
     route_tier: str = "",
+    session_key: str = "",
 ):
     """将工具输出写入 tool_output_log 独立库。
 
@@ -839,9 +937,10 @@ def record_tool_outputs(
         with dbconn(TOOL_OUTPUT_DB_PATH) as c:
             c.executemany(
                 "INSERT INTO tool_output_log "
-                "(api_usage_id, timestamp, tool_name, tool_call_id, output_text, "
-                "output_size, output_lines, is_error, stop_reason, model, route_tier) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "(api_usage_id, timestamp, tool_name, tool_call_id, "
+                "output_text, output_text_raw, output_size, output_lines, "
+                "is_error, stop_reason, model, route_tier, session_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         api_usage_id,
@@ -849,12 +948,14 @@ def record_tool_outputs(
                         t.get("tool_name", ""),
                         t.get("tool_call_id", ""),
                         t.get("output_text", ""),
+                        t.get("output_text_raw", ""),
                         t.get("output_size", 0),
                         t.get("output_lines", 0),
                         t.get("is_error"),
                         stop_reason,
                         model,
                         route_tier,
+                        session_key,
                     )
                     for t in tool_outputs
                 ],
@@ -1012,6 +1113,7 @@ async def record_usage(
                 stop_reason=stop_reason,
                 model=model,
                 route_tier=route_tier,
+                session_key=compute_session_key(request_body),
             )
     except Exception as e:
         logger.error(json.dumps({"msg": "usage_record_failed", "error": str(e)}))
