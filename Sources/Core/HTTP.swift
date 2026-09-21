@@ -9,6 +9,20 @@ enum HTTP {
     /// 防反爬 UA，不含版本号和仓库信息
     static let defaultUserAgent = "Utility (macOS)"
 
+    /// 本机回环地址。统一用字面量 `127.0.0.1` 而非 `localhost`：后者可能解析到 `::1`，
+    /// 而本机服务（MCP server / token proxy）只监听 IPv4。本机客户端一律以此为准。
+    static let localHost = "127.0.0.1"
+
+    /// 本机服务基地址，如 `http://127.0.0.1:8613`
+    static func localBaseURL(port: Int) -> String {
+        "http://\(localHost):\(port)"
+    }
+
+    /// 本机服务 URL（可带路径），如 `HTTP.localURL(port: 8613, path: "/usage/summary")`
+    static func localURL(port: Int, path: String = "") -> URL? {
+        URL(string: localBaseURL(port: port) + path)
+    }
+
     struct Response {
         let data: Data
         let statusCode: Int
@@ -66,7 +80,7 @@ enum HTTP {
                 return Response(
                     data: data,
                     statusCode: httpResponse.statusCode,
-                    headers: httpResponse.allHeaderFields
+                    headers: httpResponse.allHeaderFields,
                 )
             } catch {
                 lastError = error
@@ -81,7 +95,7 @@ enum HTTP {
 
     static func get(
         url: URL,
-        configure: (inout RequestConfig) -> Void = { _ in }
+        configure: (inout RequestConfig) -> Void = { _ in },
     ) async throws -> Response {
         var cfg = RequestConfig(method: .get, url: url)
         configure(&cfg)
@@ -91,7 +105,7 @@ enum HTTP {
     static func post(
         url: URL,
         body: Data? = nil,
-        configure: (inout RequestConfig) -> Void = { _ in }
+        configure: (inout RequestConfig) -> Void = { _ in },
     ) async throws -> Response {
         var cfg = RequestConfig(method: .post, url: url, body: body)
         configure(&cfg)

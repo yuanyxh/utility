@@ -15,17 +15,35 @@ enum L10n {
 
     /// 首次访问任一字符串时自动加载（系统首选语言）
     private static let _ready: Bool = {
-        let preferred = Locale.preferredLanguages.first ?? "zh-Hans"
-        let lang = preferred.hasPrefix("zh") ? "zh-Hans" : "en"
-        loadJSON(language: lang, notify: false)
+        loadJSON(language: resolvedLanguage(), notify: false)
         return true
     }()
 
     /// ConfigManager.load() 后调用 —— 按配置文件覆盖语言
     static func setup() {
-        let config = ConfigManager.shared.config
-        let lang = config.general.language.isEmpty ? preferredLanguage() : config.general.language
-        loadJSON(language: lang, notify: true)
+        loadJSON(
+            language: resolvedLanguage(
+                configured: ConfigManager.shared.config.general.language,
+            ),
+            notify: true,
+        )
+    }
+
+    // MARK: - 语言判据（唯一来源）
+
+    /// 语言规范化：`zh*` → `zh-Hans`，其余 → `en`。
+    static func normalize(_ language: String) -> String {
+        language.hasPrefix("zh") ? "zh-Hans" : "en"
+    }
+
+    /// 当前生效语言：配置优先，留空则跟随系统首选。
+    ///
+    /// 这是**跨语言唯一判据**——L10n 自己、以及注入给 Python 的 `UTILITY_LANG`
+    /// （决定 `prompts/<lang>/` 选哪套提示词）都走这里。两处各推导一份，迟早会出现
+    /// 「界面中文、提示词英文」这类谁也想不到的组合。
+    /// 默认参数不读 `ConfigManager`：`_ready` 可能在配置加载前就触发，那时读配置会崩。
+    static func resolvedLanguage(configured: String = "") -> String {
+        normalize(configured.isEmpty ? preferredLanguage() : configured)
     }
 
     private static func loadJSON(language: String, notify: Bool) {

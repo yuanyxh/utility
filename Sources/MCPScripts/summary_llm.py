@@ -7,13 +7,12 @@
 
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
 
 import httpx
 
-from config import deepseek_api_key, notes_dir, summary_api_url, summary_model
+import llm_client
+from config import ai_api_key, notes_dir
 from log_utils import (
     setup_logging,
     write_error_log as _shared_write_error_log,
@@ -23,13 +22,15 @@ from log_utils import (
 # 配置（与拆分前 summarize.py 一致）
 # ---------------------------------------------------------------------------
 
-DEEPSEEK_API_KEY = deepseek_api_key()
-SUMMARY_MODEL = summary_model()
-SUMMARY_API_URL = summary_api_url()
+#: 主模型 key。本模块不再直接用它发请求（LLM 调用统一走 `llm_client`），
+#: 保留是因为 `summarize.py` 的 `main()` 守卫从这里取（缺 key 直接退出）。
+AI_API_KEY = ai_api_key()
 NOTES_DIR = Path(notes_dir())
 ERROR_LOG = NOTES_DIR / "流水线错误日志.jsonl"
 SUMMARY_LLM_TEMPERATURE = 0.1
-SUMMARY_LLM_TIMEOUT = 90
+#: LLM 调用超时（秒）。单一来源 = `llm_client.DEFAULT_SYNC_TIMEOUT` ← config `ai.llmTimeout`。
+#: 原先此处写死 90、而 `summary_rules`/`summarize` 各写死 120——同一类调用三个值。
+SUMMARY_LLM_TIMEOUT = llm_client.DEFAULT_SYNC_TIMEOUT
 SUMMARY_API_TIMEOUT = 10
 
 logger = setup_logging("summarize")
@@ -58,97 +59,29 @@ def _llm_chat(
     disable_thinking: bool = False,
     system_prompt: str | None = None,
 ) -> str | None:
-    try:
-        messages: list[dict] = [{"role": "user", "content": prompt}]
-        if system_prompt:
-            messages.insert(0, {"role": "system", "content": system_prompt})
-        body = {
-            "model": SUMMARY_MODEL,
-            "messages": messages,
-            "temperature": (
-                temperature if temperature is not None else SUMMARY_LLM_TEMPERATURE
-            ),
-        }
-        # 聚合/文章生成等输出较大的阶段显式放宽 max_tokens，
-        # 否则 LLM 默认 4096 截断导致 JSON 解析失败（AGGREGATE_JSON 根因）
-        if max_tokens:
-            body["max_tokens"] = max_tokens
-        # deepseek-v4-flash 为推理模型：长 prompt 下 thinking 思考会吃光
-        # max_tokens，content 为空 → JSON 解析失败。聚合/生成阶段关思考，
-        # 让输出 token 全部用于 content（实测 thinking disabled + 16384 完整输出）
-        if disable_thinking:
-            body["thinking"] = {"type": "disabled"}
-        resp = _HTTP.post(
-            f"{SUMMARY_API_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-            timeout=timeout if timeout is not None else SUMMARY_LLM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.warning(f"LLM call failed: {e}")
-        return None
+    """summarize 全链路的同步 LLM 调用薄封装（转发 `llm_client.chat`）。
+
+    保留此名字而不是让 6 个调用点直接调 `llm_client.chat`：调用点之间的差异只是
+    「温度 / 超时 / 关思考」几个默认值，收敛在这一处即可，不必动调用点。
+    """
+    return llm_client.chat(
+        prompt,
+        system=system_prompt,
+        temperature=(
+            temperature if temperature is not None else SUMMARY_LLM_TEMPERATURE
+        ),
+        max_tokens=max_tokens,
+        timeout=timeout if timeout is not None else SUMMARY_LLM_TIMEOUT,
+        disable_thinking=disable_thinking,
+        # deepseek-v4-flash 等推理模型：长 prompt 下思考会吃光 max_tokens、
+        # content 为空 → JSON 解析失败（AGGREGATE_JSON 根因），故聚合/生成阶段关思考。
+        # 这是该 provider 的**私有字段**（非 OpenAI 协议事实），只能由调用方显式传出：
+        # 写进 llm_client 的公共层会让其他 openai provider 收到未知字段而 400。
+        extra_body={"thinking": {"type": "disabled"}} if disable_thinking else None,
+        label="LLM call failed",
+    )
 
 
-def _parse_json_any(raw: str) -> dict | None:
-    raw = raw.strip()
-    m = re.search(r"```json\s*\n(.+?)\n\s*```", raw, re.DOTALL)
-    if not m:
-        m = re.search(r"```\s*\n(.+?)\n\s*```", raw, re.DOTALL)
-    if not m:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-    json_str = m.group(1) if m and m.lastindex else (m.group(0) if m else raw)
-    start, end = json_str.find("{"), json_str.rfind("}")
-    if start != -1 and end != -1:
-        json_str = json_str[start : end + 1]
-    try:
-        return json.loads(json_str, strict=False)
-    except json.decoder.JSONDecodeError:
-        fixed = re.sub(r",\s*([}\]])", r"\1", json_str)
-        try:
-            return json.loads(fixed, strict=False)
-        except json.decoder.JSONDecodeError:
-            # LLM 复制原文时可能把英文双引号原样带进字符串值且未转义 → 转义后重试
-            quoted = _escape_inline_quotes(fixed)
-            try:
-                return json.loads(quoted, strict=False)
-            except json.decoder.JSONDecodeError:
-                return None
-
-
-def _escape_inline_quotes(s: str) -> str:
-    """把字符串值内未转义的裸引号转义为 \\"（键结束/值结束引号不受影响）。"""
-    out = []
-    in_str = False
-    i = 0
-    n = len(s)
-    while i < n:
-        c = s[i]
-        if in_str:
-            if c == "\\":
-                out.append(c)
-                if i + 1 < n:
-                    out.append(s[i + 1])
-                    i += 2
-                    continue
-            elif c == '"':
-                j = i + 1
-                while j < n and s[j] in " \t":
-                    j += 1
-                if j < n and s[j] in ",}]:":
-                    in_str = False
-                    out.append(c)
-                else:
-                    out.append('\\"')
-            else:
-                out.append(c)
-        else:
-            if c == '"':
-                in_str = True
-            out.append(c)
-        i += 1
-    return "".join(out)
+#: 保留历史名：`summarize.py` / `summary_rules.py` 共 6 处调用点依赖它。
+#: 实现已迁至 `llm_client.parse_json`（原 `_escape_inline_quotes` 随迁）。
+_parse_json_any = llm_client.parse_json

@@ -28,15 +28,17 @@ from config import (
     notes_dir,
     summary_exclude_tags,
 )
+import prompt_loader
 from log_utils import (
     setup_logging as _log_setup,
 )
 from summary_llm import (
     _HTTP,
-    DEEPSEEK_API_KEY,
+    AI_API_KEY,
     _llm_chat,
     _parse_json_any,
     write_error_log,
+    SUMMARY_LLM_TIMEOUT,
 )
 from summary_rules import _run_phase3
 from summary_stats import _print_report_v2
@@ -73,7 +75,9 @@ AGGREGATE_BATCH_SIZE = 60
 
 AGGREGATE_LLM_TEMPERATURE = 0.2
 
-AGGREGATE_LLM_TIMEOUT = 120
+#: 批量聚合的 LLM 超时。同一来源（config `ai.llmTimeout`）——聚合输出更长（max_tokens
+#: 放宽到 16384），但撞的是同一条上游超时，故与单次摘要共用同一值，不再各写一份。
+AGGREGATE_LLM_TIMEOUT = SUMMARY_LLM_TIMEOUT
 
 AGGREGATE_MAX_ROUNDS = 3
 
@@ -543,39 +547,15 @@ def _quality_rule_judge(text: str) -> tuple[str, str]:
     return "keep", "常规通过"
 
 
-QUALITY_JUDGE_SYSTEM = """你是知识库记忆质量判定器。判断一条记忆是否值得进入 LLM 聚合沉淀（keep），还是应丢弃（drop）。
-
-DROP 的情形：
-- 正文本身就是截断占位，无实质信息（如整条是"内容截断，保留已有信息"、"未详述"等占位文字）
-- 关键信息被截断/不完整：正文以截断占位或半截语句结尾，核心结论/路径/参数/接口/原因缺失，无法还原
-- 纯状态快照：如"已完成X"、"已配置Y"、"User built an APK"，无任何细节、技术参数或结论
-- 纯测试数据、垃圾数据、过短（去空白<15字符）、空泛无具体内容
-
-KEEP 的情形：
-- 有实质技术信息：具体文件/组件/参数/判断条件/结论/根因
-- 讨论"质量门/截断/审计/修复机制"本身的元讨论，只要包含具体内容就保留
-- 用户行为约束/偏好/明确要求等有信息量的记录
-
-关键区分：
-- "正文在讨论截断问题"（如"LLM输出被截断导致JSON解析失败"）→ KEEP，信息完整
-- "正文本身就是被截断的占位"（如"XX（内容截断，保留已有信息）"）→ DROP，无信息
-
-补充状态快照判据：
-- 英文：User 对某文件/项目做了动作（built/split/configured/tested/refactored/created/updated 等），但无任何技术参数、结论、判断 → DROP
-- 即使快照具体到文件+动作+日期，只要无可执行信息/技术细节/结论，仍是纯状态快照 → DROP
-- 中文：短句记录"已完成X/今天测试了Y/配置了Z"，无技术参数、结论、根因 → DROP
-- 有真实技术内容（实现方式/参数/结论/根因/判断条件）的中英文记忆才 KEEP
-
-只输出 JSON：{"judge": "keep" 或 "drop", "reason": "一句中文理由"}"""
-
-
 def _quality_llm_judge_once(text: str) -> str:
     """单次 LLM 质量判定，返回 keep/drop/ERR（解析失败或异常，fail-open）。"""
     raw = _llm_chat(
-        f"记忆内容：\n{text}",
+        # user 前缀同样是提示词：原先硬编码为 `f"记忆内容：\n{text}"`，英文环境下会
+        # 中文前缀配英文 system。system 与 user 各占一份模板文件（见 prompt_loader）。
+        prompt_loader.prompt("quality_judge_user", text=text),
         temperature=0,
         max_tokens=200,
-        system_prompt=QUALITY_JUDGE_SYSTEM,
+        system_prompt=prompt_loader.prompt("quality_judge"),
     )
     if not raw:
         return "ERR"
@@ -691,30 +671,11 @@ def _aggregate_round(
     label 用于日志区分「分批」与「递归合并轮」。LLM 输出无效（重试 1 次后仍失败）
     时返回 (None, raw)，由调用方决定中断（首轮）或保留当前结果继续（递归轮）。
     """
-    prompt = f"""\
-你正在对一批记忆事实做聚合预处理：按主题分类、组内合并去重、丢弃无长期价值的一次性信息。
-
-记忆事实{label}：
-{facts_text}
-
-### 要求
-
-1. **按主题分组**：语义相近/同一主题的事实归为同一组
-2. **组内合并去重**：同一件事的重复/相似记录合并为一条连贯文本，不要重复罗列
-3. **时间线演进**：同一主题跨多日的记忆，按时间先后组织进 facts（先发生在前），体现「先 A、后改成 B」的演变轨迹；内容发生变化时保留演变过程而非只留最终状态
-4. **关键节点标日期**：根因判定、方案选型、决策、修复完成等关键节点在 facts 中标注日期，如（8/3 首次发现，8/5 确认根因）
-5. **评估沉淀价值（retain）**：每组判断是否值得沉淀为长期知识笔记，宁缺毋滥——
-   - **retain=true**：含可长期复用的知识，如技术方案、架构决策、踩坑与解决办法、可复用的经验结论
-   - **retain=false**：以下一律判 false——纯临时工作记录（任务编号流水、无细节的单条调研痕迹、过程性碎片如"对 X 做了调研""讨论了 Y"）、泛泛而谈无具体方案的结论、无定位信息（文件路径/组件名/参数名/判断条件/报错信息）的模糊经验、几天后即无意义的中间态
-   - **宁可遗漏，不要产出临时记录**：拿不准就判 false
-6. **丢弃一次性信息**：临时状态、过时配置、纯日志类碎片、无上下文的孤句不进入分组
-7. **主题要具体**：如 "蓝牙打印机 SDK 集成" 而非 "打印"
-8. **只保留记忆中出现的信息**：禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
-9. **facts 完整度**：必须包含该主题全部记忆条目中的所有可复用细节，特别是文件路径、组件/接口名、参数名、判断条件、报错信息等定位信息，不得因分组而丢弃
-
-返回 JSON：{{"groups": [{{"topic": "具体主题", "facts": "合并去重后按时间组织的事实文本", "tags": ["标签"], "retain": true}}]}}
-没有有效内容时返回 {{"groups": []}}。
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    prompt = prompt_loader.prompt(
+        "aggregate",
+        label=label,
+        facts_text=facts_text,
+    )
     parsed = None
     raw = None
     for attempt in range(2):  # 失败重试 1 次（LLM 偶发输出不完整/非 JSON）
@@ -820,16 +781,10 @@ def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
         f"- [{i}] {g.get('topic', '')}：{g.get('facts', '')[:150]}"
         for i, g in enumerate(groups)
     )
-    prompt = f"""\
-以下为分批聚合得到的记忆组，跨批可能存在主题重复。请将 topic 相同或相近的组收敛为一组。
-
-记忆组：
-{entries}
-
-要求：合并后 facts 按时间线组织（先发生在前），同一主题跨批演进时保留演变过程、关键节点保留日期标注。
-
-返回 JSON：{{"groups": [{{"topic": "合并后主题", "facts": "合并后按时间组织的完整事实文本", "tags": ["标签"], "retain": true}}]}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    prompt = prompt_loader.prompt(
+        "merge_cross_batch",
+        entries=entries,
+    )
     raw = _llm_chat(
         prompt,
         temperature=AGGREGATE_LLM_TEMPERATURE,
@@ -854,10 +809,17 @@ def _llm_json(
     temperature: float | None = None,
     timeout: float | None = None,
     disable_thinking: bool = False,
+    feature: str | None = None,
 ) -> dict | None:
     """think enable 输出 JSON；解析失败自动降级 disable_thinking 重试一次。
 
-    返回解析成功的 dict；两次都失败返回 None。disable_thinking=True 时全程禁用。
+    返回解析成功的 dict；两次都失败返回 None（fail-open，由调用方各自兜底）。
+    传了 `feature` 则补两处**外部信号**——原先这里的失败是彻底静默的（只返回 None，
+    调用方按「无结果」继续），坏 prompt 或模型不守格式都无从发现：
+      - 两次都解析失败 → `write_error_log(PROMPT_JSON_PARSE)`
+      - 解析成功但缺模板声明的 `json_keys` → `write_error_log(PROMPT_JSON_MISS)`，
+        **不改返回值**：缺键是「模型没按契约输出」，与解析失败是两回事，是否当失败
+        由调用方决定（这里只让它可见）。
     """
     for attempt in range(2):
         raw = _llm_chat(
@@ -870,32 +832,37 @@ def _llm_json(
         if raw:
             parsed = _parse_json_any(raw)
             if parsed:
+                if feature:
+                    missing = prompt_loader.missing_json_keys(feature, parsed)
+                    if missing:
+                        write_error_log(
+                            f"{feature}: 模型输出缺少模板声明的键 {list(missing)}",
+                            code="PROMPT_JSON_MISS",
+                        )
                 return parsed
         if attempt == 0:
             logger.warning("JSON 输出解析失败，降级 disable_thinking 重试一次")
+    if feature:
+        write_error_log(
+            f"{feature}: LLM 输出两次都未能解析为 JSON（prompt 或模型输出异常）",
+            code="PROMPT_JSON_PARSE",
+        )
     return None
 
 
 def _extract_keywords(group: dict) -> list[str]:
     """提炼组主题的检索关键词（3-8 个名词性词）。失败返回 []。"""
     facts = str(group.get("facts", ""))[:SUMMARY_MERGE_CONTEXT_CHARS]
-    prompt = f"""\
-从以下记忆主题中提炼 3-{SUMMARY_KEYWORD_COUNT} 个用于检索知识库的关键词。
-
-主题：{group.get('topic', '')}
-相关事实：
-{facts}
-
-要求：
-1. 名词性关键词：专有名词、项目名、技术栈、库名、主题中心词
-2. 每个关键词 ≥{SEARCH_MIN_TOKEN_LEN} 字符
-3. 避免「记忆」「总结」「问题」「修复」「开发」等通配词
-4. 用具体词而非描述句
-5. 数量 3-{SUMMARY_KEYWORD_COUNT} 个
-
-返回 JSON：{{"keywords": ["关键词1", "关键词2", ...]}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    parsed = _llm_json(prompt, max_tokens=SUMMARY_KEYWORD_MAX_TOKENS)
+    prompt = prompt_loader.prompt(
+        "extract_keywords",
+        SUMMARY_KEYWORD_COUNT=SUMMARY_KEYWORD_COUNT,
+        topic=group.get("topic", ""),
+        facts=facts,
+        SEARCH_MIN_TOKEN_LEN=SEARCH_MIN_TOKEN_LEN,
+    )
+    parsed = _llm_json(
+        prompt, max_tokens=SUMMARY_KEYWORD_MAX_TOKENS, feature="extract_keywords"
+    )
     if not parsed:
         return []
     kws = parsed.get("keywords") or []
@@ -1021,25 +988,15 @@ def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
     candidates = "\n".join(
         f"- [{i}] {h['rel_path']}：{h['snippet'][:120]}" for i, h in enumerate(hits)
     )
-    prompt = f"""\
-判断以下记忆主题是否应该归并到已有的知识笔记中。
-
-待沉淀主题：{group.get('topic', '')}
-相关事实：
-{facts}
-
-已有笔记候选（检索命中，按相关度降序）：
-{candidates}
-
-判定标准：
-1. **归并（action=merge）**：已有笔记与当前主题高度相关——同技术栈/同项目/同一件事的持续演进
-2. **新建（action=new）**：仅沾边/命中通用词，或本质是新主题，强行归并会污染已有笔记
-3. 多命中时选最相关的一个 target；内容演进/冲突仍可归并（reason 注明）
-4. target 必须是上方候选列表中的 rel_path，不要臆造路径
-
-返回 JSON：{{"action": "merge" 或 "new", "target": "相对Extracts的md路径（merge时）", "reason": "一句话理由"}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    parsed = _llm_json(prompt, max_tokens=SUMMARY_JUDGE_MAX_TOKENS)
+    prompt = prompt_loader.prompt(
+        "decide_merge",
+        topic=group.get("topic", ""),
+        facts=facts,
+        candidates=candidates,
+    )
+    parsed = _llm_json(
+        prompt, max_tokens=SUMMARY_JUDGE_MAX_TOKENS, feature="decide_merge"
+    )
     if parsed:
         action = str(parsed.get("action", "")).strip().lower()
         if action == "merge":
@@ -1087,31 +1044,17 @@ def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None
     """think enable 生成新建文章：{"dir", "title", "content"}。失败返回 None。"""
     facts = str(group.get("facts", ""))
     tops_block = "、".join(sorted(existing_tops)) if existing_tops else "（空）"
-    prompt = f"""\
-将以下记忆事实整理为一篇高质量知识笔记（新建文件）。
-
-待沉淀主题：{group.get('topic', '')}
-相关事实：
-{facts}
-
-现有笔记目录结构：
-{dir_tree}
-
-现有顶层目录：{tops_block}
-
-### 要求
-
-1. **严格基于相关事实写作**：只使用其中出现的信息，禁止编造、禁止虚构不存在的 API/组件名/方法名/版本号/配置项/代码/数据
-2. 记忆事实未提供的细节不要补造，宁可缺省也不虚构
-3. **时间线演进**：事实含跨日演进时按时间组织，关键节点保留日期标注（如 8/3 首次发现，8/5 确认根因）
-4. **目录（dir）**：**必须优先复用**上方「现有顶层目录」之一；仅当现有目录都无法容纳该主题时才新建单层顶层目录（此时明确给出新建理由）；禁止嵌套多级新目录；禁止使用 {sorted(SUMMARY_EXCLUDE_DIRS)} 作为目录
-5. **标题（title）**：具体，如 "UTSJSONObject null 安全访问" 而非 "UTSJSONObject 坑"
-6. 篇幅 150-500 字，事实密度优先，不要空泛
-7. 正文不需要 # 标题行（脚本会写）
-
-返回 JSON：{{"dir": "相对目录路径", "title": "具体标题", "content": "Markdown 正文"}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    parsed = _llm_json(prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2)
+    prompt = prompt_loader.prompt(
+        "gen_new",
+        topic=group.get("topic", ""),
+        facts=facts,
+        dir_tree=dir_tree,
+        tops_block=tops_block,
+        exclude_dirs=sorted(SUMMARY_EXCLUDE_DIRS),
+    )
+    parsed = _llm_json(
+        prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2, feature="gen_new"
+    )
     if not parsed:
         return None
     dir_name = str(parsed.get("dir", "")).strip().strip("/")
@@ -1134,32 +1077,16 @@ def _gen_merge(group: dict, target_file: Path, existing_text: str) -> dict | Non
     """
     facts = str(group.get("facts", ""))
     context = _relevant_segments(existing_text, facts, SUMMARY_MERGE_LOOKBACK_CHARS)
-    prompt = f"""\
-将以下记忆事实补充到已有知识笔记中（追加新信息）。
-
-待沉淀主题：{group.get('topic', '')}
-相关事实：
-{facts}
-
-目标笔记：{target_file.relative_to(EXTRACTS_DIR)}
-目标笔记相关段落（按与事实相关度选取，非全文件）：
-{context}
-
-### 要求
-
-1. **严格基于相关事实写作**：只使用其中出现的信息，禁止编造
-2. **只写已有内容未覆盖的新增信息**：已有内容已写过的细节不要重复
-3. **时间线演进**：与已有内容构成先后演进时标注日期（如 8/3 首次发现，8/5 确认根因），体现「先 A、后改成 B」
-4. **内容冲突时**：以事实为准，注明与旧结论的差异
-5. 篇幅 150-500 字，事实密度优先
-6. 正文不需要 # 标题行（脚本会写）
-7. **修正旧结论时**：若本次内容否定了旧段结论（supersedes 语义），"supersedes" 置 true；仅补充新信息置 false
-8. **无增量判定（重要）**：先对比「相关事实」与「目标笔记相关段落」。若相关事实的全部要点已被既有内容覆盖、本次无实质新增信息 → 返回 {{"action": "no_increment", "reason": "简述哪些内容已存在"}}。仅当存在未被覆盖的新增信息时才正常返回；不确定时视为有增量（宁保留勿丢失）
-
-返回 JSON：{{"action": "merge", "title": "本节标题", "content": "Markdown 正文", "supersedes": true 或 false}}
-或无增量时：{{"action": "no_increment", "reason": "重复点简述"}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
-    parsed = _llm_json(prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2)
+    prompt = prompt_loader.prompt(
+        "gen_merge",
+        topic=group.get("topic", ""),
+        facts=facts,
+        target=target_file.relative_to(EXTRACTS_DIR),
+        context=context,
+    )
+    parsed = _llm_json(
+        prompt, max_tokens=SUMMARY_GEN_MAX_TOKENS, temperature=0.2, feature="gen_merge"
+    )
     if not parsed:
         return None
     if str(parsed.get("action", "")).strip().lower() == "no_increment":
@@ -1766,9 +1693,9 @@ def main():
         print("⚠️ 已有 summarize 实例在运行，跳过本次")
         return
 
-    if not DEEPSEEK_API_KEY:
-        write_error_log("DEEPSEEK_API_KEY not set", code="CONFIG")
-        print("❌ DEEPSEEK_API_KEY 未设置")
+    if not AI_API_KEY:
+        write_error_log("AI_API_KEY not set", code="CONFIG")
+        print("❌ AI_API_KEY 未设置")
         return
 
     if not _throttle_ai_run():
@@ -1843,7 +1770,7 @@ def main():
     if updated_files and consumed_ids:
         _mark_processed(consumed_ids)
 
-    # 阶段3：规范提炼（规则/规范类记忆 → MCP/Skills/Rules/*.md）
+    # 阶段3：规范提炼（规则/规范类记忆 → MCP/Rules/*.md）
     phase3 = _run_phase3(groups, today_str)
     rules_updates = phase3.get("updated", "")
     if rules_updates:

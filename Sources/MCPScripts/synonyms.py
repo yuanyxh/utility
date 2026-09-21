@@ -1,9 +1,27 @@
-"""
-编程同义词映射表，将中文搜索词扩展为对应英文编程术语。
+"""编程同义词映射表：把中文搜索词扩展成对应的英文编程术语。
 
-被 server.py 的 expand_query() 引用，用于 FTS5 全文搜索的同义词扩展。
-可独立维护，无需修改 server.py。
+内置默认（`SYNONYM_MAP`）+ 用户增量（`config.yaml` 的 `mcp.synonyms`，经 env
+`MCP_SYNONYMS` 注入）。合并语义与项目里其它「增量补充」配置一致——**同名覆盖、异名追加**：
+用户要加几个词，不必抄一份完整内置表回来维护。
+
+**不迁入 notes**：检索质量不该成为可被静默改坏的变量——改写坏了的表现是「搜不到」，
+没有任何报错，与「这条记录本来就不存在」无法区分。
+
+被 `server_search.expand_query()` 引用，用于 FTS5 全文搜索的同义词扩展。
 """
+
+from __future__ import annotations
+
+import json
+import os
+
+from log_utils import setup_logging
+
+logger = setup_logging("synonyms")
+
+#: 用户自定义同义词表的 env 名（跨语言契约，Swift 侧 `MCPProcessManager.synonymsEnvKey`
+#: 同值，由 `scripts/check-router-config-contract.py` 交叉断言）。
+SYNONYMS_ENV_KEY = "MCP_SYNONYMS"
 
 SYNONYM_MAP: dict[str, str] = {
     "请求": "request fetch http api network",
@@ -67,3 +85,36 @@ SYNONYM_MAP: dict[str, str] = {
     "注入": "inject dependency di wire",
     "捕获": "catch try error exception throw",
 }
+
+#: 合并结果缓存：env 在进程启动时固定，故首次解析后复用
+#: （配置改了要重启 MCP 服务才生效，与其它注入型配置一致）。
+_merged: dict[str, str] | None = None
+
+
+def load_synonyms() -> dict[str, str]:
+    """内置默认 + 用户增量（同名覆盖、异名追加）。首次调用解析并缓存。
+
+    返回的表**只读**——调用方（`expand_query`）只做查询，不要就地修改它。
+    """
+    global _merged
+    if _merged is not None:
+        return _merged
+
+    merged = dict(SYNONYM_MAP)
+    raw = os.environ.get(SYNONYMS_ENV_KEY, "").strip()
+    if raw:
+        try:
+            user = json.loads(raw)
+        except ValueError as e:
+            # 坏了不能静默：表现是「我配的同义词没生效」，而这与「这个词本来没配」无法区分
+            logger.error(f"{SYNONYMS_ENV_KEY} 不是合法 JSON，已忽略用户同义词: {e}")
+            user = None
+        if isinstance(user, dict):
+            merged.update({str(k): str(v) for k, v in user.items()})
+        elif user is not None:
+            logger.error(
+                f"{SYNONYMS_ENV_KEY} 不是对象（得到 {type(user).__name__}），已忽略"
+            )
+
+    _merged = merged
+    return _merged

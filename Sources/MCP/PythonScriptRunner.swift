@@ -2,9 +2,8 @@ import Foundation
 
 /// Python 脚本统一执行入口。
 ///
-/// 所有 py 脚本（server.py / summarize.py / token_proxy.py / ast_extractor.py /
-/// prepare_article_source.py / gen_article_generic.py）的 venv 定位、脚本路径解析、
-/// 环境变量构造、一次性执行与常驻守护都收敛到这里，各调用方不再各自实现。
+/// 所有 py 脚本（清单见 `PythonScripts`，对应 `Sources/MCPScripts/*.py`）的 venv 定位、
+/// 脚本路径解析、环境变量构造、一次性执行与常驻守护都收敛到这里，各调用方不再各自实现。
 /// 业务决策（状态语义、事件广播、复用探测、通知）仍由组合方（MCPProcessManager /
 /// TokenProxyManager）负责，本类只提供通用骨架。
 enum PythonScriptRunner {
@@ -77,31 +76,9 @@ enum PythonScriptRunner {
 
     /// Resolve path to a script in MCPScripts bundle directory.
     /// Checks bundle first (packaged app), then dev source directory.
+    /// 路径推导收在 `MCPScriptsResources`（提示词模板读取共用同一套候选目录）。
     static func findScript(named name: String) -> String? {
-        // In SPM, resources are at Bundle.module.resourceURL
-        guard let resourceURL = Bundle.module.resourceURL else {
-            debugLog("[ScriptRunner] No bundle resource URL")
-            return nil
-        }
-
-        let scriptsDir = resourceURL.appendingPathComponent("MCPScripts")
-        let scriptPath = scriptsDir.appendingPathComponent(name).path
-
-        if FileManager.default.fileExists(atPath: scriptPath) {
-            return scriptPath
-        }
-
-        // Fallback: development path (source directory)
-        let devBase = resourceURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let devPath = devBase.appendingPathComponent("MCPScripts/\(name)").path
-
-        if FileManager.default.fileExists(atPath: devPath) {
-            return devPath
-        }
-
-        return nil
+        MCPScriptsResources.path(relative: name)
     }
 
     // MARK: - 环境变量（唯一来源）
@@ -136,24 +113,71 @@ enum PythonScriptRunner {
             env["https_proxy"] = proxyString
         }
 
-        // ai 配置
-        let ai = ConfigManager.shared.config.ai
-        if !ai.apiKey.isEmpty { env["DEEPSEEK_API_KEY"] = ai.apiKey }
-        if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
-        if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
+        // ai 配置 + 语言（取值与 `.sh` 任务同源，见 aiEnvironment()）
+        for (key, value) in aiEnvironment() {
+            env[key] = value
+        }
 
         // mcp 路径配置（token_proxy 也需要 NOTES_DIR，故放在公共层）
-        if let mcp = ConfigManager.shared.config.mcp {
-            // 空字符串 = 使用默认路径 ~/.utility/notes/
-            let notesDir: String = if mcp.knowledgeBasePath.isEmpty {
-                AppPaths.configDir
-                    .appendingPathComponent("notes").path
-            } else {
-                (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-            }
+        if let notesDir = resolvedNotesDir() {
             env["NOTES_DIR"] = notesDir
         }
         return env
+    }
+
+    // MARK: - 跨语言 env 取值（服务进程与 `.sh` 任务共用）
+
+    /// AI 相关 env：key / baseURL / model / llmTimeout / 语言。
+    ///
+    /// 抽成一份是因为**跨语言 env 有两个注入点**：服务进程走 `baseEnvironment()`，
+    /// 内部 `.sh` 定时任务走 `shellCommand(environmentOverrides:)`。两处各写一遍取值逻辑时，
+    /// 新增一个 env 只会加进其中一处，表现为「服务进程里配置生效、定时任务里静默回退默认」
+    /// ——`AI_LLM_TIMEOUT` 与 `UTILITY_LANG` 就这样漏过一次：定时总结恒用 120s 超时
+    /// （而 `ai.llmTimeout` 的消费方恰好全在 summarize 链路上），英文界面下也仍用中文提示词。
+    static func aiEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        let ai = ConfigManager.shared.config.ai
+        if !ai.apiKey.isEmpty { env[EnvKeys.aiAPIKey] = ai.apiKey }
+        if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
+        if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
+        // 0 / 负值 = 用内置默认，不注入（Python 侧 `config.llm_timeout()` 同约定回退）。
+        // **保留小数**：`String(Int(…))` 会把 0.5 变成 "0"，而 Python 把 0 当作「未配置」
+        // 回退默认 120s——Swift 认为已注入、Python 认为没配，同一个 0 在两处含义相反。
+        if ai.llmTimeout > 0 { env[EnvKeys.aiLLMTimeout] = String(ai.llmTimeout) }
+        // 语言：Python 侧提示词按它选 `prompts/<lang>/`。判据复用 L10n（唯一来源），
+        // 否则会出现「界面中文、提示词英文」这类没人想得到的组合。
+        env[EnvKeys.utilityLang] = L10n.resolvedLanguage(
+            configured: ConfigManager.shared.config.general.language,
+        )
+        return env
+    }
+
+    /// 知识库笔记目录（空配置 → `<配置域>/notes`）。同样两个注入点共用。
+    static func resolvedNotesDir() -> String? {
+        guard let mcp = ConfigManager.shared.config.mcp else { return nil }
+        // 空字符串 = 使用默认路径
+        return mcp.knowledgeBasePath.isEmpty
+            ? AppPaths.configDir.appendingPathComponent("notes").path
+            : (mcp.knowledgeBasePath as NSString).expandingTildeInPath
+    }
+
+    /// 内部 `.sh` 任务需要内联的 env（**服务进程与定时任务的最小公共集**）。
+    ///
+    /// 与 `baseEnvironment()` 的差别是**有意的**：`.sh` 走 `/bin/bash -c`，把 baseEnvironment
+    /// 全体（继承环境、代理设置等）内联进命令串既污染又可能因值含空格而截断，故这里只列脚本
+    /// 真正需要的键。但**取值必须与 baseEnvironment 同源**（`aiEnvironment()` /
+    /// `resolvedNotesDir()`）——新增跨语言 env 时两处都要照顾到。
+    /// `MEMORY_SERVER_URL` / `SUMMARY_EXCLUDE_TAGS` 是 `.sh` 侧独有的，由调用方传入。
+    static func taskEnvironmentOverrides(
+        memoryServerURL: String,
+        excludeTags: String,
+    ) -> [String: String] {
+        var overrides = aiEnvironment()
+        if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
+        overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
+        overrides["MEMORY_SERVER_URL"] = memoryServerURL
+        overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
+        return overrides
     }
 
     /// baseEnvironment + 脚本专属 overrides。
@@ -178,7 +202,7 @@ enum PythonScriptRunner {
     static func shellCommand(
         script: String,
         arguments: [String] = [],
-        environmentOverrides: [String: String] = [:]
+        environmentOverrides: [String: String] = [:],
     ) -> String {
         var parts: [String] = []
         // 排序保证输出稳定（KEY 顺序不影响 bash 语义）
@@ -200,7 +224,7 @@ enum PythonScriptRunner {
         scriptPath: String,
         arguments: [String],
         stdin: Data? = nil,
-        timeout: TimeInterval
+        timeout: TimeInterval,
     ) throws -> Data {
         guard let pythonPath = resolvePython() else {
             throw PythonProcessError.pythonUnavailable

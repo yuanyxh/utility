@@ -547,18 +547,6 @@ def _detect_api_format(body: dict) -> str:
     return "anthropic"
 
 
-def _is_claude_code(headers) -> bool:
-    """判断请求是否来自 Claude Code（请求头特征，非内容匹配）。
-
-    用协议级特征而非具体文案：x-anthropic-billing-header 是 Claude Code
-    特有的请求头；User-Agent 兜底含 "claude"。其他客户端（codex/curl 等）
-    不满足，不会触发 classifier 处理。
-    """
-    if headers.get("x-anthropic-billing-header"):
-        return True
-    return "claude" in headers.get("user-agent", "").lower()
-
-
 def _is_classifier_candidate(body: dict) -> bool:
     """结构启发式判断是否 classifier 候选：stream != true + tools 空 + messages ≤ 2。
 
@@ -593,7 +581,9 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
     """读取 System_Prompts.md，注入到最后一条真实用户输入前。
 
     从后往前找 role==user 且 content 为字符串 / 数组含 text 块的真实
-    用户输入（跳过 tool_result 消息），在其前插入规则块。返回
+    用户输入（纯 tool_result 消息不含 text，会被跳过），在其前插入规则块；
+    若该消息本身也含 tool_result（用户在工具执行中插话的形态），则改插到
+    最后一个 tool_result 之后——该块必须始终保持在这条消息的首位。返回
     (body_bytes, 命中索引)，命中索引为注入目标的 messages 下标，
     文件缺失 / 读取失败 / 未命中时为 -1。mtime 未变时跳过读盘。
     """
@@ -647,7 +637,15 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
         if isinstance(content, str):
             msg["content"] = rule_block + content
         elif isinstance(content, list):
-            content.insert(0, {"type": "text", "text": rule_block})
+            # Anthropic 硬约束：响应 tool_use 的消息里 tool_result 必须是首个块
+            # （官方 Troubleshooting 明列此错因）。插到首位会把 tool_result 挤后，
+            # 上游按「tool_use 后未紧跟 tool_result」直接 400，故插到最后一个
+            # tool_result **之后**；无 tool_result 时退化为首位，行为不变。
+            last_tool_result = -1
+            for idx, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    last_tool_result = idx
+            content.insert(last_tool_result + 1, {"type": "text", "text": rule_block})
         break
 
     # 文件存在但未找到真实用户输入（如全部 user 消息都是 tool_result）→ 记录告警防静默失效

@@ -35,8 +35,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-import aiohttp
-
+import llm_client
+import prompt_loader
 from db import conn as dbconn
 from log_utils import setup_logging
 from proxy_protocol import _is_classifier_candidate
@@ -72,17 +72,6 @@ logger = setup_logging("token_proxy", json_format=True)
 # 取值一律偏保守：宁可少切档，不可乱切档。
 # ---------------------------------------------------------------------------
 
-#: 分类 prompt 模板。**本模板的权威副本在这里**（Swift 侧只存用户覆盖值，
-#: 留空即用本模板）。{tier_lines} 由 tiers 的 name+description 动态拼装，
-#: 加档无需改代码；{last_user_message} 为末条真实用户消息。
-DEFAULT_CLASSIFY_PROMPT_TEMPLATE = """根据以下用户消息归类。可选类别：
-{tier_lines}
-
-只输出类别名，禁止输出其他任何内容，否则退回重走。
-
-## 用户消息
-{last_user_message}
-"""
 
 # 键分量的权威定义在归一化层（proxy_normalize），此处只做引用避免两处推导。
 # `latest_user` → loop 内稳定、新指令自动分界；`first_user` → 更抗客户端注入的
@@ -1210,17 +1199,29 @@ class Router:
     # -- 分类器 -----------------------------------------------------------
 
     def _build_classify_prompt(self, user_text: str) -> str:
+        """构造分类 prompt。
+
+        模板优先级：`config.yaml router.classifier.promptTemplate`（用户显式配置，最具体）
+        → `prompts/<lang>/classify_tier.md`（内置默认，可被同名用户文件覆盖）。
+        两条路的严格程度**有意不同**：配置模板是用户手写的，走宽松 replace（容忍
+        `{lastUserMessage}` 这类拼写差异）；文件模板由我们维护，走 loader 的严格契约校验
+        ——改名遗漏必须报错，而不是渲染出一个缺了用户消息的 prompt。
+        """
         cfg = self.config
-        tmpl = cfg.classifier_prompt_template or DEFAULT_CLASSIFY_PROMPT_TEMPLATE
         tier_lines = "\n".join(
             f"- {t.name}：{t.description}" if t.description else f"- {t.name}"
             for t in cfg.tiers
         )
-        # 两种拼写都替换：模板由用户手写，占位符拼错时 replace 是空操作、
-        # 分类 prompt 会静默丢掉用户消息（分类器只能瞎猜），代价远大于多一次替换。
-        for name in ("{last_user_message}", "{lastUserMessage}"):
-            tmpl = tmpl.replace(name, user_text)
-        return tmpl.replace("{tier_lines}", tier_lines)
+        if cfg.classifier_prompt_template:
+            tmpl = cfg.classifier_prompt_template
+            # 两种拼写都替换：占位符拼错时 replace 是空操作、
+            # 分类 prompt 会静默丢掉用户消息（分类器只能瞎猜），代价远大于多一次替换。
+            for name in ("{last_user_message}", "{lastUserMessage}"):
+                tmpl = tmpl.replace(name, user_text)
+            return tmpl.replace("{tier_lines}", tier_lines)
+        return prompt_loader.prompt(
+            "classify_tier", tier_lines=tier_lines, last_user_message=user_text
+        )
 
     async def _classify(self, turns: list[NormalizedTurn]) -> str | None:
         cfg = self.config
@@ -1252,14 +1253,9 @@ class Router:
             t0 = time.monotonic()
             attempt_timeout = min(cfg.classifier_timeout_ms, remaining_ms)
             try:
-                if api_format == API_OPENAI:
-                    result = await self._classify_openai(
-                        prompt, provider, attempt_timeout
-                    )
-                else:
-                    result = await self._classify_anthropic(
-                        prompt, provider, attempt_timeout
-                    )
+                result = await self._classify_with_provider(
+                    prompt, provider, attempt_timeout, api_format
+                )
                 canonical = cfg.canonical_tier(result)
                 if canonical:
                     logger.info(
@@ -1309,58 +1305,39 @@ class Router:
         )
         return None
 
-    async def _classify_anthropic(
-        self, prompt: str, provider: dict, timeout_ms: int
+    async def _classify_with_provider(
+        self, prompt: str, provider: dict, timeout_ms: int, api_format: str
     ) -> str:
-        url = f"{provider['url']}{CLASSIFIER_ENDPOINT[API_ANTHROPIC]}"
-        headers = {
-            "content-type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        api_key = api_key_of(provider)
-        if api_key:
-            headers["x-api-key"] = api_key
-        body = {
-            "model": provider["models"][0],
-            "max_tokens": 10,
-            "thinking": {"type": "disabled"},  # 分类任务不需要推理，禁用可显著降延迟
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=body, headers=headers, timeout=timeout
-            ) as resp:
-                data = await resp.json()
-                content = data.get("content") or [{}]
-                return content[0].get("text", "").strip().lower()
+        """按 provider 的协议发一次分类请求（协议分派在 `llm_client` 内）。
 
-    async def _classify_openai(
-        self, prompt: str, provider: dict, timeout_ms: int
-    ) -> str:
-        cfg = self.config
-        url = f"{provider['url']}{CLASSIFIER_ENDPOINT[API_OPENAI]}"
-        headers = {"content-type": "application/json"}
-        api_key = api_key_of(provider)
-        if api_key:
-            headers["authorization"] = f"Bearer {api_key}"
-        body = {
-            "model": provider["models"][0],
-            "max_tokens": 10,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=body, headers=headers, timeout=timeout
-            ) as resp:
-                data = await resp.json()
-                choices = data.get("choices") or []
-                if not choices:
-                    return ""
-                return (
-                    (choices[0].get("message") or {}).get("content", "").strip().lower()
-                )
+        命名带 `_with_provider`：本类另有一个 `_classify(turns)`（分类入口，负责构造
+        prompt + 重试 + 预算）。Python 后定义的同名方法会**静默覆盖**前一个，
+        重名会让 `_classify(turns)` 的调用方拿到 TypeError 而不报编译错误
+        （实测：router_exception: missing 3 required positional arguments）。
+
+        本方法只负责把 provider 配置翻译成 `LLMTarget`：endpoint 必须显式给出——
+        分类器是代理自己发起的请求，没有客户端 path 可沿用（见 `CLASSIFIER_ENDPOINT`）。
+        """
+        text = await llm_client.achat(
+            prompt,
+            target=llm_client.LLMTarget(
+                endpoint=f"{provider['url']}{CLASSIFIER_ENDPOINT[api_format]}",
+                model=provider["models"][0],
+                # provider 的 apiKey 可为空 = 透传客户端 key；空 key 仍须能发出请求
+                api_key=api_key_of(provider),
+                api_format=api_format,
+            ),
+            max_tokens=10,
+            # 分类任务不需要推理：anthropic 侧注入 thinking:disabled（与旧实现一致，
+            # 实测可显著降延迟）；openai 协议无此标准字段，旧实现也不注入，故保持不动。
+            disable_thinking=(api_format == API_ANTHROPIC),
+            timeout=timeout_ms / 1000,
+            label="classifier",
+        )
+        # 缺 content/choices 时旧实现返回空串（外层按「无效分类结果」重试）而非失败，
+        # 故此处同样归一为空串——`achat` 对 openai 缺 choices 返回 None 是给
+        # summarize 那条链路的语义（那里 None 与 "" 都会走同一条「无输出」分支）。
+        return (text or "").strip().lower()
 
     # -- 输出 -------------------------------------------------------------
 

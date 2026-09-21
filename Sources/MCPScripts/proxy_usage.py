@@ -13,11 +13,11 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-import aiohttp
-
-from config import data_dir, deepseek_api_key, summary_model, summary_api_url
+import llm_client
+from config import data_dir
 from db import conn as dbconn
 from log_utils import setup_logging
+from proxy_client import load_client_text
 from proxy_normalize import _result_text as result_text
 from proxy_protocol import strip_injected_rules
 
@@ -36,11 +36,14 @@ TOOL_OUTPUT_RETENTION_DAYS = 5
 # gateway_log 记录范围与保留期：非 2xx + 请求体 >=512KB 预警，保留 90 天
 GATEWAY_LOG_SIZE_THRESHOLD = 512 * 1024
 GATEWAY_LOG_RETENTION_DAYS = 90
-# LLM 配置（usage 字段路径解析用，见 UsageFieldResolver._ask_model）。
-# 默认空串做「未配置即禁用」守卫——不要用 config 的默认真实值（会带空 URL 发起调用）。
-LLM_API_URL = summary_api_url(default="")
-LLM_API_KEY = deepseek_api_key()
-LLM_MODEL = summary_model(default="")
+# LLM 配置（usage 字段路径解析用，见 UsageFieldResolver._ask_model）已交由 llm_client
+# 统一读取。此前的 LLM_API_URL/LLM_API_KEY/LLM_MODEL 三个别名等于把同一份配置读了第二遍，
+# 且「未配置即禁用」的守卫条件散落在这里——配置改名时这里不会报错，只会静默停用解析。
+
+# 客户端注入文案/标签（续接提示词、摘要前缀、客户端标签）：各客户端取值不同且随版本
+# 变化，故作为**可配置表**（config.yaml modelProxy.clientText → MODEL_PROXY_CLIENT_TEXT），
+# 缺省时用 proxy_client 内置默认（= 引入配置面前的历史行为，零行为变化）。
+CLIENT_TEXT = load_client_text(os.environ.get("MODEL_PROXY_CLIENT_TEXT", ""))
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -377,7 +380,7 @@ class UsageFieldResolver:
 
     async def _ask_model(self, sample_response: dict) -> dict | None:
         """调用主模型识别 usage 字段路径。"""
-        if not LLM_API_URL or not LLM_API_KEY:
+        if not llm_client.is_configured():
             return None
 
         prompt = (
@@ -391,38 +394,14 @@ class UsageFieldResolver:
             f"Response sample:\n{json.dumps(sample_response, indent=2)[:2000]}"
         )
 
-        payload = {
-            "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
-            "max_tokens": 300,
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {LLM_API_KEY}",
-        }
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{LLM_API_URL}/chat/completions",
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    if resp.status != 200:
-                        return None
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    # 提取 JSON
-                    start = content.index("{")
-                    end = content.rindex("}") + 1
-                    return json.loads(content[start:end])
-        except Exception as e:
-            logger.warning(
-                json.dumps({"msg": "usage_resolver_ask_failed", "error": str(e)})
-            )
-            return None
+        raw = await llm_client.achat(
+            prompt,
+            temperature=0,
+            max_tokens=300,
+            timeout=15,
+            label="usage_resolver_ask_failed",
+        )
+        return llm_client.parse_json(raw)
 
     def _get_by_path(self, obj: dict, path: str):
         """按 dot-separated path 取值。"""
@@ -577,14 +556,7 @@ resolver = UsageFieldResolver()
 #: 只按名剔除，不再把任意 `<...>` 当标签：用户输入里出现比较运算符（`if x < y
 #: and y > z`）或 HTML 片段时，通用标签清理会把中间整段吃掉——实测
 #: `'if x < y and y > z: pass'` 被清成 `'if x z: pass'`，日志字段严重失真。
-CLIENT_INJECTED_TAGS = (
-    "system-reminder",
-    "local-command-caveat",
-    "local-command-stdout",
-    "command-name",
-    "command-message",
-    "command-args",
-)
+CLIENT_INJECTED_TAGS = CLIENT_TEXT.injected_tags
 
 _TAG_RE = re.compile(
     r"</?(?:" + "|".join(re.escape(t) for t in CLIENT_INJECTED_TAGS) + r")\b[^>]*>",
@@ -614,8 +586,33 @@ def _extract_user_text(content) -> str:
     return _TAG_RE.sub("", content_str).strip()
 
 
-#: 续接提示词前缀——其正文是上一轮摘要，不是用户输入，会话标识与用户输入提取都要跳过。
-CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
+#: 续接提示词前缀（多个客户端各自取值）——其正文是上一轮摘要，不是用户输入，
+#: 会话标识与用户输入提取都要跳过。来源见 CLIENT_TEXT。
+CONTINUATION_PREFIXES = CLIENT_TEXT.continuation_prefixes
+
+#: 压缩摘要前缀——上下文被压缩后的续接请求正文以它开头，同样是上一轮摘要而非用户输入，
+#: 与续接提示词一起跳过（input_preview 与 actual_user_input 两处都读这两个常量）。
+SUMMARY_PREFIXES = CLIENT_TEXT.summary_prefixes
+
+#: 未命中已登记文案的「大块用户消息」阈值（字符）。超过该长度、且既不是续接提示词也不是
+#: 摘要前缀的 user 消息，多半来自**尚未登记**的客户端注入物。登记一份样本，便于把新客户端
+#: 文案补进 config.yaml modelProxy.clientText——否则它只会静默污染 actual_user_input
+#: 与会话标识锚点（二者都是下游统计与路由判定的输入）。
+UNREGISTERED_BLOB_MIN_CHARS = 2000
+
+
+def _observe_unregistered_blob(content_str: str) -> None:
+    if len(content_str) >= UNREGISTERED_BLOB_MIN_CHARS:
+        logger.info(
+            json.dumps(
+                {
+                    "msg": "client_text_miss",
+                    "length": len(content_str),
+                    "sample": content_str[:80],
+                }
+            )
+        )
+
 
 #: 会话标识的 system 前缀截断上限（与 proxy_normalize.SYSTEM_PREFIX_LIMIT 同量级）。
 #: 长 system 每请求重算 SHA256 的成本随会话增长，截断不影响「同类 agent 归一组」的判别力。
@@ -674,7 +671,7 @@ def compute_session_key(body: dict) -> str:
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
         text = _extract_user_text(msg.get("content", ""))
-        if text.startswith(CONTINUATION_PREFIX):
+        if text.startswith(CONTINUATION_PREFIXES):
             continue
         if text:
             parts.append(text[:SESSION_FIRST_USER_LIMIT])
@@ -730,11 +727,13 @@ def extract_request_context(body: dict) -> dict:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
             # 跳过续接提示词
-            if content_str.startswith(CONTINUATION_PREFIX):
+            if content_str.startswith(CONTINUATION_PREFIXES):
                 continue
             # 跳过纯摘要内容
-            if content_str.strip().startswith("Summary:"):
+            if content_str.strip().startswith(SUMMARY_PREFIXES):
                 continue
+            # 未命中已登记文案的长消息 → 登记样本（发现未登记客户端的注入物）
+            _observe_unregistered_blob(content_str)
             if content_str.strip():
                 user_texts.append(content_str[:200])
     ctx["input_preview"] = " | ".join(user_texts)
@@ -745,11 +744,13 @@ def extract_request_context(body: dict) -> dict:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
             # 跳过续接提示词（其正文是上一轮摘要，不是用户输入）
-            if content_str.startswith(CONTINUATION_PREFIX):
+            if content_str.startswith(CONTINUATION_PREFIXES):
                 continue
-            # 跳过纯摘要内容（以 "Summary:" 开头）
-            if content_str.strip().startswith("Summary:"):
+            # 跳过纯摘要内容
+            if content_str.strip().startswith(SUMMARY_PREFIXES):
                 continue
+            # 未命中已登记文案的长消息 → 登记样本（发现未登记客户端的注入物）
+            _observe_unregistered_blob(content_str)
             if content_str.strip():
                 actual_parts.append(content_str[:500])
     ctx["actual_user_input"] = " | ".join(actual_parts) if actual_parts else ""

@@ -80,7 +80,7 @@ final class TokenProxyManager {
             Payload(
                 name: $0.name, url: $0.url,
                 apiFormat: $0.apiFormat.rawValue, apiKey: $0.apiKey,
-                models: $0.models
+                models: $0.models,
             )
         }
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
@@ -150,7 +150,7 @@ final class TokenProxyManager {
             max_retries: c.maxRetries,
             retry_delay_ms: c.retryDelayMs,
             timeout_ms: c.timeoutMs,
-            total_budget_ms: c.totalBudgetMs
+            total_budget_ms: c.totalBudgetMs,
         )
         let pol = router.policy
         let policy = PolicyPayload(
@@ -163,13 +163,13 @@ final class TokenProxyManager {
             escalate_patterns: pol.escalatePatterns,
             readonly_tools: pol.readonlyTools,
             normal_stop_reasons: pol.normalStopReasons,
-            require_paired_history: pol.requirePairedHistory
+            require_paired_history: pol.requirePairedHistory,
         )
         let conv = router.conversation
         let conversation = ConversationPayload(
             key_parts: conv.keyParts,
             max_sessions: conv.maxSessions,
-            ttl_seconds: conv.ttlSeconds
+            ttl_seconds: conv.ttlSeconds,
         )
         let prof = router.profile
         let profile = ProfilePayload(
@@ -178,7 +178,7 @@ final class TokenProxyManager {
             window: prof.window,
             upgrade_rate_threshold: prof.upgradeRateThreshold,
             prior_tier: prof.priorTier,
-            max_profiles: prof.maxProfiles
+            max_profiles: prof.maxProfiles,
         )
         let payload = RouterPayload(
             enabled: router.enabled,
@@ -189,7 +189,59 @@ final class TokenProxyManager {
             default_tier: router.defaultTier,
             policy: policy,
             conversation: conversation,
-            profile: profile
+            profile: profile,
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// classifier 加速白名单序列化为 JSON（config.yaml `modelProxy.clientAccel`）。
+    ///
+    /// JSON 侧统一 snake_case——Python `proxy_client.load_client_accel` 按该命名解析。
+    /// 未配置时返回 nil（不注入），Python 侧用内置默认白名单。
+    private func clientAccelJSON() -> String? {
+        guard let accel = proxyConfig?.clientAccel else { return nil }
+
+        struct MatcherPayload: Encodable {
+            let name: String
+            let user_agent_contains: [String]
+            let header_present: [String]
+        }
+        struct AccelPayload: Encodable {
+            let enabled: Bool
+            let clients: [MatcherPayload]
+        }
+
+        let payload = AccelPayload(
+            enabled: accel.enabled,
+            clients: accel.clients.map {
+                MatcherPayload(
+                    name: $0.name,
+                    user_agent_contains: $0.userAgentContains,
+                    header_present: $0.headerPresent,
+                )
+            },
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// 客户端注入文案/标签表序列化为 JSON（config.yaml `modelProxy.clientText`）。
+    ///
+    /// 未配置时返回 nil（不注入），Python 侧用内置默认表（= 历史行为）。
+    private func clientTextJSON() -> String? {
+        guard let text = proxyConfig?.clientText else { return nil }
+
+        struct TextPayload: Encodable {
+            let continuation_prefixes: [String]
+            let summary_prefixes: [String]
+            let injected_tags: [String]
+        }
+
+        let payload = TextPayload(
+            continuation_prefixes: text.continuationPrefixes,
+            summary_prefixes: text.summaryPrefixes,
+            injected_tags: text.injectedTags,
         )
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -207,6 +259,12 @@ final class TokenProxyManager {
         }
         if let routerJSON = routerJSON() {
             overrides["MODEL_PROXY_ROUTER"] = routerJSON
+        }
+        if let clientAccelJSON = clientAccelJSON() {
+            overrides["MODEL_PROXY_CLIENT_ACCEL"] = clientAccelJSON
+        }
+        if let clientTextJSON = clientTextJSON() {
+            overrides["MODEL_PROXY_CLIENT_TEXT"] = clientTextJSON
         }
         return PythonScriptRunner.environment(overrides: overrides)
     }
@@ -258,7 +316,7 @@ final class TokenProxyManager {
     func fetchTodaySummary() async -> TodaySummary {
         // 必须用 currentPort（缓存值）：用每次重新探测的端口，代理运行时会因
         // 自己占着 8613 而探测到 8614，请求打不到自己的查询端点。
-        guard let url = URL(string: "http://127.0.0.1:\(currentPort)/usage/summary") else {
+        guard let url = HTTP.localURL(port: currentPort, path: "/usage/summary") else {
             return TodaySummary()
         }
         do {
@@ -273,7 +331,7 @@ final class TokenProxyManager {
 
     private func ensureDaemon() -> PythonDaemon? {
         if let daemon { return daemon }
-        guard let scriptPath = PythonScriptRunner.findScript(named: "token_proxy.py") else {
+        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.tokenProxy) else {
             return nil
         }
         var config = PythonDaemon.Config(
@@ -289,7 +347,7 @@ final class TokenProxyManager {
             environment: { [weak self] in
                 self?.proxyEnvironment ?? [:]
             },
-            logTag: "TokenProxy"
+            logTag: "TokenProxy",
         )
         // 崩溃重启参数与 mcp 段同义，从配置读——此前写死 3 / 2.0，与
         // MCPProcessManager 读配置的行为不一致，改一处忘另一处就会分叉

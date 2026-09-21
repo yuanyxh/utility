@@ -365,9 +365,6 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             item.isEnabled = task.enabled
             item.representedObject = task.name
             item.state = (runningProcesses[task.name] != nil) ? .on : .off
-            if task.name == "gen-article" {
-                debugLog("[MenuBar] gen-article item.state=\(item.state.rawValue) (running=\(runningProcesses[task.name] != nil))")
-            }
             sub.addItem(item)
         }
 

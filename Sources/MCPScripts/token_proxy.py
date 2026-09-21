@@ -17,6 +17,7 @@ import time
 import aiohttp
 from aiohttp import web
 
+import llm_client
 from log_utils import setup_logging
 from proxy_protocol import (
     ProtocolConverter,
@@ -25,11 +26,11 @@ from proxy_protocol import (
     _extract_usage_from_sse,
     _extract_output_from_sse,
     _extract_tool_name_from_sse,
-    _is_claude_code,
     _is_classifier_candidate,
     _inject_classifier_disabled,
     _inject_system_prompt,
 )
+from proxy_client import load_client_accel, matches_accel_client
 from proxy_model_tag import (
     AnthropicSSETagger,
     OpenAITagInserter,
@@ -62,6 +63,9 @@ UPSTREAM_URL = os.environ.get("MODEL_PROXY_URL", "")  # 兼容：providers 为�
 # 未匹配 → providers[0] 兜底，上游 model 用其 models[0]。
 PROVIDERS_JSON = os.environ.get("MODEL_PROXY_PROVIDERS", "")
 ROUTER_JSON = os.environ.get("MODEL_PROXY_ROUTER", "")  # 智能路由配置（JSON env）
+# classifier 加速的客户端白名单（JSON env，Swift 侧从 config.yaml modelProxy.clientAccel
+# 序列化；缺省为空串 → proxy_client 用内置默认白名单，即历史行为）
+CLIENT_ACCEL_JSON = os.environ.get("MODEL_PROXY_CLIENT_ACCEL", "")
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -105,6 +109,9 @@ def _load_providers() -> list[dict]:
 
 
 PROVIDERS = _load_providers()
+
+#: classifier 加速白名单（客户端身份的唯一来源；判据来自可配置白名单而非写死的客户端指纹）
+CLIENT_ACCEL = load_client_accel(CLIENT_ACCEL_JSON)
 
 
 def _load_router() -> dict:
@@ -178,6 +185,37 @@ ROUTER = build_router(
 _logged_first_body: bool = False
 
 
+#: 入口路径 → 协议格式的映射前缀（在 `_upstream_path` 归一化之后比较）。
+#: **入口路径是协议的权威声明**，比从请求体推测可靠：启发式在「无 system、无 tools
+#: 的单轮请求」上必然落到兜底分支（见 `_detect_api_format`），会把 OpenAI 协议请求
+#: 误判成 anthropic 并做错误转换。
+ANTHROPIC_PATH_PREFIXES: tuple[str, ...] = ("v1/messages",)
+OPENAI_PATH_PREFIXES: tuple[str, ...] = ("v1/chat/completions", "v1/completions")
+
+
+def _upstream_path(request_path: str) -> str:
+    """客户端请求路径 → 上游相对路径（provider.url 之后的部分）。
+
+    `/open/v1/messages` → `v1/messages`；`/v1/messages` → `v1/messages`。
+    `/open` 是历史兼容入口（用户已配 `ANTHROPIC_BASE_URL=.../open/v1`），
+    `/v1` 是协议原生入口；两者在此归一，后续逻辑只面对一种形态。
+    """
+    if request_path.startswith("/open/"):
+        return request_path[len("/open/") :]
+    return request_path.lstrip("/")
+
+
+def _api_format_from_path(upstream_path: str) -> str | None:
+    """按入口路径判定协议格式；路径不表明协议时返回 None（交由启发式兜底）。"""
+    for prefix in ANTHROPIC_PATH_PREFIXES:
+        if upstream_path.startswith(prefix):
+            return "anthropic"
+    for prefix in OPENAI_PATH_PREFIXES:
+        if upstream_path.startswith(prefix):
+            return "openai"
+    return None
+
+
 async def handle_proxy(request: web.Request) -> web.StreamResponse:
     """转发请求到上游 API，流式返回响应。"""
     if not UPSTREAM_URL and not PROVIDERS:
@@ -186,11 +224,13 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             status=503,
         )
 
-    # 网关模型发现：GET /open/v1/models → 返回 providers 全部模型。
-    # 配合 CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1，/model 选择器列出路由。
-    path = request.match_info.get("path", "")
+    # 上游相对路径：/open 兼容入口与 /v1 原生入口在此归一
+    path = _upstream_path(request.path)
+
+    # 网关模型发现：GET /v1/models（或 /open/v1/models）→ 返回 providers 全部模型，
+    # 供客户端模型选择器列出路由。响应 schema 按协议选择，见 _models_schema_for。
     if request.method == "GET" and path == "v1/models":
-        return await _handle_models()
+        return await _handle_models(request)
 
     # 读取请求 body
     body_bytes = await request.read()
@@ -200,8 +240,26 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
-    # 检测客户端 API 格式（anthropic / openai）
-    api_format = _detect_api_format(request_body)
+    # 客户端 API 格式：**入口路径优先**（协议声明），路径不表明协议时才回退请求体启发式。
+    # 两者不一致时记 format_mismatch 而**不静默采信**——不一致本身是信号（客户端用了
+    # 非规范路径，或启发式误判），静默会让错误转换无从归因。
+    api_format = _api_format_from_path(path)
+    if api_format is None:
+        api_format = _detect_api_format(request_body)
+    else:
+        by_body = _detect_api_format(request_body)
+        if by_body != api_format:
+            logger.warning(
+                json.dumps(
+                    {
+                        "msg": "format_mismatch",
+                        "path": request.path,
+                        "by_path": api_format,
+                        "by_body": by_body,
+                        "effect": "采用路径判据",
+                    }
+                )
+            )
 
     # 分级路由：会话身份 + 段级档位。
     # 归一化在协议转换与规则注入之前做——决策只看客户端的原始消息结构。
@@ -238,17 +296,21 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     provider_format = api_format_of(provider)
     body_bytes = json.dumps(request_body).encode()
 
-    # 构建上游 URL
-    # 例: /open/v1/messages → path="v1/messages" → provider.url/v1/messages
+    # 构建上游 URL（两种入口形态已在 path 归一）
+    # 例: /v1/messages 或 /open/v1/messages → path="v1/messages" → provider.url/v1/messages
     upstream = f"{provider['url']}/{path}"
     if request.query_string:
         upstream += f"?{request.query_string}"
 
     # 安全分类请求（classifier）关闭 thinking，加速响应。
-    # 仅对 Claude Code 来源生效（_is_claude_code 校验请求头），结构启发式识别。
-    # 关键路径日志：命中记 info；Claude Code 来源但非 candidate 记 debug，
-    # 用于观测形态变化（防静默失效）；非 Claude Code 来源记 debug。
-    if _is_claude_code(request.headers):
+    # 结构判据（_is_classifier_candidate）与客户端无关；**是否启用由可配置客户端
+    # 白名单决定**（config.yaml modelProxy.clientAccel）——客户端身份不是协议事实，
+    # 写死单一客户端会让其他客户端在同一结构的请求下拿不到加速、撞上游超时。
+    # 关键路径日志按三类返回点区分：命中白名单且为 candidate 记 info；命中白名单但
+    # 非 candidate 记 debug（观测形态变化）；未命中白名单记 debug（含 UA 摘要，
+    # 便于发现需要登记的新客户端）。
+    accel_client = matches_accel_client(request.headers, CLIENT_ACCEL)
+    if accel_client:
         if _is_classifier_candidate(request_body):
             _inject_classifier_disabled(request_body, api_format)
             body_bytes = json.dumps(request_body).encode()
@@ -256,6 +318,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 json.dumps(
                     {
                         "msg": "classifier_thinking_disabled",
+                        "client": accel_client,
                         "model": request_body.get("model", ""),
                         "messages": len(request_body.get("messages", [])),
                         "api_format": api_format,
@@ -263,10 +326,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 )
             )
         else:
-            logger.debug(
+            logger.info(
                 json.dumps(
                     {
                         "msg": "classifier_check_skip",
+                        "client": accel_client,
                         "model": request_body.get("model", ""),
                         "stream": request_body.get("stream"),
                         "tools": len(request_body.get("tools", [])),
@@ -275,7 +339,16 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 )
             )
     else:
-        logger.debug("classifier_source_not_claude")
+        logger.info(
+            json.dumps(
+                {
+                    "msg": "classifier_client_not_allowed",
+                    # UA 截断：仅用于发现需要登记的新客户端，不整串落盘
+                    "user_agent": request.headers.get("user-agent", "")[:80],
+                    "api_format": api_format,
+                }
+            )
+        )
 
     # System prompt 注入：从 System_Prompts.md 读取规则，注入到最后一条真实用户输入前
     injected, rule_target = _inject_system_prompt(request_body)
@@ -360,11 +433,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
     start_time = time.monotonic()
 
-    # 503 瞬时重试：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"），
-    # 命中 Claude Code 的 classifier 调用时会导致 Bash 被拦截。等待后重试，最多 3 次。
-    RETRY_MAX = 2  # 额外重试次数
-    RETRY_DELAY = 0.5  # 重试间隔（秒）
-    for attempt in range(RETRY_MAX + 1):
+    # 503 瞬时重试：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"）。
+    # 命中 agent 客户端的安全分类调用时会导致其关键操作被拦（故障与客户端无关，
+    # 早期观测来自 Claude Code）。
+    # 策略值取自 llm_client（**单一权威**）：同一类故障在「主转发」与「LLM 调用」两处
+    # 都要处理，就地各写一份必然漂移；换值时要能一处改全局生效。
+    retry_max = llm_client.DEFAULT_RETRY_503_MAX
+    retry_delay = llm_client.DEFAULT_RETRY_503_DELAY
+    for attempt in range(retry_max + 1):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.request(
@@ -381,19 +457,19 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     latency_ms = int((time.monotonic() - start_time) * 1000)
 
                     # 上游瞬时 503：放弃本次连接，等待后重试
-                    if upstream_resp.status == 503 and attempt < RETRY_MAX:
+                    if upstream_resp.status == 503 and attempt < retry_max:
                         logger.warning(
                             json.dumps(
                                 {
                                     "msg": "proxy_retry",
-                                    "path": f"/open/{path}",
+                                    "path": request.path,
                                     "attempt": attempt + 1,
                                     "latency_ms": latency_ms,
                                     "model": request_body.get("model", ""),
                                 }
                             )
                         )
-                        await asyncio.sleep(RETRY_DELAY)
+                        await asyncio.sleep(retry_delay)
                         continue
 
                     # 模型名注入：把**实际路由到**的模型名写进助手回复末尾。
@@ -690,7 +766,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             {
                                 "msg": "proxy_request",
                                 "method": request.method,
-                                "path": f"/open/{path}",
+                                "path": request.path,
                                 "status": upstream_resp.status,
                                 "latency_ms": latency_ms,
                                 "model": request_body.get("model", ""),
@@ -722,7 +798,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 json.dumps(
                     {
                         "msg": "proxy_error",
-                        "path": f"/open/{path}",
+                        "path": request.path,
                         "error": str(e),
                         "latency_ms": latency_ms,
                     }
@@ -734,24 +810,80 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             )
 
 
-async def _handle_models() -> web.Response:
-    """GET /v1/models：返回 providers 全部模型（Anthropic models API 格式）。
+#: OpenAI 兼容 schema 中 `created` 的取值（2026-01-01T00:00:00Z 的 epoch）。
+#: 用固定常量而非当前时间：同一份模型列表每次响应的 `created` 必须稳定，
+#: 否则按该字段做缓存的客户端会反复失效。
+_MODEL_CREATED_EPOCH = 1767225600
 
-    配合 Claude Code 的 CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1，
-    /model 选择器直接列出代理路由的模型。
+
+def _models_schema_for(request: web.Request) -> str:
+    """模型发现响应的协议格式。判据取自**协议级请求头**，不用 UA：
+
+    - 带 `anthropic-version`（Anthropic SDK / Claude Code 每条请求都带）→ anthropic
+    - 带 `Authorization: Bearer ...`（OpenAI SDK 的鉴权方式）→ openai
+    - 两者都无 → 按 `/open/*` 兼容入口兜底为 anthropic，并记 info 日志
+
+    UA 是客户端产品指纹、与协议无关，拿它判协议正是本阶段要消除的那类写法。
     """
-    data = []
-    for p in PROVIDERS:
-        pname = p.get("name", "")
-        for m in p.get("models", []):
-            data.append(
-                {
-                    "type": "model",
-                    "id": m,
-                    "display_name": f"{pname} · {m}",
-                    "created_at": "2026-01-01T00:00:00Z",
-                }
-            )
+    if request.headers.get("anthropic-version"):
+        return "anthropic"
+    if request.headers.get("authorization", "").lower().startswith("bearer"):
+        return "openai"
+    logger.info(
+        json.dumps(
+            {
+                "msg": "models_schema_fallback",
+                "path": request.path,
+                "schema": "anthropic",
+            }
+        )
+    )
+    return "anthropic"
+
+
+async def _handle_models(request: web.Request) -> web.Response:
+    """GET /v1/models（或 /open/v1/models）：返回 providers 全部模型。
+
+    同一端点要服务两种协议客户端，响应 schema 不同：
+    - Anthropic（Claude Code 的 /model 选择器）：`{data:[{type,id,display_name,
+      created_at}], has_more, first_id, last_id}`
+    - OpenAI（SDK `models.list()`）：`{object:"list", data:[{id,object:"model",
+      created, owned_by}]}`
+
+    只提供一种会让另一种协议的 SDK 解析失败。
+    """
+    entries: list[tuple[str, str]] = [
+        (p.get("name", ""), m) for p in PROVIDERS for m in p.get("models", [])
+    ]
+
+    if _models_schema_for(request) == "openai":
+        data = [
+            {
+                "id": m,
+                "object": "model",
+                "created": _MODEL_CREATED_EPOCH,
+                "owned_by": pname,
+            }
+            for pname, m in entries
+        ] or [
+            {
+                "id": "unknown",
+                "object": "model",
+                "created": _MODEL_CREATED_EPOCH,
+                "owned_by": "",
+            }
+        ]
+        return web.json_response({"object": "list", "data": data})
+
+    data = [
+        {
+            "type": "model",
+            "id": m,
+            "display_name": f"{pname} · {m}",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        for pname, m in entries
+    ]
     if not data:
         data.append(
             {
@@ -958,7 +1090,12 @@ def create_app() -> web.Application:
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)
+    # 两种入口并存：`/v1/*` 是协议原生入口（客户端无需把 base_url 配成非常规前缀），
+    # `/open/*` 是历史兼容别名（已配 ANTHROPIC_BASE_URL=.../open/v1 的用户不受影响）。
+    # 注册在 /usage/* 与 /health 之后，不会遮蔽它们；两条路由共用同一 handler，
+    # 路径在 _upstream_path 归一。
     app.router.add_route("*", "/open/{path:.*}", handle_proxy)
+    app.router.add_route("*", "/v1/{path:.*}", handle_proxy)
     return app
 
 

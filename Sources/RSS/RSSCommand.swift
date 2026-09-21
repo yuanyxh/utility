@@ -24,9 +24,14 @@ struct RSSCommand: ParsableCommand {
     mutating func run() throws {
         if fetch {
             Task {
-                let new = try await RSSManager.shared.fetchAll()
-                print(L10n.RSS.fetchDone(new.count))
-                Darwin.exit(0)
+                do {
+                    let new = try await RSSManager.shared.fetchAll()
+                    print(L10n.RSS.fetchDone(new.count))
+                    Darwin.exit(0)
+                } catch {
+                    FileHandle.standardError.write(Data("\(error)\n".utf8))
+                    Darwin.exit(1)
+                }
             }
             RunLoop.main.run()
         }

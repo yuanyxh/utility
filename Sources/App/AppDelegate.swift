@@ -42,9 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // 启动 Token 代理监控
         startTokenProxy()
 
-        // 注册 gen-article 手动任务
-        updateArticleTask()
-
         registerAllHotkeys()
         installEventHandler()
 
@@ -104,9 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         } else {
             TokenProxyManager.shared.stop()
         }
-
-        // gen-article 内部任务：按配置注册/注销
-        updateArticleTask()
     }
 
     /// 注册/注销内置记忆总结任务。幂等：disabled 时注销；enabled 时直接注册。
@@ -117,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard let mcp = ConfigManager.shared.config.mcp,
               mcp.summaryEnabled,
               mcp.enabled,
-              let scriptPath = PythonScriptRunner.findScript(named: "summarize.py")
+              let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.summarize)
         else {
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
             debugLog("[MCP] Summary task disabled or unavailable")
@@ -126,29 +120,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         let hour = mcp.summaryHour
         let trigger = "0 \(hour) * * *"
-        let ai = ConfigManager.shared.config.ai
-        let apiKey = ai.apiKey
-        let notesDir: String = if mcp.knowledgeBasePath.isEmpty {
-            AppPaths.configDir.appendingPathComponent("notes").path
-        } else {
-            (mcp.knowledgeBasePath as NSString).expandingTildeInPath
-        }
-        let baseURL = ai.baseURL.isEmpty ? "" : ai.baseURL
-        let model = ai.model.isEmpty ? "" : ai.model
-        let serverURL = "http://localhost:\(mcp.port)"
-
+        let serverURL = HTTP.localBaseURL(port: mcp.port)
         let excludeTagsStr = mcp.excludeTags.joined(separator: ",")
         let cmd = PythonScriptRunner.shellCommand(
             script: scriptPath,
-            environmentOverrides: [
-                "DEEPSEEK_API_KEY": apiKey,
-                "NOTES_DIR": notesDir,
-                "SUMMARY_API_URL": baseURL,
-                "SUMMARY_MODEL": model,
-                "MEMORY_SERVER_URL": serverURL,
-                "UTILITY_DATA_DIR": AppPaths.configDir.path,
-                "SUMMARY_EXCLUDE_TAGS": excludeTagsStr,
-            ],
+            // 取值与 MCP 服务进程**同源**（`PythonScriptRunner.taskEnvironmentOverrides`）。
+            // 这里曾自己写一份白名单，于是新增的 `AI_LLM_TIMEOUT` / `UTILITY_LANG` 只加进了
+            // 服务进程那一侧，定时总结因此恒用 120s 超时、英文界面下仍走中文提示词。
+            environmentOverrides: PythonScriptRunner.taskEnvironmentOverrides(
+                memoryServerURL: serverURL,
+                excludeTags: excludeTagsStr,
+            ),
         )
 
         let task = TaskConfig(
@@ -160,58 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[MCP] Summary task registered (cron: \(trigger))")
-    }
-
-    /// 注册/注销 gen-article 手动任务：素材自动化 + 文章生成一条龙。
-    /// 路径一律由 knowledgeBasePath 推导 Gen_Articles/ 工作目录，不做路径配置。
-    /// 幂等：disabled 时注销；enabled 时直接注册（内部同名替换）。
-    private func updateArticleTask() {
-        let article = ConfigManager.shared.config.article
-        guard article.enabled,
-              let kbPath = ConfigManager.shared.config.mcp?.knowledgeBasePath,
-              !kbPath.isEmpty,
-              let prepareScript = PythonScriptRunner.findScript(named: "prepare_article_source.py"),
-              let genScript = PythonScriptRunner.findScript(named: "gen_article_generic.py")
-        else {
-            TaskScheduler.shared.unregisterInternalTask(named: "gen-article")
-            debugLog("[Article] Task disabled or unavailable")
-            return
-        }
-
-        let genDir = (kbPath as NSString).expandingTildeInPath + "/Gen_Articles"
-        let topicPath = genDir + "/topic.md"
-        let factsPath = genDir + "/topic_facts.md"
-        let soulPath = genDir + "/SOUL.md"
-        let articlesDir = genDir + "/articles"
-
-        let agent = article.agentCli
-        let prepareCmd = PythonScriptRunner.shellCommand(
-            script: prepareScript,
-            arguments: ["--topic", topicPath, "--out", factsPath, "--agent", "'\(agent)'"],
-        )
-        let genArgs = [
-            "--soul", soulPath,
-            "--src", factsPath,
-            "--topic", "\"$TOPIC\"",
-            "--out", articlesDir,
-            "--retries", "\(article.retries)",
-        ] + (article.judge ? ["--judge"] : []) + ["--agent", "'\(agent)'"]
-        let genCmd = PythonScriptRunner.shellCommand(
-            script: genScript,
-            arguments: genArgs,
-        )
-        // --topic 取 topic.md 全文（prepare 素材的主题来源），shell 定义变量后传给 gen
-        let cmd = prepareCmd + " && TOPIC=\"$(cat \"\(topicPath)\")\" && " + genCmd
-
-        let task = TaskConfig(
-            name: "gen-article",
-            trigger: "",
-            exec: .sh(cmd),
-            enabled: true,
-            mode: .manual,
-        )
-        TaskScheduler.shared.registerInternalTask(task)
-        debugLog("[Article] gen-article task registered (manual)")
     }
 
     private func registerAllHotkeys() {

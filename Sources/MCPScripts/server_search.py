@@ -25,7 +25,7 @@ import numpy as np
 from db import conn as dbconn
 from log_utils import setup_logging
 from server_embed import _get_shared_embedder, embed_query
-from synonyms import SYNONYM_MAP
+from synonyms import load_synonyms
 
 # ---------------------------------------------------------------------------
 # 配置（与拆分前 server.py 一致；NOTE_*/PROJECT_MARKER_* 为 server 专属）
@@ -111,11 +111,13 @@ except ImportError:
 
 
 def expand_query(query: str) -> str:
+    # 内置默认 + 用户增量（config.yaml `mcp.synonyms`）；合并与缓存都在 synonyms 层
+    synonyms = load_synonyms()
     terms = query.lower().split()
     expanded = set(terms)
     for term in terms:
-        if term in SYNONYM_MAP:
-            for syn in SYNONYM_MAP[term].split():
+        if term in synonyms:
+            for syn in synonyms[term].split():
                 expanded.add(syn)
     return " OR ".join(f'"{t}"' if " " in t else t for t in expanded)
 

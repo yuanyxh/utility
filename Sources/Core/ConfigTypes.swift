@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - 配置默认值
+
+/// 跨类型共用的配置默认值（单一权威）。
+///
+/// 同一条默认值同时出现在「属性初值」与「解码兜底」两处时，改一处漏一处就会产生
+/// 「YAML 写了走一个默认、没写走另一个默认」的行为分裂；`OpenAIClient` 的兜底
+/// 又是第三处。故集中于此，三处一律引用常量。
+enum ConfigDefaults {
+    /// AI API 请求超时（秒）——`general.aiTimeout` 的默认值。
+    ///
+    /// ⚠️ 语义是 **agent / HTTP 调用**超时（Swift 注入 `AGENT_TIMEOUT` 供 Python 侧
+    /// agent 子进程使用），与 `ai.llmTimeout`（Python 侧 LLM 单次推理超时，
+    /// 注入 `AI_LLM_TIMEOUT`）**不是一回事**——两者值恰好都是 120，极易混用。
+    static let defaultAITimeout: TimeInterval = 120
+
+    /// LLM 单次推理超时（秒）——`ai.llmTimeout` 的默认值。
+    ///
+    /// 三处 Python 侧 LLM 调用共用它（单次摘要 / 批量聚合 / 规则提炼）。
+    /// `0` 或负值 = 用本默认值（沿用 `OpenAIClient.init` 的 `timeout > 0` 约定）。
+    static let llmTimeout: TimeInterval = 120
+}
+
 // MARK: - Root Config
 
 public struct AppConfig: Codable {
@@ -14,7 +36,6 @@ public struct AppConfig: Codable {
     var notifications: NotificationConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
-    var article: ArticleConfig = .init()
 
     public init() {}
 
@@ -31,7 +52,6 @@ public struct AppConfig: Codable {
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
-        article = (try? c.decode(ArticleConfig.self, forKey: .article)) ?? .init()
     }
 }
 
@@ -62,6 +82,11 @@ public struct MCPConfig: Codable {
     /// 总结排除 tag（跳过含这些 tag 的记忆）
     var excludeTags: [String] = []
 
+    /// 检索同义词扩展表（**增量补充**：同名覆盖内置、异名追加）。
+    /// 内置表在 `Sources/MCPScripts/synonyms.py`，这里只放用户自定义的部分——
+    /// 用户改的应该是「加几个词」，而不是抄一份完整内置表来维护。
+    var synonyms: [String: String] = [:]
+
     // 进程守护
     var maxRestarts: Int = 3
     var restartDelayMs: Int = 2000
@@ -80,6 +105,7 @@ public struct MCPConfig: Codable {
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
+        synonyms = try c.decodeIfPresent([String: String].self, forKey: .synonyms) ?? [:]
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
     }
@@ -106,8 +132,8 @@ public struct GeneralConfig: Codable {
     var httpRetryCount: Int = 0
 
     /// AI 客户端超时
-    /// AI API 请求超时（秒），0 = 不限制
-    var aiTimeout: TimeInterval = 120
+    /// AI API 请求超时（秒），0 = 不限制（默认值见 `ConfigDefaults.defaultAITimeout`）
+    var aiTimeout: TimeInterval = ConfigDefaults.defaultAITimeout
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -118,7 +144,8 @@ public struct GeneralConfig: Codable {
         logBackupCount = try c.decodeIfPresent(Int.self, forKey: .logBackupCount) ?? 3
         httpTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .httpTimeout) ?? 30
         httpRetryCount = try c.decodeIfPresent(Int.self, forKey: .httpRetryCount) ?? 0
-        aiTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .aiTimeout) ?? 120
+        aiTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .aiTimeout)
+            ?? ConfigDefaults.defaultAITimeout
     }
 }
 
@@ -129,12 +156,22 @@ public struct AIConfig: Codable {
     var apiKey: String = ""
     var model: String = ""
 
+    /// LLM 单次推理超时（秒）。0 或负值 = 用默认（见 `ConfigDefaults.llmTimeout`）。
+    ///
+    /// Swift 注入 `AI_LLM_TIMEOUT`，Python 侧三处 LLM 调用（单次摘要 / 批量聚合 /
+    /// 规则提炼）共用。**不复用 `general.aiTimeout`**：那一项是 agent/HTTP 调用超时
+    /// （`AGENT_TIMEOUT`），语义与量级都不同，合并会让「调大 agent 超时」意外放宽
+    /// 或收紧 LLM 调用，反之亦然。
+    var llmTimeout: TimeInterval = ConfigDefaults.llmTimeout
+
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        llmTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .llmTimeout)
+            ?? ConfigDefaults.llmTimeout
     }
 }
 
@@ -187,10 +224,99 @@ public struct ModelProxyConfig: Codable {
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
         router = try c.decodeIfPresent(ModelRouterConfig.self, forKey: .router)
+        clientAccel = decodeAny(
+            decoder, ClientAccelConfig.self, keys: ["clientAccel", "client_accel"],
+        )
+        clientText = decodeAny(
+            decoder, ClientTextConfig.self, keys: ["clientText", "client_text"],
+        )
     }
 
     /// 智能路由配置（可选，不配置则保持手动切换行为）
     var router: ModelRouterConfig?
+    /// classifier 加速的客户端白名单（可选；缺省用内置默认，配置为**增量补充**）
+    var clientAccel: ClientAccelConfig?
+    /// 客户端注入文案/标签表（可选；缺省用内置默认，配置为**增量补充**）
+    var clientText: ClientTextConfig?
+}
+
+/// 客户端身份白名单条目：哪些客户端享受 classifier thinking disabled 加速。
+///
+/// 客户端身份**不是协议事实**，故此处不含任何写死的指纹判断——历史上
+/// `proxy_protocol._is_claude_code` 用 UA 子串/私有请求头硬编码 Claude Code，
+/// 使其他客户端在同一结构的请求下拿不到加速（上游为默认 thinking 的模型时
+/// 响应 28-32s，撞客户端超时、关键操作被拦）。匹配条件全部由配置声明。
+public struct ClientMatcherConfig: Codable {
+    /// 客户端名（仅用于日志区分命中者，也用于「同名覆盖默认项」）
+    var name: String = ""
+    /// UA 需包含的子串（任一命中即可）
+    var userAgentContains: [String] = []
+    /// 需存在的请求头名（全部存在才命中）
+    var headerPresent: [String] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        // 一律走 decodeAny：混用 container(keyedBy:) 时「照抄哪一行」会决定多词字段
+        // 是否静默失效（snake_case 不命中也只是回退默认值，不报错）。
+        name = decodeAny(decoder, String.self, keys: ["name"]) ?? ""
+        userAgentContains = decodeAny(
+            decoder, [String].self, keys: ["userAgentContains", "user_agent_contains"],
+        ) ?? []
+        headerPresent = decodeAny(
+            decoder, [String].self, keys: ["headerPresent", "header_present"],
+        ) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, userAgentContains, headerPresent
+    }
+}
+
+/// classifier 加速的客户端白名单（config.yaml `modelProxy.clientAccel`）。
+///
+/// 配置为**增量补充**：内置默认始终是基线，这里声明的客户端追加（同名覆盖）。
+/// 唯一的关闭开关是 `enabled`。
+public struct ClientAccelConfig: Codable {
+    var enabled: Bool = true
+    var clients: [ClientMatcherConfig] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        enabled = decodeAny(decoder, Bool.self, keys: ["enabled"]) ?? true
+        clients = decodeAny(decoder, [ClientMatcherConfig].self, keys: ["clients"]) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, clients
+    }
+}
+
+/// 客户端注入文案/标签表（config.yaml `modelProxy.clientText`）。
+///
+/// 续接提示词、摘要前缀、客户端标签随客户端版本变化且各家取值不同，故为可配置表；
+/// 配置为**增量补充**（默认在前、配置在后），避免只写一个字段就把其余默认静默清空。
+public struct ClientTextConfig: Codable {
+    var continuationPrefixes: [String] = []
+    var summaryPrefixes: [String] = []
+    var injectedTags: [String] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        continuationPrefixes = decodeAny(
+            decoder, [String].self,
+            keys: ["continuationPrefixes", "continuation_prefixes"],
+        ) ?? []
+        summaryPrefixes = decodeAny(
+            decoder, [String].self, keys: ["summaryPrefixes", "summary_prefixes"],
+        ) ?? []
+        injectedTags = decodeAny(
+            decoder, [String].self, keys: ["injectedTags", "injected_tags"],
+        ) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case continuationPrefixes, summaryPrefixes, injectedTags
+    }
 }
 
 /// 按任意候选键名取同类型值——同时兼容 camelCase 与 snake_case 两种 YAML 写法。
@@ -220,7 +346,7 @@ private struct AnyKey: CodingKey {
 }
 
 private func decodeAny<T: Decodable>(
-    _ decoder: Decoder, _: T.Type, keys: [String]
+    _ decoder: Decoder, _: T.Type, keys: [String],
 ) -> T? {
     guard let c = try? decoder.container(keyedBy: AnyKey.self) else { return nil }
     for name in keys {
@@ -446,30 +572,6 @@ public struct RouterProfile: Codable {
     }
 }
 
-// MARK: - Article
-
-/// 文章生成（gen-article 内部任务）配置。路径一律由 mcp.knowledgeBasePath
-/// 推导出 Gen_Articles/ 工作目录，不做路径配置（最少配置化）。
-public struct ArticleConfig: Codable {
-    var enabled: Bool = false
-    /// agent CLI 命令模板（占位符 {system_prompt_file}/{prompt_file} 由脚本替换）。
-    /// ⚠️ GUI/LaunchAgent 启动的子进程 PATH 不含用户工具目录，主命令须写绝对路径。
-    /// 空字符串 = 未配置，启用时报错提示用户配置。
-    var agentCli: String = ""
-    var retries: Int = 5
-    /// 生成后启用 LLM-as-Judge 管道式评估（素材校验 + 文章二次检测）
-    var judge: Bool = true
-
-    public init() {}
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? ""
-        retries = try c.decodeIfPresent(Int.self, forKey: .retries) ?? 5
-        judge = try c.decodeIfPresent(Bool.self, forKey: .judge) ?? true
-    }
-}
-
 // MARK: - Clipboard
 
 public struct ClipboardConfig: Codable {
@@ -644,7 +746,7 @@ public enum TaskExecConfig: Codable {
         case "py": self = .py(cmd)
         default:
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)"
+                forKey: .type, in: c, debugDescription: "Unknown exec type: \(type)",
             )
         }
     }

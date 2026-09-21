@@ -15,7 +15,7 @@ final class MCPClient {
     /// 的自动探测构成两处推导——配置为 0（默认值）且 9001 被占用时，服务实际监听
     /// 9002，而这里仍请求 9001，所有项目检索请求都会失败。
     private var baseURL: String {
-        "http://127.0.0.1:\(MCPProcessManager.shared.currentPort)"
+        HTTP.localBaseURL(port: MCPProcessManager.shared.currentPort)
     }
 
     private init() {}

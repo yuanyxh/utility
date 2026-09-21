@@ -1,7 +1,7 @@
 """summarize 阶段3 规范提炼模块。
 
 从 summarize.py 拆分（2026-08-30，重构阶段3）：规则/规范类记忆 →
-MCP/Skills/Rules/*.md 的提炼、修剪、渲染。代码原样搬移不改逻辑。
+MCP/Rules/*.md 的提炼、修剪、渲染。代码原样搬移不改逻辑。
 """
 
 from __future__ import annotations
@@ -9,12 +9,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import prompt_loader
 from log_utils import setup_logging
 from summary_llm import (
     _llm_chat,
     _parse_json_any,
     write_error_log,
     NOTES_DIR,
+    SUMMARY_LLM_TIMEOUT,
 )
 
 # ---------------------------------------------------------------------------
@@ -22,11 +24,13 @@ from summary_llm import (
 # ---------------------------------------------------------------------------
 
 MCP_DIR = NOTES_DIR / "MCP"
-SKILLS_RULES_DIR = MCP_DIR / "Skills" / "Rules"
+SKILLS_RULES_DIR = MCP_DIR / "Rules"
 RULES_MIN_CANDIDATES = 3  # 本周期规则/规范类有效记忆少于该值则跳过提炼
 RULES_MAX_PER_FILE = 60  # 每规范文件条目上限，超出由 LLM 淘汰
 RULES_LLM_TEMPERATURE = 0.2  # 提炼允许归纳，与聚合一致
-RULES_LLM_TIMEOUT = 120
+#: 规则提炼的 LLM 超时。取自同一来源（config `ai.llmTimeout`）——与单次摘要、批量聚合
+#: 共用，区别于「本阶段的提示词更大所以要更长」的旧假设：实测三者撞的是同一条上游超时。
+RULES_LLM_TIMEOUT = SUMMARY_LLM_TIMEOUT
 # 多级规范：global 全局通用 + 各项目类型通用；LLM 判定不了的归入 global
 RULES_LEVELS = {
     "global": "全局通用",
@@ -176,7 +180,7 @@ def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
 
 
 def _run_phase3(groups: list[dict], today_str: str) -> dict:
-    """阶段3：从本周期聚合记忆中提炼"规则/规范类"规范，写入 MCP/Skills/Rules/*.md。
+    """阶段3：从本周期聚合记忆中提炼"规则/规范类"规范，写入 MCP/Rules/*.md。
 
     只提炼可复用、稳定、能指导行动的知识；偶遇 bug、一次性修复、
     版本绑定 workaround 不提炼。本周期有效候选 < RULES_MIN_CANDIDATES 时跳过。
@@ -199,43 +203,12 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
     )
     level_labels = "\n".join(f"- {k}: {v}" for k, v in RULES_LEVELS.items())
 
-    prompt = f"""\
-你正在对一批"已聚合的长期记忆"做规范提炼。聚合内容里混有「偶遇 bug / 一次性修复」与
-「真正的规范 / 规则」两类。本次**只提炼后者**，宁缺毋滥。
-
-本周期聚合记忆：
-{facts_text}
-
-### 什么是"真正的规范"（可提炼）——四条判据，满足越多越值得提炼
-1. **主动约定**：事前制定的行为准则/约定，而不是踩坑后的补救措施
-2. **抽象通用**：换项目、换技术栈依然成立；删掉具体库名/字段名/版本号/报错信息后，这句话仍然说得通
-3. **反复出现**：同一经验在多个记忆、多个场景中重复沉淀过，而非单次偶遇
-4. **架构/原则**：属于架构决策、设计原则、工程流程约定（如分层解耦、单一职责、配置用常量、提交前验证）
-
-### 什么"不算规范"（绝不提炼）——以下情形一律丢弃
-- 从某个具体 bug 修复中得出的结论（如"某字段要同时判 IS NULL 和空串""某工具参数要先探测 schema"），即使能概括成一句话
-- 绑定具体报错信息/版本号/环境的一次性补救
-- 单次踩坑经验，未在多场景重复出现
-- 纯操作步骤记录
-
-### 判定技巧
-- 自问：如果从来没踩过那个坑，我还会主动说出这条规则吗？——不会 → 是踩坑教训，不是规范
-- 自问：去掉所有技术名词后，这句话还剩什么？——剩不下 → 不够抽象，丢弃
-
-### 提炼要求
-1. 提炼 0-5 条，宁缺毋滥，无法提炼则返回空数组
-2. 每条规范一句话说清、可行动、**不绑定任何具体技术细节**
-3. 每条规范给出 keywords：3-5 个触发关键词/场景（覆盖技术域、动作、对象等触发面），供工具描述生成"当 xxx 时触发"信号
-4. 级别 level 从以下选择，判定不了归入 global：
-{level_labels}
-
-### 避免重复
-已有标题清单（新规范标题不要与它们重复/高度重叠）：
-{titles_block}
-
-返回 JSON：{{"candidates": ["判定为规范类的记忆主题列表"], "norms": [{{"title": "标题", "level": "global", "summary": "可行动的规范", "keywords": ["触发关键词1", "触发关键词2", "触发关键词3"], "source": "来源记忆主题"}}]}}
-没有规范类内容时返回 {{"candidates": [], "norms": []}}。
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    prompt = prompt_loader.prompt(
+        "extract_rules",
+        facts_text=facts_text,
+        level_labels=level_labels,
+        titles_block=titles_block,
+    )
     raw = _llm_chat(
         prompt,
         temperature=RULES_LLM_TEMPERATURE,

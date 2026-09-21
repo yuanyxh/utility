@@ -32,8 +32,8 @@ enum ASTExtractorRunner {
     ///            Individual file errors are silently dropped (caller falls back to regex).
     static func extractBatch(_ files: [BatchInput]) -> [String: [SymbolRecord]] {
         guard !files.isEmpty else { return [:] }
-        guard let scriptPath = PythonScriptRunner.findScript(named: "ast_extractor.py") else {
-            debugLog("[AST] ast_extractor.py not found in bundle")
+        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
+            debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
             return [:]
         }
 
@@ -65,8 +65,8 @@ enum ASTExtractorRunner {
     ///   (script not found, parse error, timeout — caller should fall back to regex).
     static func extract(from content: String, filePath: String, ext: String) -> [SymbolRecord]? {
         guard isSupported(ext) else { return nil }
-        guard let scriptPath = PythonScriptRunner.findScript(named: "ast_extractor.py") else {
-            debugLog("[AST] ast_extractor.py not found in bundle")
+        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
+            debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
             return nil
         }
 

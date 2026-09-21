@@ -8,6 +8,8 @@ notifications:
 # ---------- 通用 ----------
 general:
   # 界面语言。留空跟随系统，可选值: zh / en
+  # 同时决定提示词语言与 MCP 工具参数描述的语言：Python 侧按它选择 `prompts/<lang>/*.md`
+  # 与 `tool_text.PARAM_TEXT` 的文案（未翻译的条目自动回退中文基线）
   language: ''
 
   # 是否启用系统代理。启用时自动读取 macOS 系统代理设置
@@ -21,8 +23,8 @@ general:
   httpTimeout: 30       # HTTP 请求默认超时（秒）
   httpRetryCount: 0     # HTTP 请求重试次数
 
-  # AI 客户端超时
-  aiTimeout: 120        # AI API 请求超时（秒）
+  # AI 客户端超时（默认值见 Swift `ConfigDefaults.defaultAITimeout`）
+  aiTimeout: 120        # AI API 请求超时（秒），0 = 不限制
 
 # ---------- AI ----------
 ai:
@@ -32,6 +34,11 @@ ai:
   apiKey: ''
   # 模型名，例如 deepseek-v4-flash / gpt-4o-mini
   model: ''
+  # LLM 单次推理超时（秒），0 或负值 = 用默认（Swift `ConfigDefaults.llmTimeout`）。
+  # 作用于 Python 侧三处 LLM 调用（单次摘要 / 批量聚合 / 规则提炼），换慢模型
+  # （推理模型、长上下文）时会真撞到。**与上面 general.aiTimeout 不是一回事**：
+  # 那一项是 agent 子进程超时（AGENT_TIMEOUT），量级与语义都不同。
+  llmTimeout: 120
 
 # ---------- 模型代理 ----------
 modelProxy:
@@ -60,6 +67,26 @@ modelProxy:
       apiKey: ''
       models:
         - mimo-v2.5-pro
+
+  # 客户端白名单：哪些客户端享受 classifier（安全分类）请求的 thinking disabled 加速。
+  # 客户端身份不是协议事实，因此不写死在代码里——其他 agent 客户端按同样格式追加即可。
+  # 内置默认已含 claude-code；本段为**增量补充**（同名覆盖、异名追加）。
+  # 匹配语义：userAgentContains 任一命中 **且** headerPresent 全部存在（两类都空则不命中）。
+  clientAccel:
+    enabled: true
+    clients: []
+    #  - name: my-agent
+    #    userAgentContains: ['my-agent']
+    #    headerPresent: []
+
+  # 客户端注入文案/标签：续接提示词、压缩摘要前缀、客户端注入标签。
+  # 各客户端取值不同且随版本变化，故为可配置表；本段为**增量补充**（内置默认在前）。
+  # 未命中任何已登记文案的长消息会记 client_text_miss（debug），便于发现新客户端的文案，
+  # 而不是让它静默污染 actual_user_input 与会话标识锚点。
+  clientText:
+    continuationPrefixes: []
+    summaryPrefixes: []
+    injectedTags: []
 
   # 分级路由：按任务分类选择档位，会话内「单调不降」。
   # 不配置或 enabled=false 则保持手动切换行为（行为与引入本特性前完全一致）。
@@ -191,6 +218,14 @@ mcp:
   # 总结排除 tag：含这些 tag 的记忆不进入知识库沉淀（工作流/格式类，非技术知识）
   excludeTags:
 
+  # 检索同义词扩展：中文查询词扩展出对应英文术语，供 project_search 等全文检索使用。
+  # **增量补充**语义——同名覆盖内置、异名追加，只写你要加的，不必抄回整张内置表
+  # （内置表在 Sources/MCPScripts/synonyms.py）。改后需重启 MCP 服务生效。
+  synonyms: {}
+    # 部署: "deploy release publish"
+    # 请求: "request http call"
+
+
   # 进程守护
   maxRestarts: 3
   restartDelayMs: 2000
@@ -203,6 +238,20 @@ clipboard:
   hotkey: cmd+shift+c
   pollInterval: 0.3
 
+# ---------- 提示词 ----------
+# 提示词模板以**文件**为准（Swift 翻译与 Python 摘要共用同一目录与同一契约）：
+#   用户覆盖: <配置目录>/prompts/<feature>.md          （~/.config/utility/prompts/，与语言无关）
+#   随包内置: MCPScripts/prompts/<lang>/<feature>.md
+# 自定义文件不按语言分目录——写 prompt 的人只有一种母语，切换界面语言不该让它失效。
+# 内置模板按语言分目录：语言取 general.language，该语言没有某文件时回退 zh-Hans 基线（并记 warning）。
+# 定制方式：把内置文件复制到配置目录下同名路径再改；文件头的 front-matter
+# （name / placeholders）必须与正文一致，写错会被拒绝并自动回退内置版本。
+prompts:
+  # 内联模板，优先级**高于**上面的文件，适合临时试验；键为 feature
+  # （translate / translate_auto），值为带 {source}/{target} 等占位符的模板。
+  # 长期定制建议用文件，便于版本管理与复用。
+  templates: {}
+
 translation:
   hotkey: option+d
   hotkeyOCR: option+s
@@ -210,6 +259,8 @@ translation:
   targetLang: auto
   firstLang: zh
   secondLang: en
+  # 翻译 system prompt 的内联覆盖（最高优先级，留空则走提示词模板文件）。
+  # 支持 {source} / {target} 两个占位符。
   prompt: ''
 
 stage:

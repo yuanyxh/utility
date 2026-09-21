@@ -26,7 +26,6 @@ import sys
 import time
 import asyncio
 import anyio
-import httpx
 from datetime import datetime, timedelta
 
 from mem0 import Memory
@@ -55,7 +54,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from config import (
-    deepseek_api_key,
+    ai_api_key,
     summary_model,
     summary_api_url,
     notes_dir,
@@ -65,6 +64,7 @@ from server_embed import (
     EMBEDDER_DIMS,
     FASTEMBED_CACHE_DIR,
     _get_shared_embedder,
+    describe_dim_mismatch,
     embed_query,
 )
 from server_search import (
@@ -74,6 +74,9 @@ from server_search import (
     tool_project_exports,
     _query_project_notes,
 )
+import llm_client
+import prompt_loader
+from tool_text import param_text
 from log_utils import setup_logging
 
 logger = setup_logging("server")
@@ -147,7 +150,7 @@ SUMMARY_LLM_MODEL = summary_model()
 
 SUMMARY_LLM_API_URL = summary_api_url()
 
-DEEPSEEK_API_KEY = deepseek_api_key()
+AI_API_KEY = ai_api_key()
 
 SUMMARY_LLM_TEMPERATURE = 0.1
 
@@ -166,6 +169,27 @@ HOT_INIT_MAX_RUNTIME_FAILURES = 5
 PROCESSED_FIELD = "processed"
 
 PROCESSED_MAX_BIT = 7
+
+#: `set_memory_processed` 的参数校验文案。HTTP 端点（`api_memories_processed`）与 MCP 工具
+#: （`_handle_set_memory_processed`）**共用同一批**——两处各写一份时改一处忘一处，会让同一个
+#: 错误在两条入口给出不同提示；而这是**给模型看**的文案，措辞不定只会让它更难判断该改哪个参数。
+#: 统一英文：这一层（工具返回/内部日志）不与 `UTILITY_LANG` 联动，面向终端用户的文案在 Swift
+#: 侧由 `L10n` 覆盖。
+ERR_MEMORY_IDS_EMPTY = "memory_ids must not be empty"
+ERR_VALUE_INVALID = "value must be 0 (reset) or 1 (set)"
+ERR_BIT_VALUE_NOT_INT = "bit/value must be integers"
+
+#: 入口层通用错误：热层未就绪。**6 处**（各工具 handler + HTTP 端点）共用一句——
+#: 各写一份时改一处忘一处，同一状态在不同工具下提示不同，调用方难以归纳该怎么重试。
+ERR_HOT_LAYER_NOT_READY = "Hot layer not initialized"
+
+
+def err_bit_out_of_range(bit: int | None = None) -> str:
+    """bit 越界文案。带 `bit` 时附上实际值——内部异常用它，日志里能直接看出是哪个值越界。"""
+    return f"bit out of range 0-{PROCESSED_MAX_BIT}" + (
+        "" if bit is None else f": {bit}"
+    )
+
 
 ARCHIVE_DAYS = 90
 
@@ -235,7 +259,7 @@ MEM0_CONFIG = {
         "config": {
             "model": SUMMARY_LLM_MODEL,
             "openai_base_url": SUMMARY_LLM_API_URL,
-            "api_key": DEEPSEEK_API_KEY,
+            "api_key": AI_API_KEY,
             "temperature": SUMMARY_LLM_TEMPERATURE,
         },
     },
@@ -286,6 +310,28 @@ def _init_hot_memory() -> bool:
     return False
 
 
+def _collection_vector_size(client, collection_name: str) -> int | None:
+    """读集合的向量维度；读不到返回 None（调用方按「无法判定」跳过校验）。
+
+    本项目用单向量配置；命名向量（dict）形态一并兼容——为读一个维度而崩在启动路径上，
+    代价远大于兼容它的几行代码。
+    """
+    try:
+        vectors = client.get_collection(collection_name).config.params.vectors
+    except Exception as e:
+        logger.warning(f"failed to read dimension of collection {collection_name}: {e}")
+        return None
+    size = getattr(vectors, "size", None)
+    if isinstance(size, int):
+        return size
+    if isinstance(vectors, dict):
+        for config in vectors.values():
+            value = getattr(config, "size", None)
+            if isinstance(value, int):
+                return value
+    return None
+
+
 try:
     qdrant = QdrantClient(path=QDRANT_PATH, force_disable_check_same_thread=True)
     existing = [c.name for c in qdrant.get_collections().collections]
@@ -295,7 +341,18 @@ try:
             vectors_config=VectorParams(size=EMBEDDER_DIMS, distance=Distance.COSINE),
         )
         logger.info(f"Cold layer collection '{COLD_COLLECTION}' created")
-    logger.info("Cold layer (Qdrant direct) initialized")
+    else:
+        # 集合维度在首次创建时固定：换模型（维度变化）后旧向量与新查询向量不可比，
+        # 而检索侧异常会被吞成一条 warning —— 表现为冷层检索静默失效。启动时点出来。
+        advice = describe_dim_mismatch(
+            _collection_vector_size(qdrant, COLD_COLLECTION), EMBEDDER_DIMS
+        )
+        if advice:
+            logger.error(advice)
+            # 禁用冷层，但热层/项目检索照常（其余 qdrant 用法均有 `if qdrant` 守卫）
+            qdrant = None
+    if qdrant is not None:
+        logger.info("Cold layer (Qdrant direct) initialized")
 except Exception as e:
     logger.error(f"Cold layer Qdrant init failed: {e}")
     qdrant = None
@@ -601,7 +658,7 @@ def _build_metadata(src: dict, now_iso: str) -> dict:
 
 
 async def _check_contradiction(content: str, similar_items: list[dict]) -> dict | None:
-    if not similar_items or not DEEPSEEK_API_KEY:
+    if not similar_items or not llm_client.is_configured():
         return None
     items_text = "\n\n---\n\n".join(
         [
@@ -609,46 +666,18 @@ async def _check_contradiction(content: str, similar_items: list[dict]) -> dict 
             for item in similar_items[:CONTRADICTION_TOP_K]
         ]
     )
-    prompt = f"""
-你是一个记忆一致性检测器。请判断以下"新记忆"与"已有记忆"之间的关系。
-
-已有记忆：
-{items_text}
-
-新记忆：
-{content}
-
-请判断关系类型并返回 JSON:
-- "contradiction": 新记忆与某条已有记忆在事实上矛盾
-- "supplement": 新记忆补充或细化了已有记忆, 可以共存
-- "duplicate": 新记忆与已有记忆高度重复, 建议合并
-- "unrelated": 完全不同的话题
-
-返回 JSON: {{"relation": "<类型>", "reason": "<一句话原因>", "conflicting_id": "<冲突的记忆ID, 仅 contradiction 时填写>"}}
-只返回严格标准的 JSON 对象, 不要代码块。"""
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{SUMMARY_LLM_API_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": SUMMARY_LLM_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                },
-                timeout=DEFAULT_TIMEOUT,
-            )
-            resp.raise_for_status()
-            raw = resp.json()["choices"][0]["message"]["content"].strip()
-            start, end = raw.find("{"), raw.rfind("}")
-            if start != -1 and end != -1:
-                return json.loads(raw[start : end + 1])
-    except Exception as e:
-        logger.warning(f"Contradiction check failed: {e}")
-    return None
+    prompt = prompt_loader.prompt(
+        "contradiction",
+        items_text=items_text,
+        content=content,
+    )
+    raw = await llm_client.achat(
+        prompt,
+        temperature=0.1,
+        timeout=DEFAULT_TIMEOUT,
+        label="Contradiction check failed",
+    )
+    return llm_client.parse_json(raw)
 
 
 def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
@@ -686,7 +715,7 @@ def _set_processed_bit(memory_id: str, bit: int, value: int) -> bool:
     if not hot_memory:
         return False
     if not (0 <= bit <= PROCESSED_MAX_BIT):
-        raise ValueError(f"bit 超出范围 0-{PROCESSED_MAX_BIT}: {bit}")
+        raise ValueError(err_bit_out_of_range(bit))
     try:
         old = hot_memory.get(memory_id)
         if not old:
@@ -699,7 +728,7 @@ def _set_processed_bit(memory_id: str, bit: int, value: int) -> bool:
         return True
     except Exception as e:
         logger.warning(
-            f"设置 processed 位失败 {memory_id} bit={bit} value={value}: {e}"
+            f"failed to set processed bit {memory_id} bit={bit} value={value}: {e}"
         )
         return False
 
@@ -816,7 +845,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "content": {
                         "type": "string",
-                        "description": "记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。",
+                        "description": param_text("param.memory_content"),
                     },
                     "agent_id": {"type": "string", "default": "unknown"},
                     "visibility": {
@@ -845,7 +874,7 @@ async def handle_list_tools() -> list[Tool]:
                             "properties": {
                                 "content": {
                                     "type": "string",
-                                    "description": "记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按五要素组织——场景(哪个项目/什么上下文)、目标(解决什么问题)、矛盾(难点/坑/为什么这么设计)、决策(怎么做/怎么选的)、演进(当前状态/后续变化), 缺的要素省略不硬凑。背景里首次出现的项目内部概念(组件/API/路径/内部缩写)用一句话说清「它是什么、干什么用的」, 让脱离项目上下文的人也能看懂。",
+                                    "description": param_text("param.memory_content"),
                                 },
                                 "agent_id": {"type": "string", "default": "unknown"},
                                 "visibility": {
@@ -873,11 +902,14 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索查询"},
+                    "query": {
+                        "type": "string",
+                        "description": param_text("param.query"),
+                    },
                     "limit": {
                         "type": "integer",
                         "default": DEFAULT_RECALL_LIMIT,
-                        "description": "最大返回结果数",
+                        "description": param_text("param.max_results"),
                     },
                     "include_archived": {"type": "boolean", "default": False},
                 },
@@ -892,7 +924,7 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "since_days": {
                         "type": "number",
-                        "description": "向前数几天, 默认 3 天",
+                        "description": param_text("param.since_days"),
                     },
                 },
             },
@@ -924,17 +956,17 @@ async def handle_list_tools() -> list[Tool]:
                     "memory_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "记忆 ID 列表",
+                        "description": param_text("param.memory_ids"),
                     },
                     "bit": {
                         "type": "integer",
                         "default": 0,
-                        "description": "位索引, 0=已总结处理",
+                        "description": param_text("param.bit"),
                     },
                     "value": {
                         "type": "integer",
                         "default": 1,
-                        "description": "1=设置位, 0=重置位",
+                        "description": param_text("param.bit_value"),
                     },
                 },
                 "required": ["memory_ids"],
@@ -949,19 +981,19 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "dbPath": {
                         "type": "string",
-                        "description": "必填, 绝对路径 + .utility/deps.sqlite, 示例: `/absolute/path/.utility/deps.sqlite`",
+                        "description": param_text("param.db_path"),
                     },
                     "query": {
                         "type": "string",
-                        "description": "必填, 搜索关键词(支持中文同义词)",
+                        "description": param_text("param.search_keyword"),
                     },
                     "file_path": {
                         "type": "string",
-                        "description": "可选, 限定文件路径(支持模糊匹配, 如 src/utils/)",
+                        "description": param_text("param.file_path"),
                     },
                     "kind": {
                         "type": "string",
-                        "description": "可选, 限定符号类型(class/fun/val/var/interface/...)",
+                        "description": param_text("param.symbol_kind"),
                     },
                 },
                 "required": ["dbPath", "query"],
@@ -977,9 +1009,12 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "dbPath": {
                         "type": "string",
-                        "description": "必填, 绝对路径 + .utility/deps.sqlite, 示例: `/absolute/path/.utility/deps.sqlite`",
+                        "description": param_text("param.db_path"),
                     },
-                    "path": {"type": "string", "description": "可选子路径"},
+                    "path": {
+                        "type": "string",
+                        "description": param_text("param.subpath"),
+                    },
                 },
                 "required": ["dbPath"],
             },
@@ -992,9 +1027,12 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "dbPath": {
                         "type": "string",
-                        "description": "必填, 绝对路径 + .utility/deps.sqlite, 示例: `/absolute/path/.utility/deps.sqlite`",
+                        "description": param_text("param.db_path"),
                     },
-                    "type": {"type": "string", "description": "可选筛选: spm/npm/pip"},
+                    "type": {
+                        "type": "string",
+                        "description": param_text("param.package_type"),
+                    },
                 },
                 "required": ["dbPath"],
             },
@@ -1007,9 +1045,12 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "dbPath": {
                         "type": "string",
-                        "description": "必填, 绝对路径 + .utility/deps.sqlite, 示例: `/absolute/path/.utility/deps.sqlite`",
+                        "description": param_text("param.db_path"),
                     },
-                    "path": {"type": "string", "description": "文件或目录路径"},
+                    "path": {
+                        "type": "string",
+                        "description": param_text("param.file_or_dir"),
+                    },
                 },
                 "required": ["dbPath", "path"],
             },
@@ -1022,15 +1063,15 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "搜索关键词，支持自然语言描述",
+                        "description": param_text("param.notes_keyword"),
                     },
                     "path": {
                         "type": "string",
-                        "description": "项目目录绝对路径",
+                        "description": param_text("param.project_dir"),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "最大返回结果数",
+                        "description": param_text("param.max_results"),
                         "default": 5,
                     },
                 },
@@ -1045,11 +1086,11 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "parentName": {
                         "type": "string",
-                        "description": "tool 注册名，如 check/write/think",
+                        "description": param_text("param.parent_name"),
                     },
                     "path": {
                         "type": "string",
-                        "description": "附属资源相对 tool 目录的路径，如 references/durable-context.md",
+                        "description": param_text("param.resource_path"),
                     },
                 },
                 "required": ["parentName", "path"],
@@ -1086,7 +1127,7 @@ async def _handle_remember(arguments: dict) -> list[TextContent]:
                 type="text",
                 text=json.dumps(
                     {
-                        "error": "Hot layer not initialized",
+                        "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
                     }
                 ),
@@ -1130,7 +1171,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
                 type="text",
                 text=json.dumps(
                     {
-                        "error": "Hot layer not initialized",
+                        "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
                     }
                 ),
@@ -1240,7 +1281,7 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
                 type="text",
                 text=json.dumps(
                     {
-                        "error": "Hot layer not initialized",
+                        "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
                     }
                 ),
@@ -1297,7 +1338,7 @@ async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
                 type="text",
                 text=json.dumps(
                     {
-                        "error": "Hot layer not initialized",
+                        "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
                     }
                 ),
@@ -1308,20 +1349,20 @@ async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
     value = int(arguments.get("value", 1))
     if not memory_ids:
         return [
-            TextContent(type="text", text=json.dumps({"error": "memory_ids 不能为空"}))
+            TextContent(type="text", text=json.dumps({"error": ERR_MEMORY_IDS_EMPTY}))
         ]
     if not (0 <= bit <= PROCESSED_MAX_BIT):
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": f"bit 超出范围 0-{PROCESSED_MAX_BIT}"}),
+                text=json.dumps({"error": err_bit_out_of_range()}),
             )
         ]
     if value not in (0, 1):
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": "value 只能为 0(重置)或 1(设置)"}),
+                text=json.dumps({"error": ERR_VALUE_INVALID}),
             )
         ]
     results = []
@@ -1708,7 +1749,7 @@ async def main():
 
     async def api_memories_recent(request):
         if not await _ensure_hot_memory():
-            return JSONResponse({"error": "Hot layer not initialized"}, status_code=503)
+            return JSONResponse({"error": ERR_HOT_LAYER_NOT_READY}, status_code=503)
         since_str = request.query_params.get("since", "")
         limit = int(request.query_params.get("limit", 200))
         try:
@@ -1740,7 +1781,7 @@ async def main():
     async def api_memories_processed(request):
         """批量设置/重置记忆已处理位（bit0=已总结处理），幂等；供 summarize 写回与测试还原。"""
         if not await _ensure_hot_memory():
-            return JSONResponse({"error": "Hot layer not initialized"}, status_code=503)
+            return JSONResponse({"error": ERR_HOT_LAYER_NOT_READY}, status_code=503)
         try:
             body = await request.json()
         except Exception:
@@ -1750,17 +1791,13 @@ async def main():
             bit = int(body.get("bit", 0))
             value = int(body.get("value", 1))
         except (TypeError, ValueError):
-            return JSONResponse({"error": "bit/value 必须为整数"}, status_code=400)
+            return JSONResponse({"error": ERR_BIT_VALUE_NOT_INT}, status_code=400)
         if not memory_ids:
-            return JSONResponse({"error": "memory_ids 不能为空"}, status_code=400)
+            return JSONResponse({"error": ERR_MEMORY_IDS_EMPTY}, status_code=400)
         if not (0 <= bit <= PROCESSED_MAX_BIT):
-            return JSONResponse(
-                {"error": f"bit 超出范围 0-{PROCESSED_MAX_BIT}"}, status_code=400
-            )
+            return JSONResponse({"error": err_bit_out_of_range()}, status_code=400)
         if value not in (0, 1):
-            return JSONResponse(
-                {"error": "value 只能为 0(重置)或 1(设置)"}, status_code=400
-            )
+            return JSONResponse({"error": ERR_VALUE_INVALID}, status_code=400)
         updated = 0
         failed_ids = []
         for mid in memory_ids:

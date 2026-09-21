@@ -155,13 +155,27 @@ translation:
 <details>
 <summary>自定义提示词模板</summary>
 
-内置模板名：`translate`（固定源→目标）、`translate_auto`（自动判断方向）、`summarize`、`rewrite`。
+提示词以**文件**为准（内置模板与 Python 摘要/记忆管线共用同一套文件）：
+
+```
+~/.config/utility/prompts/<feature>.md            # 自定义，与界面语言无关
+```
+
+把内置模板（随包的 `MCPScripts/prompts/<lang>/`，文件名即 feature 名）复制到上述路径再改即可。
+自定义文件**不按语言分目录**——你写的就是给自己用的那一份，切换界面语言不会让它失效。
+内置模板则按语言分目录：用哪一套由 `general.language` 决定，该语言没有这个文件时回退中文基线
+并记一条 warning。
+
+文件头部的 front-matter（`name` / `placeholders`）必须与正文一致——`name` 要和文件名相同，
+`placeholders` 要和正文里实际出现的 `{占位符}` 完全相同，写错会被拒绝并自动回退内置版本
+（不会静默生效，也不会让功能停摆）。
+
+也可以在配置里写内联模板，优先级高于文件（仅翻译功能，且只认 `translate` / `translate_auto`）：
 
 ```yaml
 prompts:
   templates:
-    summarize: "请用中文总结以下内容的要点，保持简洁，标注关键数字"
-    rewrite: "请用更专业的语气重写以下文本"
+    translate: "你是一个专业的技术翻译。将{source}翻译成{target}。只返回译文，不要解释"
 ```
 </details>
 
@@ -185,6 +199,11 @@ mcp:
   # 每日记忆总结
   summaryEnabled: true
   summaryHour: 17
+  # 检索同义词扩展：中文查询词扩展出英文术语，供项目检索使用。
+  # 增量补充——同名覆盖内置、异名追加，只写你要加的（内置表在 synonyms.py）
+  synonyms:
+    部署: "deploy release publish"
+    请求: "request http call"
 ```
 </details>
 

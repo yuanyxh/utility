@@ -26,13 +26,83 @@ from log_utils import setup_logging
 EMBEDDER_MODEL = os.environ.get(
     "EMBEDDER_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
-EMBEDDER_DIMS = 384
 FASTEMBED_CACHE_DIR = os.environ.get(
     "FASTEMBED_CACHE_PATH", os.path.expanduser("~/.cache/fastembed_cache")
 )
 os.environ.setdefault("FASTEMBED_CACHE_PATH", FASTEMBED_CACHE_DIR)
 
 logger = setup_logging("server")
+
+#: 维度兜底值。**是兜底不是默认值**：只有在 fastembed 元数据里查不到该模型时才用。
+#: 384 = `all-MiniLM-L6-v2` 的维度，也是引入本机制前写死的值（故默认路径零行为变化）。
+_FALLBACK_EMBEDDER_DIMS = 384
+
+#: fastembed 元数据（`TextEmbedding.list_supported_models()` 条目）的字段名。
+#: 单列常量是因为它们是**外部库的字段名**：库改名时在这里一处红，而不是各处静默取不到
+#: 值、全体回退兜底。
+_META_MODEL_FIELD = "model"
+_META_DIM_FIELD = "dim"
+
+
+def resolve_embedder_dims(
+    model_name: str, *, fallback: int = _FALLBACK_EMBEDDER_DIMS
+) -> int:
+    """从 fastembed 元数据解析模型的向量维度。
+
+    维度是**模型固有属性**，故只从 fastembed 自己的元数据取：交给 Swift 注入等于另建一份
+    「模型名 → 维度」映射，与真实值必然漂移（换模型忘了改映射 → 集合维度与向量维度不符）。
+    查不到/字段不可用/查询异常一律回退 `fallback` 并记 warning。
+
+    纯元数据读取：不加载 ONNX 模型、不走网络（实测 30 个条目开销可忽略）。
+    """
+    try:
+        for entry in TextEmbedding.list_supported_models():
+            if entry.get(_META_MODEL_FIELD) != model_name:
+                continue
+            dim = entry.get(_META_DIM_FIELD)
+            if isinstance(dim, int) and dim > 0:
+                return dim
+            logger.warning(
+                f"fastembed metadata for {model_name!r} has unusable "
+                f"{_META_DIM_FIELD}={dim!r}; falling back to {fallback} dims"
+            )
+            return fallback
+    except Exception as e:
+        logger.warning(
+            f"fastembed metadata lookup failed ({type(e).__name__}: {e}); "
+            f"falling back to {fallback} dims"
+        )
+        return fallback
+
+    logger.warning(
+        f"Model {model_name!r} is not in fastembed supported models; "
+        f"falling back to {fallback} dims. 若该模型维度不是 {fallback}，"
+        "向量检索会以维度不符失败——先核对 EMBEDDER_MODEL 拼写"
+    )
+    return fallback
+
+
+#: 当前 embedder 的向量维度（由模型元数据解析，见 `resolve_embedder_dims`）。
+EMBEDDER_DIMS = resolve_embedder_dims(EMBEDDER_MODEL)
+
+
+def describe_dim_mismatch(existing_dims: int | None, expected_dims: int) -> str | None:
+    """集合维度与当前 embedder 维度不一致时的处置建议；一致或无法判定返回 None。
+
+    为什么必须显式报错：**集合维度在首次创建时固定**。换模型（维度变化）后旧向量与
+    新查询向量不可比，Qdrant 会在 query 时报 dimension 错误——而 `search_cold_layer`
+    把异常吞成一条 warning，表现为「冷层检索静默失效、用户只觉得结果变少」。
+    启动时点出来，比事后从「检索结果不对」倒查便宜得多。
+    """
+    if existing_dims is None or existing_dims == expected_dims:
+        return None
+    return (
+        f"冷层集合维度不一致：集合 {existing_dims} 维，当前 embedder "
+        f"{EMBEDDER_MODEL!r} 为 {expected_dims} 维。处置（集合维度不可修改）："
+        f"改回原模型（EMBEDDER_MODEL / config.yaml mcp.embedderModel），"
+        f"或删除冷层集合让其按新维度重建、向量全量重扫"
+    )
+
 
 _shared_embedder = None
 

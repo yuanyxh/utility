@@ -4,7 +4,7 @@
 消除「同一变量在 2-3 个文件各读一遍、默认值硬编码散落」的重复。
 
 用法（同目录扁平 import，复用 log_utils/agent_call 成功模式）：
-    from config import deepseek_api_key, summary_model, summary_api_url, notes_dir, data_dir
+    from config import ai_api_key, summary_model, summary_api_url, notes_dir, data_dir
 
 注意：
 - 本模块为纯函数层，仅依赖标准库 os，import 无任何副作用——server.py 必须在
@@ -34,8 +34,39 @@ def get(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-def deepseek_api_key() -> str:
-    return get("DEEPSEEK_API_KEY", "")
+def ai_api_key() -> str:
+    """通用 AI API key（文本生成与向量嵌入共用，与 provider 解绑）。
+
+    环境变量 `AI_API_KEY` 由 Swift `EnvKeys.aiAPIKey` 注入，两侧一致性由
+    `scripts/check-router-config-contract.py` 断言。
+    """
+    return get("AI_API_KEY", "")
+
+
+def llm_timeout(default: float = 120.0) -> float:
+    """LLM 单次推理超时（秒）。环境变量 `AI_LLM_TIMEOUT` 由 Swift 从 `ai.llmTimeout` 注入。
+
+    缺省 / 非数字 / 非正值一律回退 `default`，与 Swift 侧 `OpenAIClient.init` 的
+    「0 = 用默认值」约定一致。**不要**套用 `general.httpTimeout` 那套「0 = 不限制」：
+    同一个 0 在两项配置里含义相反，是最容易被误配成「永不超时」的写法。
+    """
+    raw = get("AI_LLM_TIMEOUT", "")
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def ui_language(default: str = "") -> str:
+    """界面/提示词语言（`zh-Hans` / `en`）。Swift 按 `general.language` 注入 `UTILITY_LANG`。
+
+    提示词目录按它选择（`prompts/<lang>/<feature>.md`），故与界面语言必须同源。
+    未注入时返回空串，由调用方（prompt_loader）回退基线语言。
+    """
+    return get("UTILITY_LANG", default)
 
 
 def summary_model(default: str = _DEFAULT_SUMMARY_MODEL) -> str:

@@ -89,7 +89,7 @@ final class PythonDaemon: @unchecked Sendable {
     /// 探测端口是否已有健康进程（健康则复用，避免重复 spawn 端口竞争）。
     /// service 校验防止误复用同端口其他服务（MCP 场景）。
     func probeExistingServer() -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(config.port())\(config.healthPath)") else {
+        guard let url = HTTP.localURL(port: config.port(), path: config.healthPath) else {
             return false
         }
         // 这里在 lifecycleQueue（后台队列）上同步等待，不是在主线程——
@@ -132,10 +132,18 @@ final class PythonDaemon: @unchecked Sendable {
     }
 
     /// 强制重启（配置重载时调用）：停旧进程 → 等死 → 真正 spawn。
+    ///
+    /// 若本进程是冷启动时「复用」来的外部健康进程（孤儿），`process` 为 nil，
+    /// `stopSync()` 停不掉它，spawn 会撞端口。故此处补一步按端口清理。
+    /// 只在没有托管进程时做——正常托管的重启路径行为完全不变。
     func forceRestart() {
         lifecycleQueue.async { [weak self] in
             guard let self else { return }
+            let hadManagedProcess = process != nil
             stopSync()
+            if !hadManagedProcess {
+                terminatePortOccupant()
+            }
             crashCount = 0
             launchProcess()
         }
@@ -182,6 +190,52 @@ final class PythonDaemon: @unchecked Sendable {
         }
     }
 
+    /// 终止端口上的监听进程——用于「冷启动时复用了孤儿进程」的场景。
+    ///
+    /// 那种情况下 `process` 为 nil，`stopSync()` 无从下手，直接 spawn 会因端口
+    /// 仍被占而失败（uvicorn 报 Errno 48）。这里按端口找出监听者清掉，
+    /// 让随后的 `launchProcess()` 能绑上。
+    ///
+    /// **必须带 `-sTCP:LISTEN`**：不带时 `lsof -ti:<port>` 会连「连接该端口的
+    /// 客户端」一并返回（实测 8613 上会返回正在走代理的 Clash Verge），
+    /// 照此 kill 即误杀无关进程。
+    private func terminatePortOccupant() {
+        for pid in listeningPIDs() {
+            kill(pid, SIGTERM)
+        }
+        // 等端口真正释放再返回：launchProcess() 紧随其后要绑同一端口，
+        // 进程未死透时绑定依旧失败——这正是本函数存在的理由。
+        let deadline = DispatchTime.now() + 3.0
+        while .now() < deadline, !listeningPIDs().isEmpty {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        for pid in listeningPIDs() {
+            kill(pid, SIGKILL)
+        }
+    }
+
+    /// 端口上的监听进程 PID（仅 LISTEN，不含连接方）。
+    /// `lsof` 走全路径：本进程由 launchd 启动，PATH 不含 /usr/sbin。
+    private func listeningPIDs() -> [Int32] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        proc.arguments = ["-ti:\(config.port())", "-sTCP:LISTEN"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+        } catch {
+            debugLog("[\(config.logTag)] lsof 调用失败: \(error.localizedDescription)")
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        return text.split(whereSeparator: \.isNewline)
+            .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
     private func launchProcess() {
         isStopping = false
         let proc = Process()
@@ -200,28 +254,32 @@ final class PythonDaemon: @unchecked Sendable {
             lifecycleQueue.async { [weak self] in
                 guard let self else { return }
                 // stop() 主动关闭时不触发重启
-                if self.isStopping { return }
+                if isStopping { return }
 
-                if reason == .uncaughtSignal {
-                    self.crashCount += 1
-                    let count = self.crashCount
+                // 判据须同时覆盖「被信号杀死」与「非零退出码」：只看 .uncaughtSignal
+                // 会漏掉最常见的失败——Python 未捕获异常、端口绑定失败（uvicorn 报
+                // Errno 48 后 exit 3）、外部 kill 都退化为 .exit，被当作正常退出
+                // 静默置 .stopped 且永不重试。
+                if reason == .uncaughtSignal || p.terminationStatus != 0 {
+                    crashCount += 1
+                    let count = crashCount
                     debugLog(
-                        "[\(self.config.logTag)] Process crashed (\(count)/\(self.config.maxRestarts))"
+                        "[\(config.logTag)] Process crashed (\(count)/\(config.maxRestarts))",
                     )
-                    if count >= self.config.maxRestarts {
-                        self.state = .crashed
+                    if count >= config.maxRestarts {
+                        state = .crashed
                         DispatchQueue.main.async {
                             self.onMaxRestarts?(self.config.maxRestarts)
                         }
                         return
                     }
-                    self.state = .restarting
-                    DispatchQueue.main.asyncAfter(deadline: .now() + self.config.restartDelaySec) {
+                    state = .restarting
+                    DispatchQueue.main.asyncAfter(deadline: .now() + config.restartDelaySec) {
                         self.lifecycleQueue.async { self.launchProcess() }
                     }
                 } else {
                     // Normal exit
-                    self.state = .stopped
+                    state = .stopped
                 }
             }
         }
@@ -292,14 +350,14 @@ final class PythonDaemon: @unchecked Sendable {
     /// （阻塞主线程导致 URLSession 回调死锁——项目实测教训，见 CLAUDE.md）。
     private func startHealthCheck() {
         healthCheckTimer?.invalidate()
-        guard let url = URL(string: "http://127.0.0.1:\(config.port())\(config.healthPath)") else {
+        guard let url = HTTP.localURL(port: config.port(), path: config.healthPath) else {
             return
         }
         var retries = 0
         let maxRetries = config.healthCheckMaxRetries
 
         healthCheckTimer = Timer.scheduledTimer(
-            withTimeInterval: config.healthCheckIntervalSec, repeats: true
+            withTimeInterval: config.healthCheckIntervalSec, repeats: true,
         ) { [weak self] timer in
             guard let self else { return }
 
@@ -311,8 +369,8 @@ final class PythonDaemon: @unchecked Sendable {
                 // ——Timer 回调在主线程，直接调用会与 launchProcess 竞争
                 lifecycleQueue.async { [weak self] in
                     guard let self else { return }
-                    self.state = .crashed
-                    self.stopSync()
+                    state = .crashed
+                    stopSync()
                 }
                 return
             }
@@ -324,8 +382,8 @@ final class PythonDaemon: @unchecked Sendable {
                     // crashCount 与 state 都由 lifecycleQueue 独占，回到该队列收敛
                     lifecycleQueue.async { [weak self] in
                         guard let self else { return }
-                        self.crashCount = 0
-                        self.state = .running
+                        crashCount = 0
+                        state = .running
                     }
                     timer.invalidate()
                     debugLog("[\(config.logTag)] Server ready")

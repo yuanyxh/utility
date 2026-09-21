@@ -72,7 +72,7 @@ final class MCPProcessManager {
         overrides["MCP_PORT"] = String(currentPort)
 
         // MEMORY_SERVER_URL：summarize.py 用此变量访问 MCP 服务
-        overrides["MEMORY_SERVER_URL"] = "http://127.0.0.1:\(currentPort)"
+        overrides["MEMORY_SERVER_URL"] = HTTP.localBaseURL(port: currentPort)
 
         // mcp 路径配置（空字符串 = 使用默认路径）
         if let mcp = mcpConfig {
@@ -98,8 +98,30 @@ final class MCPProcessManager {
             if !mcp.embedderModel.isEmpty {
                 overrides["EMBEDDER_MODEL"] = mcp.embedderModel
             }
+
+            // 检索同义词扩展表：键值都由用户定义，无法用固定 struct 承载，故整体序列化透传。
+            // 合并留在 Python 侧一处完成——两侧各写一遍合并逻辑，迟早出现「Swift 覆盖了、
+            // Python 追加了」这种没法解释的差异。
+            if let json = Self.synonymsJSON(mcp.synonyms) {
+                overrides[Self.synonymsEnvKey] = json
+            }
         }
         return PythonScriptRunner.environment(overrides: overrides)
+    }
+
+    /// 同义词表的 env 名（跨语言契约，Python 侧 `synonyms.SYNONYMS_ENV_KEY` 同值，
+    /// 由 `scripts/check-router-config-contract.py` 交叉断言）。
+    static let synonymsEnvKey = "MCP_SYNONYMS"
+
+    /// 同义词表 → JSON；空表返回 nil（不注入，Python 侧用内置默认）。
+    static func synonymsJSON(_ synonyms: [String: String]) -> String? {
+        guard !synonyms.isEmpty,
+              let data = try? JSONEncoder().encode(synonyms),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+        return json
     }
 
     /// 重置预检缓存（配置重载后调用，下次 start 重新检查）
@@ -226,7 +248,7 @@ final class MCPProcessManager {
     }
 
     private func findServerScript() -> String? {
-        PythonScriptRunner.findScript(named: "server.py")
+        PythonScriptRunner.findScript(named: PythonScripts.server)
     }
 
     // MARK: - Daemon 装配
