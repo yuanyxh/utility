@@ -253,6 +253,16 @@ final class PythonDaemon: @unchecked Sendable {
             // 全部收敛回该队列再读写，消除这组无同步竞争。
             lifecycleQueue.async { [weak self] in
                 guard let self else { return }
+
+                // 身份判断必须凌驾于 isStopping 之上。forceRestart 的 stopSync()
+                // 置 isStopping 后立刻 launchProcess()，而后者第一步就把该标志重置
+                // 回 false；等这个异步回调真正跑起来时标志已失效，旧进程的正常关闭
+                // 会被误判成崩溃——表现为每次重载配置凭空多 spawn 一个进程，它撞上
+                // 被占用的端口后进入无限重启循环（2026-09-21 实测 784 次、持续 49
+                // 分钟）。process 已被替换成新进程，即说明这次退出属于旧进程，忽略。
+                // 真崩溃时 process 仍等于 p，不受影响。
+                if process !== p { return }
+
                 // stop() 主动关闭时不触发重启
                 if isStopping { return }
 
@@ -275,7 +285,20 @@ final class PythonDaemon: @unchecked Sendable {
                     }
                     state = .restarting
                     DispatchQueue.main.asyncAfter(deadline: .now() + config.restartDelaySec) {
-                        self.lifecycleQueue.async { self.launchProcess() }
+                        self.lifecycleQueue.async {
+                            // 重启前先探一次端口：若已有健康进程在跑，说明这次「崩溃」
+                            // 多半是新进程撞了被占用的端口，再 spawn 只会重复撞。直接
+                            // 认领，避免把一次端口冲突放大成重启风暴。
+                            // probeExistingServer 在 lifecycleQueue（非主线程）上同步
+                            // 等待，不会死锁——与 start() 的调用点同理。
+                            if self.probeExistingServer() {
+                                self.crashCount = 0
+                                self.state = .running
+                                debugLog("[\(self.config.logTag)] Adopted healthy process after crash")
+                            } else {
+                                self.launchProcess()
+                            }
+                        }
                     }
                 } else {
                     // Normal exit

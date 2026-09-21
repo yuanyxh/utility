@@ -238,7 +238,9 @@ model、看不出代理路由到了哪个上游」的问题。改这块要守住
 - **提取流水线（三项优化）**：
   1. **A — 批量 AST**：扫描前统一调用 `ast_extractor.py --batch`，单次 subprocess 处理所有 AST 文件（Python ast + @babel/parser），避免逐文件启动子进程
   2. **C — 并发提取**：`DispatchQueue.concurrentPerform` 并行执行正则提取，NSLock 保护结果收集
-  3. **D — 批量写入**：`batchWriteFiles()` 单事务写入所有文件结果（DELETE old → INSERT symbols → UPDATE file → handle failed_files）
+  3. **D — 单事务原子替换**：`replaceScanResults()` 一次 `dbQueue.write` 内完成「清空全部表 → 写目录/文件/符号/包 → 重建 FTS」（2026-09-21 由 `clearAll()` + `batchWriteFiles()` 合并而来）
+- **写入必须原子，清空与写入不能分开提交**：分开时遍历 + 提取期间（大项目数十秒）库对 MCP 读者是空的，检索一律返回「什么都没有」，模型会据此重复实现已有功能；中途被打断还会留下空库。**`clearAll()` 已删除，勿重新引入**——单独暴露可外部调用的清库方法会诱导后来者在扫描开头清库
+- **模块根标记 `has_package_manifest` 的判定要在 includes 过滤之前**（清单文件不匹配任何 include 模式，放后面永远标不上），且**统一在遍历结束后回填**，不依赖枚举顺序；不要拿目录名比对清单文件名（恒为 false）
 - 提取优先级：AST 脚本优先 → 正则提取器兜底 → 都失败则计数
 - AST 连续 3 次失败后跳过（`failed_files` 表跨扫描计数），文件修改后自动重置
 - `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` / `VueExtractor` / `JavaExtractor` / `KotlinExtractor` 用正则 + brace-depth tracking
@@ -248,9 +250,10 @@ model、看不出代理路由到了哪个上游」的问题。改这块要守住
 - FTS5 + 同义词扩展：中文搜索先转同义词再 MATCH，降级到 LIKE
 - MCP `project_search` 三状态响应：`exact`（自动选中）、`ambiguous`（同名多文件引导）、`no_match`（无结果）
 - **符号向量缓存必须用稳定业务键，不能用 `symbols.id`**（2026-09-11 根治）：`symbols.id` 是
-  GRDB AUTOINCREMENT，而 `ProjectScanner.scan()` 经 `clearAll()` 先 `DELETE FROM symbols`
-  再重插、`batchWriteFiles()` 先按 file_path 删再重插 —— **两条写入路径都会让同一符号拿到新
-  id**。边表 `symbol_embeddings` 曾以 id 为键，每次全量重扫即全部失效（实测 67438 行、
+  GRDB AUTOINCREMENT，而 `ProjectScanner.scan()` 经 `replaceScanResults()` 先整体
+  `DELETE FROM symbols` 再重插、`FileWatcher` 增量路径先 `DELETE FROM symbols WHERE
+  file_path = ?` 再 `insertSymbols` —— **两条写入路径都会让同一符号拿到新 id**。
+  边表 `symbol_embeddings` 曾以 id 为键，每次全量重扫即全部失效（实测 67438 行、
   有效 0 行、占 132MB），下一次向量检索被迫重算全部符号（实测 349s）。
   现键 = `sha1(file_path|name|kind|signature|doc_comment)`，即 **embedding 输入字段本身**：
   符号没变则重扫不重算，字段变了则键变、自然重算（键即输入，不存在脏读）。

@@ -96,18 +96,9 @@ final class ProjectDatabase {
 
     // MARK: - Helpers
 
-    func clearAll() throws {
-        try dbQueue.write { db in
-            try db.execute(sql: "DELETE FROM directories")
-            try db.execute(sql: "DELETE FROM files")
-            try db.execute(sql: "DELETE FROM symbols")
-            try db.execute(sql: "DELETE FROM packages")
-            // Keep failed_files: AST failure count must persist across rescan cycles
-            // so the 3-strike rule can skip AST for hopeless files.
-            // Stale entries for now-deleted files are pruned by pruneFailedFiles().
-            try db.execute(sql: "DELETE FROM symbols_fts")
-        }
-    }
+    // 清空逻辑不再作为独立方法暴露：它必须与写入处于同一事务，见
+    // `replaceScanResults`。单独留一个可从外部调用的 `clearAll()`，会诱导
+    // 后来者在扫描开头清库，从而把这个空窗重新引入。
 
     /// Remove failed_files entries for files that no longer exist in the project.
     func pruneFailedFiles(knownPaths: Set<String>) throws {
@@ -168,12 +159,36 @@ final class ProjectDatabase {
 
     // MARK: - Batch writes
 
-    /// Write multiple file results in a single transaction.
-    /// Batches: DELETE old symbols → INSERT symbols → INSERT/UPDATE file record → handle failed_files.
-    func batchWriteFiles(_ fileResults: [(file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)]) throws {
+    /// 原子替换全部扫描结果：单事务内完成「清空 → 写入 → 重建 FTS」。
+    ///
+    /// 旧流程是 `clearAll()` 先独立提交，等 Phase 1 遍历与 Phase 2 提取（大项目
+    /// 数十秒）跑完才写回。这个窗口内库对 MCP 读者是空的——检索工具一律返回空
+    /// 结果，模型据此判定「代码不存在」，可能重复实现已有功能；扫描中途被中断
+    /// （Ctrl-C、OOM、抛错）则空库一直留到下次扫描才恢复。改为单事务后，读者
+    /// 要么看到完整的旧结果、要么看到完整的新结果，不存在中间态。
+    ///
+    /// 目录写入也一并纳入：原先 `insertDirectory` 在空窗期内单独提交，库会停在
+    /// 「目录有了、符号还没有」的不一致状态。
+    ///
+    /// `failed_files` 有意不清空：AST 连败计数的 3-strike 记忆必须跨扫描保留，
+    /// 已消失文件的条目由 `pruneFailedFiles` 负责清理。
+    func replaceScanResults(
+        directories: [DirectoryRecord],
+        files: [(file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)],
+        packages: [PackageRecord],
+    ) throws {
         try dbQueue.write { db in
-            for (fileRec, symbols, astFailed) in fileResults {
-                try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [fileRec.path])
+            try db.execute(sql: "DELETE FROM directories")
+            try db.execute(sql: "DELETE FROM files")
+            try db.execute(sql: "DELETE FROM symbols")
+            try db.execute(sql: "DELETE FROM packages")
+
+            for dir in directories {
+                try dir.insert(db, onConflict: .replace)
+            }
+
+            // 符号表已整体清空，无需再按 file_path 逐条删。
+            for (fileRec, symbols, astFailed) in files {
                 for s in symbols {
                     try s.insert(db, onConflict: .ignore)
                 }
@@ -191,6 +206,15 @@ final class ProjectDatabase {
                     try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [fileRec.path])
                 }
             }
+
+            for pkg in packages {
+                try pkg.insert(db, onConflict: .replace)
+            }
+
+            // FTS 必须在同一事务内 rebuild：symbols_fts 是 external content 表，
+            // content 行被删后 `DELETE FROM symbols_fts` 摘不出词（是空操作），
+            // 只有 rebuild 能让倒排表与 symbols 对齐。放事务内保证提交瞬间两者一致。
+            try db.execute(sql: "INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
         }
     }
 }
