@@ -1398,8 +1398,10 @@ async def _handle_project_search(arguments: dict) -> list[TextContent]:
             kind=arguments.get("kind", ""),
         )
         return [TextContent(type="text", text=json.dumps(result))]
-    except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    except Exception:
+        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
+        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        raise
 
 
 @_register("project_structure")
@@ -1409,8 +1411,10 @@ async def _handle_project_structure(arguments: dict) -> list[TextContent]:
             tool_project_structure, arguments["dbPath"], arguments.get("path", "")
         )
         return [TextContent(type="text", text=json.dumps(result))]
-    except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    except Exception:
+        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
+        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        raise
 
 
 @_register("project_packages")
@@ -1420,8 +1424,10 @@ async def _handle_project_packages(arguments: dict) -> list[TextContent]:
             tool_project_packages, arguments["dbPath"], arguments.get("type", "")
         )
         return [TextContent(type="text", text=json.dumps(result))]
-    except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    except Exception:
+        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
+        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        raise
 
 
 @_register("project_exports")
@@ -1431,8 +1437,10 @@ async def _handle_project_exports(arguments: dict) -> list[TextContent]:
             tool_project_exports, arguments["dbPath"], arguments["path"]
         )
         return [TextContent(type="text", text=json.dumps(result))]
-    except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    except Exception:
+        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
+        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        raise
 
 
 @_register("project_notes")
@@ -1463,9 +1471,9 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
-    except Exception as e:
-        logger.error(f"[project_notes] {e}", exc_info=True)
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    except Exception:
+        # 同上：日志与 isError 由 handle_call_tool 兜底层统一处理
+        raise
 
 
 @_register("tool_resource")
@@ -1540,13 +1548,9 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
             )
         ]
     except Exception as e:
+        # 同 handle_call_tool：未预期异常必须上抛，否则 isError 恒为 False
         logger.error(f"[tool_resource] {e}", exc_info=True)
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({"error": f"read failed: {e}"}),
-            )
-        ]
+        raise
     return [TextContent(type="text", text=content)]
 
 
@@ -1568,8 +1572,12 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
         ]
     except Exception as e:
-        logger.error(f"Error in {name}: {e}")
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+        # 必须继续上抛：此处若 return 一个 {"error": ...} 的 TextContent，
+        # 对 SDK 而言就是「工具正常返回」，isError 保持 False —— 真实故障
+        # 在客户端被当成成功、只是结果里多了个 error 字段，调用方无从据以
+        # 重试或降级。上抛后由 SDK 的 call_tool 兜底转成 isError=True。
+        logger.error(f"Error in {name}: {e}", exc_info=True)
+        raise
 
 
 def _run_archive_sync_impl() -> tuple[int, int, int]:

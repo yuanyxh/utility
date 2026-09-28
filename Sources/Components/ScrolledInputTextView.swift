@@ -126,6 +126,23 @@ public final class ScrolledInputTextView: NSView {
         ])
     }
 
+    // MARK: - Layout
+
+    /// 保持文档视图宽度与滚动区一致。
+    ///
+    /// 实机诊断到本组件的 `textView.frame.width` 停在 0（高度正常），
+    /// 而 `textContainer` 宽度已是 596 —— 排版正常、可绘制区域却是 0 宽，
+    /// 文字因此完全不可见。此处显式同步，不依赖 AppKit 的隐式时机。
+    public override func layout() {
+        super.layout()
+        let width = scrollView.contentSize.width
+        guard width > 0, textView.frame.width != width else { return }
+        textView.setFrameSize(NSSize(
+            width: width,
+            height: max(textView.frame.height, scrollView.contentSize.height),
+        ))
+    }
+
     // MARK: - Style application
 
     private func applyStyle(_ style: InputViewStyle) {

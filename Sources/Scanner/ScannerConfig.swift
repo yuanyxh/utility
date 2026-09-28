@@ -35,8 +35,21 @@ final class ScannerConfig {
                                                ".git/**", ".utility/**", "Pods/**", ".venv/**"]
     }
 
+    /// 构建/缓存目录名单 —— 目录跳过与文件排除的**单一事实源**。
+    ///
+    /// 两处曾各持一份：目录遍历用本名单（15 项），文件过滤只看 `resolvedExcludes`
+    /// （7 项、不含 `Utility.app`）。于是打包产物 `Utility.app/**` 里的 `.py`/`.swift`
+    /// 全部按后缀命中 includes 而入库（实测 120 文件 / 5996 符号，占全库 75%），
+    /// 检索结果里同一个符号恒出现两份。往 `resolvedExcludes` 补一条只能治当下，
+    /// 两份名单迟早再次漂移，故收敛到此处。
+    static let skippedDirNames: Set<String> = [
+        ".build", "node_modules", "dist", ".git", ".utility", "Pods", ".venv",
+        "__pycache__", ".svn", ".hg", ".gradle", "build", "DerivedData", "Utility.app",
+    ]
+
     /// Returns true if a file with the given relative path should be processed.
     func shouldInclude(_ path: String) -> Bool {
+        if containsSkippedDir(path) { return false }
         for excl in resolvedExcludes {
             if matchGlob(path, pattern: excl) { return false }
         }
@@ -46,13 +59,17 @@ final class ScannerConfig {
         return false
     }
 
+    /// 路径中任一级目录命中跳过名单即为真。
+    ///
+    /// 文件事件只带自身路径（`isDir` 为假），若不查祖先目录，`Utility.app/x.py`
+    /// 就绕过了目录级的跳过判定。
+    private func containsSkippedDir(_ path: String) -> Bool {
+        path.split(separator: "/").contains { Self.skippedDirNames.contains(String($0)) }
+    }
+
     /// Returns true if a directory name is a known build/cache dir to skip.
     func shouldSkipDirectory(_ name: String) -> Bool {
-        let skipDirs: Set = [".build", "node_modules", "dist", ".git",
-                             ".utility", "Pods", ".venv", "__pycache__",
-                             ".svn", ".hg", ".gradle", "build", "DerivedData",
-                             "Utility.app", "DerivedData"]
-        return skipDirs.contains(name)
+        Self.skippedDirNames.contains(name)
     }
 
     private func matchGlob(_ path: String, pattern: String) -> Bool {
