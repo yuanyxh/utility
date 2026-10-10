@@ -139,6 +139,54 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
+    /// shell 工具输出瘦身配置的 env 名（Python `proxy_output_filter.OUTPUT_FILTER_ENV_KEY` 同值）
+    static let outputFilterEnvKey = "MODEL_PROXY_OUTPUT_FILTER"
+
+    /// shell 工具输出瘦身配置。**总是注入**（proxyConfig 为空时除外），让 Python
+    /// 侧不依赖自己的缺省值——与 skill dedup 开关同理。
+    private func outputFilterJSON() -> String? {
+        guard let filter = proxyConfig?.outputFilter else { return nil }
+
+        // JSON 侧统一 snake_case（Python `proxy_output_filter._parse_config` 按该
+        // 命名解析），与 providers / clientAccel 的既有约定一致。
+        struct RulePayload: Encodable {
+            let command: String
+            let subcommand: String
+            let max_bytes: Int
+            let drop_lines: [String]
+            let keep_lines: [String]
+        }
+        struct FilterPayload: Encodable {
+            let enabled: Bool
+            let max_bytes: Int
+            let format_compress: Bool
+            let fold_repeated_lines: Bool
+            let bypass_tools: [String]
+            let shell_tools: [String]
+            let rules: [RulePayload]
+        }
+
+        let payload = FilterPayload(
+            enabled: filter.enabled,
+            max_bytes: filter.maxBytes,
+            format_compress: filter.formatCompress,
+            fold_repeated_lines: filter.foldRepeatedLines,
+            bypass_tools: filter.bypassTools,
+            shell_tools: filter.shellTools,
+            rules: filter.rules.map {
+                RulePayload(
+                    command: $0.command,
+                    subcommand: $0.subcommand,
+                    max_bytes: $0.maxBytes,
+                    drop_lines: $0.dropLines,
+                    keep_lines: $0.keepLines,
+                )
+            },
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// 脚本专属环境变量（公共部分由 PythonScriptRunner.baseEnvironment() 提供）。
     /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
     private var proxyEnvironment: [String: String] {
@@ -158,6 +206,9 @@ final class TokenProxyManager {
         // skill 全文去重开关：总是注入（"1"/"0"），让 Python 侧不依赖自己的缺省值
         overrides["MODEL_PROXY_SKILL_DEDUP"] =
             (proxyConfig?.skillDedupEnabled ?? true) ? "1" : "0"
+        if let outputFilterJSON = outputFilterJSON() {
+            overrides[Self.outputFilterEnvKey] = outputFilterJSON
+        }
         return PythonScriptRunner.environment(overrides: overrides)
     }
 

@@ -53,6 +53,27 @@ modelProxy:
   # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
   # 短提示文案按 general.language 选（内置 zh-Hans / en）。
   skillDedupEnabled: true
+  # shell 工具输出瘦身：超长砍头尾（带自证标记）+ JSON 无损 minify。只对 shell 类
+  # 工具生效——Read/Edit 等是模型点名要的文件内容，截断等于损坏。
+  outputFilter:
+    enabled: true
+    # 单条输出超此字节数才砍头尾。实测 Bash 输出 P95=5398、P99=13161，
+    # 12000 留了 2.2 倍余量——98.9% 的调用一个字节都不改。
+    maxBytes: 12000
+    formatCompress: true
+    # 连续重复行折叠会改行数、并非无损，故默认关。
+    foldRepeatedLines: false
+    bypassTools: []
+    # 额外声明的 shell 工具名。跨客户端名字各不相同（Gemini=run_shell_command、
+    # Cursor=run_terminal_cmd、Codex=local_shell），故为配置面；增量补充。
+    shellTools: []
+    # 按命令配的规则，默认空表（实测本项目 shell 输出无模板噪音，硬写只会误删）。
+    #  - command: npm
+    #    subcommand: install
+    #    maxBytes: 2000
+    #    dropLines: ["^npm warn"]
+    #    keepLines: []
+    rules: []
   # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider（上游 model 用原值）；
   # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
   # apiFormat: anthropic | openai，客户端格式不同时做协议转换。

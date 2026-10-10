@@ -134,6 +134,13 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
   - **只换文本不动外壳**：`tool_use_id`/`tool_call_id` 与消息结构保持，否则上游以「tool_use 缺少配对 tool_result」直接 400
   - **短提示 i18n**：`SKILL_DEDUP_NOTES` 按 `config.ui_language()`（← `UTILITY_LANG` ← `general.language`）选文案，缺该语言回退 `zh-Hans`，与 `tool_text`/`prompt_loader` 同源
   - **已知风险**：客户端 `/compact` 压掉上文后，模型读到「已加载」却找不到内容（官方同风险）
+- **shell 工具输出瘦身（`proxy_output_filter.py`，2026-10-10）**：超长砍头尾（保留前 70% + 后 30%，插自证标记 `[... 已截断 N 字节 ...]`，文案按 `general.language` 选）+ JSON 无损 minify。开关 `modelProxy.outputFilter` → `MODEL_PROXY_OUTPUT_FILTER`（JSON 串，**总是注入**）。收益来自「事后过滤」——本代理是反向代理，看不到执行前的命令，**snip/rtk/context-compress 收益主体的 `inject`（执行前改命令，如 `go test` 注入 `-json` 275→8 token）整条路不可用**
+  - **只对 shell 类工具生效**：Read/Edit 等是模型点名要的文件内容，截断等于损坏；shell 输出才是「命令五花八门、结果不可预期」的来源
+  - **识别必须靠结构判据而非工具名**：`input` 含字符串 `command` 即 shell 类（协议级事实）。工具名**不是协议事实**——跨客户端各不相同（Claude Code=`Bash`、Anthropic 原生=`bash`、Gemini=`run_shell_command`、Cursor=`run_terminal_cmd`、Codex=`local_shell`/`shell`），硬编码 `"Bash"` 会让其他客户端接进来后过滤永不触发且**不报错**。`shellTools` 为可配置增量名单（内置默认 `("Bash",)` 作兜底）；名字不在名单但靠结构命中时记 `shell_tool_unlisted`（含名字），使新客户端可被**发现**（同 `client_text_miss` 模式）
+  - **两种 API 格式各一份**：Anthropic 从 `tool_result` 块配 `tool_use_id` 取 assistant 的 `tool_use.input.command`；OpenAI 从 `role=="tool"` 消息配 `tool_call_id` 取 `tool_calls[].function`——**`arguments` 是 JSON 字符串，必须先 `json.loads` 才拿得到 `command`，解析失败则跳过命令级过滤（L1/L2 不受影响）**。与 skill 去重同样跑在**协议转换之前**（那时 `api_format` 是客户端格式）
+  - **插入点在 `record_request_body` 之后、ProtocolConverter 之前**（与 skill 去重同处、**排其后**）：记录层必须留原文，否则 `tool_output_log` 的度量标尺被自己毁掉
+  - **`foldRepeatedLines` 默认关**：连续重复行折叠为 `行 (xN)` 会**改变行数**，不是无损，与「L2 只做无损」的口径冲突；JSON minify 才是真无损（仅去空白，`ensure_ascii=False`）
+  - **规则表默认空**：`rules`（`command`/`subcommand`/`dropLines`/`keepLines`/`maxBytes`，语义对齐 snip 的 filter）机制完整可用，但实测本项目**没有可规则化的模板噪音**——Bash 797 次/1.24MB 中 ≤4KB 占多数（是模型要的内容），>8KB 全是内容型（vue grep 结果、文章正文、TS 报错）。硬写规则只会凭空制造**误删风险**（误删静默且不可逆），等真出现靶子再补
 - ⚠️ **含 tool_result 的消息必须插到最后一个 tool_result 之后，禁止 `insert(0)`**：响应 tool_use 的消息里 tool_result 必须是 content 首个块，插到首位会把工具结果挤后，上游直接 400「`tool_use` ids were found without `tool_result` blocks immediately after」（Anthropic 官方 Troubleshooting 明列此错因）。触发形态是 Claude Code 在工具执行中用户插话产生的 `['tool_result', …, 'text']` 混合消息；**危害被回退机制放大**——混合消息一旦产生即成为「最近的真实用户输入」，此后每个末尾为纯 tool_result 的请求（即所有工具轮次）都反复命中它，持续 400 直到用户发出新的纯文本输入（线上表现为连续 2~3 次**完全相同**的 `messages.N` 错误后自愈）。判定侧 `is_real_user_input` 无需改动，只改插入点；无 tool_result 时 `last_tool_result = -1` 自然退化为 `insert(0)`，行为不变
 
 ### Python LLM 调用统一入口（llm_client.py）

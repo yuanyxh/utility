@@ -42,6 +42,7 @@ from proxy_usage import (
 from db import conn as dbconn
 from config import ui_language
 from proxy_skill_dedup import dedup_tool_results
+from proxy_output_filter import OUTPUT_FILTER_ENV_KEY, filter_tool_outputs
 
 # ---------------------------------------------------------------------------
 # 配置（专属 env；公共配置在 config.py，协议/usage 配置在各自子模块）
@@ -60,6 +61,9 @@ CLIENT_ACCEL_JSON = os.environ.get("MODEL_PROXY_CLIENT_ACCEL", "")
 # skill 全文去重开关（config.yaml modelProxy.skillDedupEnabled → env）。缺省开：
 # 同一 skill 被反复调用时每次都把整份 SKILL.md 重复注入，纯浪费。
 SKILL_DEDUP_ENABLED = os.environ.get("MODEL_PROXY_SKILL_DEDUP", "1") != "0"
+# 工具输出瘦身配置（config.yaml modelProxy.outputFilter → env，JSON 串）。
+# 缺省空串即用 Python 侧内置默认（开，max_bytes 8000），与 skill dedup 同构。
+OUTPUT_FILTER_JSON = os.environ.get(OUTPUT_FILTER_ENV_KEY, "")
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -322,6 +326,21 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     }
                 )
             )
+
+    # 工具输出瘦身：超长砍头尾 + JSON 无损 minify，只对 shell 类工具（Read 等
+    # 是模型点名要的文件内容，截断等于损坏）。同样必须在 record 之后。
+    filtered = filter_tool_outputs(
+        request_body,
+        api_format,
+        OUTPUT_FILTER_JSON,
+        ui_language(),
+    )
+    if filtered:
+        if filtered.get("saved_bytes"):
+            body_bytes = json.dumps(request_body).encode()
+        logger.info(
+            json.dumps({"msg": "output_filter", "api_format": api_format, **filtered})
+        )
 
     # 请求协议转换：客户端 anthropic ↔ provider openai（网关标准映射）
     if api_format == "anthropic" and provider_format == "openai":

@@ -14,7 +14,8 @@
   4. 进程/约定 —— 服务名（server.py ↔ MCPProcessManager.swift）、脚本名
                   （`PythonScripts` ↔ `Sources/MCPScripts/*.py` 实际文件）、
                   同义词表 env 名（`synonyms.SYNONYMS_ENV_KEY` ↔ `synonymsEnvKey`）、
-                  工具默认值 env 名（`tool_defaults.TOOL_DEFAULTS_ENV_KEY` ↔ `toolDefaultsEnvKey`）
+                  工具默认值 env 名（`tool_defaults.TOOL_DEFAULTS_ENV_KEY` ↔ `toolDefaultsEnvKey`）、
+                  输出瘦身 env 名（`proxy_output_filter.OUTPUT_FILTER_ENV_KEY` ↔ `outputFilterEnvKey`）
   5. 提示词     —— `MCPScripts/prompts/<lang>/<feature>.md` 可被**生产解析器**
                   （`prompt_loader.parse_template`）接受、占位符与基线登记一致、
                   翻译版的 `json_keys` 与基线一致；Swift 侧有 L10n 兜底的 feature
@@ -63,6 +64,7 @@ CONFIG_PY = os.path.join(SCRIPTS, "config.py")
 SERVER_PY = os.path.join(SCRIPTS, "server.py")
 SYNONYMS_PY = os.path.join(SCRIPTS, "synonyms.py")
 TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
+OUTPUT_FILTER_PY = os.path.join(SCRIPTS, "proxy_output_filter.py")
 TOOL_TEXT_PY = os.path.join(SCRIPTS, "tool_text.py")
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
@@ -153,6 +155,9 @@ _SWIFT_SYNONYMS_ENV_RE = re.compile(r'synonymsEnvKey\s*=\s*"([^"]+)"')
 #: 工具默认值 env 名两侧的写法（同上，脚本专属 env 不走 config.py）
 _PY_TOOL_DEFAULTS_ENV_RE = re.compile(r'TOOL_DEFAULTS_ENV_KEY\s*=\s*"([^"]+)"')
 _SWIFT_TOOL_DEFAULTS_ENV_RE = re.compile(r'toolDefaultsEnvKey\s*=\s*"([^"]+)"')
+#: 输出瘦身 env 名两侧的写法（同上，脚本专属 env 不走 config.py）
+_PY_OUTPUT_FILTER_ENV_RE = re.compile(r'OUTPUT_FILTER_ENV_KEY\s*=\s*"([^"]+)"')
+_SWIFT_OUTPUT_FILTER_ENV_RE = re.compile(r'outputFilterEnvKey\s*=\s*"([^"]+)"')
 
 
 def _read(path: str) -> str | None:
@@ -500,6 +505,24 @@ def find_tool_defaults_env_violations(
     )
 
 
+def find_output_filter_env_violations(
+    py_name: str | None, swift_name: str | None
+) -> list[str]:
+    """纯函数：输出瘦身的配置 env 名两侧必须一致。
+
+    该 env 同样不进 `config.py`（脚本专属 env 的既有约定），第 3 组覆盖不到。
+    两侧不一致时 Python 读到空串、退回内置默认，表现为「我改了 maxBytes
+    但截断阈值没变」——没有任何报错。
+    """
+    return find_cross_language_const_violations(
+        py_name,
+        swift_name,
+        label="输出瘦身 env 名",
+        py_hint="proxy_output_filter.py 的 OUTPUT_FILTER_ENV_KEY",
+        swift_hint="TokenProxyManager.swift 的 outputFilterEnvKey",
+    )
+
+
 def find_client_violations(
     payloads: dict[str, set[str]], groups: dict[str, tuple[str, tuple[str, ...]]]
 ) -> list[str]:
@@ -813,6 +836,8 @@ class ContractInputs:
     swift_synonyms_env: str | None
     py_tool_defaults_env: str | None
     swift_tool_defaults_env: str | None
+    py_output_filter_env: str | None
+    swift_output_filter_env: str | None
     param_ref_keys: set[str]
     param_problems: list[str]
     param_table: dict[str, dict[str, str]]
@@ -878,6 +903,12 @@ def collect_inputs(
         swift_tool_defaults_env=_first_match(
             _SWIFT_TOOL_DEFAULTS_ENV_RE, _read(MCP_MANAGER) or ""
         ),
+        py_output_filter_env=_first_match(
+            _PY_OUTPUT_FILTER_ENV_RE, _read(OUTPUT_FILTER_PY) or ""
+        ),
+        swift_output_filter_env=_first_match(
+            _SWIFT_OUTPUT_FILTER_ENV_RE, _read(SWIFT) or ""
+        ),
         param_ref_keys=param_ref_keys,
         param_problems=param_problems,
         param_table=param_table,
@@ -907,6 +938,9 @@ def check_all(
         + find_synonym_env_violations(inp.py_synonyms_env, inp.swift_synonyms_env)
         + find_tool_defaults_env_violations(
             inp.py_tool_defaults_env, inp.swift_tool_defaults_env
+        )
+        + find_output_filter_env_violations(
+            inp.py_output_filter_env, inp.swift_output_filter_env
         )
         + find_prompt_violations(inp.prompt_files, inp.l10n_prompts, parse_template)
         + find_param_text_violations(
@@ -993,6 +1027,9 @@ def selftest(
         ),
         "工具默认值 env 名: 两侧不一致": replace(
             base, swift_tool_defaults_env="MCP_TOOL_DEFAULT_RENAMED"
+        ),
+        "输出瘦身 env 名: 两侧不一致": replace(
+            base, swift_output_filter_env="MODEL_PROXY_OUTPUT_RENAMED"
         ),
         # 提示词模板（阶段 6 新增）
         "prompt: md 正文与 L10n 兜底不一致": replace(

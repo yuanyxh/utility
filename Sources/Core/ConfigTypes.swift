@@ -221,6 +221,8 @@ public struct ModelProxyConfig: Codable {
     var restartDelayMs: Int = 2000
     /// skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（默认开）
     var skillDedupEnabled: Bool = true
+    /// shell 工具输出瘦身：超长砍头尾 + JSON 无损 minify（默认开）
+    var outputFilter: OutputFilterConfig = OutputFilterConfig()
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -232,6 +234,9 @@ public struct ModelProxyConfig: Codable {
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
         skillDedupEnabled = try c.decodeIfPresent(Bool.self, forKey: .skillDedupEnabled) ?? true
+        outputFilter = decodeAny(
+            decoder, OutputFilterConfig.self, keys: ["outputFilter", "output_filter"],
+        ) ?? OutputFilterConfig()
         clientAccel = decodeAny(
             decoder, ClientAccelConfig.self, keys: ["clientAccel", "client_accel"],
         )
@@ -322,6 +327,74 @@ public struct ClientTextConfig: Codable {
 
     enum CodingKeys: String, CodingKey {
         case continuationPrefixes, summaryPrefixes, injectedTags
+    }
+}
+
+/// shell 工具输出瘦身（config.yaml `modelProxy.outputFilter`）。
+///
+/// 两层安全动作：超长砍头尾（带自证标记）与 JSON 无损 minify。按命令配的
+/// `rules` 默认空表——实测本项目 shell 输出 ≤4KB 占 61%、>8KB 全是内容型，
+/// 没有可规则化的模板噪音，硬写规则只会凭空制造误删风险。
+public struct OutputFilterConfig: Codable {
+    var enabled: Bool = true
+    var maxBytes: Int = 8000
+    var formatCompress: Bool = true
+    /// 连续重复行折叠。**非无损**（行数变了），故默认关。
+    var foldRepeatedLines: Bool = false
+    var bypassTools: [String] = []
+    /// 额外声明的 shell 工具名。跨客户端名字各不相同，故为配置面而非写死。
+    var shellTools: [String] = []
+    var rules: [OutputFilterRule] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        enabled = decodeAny(decoder, Bool.self, keys: ["enabled"]) ?? true
+        maxBytes = decodeAny(decoder, Int.self, keys: ["maxBytes", "max_bytes"]) ?? 8000
+        formatCompress = decodeAny(
+            decoder, Bool.self, keys: ["formatCompress", "format_compress"],
+        ) ?? true
+        foldRepeatedLines = decodeAny(
+            decoder, Bool.self, keys: ["foldRepeatedLines", "fold_repeated_lines"],
+        ) ?? false
+        bypassTools = decodeAny(
+            decoder, [String].self, keys: ["bypassTools", "bypass_tools"],
+        ) ?? []
+        shellTools = decodeAny(
+            decoder, [String].self, keys: ["shellTools", "shell_tools"],
+        ) ?? []
+        rules = decodeAny(decoder, [OutputFilterRule].self, keys: ["rules"]) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, maxBytes, formatCompress, foldRepeatedLines
+        case bypassTools, shellTools, rules
+    }
+}
+
+/// 单条命令规则（`modelProxy.outputFilter.rules[]`），语义对齐 snip 的 filter：
+/// 按 `command` 首个 token 匹配，可选 `subcommand` 收窄；`maxBytes` 为 0 时用全局值。
+public struct OutputFilterRule: Codable {
+    var command: String = ""
+    var subcommand: String = ""
+    var maxBytes: Int = 0
+    var dropLines: [String] = []
+    var keepLines: [String] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        command = decodeAny(decoder, String.self, keys: ["command"]) ?? ""
+        subcommand = decodeAny(decoder, String.self, keys: ["subcommand"]) ?? ""
+        maxBytes = decodeAny(decoder, Int.self, keys: ["maxBytes", "max_bytes"]) ?? 0
+        dropLines = decodeAny(
+            decoder, [String].self, keys: ["dropLines", "drop_lines"],
+        ) ?? []
+        keepLines = decodeAny(
+            decoder, [String].self, keys: ["keepLines", "keep_lines"],
+        ) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case command, subcommand, maxBytes, dropLines, keepLines
     }
 }
 

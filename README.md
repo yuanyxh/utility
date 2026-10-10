@@ -236,6 +236,16 @@ modelProxy:
   # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
   # 短提示文案按 general.language 选（内置 zh-Hans / en）。
   skillDedupEnabled: true
+  # shell 工具输出瘦身：超长砍头尾（带自证标记）+ JSON 无损 minify。只对 shell 类
+  # 工具生效——Read/Edit 等是模型点名要的文件内容，截断等于损坏。
+  outputFilter:
+    enabled: true
+    maxBytes: 8000
+    formatCompress: true
+    foldRepeatedLines: false   # 连续重复行折叠会改行数、并非无损，故默认关
+    bypassTools: []
+    shellTools: []             # 额外声明的 shell 工具名（跨客户端名字不同）
+    rules: []                  # 按命令配的规则，默认空表
   # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider；
   # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
   # apiFormat: anthropic | openai，客户端格式不同时自动做协议转换。
