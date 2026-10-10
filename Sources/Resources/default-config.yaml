@@ -53,6 +53,9 @@ modelProxy:
   # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
   # 短提示文案按 general.language 选（内置 zh-Hans / en）。
   skillDedupEnabled: true
+  # 响应末尾追加一行「本轮代理改写了什么」，如
+  # `mimo-v2.5 | 已执行: Bash 过滤/Skill 短提示`。只加在最终文本回复上，工具调用轮不加。
+  responseAnnotationEnabled: true
   # shell 工具输出瘦身：超长砍头尾（带自证标记）+ JSON 无损 minify。只对 shell 类
   # 工具生效——Read/Edit 等是模型点名要的文件内容，截断等于损坏。
   outputFilter:

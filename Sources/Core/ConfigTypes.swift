@@ -221,6 +221,8 @@ public struct ModelProxyConfig: Codable {
     var restartDelayMs: Int = 2000
     /// skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（默认开）
     var skillDedupEnabled: Bool = true
+    /// 响应末尾追加「本轮代理改写了什么」（默认开）
+    var responseAnnotationEnabled: Bool = true
     /// shell 工具输出瘦身：超长砍头尾 + JSON 无损 minify（默认开）
     var outputFilter: OutputFilterConfig = OutputFilterConfig()
 
@@ -234,6 +236,9 @@ public struct ModelProxyConfig: Codable {
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
         skillDedupEnabled = try c.decodeIfPresent(Bool.self, forKey: .skillDedupEnabled) ?? true
+        responseAnnotationEnabled = try c.decodeIfPresent(
+            Bool.self, forKey: .responseAnnotationEnabled,
+        ) ?? true
         outputFilter = decodeAny(
             decoder, OutputFilterConfig.self, keys: ["outputFilter", "output_filter"],
         ) ?? OutputFilterConfig()

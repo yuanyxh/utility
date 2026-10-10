@@ -141,6 +141,13 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
   - **插入点在 `record_request_body` 之后、ProtocolConverter 之前**（与 skill 去重同处、**排其后**）：记录层必须留原文，否则 `tool_output_log` 的度量标尺被自己毁掉
   - **`foldRepeatedLines` 默认关**：连续重复行折叠为 `行 (xN)` 会**改变行数**，不是无损，与「L2 只做无损」的口径冲突；JSON minify 才是真无损（仅去空白，`ensure_ascii=False`）
   - **规则表默认空**：`rules`（`command`/`subcommand`/`dropLines`/`keepLines`/`maxBytes`，语义对齐 snip 的 filter）机制完整可用，但实测本项目**没有可规则化的模板噪音**——Bash 797 次/1.24MB 中 ≤4KB 占多数（是模型要的内容），>8KB 全是内容型（vue grep 结果、文章正文、TS 报错）。硬写规则只会凭空制造**误删风险**（误删静默且不可逆），等真出现靶子再补
+- **响应注记（`proxy_response_note.py`，2026-10-10）**：代理在**响应末尾**追加一行 `{model} | 已执行: Bash 过滤/Skill 短提示`，让用户看得见代理改了什么。开关 `modelProxy.responseAnnotationEnabled` → `MODEL_PROXY_RESPONSE_NOTE`（默认开，总是注入）
+  - **只追加在最终回复**：判据取**最后一个 content block 的类型**（`text` 才加，`tool_use` 不加），**不取 stop_reason**——后者要到 `message_delta` 才出现，那时 content block 已经 stop，来不及再补 delta。工具调用轮不加：那行的读者是用户，插在工具调用里既没意义、又可能干扰客户端对工具块的解析
+  - **SSE 注入点是「延迟 `content_block_stop`」**：收到 stop 先缓存，等下一个事件才知道它是不是最后一个——是则在它前面补一个 `content_block_delta`（**复用该 block 的 index**，不新建 block、不管 index 递增），不是则原样放行；`finish()` 里残留的 stop 必是最后一个。这是全项目**唯一一处响应侧改写**
+  - **无改写时也加**（显示 `{model} | 无改写`，`NOTE_EMPTY`）：模型名才是这行的主信息——新会话头几轮还没有 tool_result，skill_dedup / output_filter 都不触发，若此时整行消失就完全看不到当前模型（用户实测反馈）。代价是每条最终回复都要解析 SSE，「零开销纯透传」只剩开关关闭时那条路。400 错误响应与 `status >= 400` 一律不加
+  - **feed/finish 收发 bytes 并使用增量 UTF-8 解码**（`codecs.getincrementaldecoder`）：SSE 分片会把多字节字符切成两半，逐片 `decode()` 会解出替换字符、污染 JSON。转换分支现有的 `chunk.decode(errors="replace")` 属同类隐患但不在本次范围
+  - **注入的 delta 不进 `collected_body`**（先 extend 原始 chunk 再 feed）：usage 提取只看上游原始流，度量标尺不被自己改的内容污染
+  - **未覆盖**：客户端 openai 格式的响应不加；openai→anthropic 的 SSE 转换分支暂未接入（当前配置两端都是 anthropic，走直通）
 - ⚠️ **含 tool_result 的消息必须插到最后一个 tool_result 之后，禁止 `insert(0)`**：响应 tool_use 的消息里 tool_result 必须是 content 首个块，插到首位会把工具结果挤后，上游直接 400「`tool_use` ids were found without `tool_result` blocks immediately after」（Anthropic 官方 Troubleshooting 明列此错因）。触发形态是 Claude Code 在工具执行中用户插话产生的 `['tool_result', …, 'text']` 混合消息；**危害被回退机制放大**——混合消息一旦产生即成为「最近的真实用户输入」，此后每个末尾为纯 tool_result 的请求（即所有工具轮次）都反复命中它，持续 400 直到用户发出新的纯文本输入（线上表现为连续 2~3 次**完全相同**的 `messages.N` 错误后自愈）。判定侧 `is_real_user_input` 无需改动，只改插入点；无 tool_result 时 `last_tool_result = -1` 自然退化为 `insert(0)`，行为不变
 
 ### Python LLM 调用统一入口（llm_client.py）

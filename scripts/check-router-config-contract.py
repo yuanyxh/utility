@@ -15,7 +15,8 @@
                   （`PythonScripts` ↔ `Sources/MCPScripts/*.py` 实际文件）、
                   同义词表 env 名（`synonyms.SYNONYMS_ENV_KEY` ↔ `synonymsEnvKey`）、
                   工具默认值 env 名（`tool_defaults.TOOL_DEFAULTS_ENV_KEY` ↔ `toolDefaultsEnvKey`）、
-                  输出瘦身 env 名（`proxy_output_filter.OUTPUT_FILTER_ENV_KEY` ↔ `outputFilterEnvKey`）
+                  输出瘦身 env 名（`proxy_output_filter.OUTPUT_FILTER_ENV_KEY` ↔ `outputFilterEnvKey`）、
+                  响应注记 env 名（`proxy_response_note.RESPONSE_NOTE_ENV_KEY` ↔ `responseNoteEnvKey`）
   5. 提示词     —— `MCPScripts/prompts/<lang>/<feature>.md` 可被**生产解析器**
                   （`prompt_loader.parse_template`）接受、占位符与基线登记一致、
                   翻译版的 `json_keys` 与基线一致；Swift 侧有 L10n 兜底的 feature
@@ -65,6 +66,7 @@ SERVER_PY = os.path.join(SCRIPTS, "server.py")
 SYNONYMS_PY = os.path.join(SCRIPTS, "synonyms.py")
 TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
 OUTPUT_FILTER_PY = os.path.join(SCRIPTS, "proxy_output_filter.py")
+RESPONSE_NOTE_PY = os.path.join(SCRIPTS, "proxy_response_note.py")
 TOOL_TEXT_PY = os.path.join(SCRIPTS, "tool_text.py")
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
@@ -158,6 +160,9 @@ _SWIFT_TOOL_DEFAULTS_ENV_RE = re.compile(r'toolDefaultsEnvKey\s*=\s*"([^"]+)"')
 #: 输出瘦身 env 名两侧的写法（同上，脚本专属 env 不走 config.py）
 _PY_OUTPUT_FILTER_ENV_RE = re.compile(r'OUTPUT_FILTER_ENV_KEY\s*=\s*"([^"]+)"')
 _SWIFT_OUTPUT_FILTER_ENV_RE = re.compile(r'outputFilterEnvKey\s*=\s*"([^"]+)"')
+#: 响应注记开关 env 名两侧的写法（同上，脚本专属 env 不走 config.py）
+_PY_RESPONSE_NOTE_ENV_RE = re.compile(r'RESPONSE_NOTE_ENV_KEY\s*=\s*"([^"]+)"')
+_SWIFT_RESPONSE_NOTE_ENV_RE = re.compile(r'responseNoteEnvKey\s*=\s*"([^"]+)"')
 
 
 def _read(path: str) -> str | None:
@@ -523,6 +528,23 @@ def find_output_filter_env_violations(
     )
 
 
+def find_response_note_env_violations(
+    py_name: str | None, swift_name: str | None
+) -> list[str]:
+    """纯函数：响应注记开关的 env 名两侧必须一致。
+
+    同样是脚本专属 env，第 3 组覆盖不到。两侧不一致时 Python 读到缺省值、
+    开关配置静默失效——表现是「关了开关可那行还在」或反之。
+    """
+    return find_cross_language_const_violations(
+        py_name,
+        swift_name,
+        label="响应注记 env 名",
+        py_hint="proxy_response_note.py 的 RESPONSE_NOTE_ENV_KEY",
+        swift_hint="TokenProxyManager.swift 的 responseNoteEnvKey",
+    )
+
+
 def find_client_violations(
     payloads: dict[str, set[str]], groups: dict[str, tuple[str, tuple[str, ...]]]
 ) -> list[str]:
@@ -838,6 +860,8 @@ class ContractInputs:
     swift_tool_defaults_env: str | None
     py_output_filter_env: str | None
     swift_output_filter_env: str | None
+    py_response_note_env: str | None
+    swift_response_note_env: str | None
     param_ref_keys: set[str]
     param_problems: list[str]
     param_table: dict[str, dict[str, str]]
@@ -909,6 +933,12 @@ def collect_inputs(
         swift_output_filter_env=_first_match(
             _SWIFT_OUTPUT_FILTER_ENV_RE, _read(SWIFT) or ""
         ),
+        py_response_note_env=_first_match(
+            _PY_RESPONSE_NOTE_ENV_RE, _read(RESPONSE_NOTE_PY) or ""
+        ),
+        swift_response_note_env=_first_match(
+            _SWIFT_RESPONSE_NOTE_ENV_RE, _read(SWIFT) or ""
+        ),
         param_ref_keys=param_ref_keys,
         param_problems=param_problems,
         param_table=param_table,
@@ -941,6 +971,9 @@ def check_all(
         )
         + find_output_filter_env_violations(
             inp.py_output_filter_env, inp.swift_output_filter_env
+        )
+        + find_response_note_env_violations(
+            inp.py_response_note_env, inp.swift_response_note_env
         )
         + find_prompt_violations(inp.prompt_files, inp.l10n_prompts, parse_template)
         + find_param_text_violations(
@@ -1030,6 +1063,9 @@ def selftest(
         ),
         "输出瘦身 env 名: 两侧不一致": replace(
             base, swift_output_filter_env="MODEL_PROXY_OUTPUT_RENAMED"
+        ),
+        "响应注记 env 名: 两侧不一致": replace(
+            base, swift_response_note_env="MODEL_PROXY_NOTE_RENAMED"
         ),
         # 提示词模板（阶段 6 新增）
         "prompt: md 正文与 L10n 兜底不一致": replace(

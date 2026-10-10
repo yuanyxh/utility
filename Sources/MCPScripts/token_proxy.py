@@ -43,6 +43,11 @@ from db import conn as dbconn
 from config import ui_language
 from proxy_skill_dedup import dedup_tool_results
 from proxy_output_filter import OUTPUT_FILTER_ENV_KEY, filter_tool_outputs
+from proxy_response_note import (
+    RESPONSE_NOTE_ENV_KEY,
+    NoteBodyBuffer,
+    SSENoteInjector,
+)
 
 # ---------------------------------------------------------------------------
 # 配置（专属 env；公共配置在 config.py，协议/usage 配置在各自子模块）
@@ -64,6 +69,8 @@ SKILL_DEDUP_ENABLED = os.environ.get("MODEL_PROXY_SKILL_DEDUP", "1") != "0"
 # 工具输出瘦身配置（config.yaml modelProxy.outputFilter → env，JSON 串）。
 # 缺省空串即用 Python 侧内置默认（开，max_bytes 8000），与 skill dedup 同构。
 OUTPUT_FILTER_JSON = os.environ.get(OUTPUT_FILTER_ENV_KEY, "")
+# 响应侧追加「本轮改写了什么」（config.yaml modelProxy.responseAnnotation → env）。
+RESPONSE_NOTE_ENABLED = os.environ.get(RESPONSE_NOTE_ENV_KEY, "1") != "0"
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -311,11 +318,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # 记录转换前的原始（注入后）请求体，供 record_usage 上下文提取（结构是客户端格式）
     record_request_body = json.loads(body_bytes) if body_bytes else {}
 
+    # 本轮触发的改写清单，供响应侧追加「已执行: …」用
+    note_parts: list[str] = []
+
     # skill 全文去重：第二份起换成短提示（判据是内容逐字节相同，代理拿不到
     # skill 名单）。必须在 record 之后——记录层要留原样，否则度量标尺被自己毁掉。
     if SKILL_DEDUP_ENABLED:
         deduped = dedup_tool_results(request_body, api_format, ui_language())
         if deduped:
+            note_parts.append("skillDedup")
             body_bytes = json.dumps(request_body).encode()
             logger.info(
                 json.dumps(
@@ -337,6 +348,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     )
     if filtered:
         if filtered.get("saved_bytes"):
+            note_parts.append("outputFilter")
             body_bytes = json.dumps(request_body).encode()
         logger.info(
             json.dumps({"msg": "output_filter", "api_format": api_format, **filtered})
@@ -536,14 +548,34 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             await response.write(payload)
                             collected_body.extend(payload)
                         else:
-                            # 直通（同格式）
+                            # 直通（同格式）。响应侧追加只在确有待报的改写时启用，
+                            # 否则维持纯透传——不解析即零开销、不引入新失败路径。
+                            note_sink = None
+                            if RESPONSE_NOTE_ENABLED:
+                                if is_sse:
+                                    note_sink = SSENoteInjector(
+                                        note_parts, ui_language()
+                                    )
+                                elif upstream_resp.status < 400:
+                                    note_sink = NoteBodyBuffer(
+                                        note_parts, ui_language()
+                                    )
                             async for chunk in upstream_resp.content.iter_any():
                                 last_chunk_at = time.monotonic()
                                 # 收集 SSE chunks 以提取 usage；400 等错误响应为非 SSE JSON，
                                 # 也收集以记录响应体定位错误（临时增强）
                                 if is_sse or upstream_resp.status >= 400:
                                     collected_body.extend(chunk)
-                                await response.write(chunk)
+                                if note_sink is not None:
+                                    out = note_sink.feed(chunk)
+                                    if out:
+                                        await response.write(out)
+                                else:
+                                    await response.write(chunk)
+                            if note_sink is not None:
+                                tail = note_sink.finish()
+                                if tail:
+                                    await response.write(tail)
 
                     except (
                         ConnectionResetError,

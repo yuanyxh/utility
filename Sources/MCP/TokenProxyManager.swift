@@ -141,6 +141,8 @@ final class TokenProxyManager {
 
     /// shell 工具输出瘦身配置的 env 名（Python `proxy_output_filter.OUTPUT_FILTER_ENV_KEY` 同值）
     static let outputFilterEnvKey = "MODEL_PROXY_OUTPUT_FILTER"
+    /// 响应注记开关的 env 名（Python `proxy_response_note.RESPONSE_NOTE_ENV_KEY` 同值）
+    static let responseNoteEnvKey = "MODEL_PROXY_RESPONSE_NOTE"
 
     /// shell 工具输出瘦身配置。**总是注入**（proxyConfig 为空时除外），让 Python
     /// 侧不依赖自己的缺省值——与 skill dedup 开关同理。
@@ -209,6 +211,9 @@ final class TokenProxyManager {
         if let outputFilterJSON = outputFilterJSON() {
             overrides[Self.outputFilterEnvKey] = outputFilterJSON
         }
+        // 响应注记开关：总是注入（"1"/"0"），让 Python 侧不依赖自己的缺省值
+        overrides[Self.responseNoteEnvKey] =
+            (proxyConfig?.responseAnnotationEnabled ?? true) ? "1" : "0"
         return PythonScriptRunner.environment(overrides: overrides)
     }
 
