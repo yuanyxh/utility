@@ -38,8 +38,8 @@ logger = setup_logging("token_proxy", json_format=True)
 # ---------------------------------------------------------------------------
 # 契约面：与 Swift `TokenProxyManager.clientAccelJSON()/clientTextJSON()` 的字段约定
 #
-# 与 `proxy_router.CONTRACT_KEYS` 同义：启动时对照实际 payload 报出缺失键
-# （`client_config_missing` 告警），后续可由契约脚本断言 Swift 序列化字段 ⊇ 本集合。
+# 启动时对照实际 payload 报出缺失键（`client_config_missing` 告警），
+# 并由契约脚本断言 Swift 序列化字段 ⊇ 本集合。
 # ---------------------------------------------------------------------------
 
 ACCEL_CONTRACT_KEYS: tuple[str, ...] = ("enabled", "clients")

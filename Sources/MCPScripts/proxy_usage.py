@@ -629,8 +629,7 @@ def compute_session_key(body: dict) -> str:
     消耗，衡量「过滤是否真的省钱」——单次省 token 不等于总任务成本降低（截断导致
     模型重读文件、轮次增加，总成本可能反升）。
 
-    与 `proxy_router.build_fingerprints` 的 task_key 同构但独立实现：recording 层
-    不依赖路由层（router 可能被配置禁用，此时仍要能聚合会话）。
+    本函数独立实现，不依赖任何上层策略——聚合会话只关乎记录，与转发层无关。
     """
     parts: list[str] = []
 
@@ -922,7 +921,6 @@ def record_tool_outputs(
     api_usage_id: int | None = None,
     stop_reason: str = "",
     model: str = "",
-    route_tier: str = "",
     session_key: str = "",
 ):
     """将工具输出写入 tool_output_log 独立库。
@@ -940,8 +938,8 @@ def record_tool_outputs(
                 "INSERT INTO tool_output_log "
                 "(api_usage_id, timestamp, tool_name, tool_call_id, "
                 "output_text, output_text_raw, output_size, output_lines, "
-                "is_error, stop_reason, model, route_tier, session_key) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "is_error, stop_reason, model, session_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         api_usage_id,
@@ -955,7 +953,6 @@ def record_tool_outputs(
                         t.get("is_error"),
                         stop_reason,
                         model,
-                        route_tier,
                         session_key,
                     )
                     for t in tool_outputs
@@ -974,10 +971,6 @@ async def record_usage(
     error_message: str = "",
     tool_name_override: str = "",
     api_format: str = "anthropic",
-    route_tier: str = "",
-    route_reason: str = "",
-    profile_hash: str = "",
-    route_detail: dict | None = None,
     tool_outputs: list[dict] | None = None,
 ):
     """记录一次 API 调用的 token 用量。
@@ -1045,10 +1038,6 @@ async def record_usage(
         "tool_name": tool_name,
         "parent_id": None,
         "error_message": error_message,
-        "route_tier": route_tier,
-        "route_reason": route_reason,
-        "profile_hash": profile_hash,
-        "route_detail": json.dumps(route_detail) if route_detail else None,
     }
 
     try:
@@ -1059,9 +1048,8 @@ async def record_usage(
                 "input_preview, actual_user_input, input_message_count, has_tool_result, output_preview, "
                 "output_type, stop_reason, response_valid, model, input_tokens, "
                 "output_tokens, cache_read_tokens, cache_write_tokens, "
-                "latency_ms, api_format, request_level, tool_name, parent_id, error_message, "
-                "route_tier, route_reason, profile_hash, route_detail) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "latency_ms, api_format, request_level, tool_name, parent_id, error_message) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record["timestamp"],
                     record["request_type"],
@@ -1085,10 +1073,6 @@ async def record_usage(
                     record["tool_name"],
                     record["parent_id"],
                     record["error_message"],
-                    record["route_tier"],
-                    record["route_reason"],
-                    record["profile_hash"],
-                    record["route_detail"],
                 ),
             )
             record_id = cursor.lastrowid
@@ -1113,7 +1097,6 @@ async def record_usage(
                 api_usage_id=record_id,
                 stop_reason=stop_reason,
                 model=model,
-                route_tier=route_tier,
                 session_key=compute_session_key(request_body),
             )
     except Exception as e:

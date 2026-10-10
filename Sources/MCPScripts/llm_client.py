@@ -1,10 +1,9 @@
 """Python 侧唯一 LLM 出口。
 
-迁移前四个调用点各写一份「读配置 → 拼 body/头 → POST → 取 content → 异常吞掉」：
+迁移前三个调用点各写一份「读配置 → 拼 body/头 → POST → 取 content → 异常吞掉」：
 `summary_llm._llm_chat`（同步 httpx）、`server._check_contradiction`（异步 httpx）、
-`proxy_usage.UsageFieldResolver._ask_model`（异步 aiohttp）、
-`proxy_router._classify_anthropic/_classify_openai`（异步 aiohttp）。差异都是偶然的，
-代价是：改鉴权/超时/thinking 注入要动四处，漏一处即静默降级；各处的失败日志名不同，
+`proxy_usage.UsageFieldResolver._ask_model`（异步 aiohttp）。差异都是偶然的，
+代价是：改鉴权/超时/thinking 注入要动三处，漏一处即静默降级；各处的失败日志名不同，
 无法统一观测；解析响应体的方式也各写一遍（`content[0].text` vs `choices[0].message.content`）。
 
 本模块统一**配置解析、请求构造、鉴权头、协议差异、超时默认、thinking 注入、响应提取、

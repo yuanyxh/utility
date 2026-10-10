@@ -26,6 +26,7 @@ from db import conn as dbconn
 from log_utils import setup_logging
 from server_embed import _get_shared_embedder, embed_query
 from synonyms import load_synonyms
+from tool_defaults import arg_default
 
 # ---------------------------------------------------------------------------
 # 配置（与拆分前 server.py 一致；NOTE_*/PROJECT_MARKER_* 为 server 专属）
@@ -57,6 +58,10 @@ NOTE_SIMILARITY_THRESHOLD = 0.35
 NOTE_MAX_CHUNKS_PER_PROJECT = 50000
 NOTE_MAX_RESULTS = 20
 NOTE_PREVIEW_LEN = 300
+#: 项目工具默认返回条数（权威在 `tool_defaults.arg_default`，配置面见 config.yaml
+#: `mcp.toolDefaults`）。函数签名引用它，避免与 handler 各写一份字面量而漂移。
+DEFAULT_PROJECT_SEARCH_LIMIT = arg_default("project_search", "limit")
+DEFAULT_PROJECT_STRUCTURE_LIMIT = arg_default("project_structure", "limit")
 PROJECT_MARKER_FILES = frozenset(
     {
         # JS/TS
@@ -1028,6 +1033,7 @@ def tool_project_search(
     query: str,
     file_path: str = "",
     kind: str = "",
+    limit: int = DEFAULT_PROJECT_SEARCH_LIMIT,
 ) -> dict:
     """Multi-layer project search.
 
@@ -1104,7 +1110,7 @@ def tool_project_search(
             "expandedQuery": expanded,
             "layers": active_layers,
             "result": best,
-            "results": all_found,
+            "results": all_found[:limit],
             "total": total,
         }
 
@@ -1115,7 +1121,7 @@ def tool_project_search(
             "expandedQuery": expanded,
             "layers": active_layers,
             "result": best,
-            "results": all_found,
+            "results": all_found[:limit],
             "total": total,
         }
 
@@ -1136,7 +1142,7 @@ def tool_project_search(
                 + "\n".join(options)
                 + "\n指定 file_path 或 kind 参数可精确定位。"
             ),
-            "results": all_found[:15],
+            "results": all_found[:limit],
             "total": total,
         }
 
@@ -1146,18 +1152,20 @@ def tool_project_search(
         "query": query,
         "expandedQuery": expanded,
         "layers": active_layers,
-        "results": all_found[:10],
+        "results": all_found[:limit],
         "total": total,
     }
 
 
-def tool_project_structure(db_path: str, subpath: str = "") -> dict:
+def tool_project_structure(
+    db_path: str, subpath: str = "", limit: int = DEFAULT_PROJECT_STRUCTURE_LIMIT
+) -> dict:
     if not os.path.isfile(db_path):
         return {"error": f"Database not found: {db_path}"}
     with dbconn(db_path) as conn:
         conn.row_factory = sqlite3.Row
 
-        MAX_ITEMS = 200
+        MAX_ITEMS = limit
 
         if subpath:
             prefix = subpath.rstrip("/") + "/"

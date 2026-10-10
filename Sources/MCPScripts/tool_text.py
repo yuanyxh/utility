@@ -14,7 +14,7 @@
 （`param.db_path` 被 4 个 `project_*` 工具引用、`param.max_results` 被 2 个引用）。按路径
 命名会让这类文案在翻译时分叉成几份，而「改一处忘三处」的漂移会随翻译一起放大。
 
-契约（由 `scripts/check-router-config-contract.py` 第 7 组静态断言）：
+契约（由 `scripts/check-router-config-contract.py` 第 6 组静态断言）：
 - `handle_list_tools()` 的 `inputSchema` 里**不允许出现裸 description 字面量**，必须
   经 `param_text(...)` 取——漏改一处就会在混杂语言下露出来，且没人会注意到；
 - 引用的键必须存在于 `PARAM_TEXT`（否则运行期抛错，工具列表整体不可用）；

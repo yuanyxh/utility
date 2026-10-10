@@ -152,9 +152,8 @@
 - 所有字段 `decodeIfPresent`（避免缺少 key 导致 crash）
 - YAML key 必须与 struct property 名完全相同
   - ⚠️ **Yams 的 `YAMLDecoder` 不做键名转换**（源码核实：无 `keyDecodingStrategy`，`_KeyedDecodingContainer` 直接用 `key.stringValue` 查表）。写成 snake_case 的 key **不会报错，只会静默回退到默认值**——历史上 `max_retries`/`retry_delay_ms`/`timeout_ms`/`default_tier` 四个键因此从未生效（默认值恰好相同所以没暴露）。新增配置项后要确认它真的进了二进制：`strings .build/debug/utility | grep <propertyName>`
-  - `modelProxy.router` 段例外：解码走 `ConfigTypes.decodeAny`（用 `Decoder.container(keyedBy: AnyKey.self)` 另开任意键名容器），每个键**同时登记 camelCase 与 snake_case 两种拼写**（修复上述历史失效且不破坏既有配置）
+  - `modelProxy.clientAccel` / `clientText` 段例外：解码走 `ConfigTypes.decodeAny`（用 `Decoder.container(keyedBy: AnyKey.self)` 另开任意键名容器），每个键**同时登记 camelCase 与 snake_case 两种拼写**（修复上述历史失效且不破坏既有配置）
     - ⚠️ 不要用 `K(stringValue:)` 去试探键名：合成 CodingKeys 的 `init?(stringValue:)` 只认 case 名，传 snake_case 恒返回 nil，回退分支会变成死代码（实测过）
-  - `router.tiers` 旧字典形态（`{strong: model-a, weak: model-b}`）**无法保序**，解码时按 key 字典序还原。解析结果的真实顺序记在 `token_proxy.log` 的 `router_ready` 行（含 tier 名），改配置后应核对一眼。新配置请用数组形态
 
 ### MCP 服务
 - server.py / summarize.py / token_proxy.py 在 `Sources/MCPScripts/` 目录，脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
@@ -165,6 +164,8 @@
 - **崩溃判据必须覆盖非零退出码**（2026-09-21 修复）：原先只看 `reason == .uncaughtSignal`，而 Python 未捕获异常、端口绑定失败、外部 kill 都退化为 `.exit`（非零退出码被忽略）→ 被当作正常退出静默置 `.stopped`，永不重试也不通知，「崩溃自动重启」实际只对 SIGKILL/SIGSEGV 生效。现改为 `reason == .uncaughtSignal || terminationStatus != 0`（主动停止仍由 `isStopping` 提前 return，不会误触发重启）
 - server.py 所有配置从环境变量读取（`PythonScriptRunner.baseEnvironment()` 提供公共 AI/路径配置，脚本专属变量经 `environment(overrides:)` 注入——如 MCP_PORT/QDRANT_PATH/FASTEMBED_CACHE_PATH），实时构建，不解析 sys.argv
 - 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
+- 工具参数默认值经 `MCP_TOOL_DEFAULTS` 注入（config `mcp.toolDefaults` → env → `tool_defaults.load_defaults()` 合并内置表，**同名覆盖**）。默认值与工具 schema 的 `default` 同源（都取自 `arg_default()`），改了需重启 MCP 服务才生效——脚本专属 env 不走 `config.py`，两侧 env 名由契约脚本交叉断言
+- skill 全文去重（`proxy_skill_dedup.py`，`modelProxy.skillDedupEnabled` → `MODEL_PROXY_SKILL_DEDUP`）：代理转发前把**逐字节相同**的 tool_result 文本第二份起换成 i18n 短提示、保留第一次——本项目 MCP skill 不是 Claude Code 原生 skill，吃不到官方那套去重。插入点在 `record_request_body` 之后、协议转换之前（记录层必须留原样，否则 `tool_output_log` 的度量标尺被自己毁掉）
 - summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入
 - summarize.py 防重复触发：单实例文件锁 + 距上次完整总结 < 6h 跳过；mcp-summary 注册时
   enabled 直接 register（不先 unregister，避免清 last_fire 后 handleMissed 每天重复补触发）
@@ -177,61 +178,6 @@
   3. **LLM 语义判定**：`_gen_merge` prompt 第 8 条 no_increment——改写式重复（措辞不同但信息已被既有段覆盖）拦截
   - 契约：`_gen_merge` 正常返回 `{title,content,supersedes}` **不带 action**，仅 no_increment 带 `{"action":"no_increment","reason":...}`——防 `results.append({..., **item})` 中 action 覆盖局部变量污染 fallback_merge
   - 纯 ratio 阈值不可分：真重复（0.55-0.75）与正常段（README 模板 0.7-1.0）区间重叠 → 覆盖率 + LLM 语义双判定
-
-### 模型分级路由（proxy_normalize.py + proxy_router.py）
-
-`modelProxy.router` 配置的 strong/weak 档位路由。设计沉淀见 `.claude/CLAUDE.md` 的
-「分级路由」条，此处只列改代码时必须守住的边界：
-
-- **只依赖协议契约**：判据只能来自 Anthropic Messages API / OpenAI Chat Completions
-  的协议定义（消息结构、`tool_result.is_error`、`tool_use.name`、`stop_reason`/
-  `finish_reason`、`system`/`tools`）。禁止在代码里出现工具名、工具输出文本、客户端
-  注入标记等字面量——新增判据要么走协议字段，要么做成配置项
-- **`is_error` 三态不可混同**：`None`（协议未提供）≠ `False`（确认成功）。降档必须以
-  「确认无失败」为前提，`None` 只能升档或保持
-- **切档必须有正面证据**：默认保持当前档；降档需配置白名单 + 确认成功 + 剩余轮数够
-  回本三条件同时满足。升档与降档共享同一道「历史工具调用配对完整」前置检查——
-  换 provider/格式时配对不全会让严格上游 400，两个方向都一样
-- **阈值来自公式不是直觉**：`switchCostTurns` 由缓存折扣反推（见 CLAUDE.md 的成本
-  模型），改动前先确认 provider 的缓存折扣。**`checkpointInterval` 必须与它自洽**：
-  检查点比回本线还密，弱档段就永远撑不到回本，降档恒亏。实现上已降档的会话会把
-  间隔抬到 `max(checkpointInterval, switchCostTurns)`，但配置本身也不该写成矛盾值
-- **分类失败兜底走 `defaultTier`（可配置）**：模板默认 `weak`。这是成本与质量的
-  取舍——失败时没有关于任务的任何证据，选低档省钱、选高档保质量，由用户定。
-  无论选哪个，都必须有 `classifier.totalBudgetMs` 总闸，否则 3×timeout 会全压在
-  转发前的关键链路上
-- 子 agent 的 system prompt 与工具集与主 agent 天然不同，`profile_key` 自动隔离，
-  不需要客户端配合、也不要为识别子 agent 增加客户端特化逻辑
-- **配置契约两侧必须同步**：`proxy_router.CONTRACT_KEYS` 声明 Python 读取的全部键，
-  `TokenProxyManager.routerJSON()` 的 `*Payload` 结构体负责序列化。新增 router 配置项
-  要同时改 `ConfigTypes.swift`、`routerJSON()`、`default-config.yaml`。跑
-  `python3 scripts/check-router-config-contract.py` 校验（`--selftest` 反向验证检查器
-  本身有效）——脚本从两侧**真实源码**提取字段，不是手维护的镜像
-- **Python 侧的 `FALLBACK_*` 是兜底不是默认值**：`MODEL_PROXY_ROUTER` 只由 Swift 生成，
-  这些常量正常链路上不可达，只在手写 env 或 Swift 漏字段时生效。缺字段必须记
-  `router_config_missing` 告警——同一语义两个权威源、其中一个长期不执行，漂移就没人发现
-
-### 模型名回显（proxy_model_tag.py）
-
-把路由**实际选中**的模型名追加到助手回复末尾，解决「客户端 statusLine 显示的是自选
-model、看不出代理路由到了哪个上游」的问题。改这块要守住的边界：
-
-- **改动响应体长度就必须剔除 `content-length`**：从上游复制响应头时，若带上
-  `content-length`，客户端会按**旧长度**读取，把注入的尾段整段截掉。有 tagger 时交由
-  aiohttp 重新分帧。这个坑只在「上游确实返回了该头」时暴露——真实 Anthropic SSE 多为
-  chunked 所以线上不一定复现，**mock 上游必须带 content-length 才能测出来**
-- **`feed()` 与 `finish()` 两个出口都要写**：`message_delta` / `message_stop` 被暂存在
-  注入器里（因为只有 `message_delta` 带 `stop_reason`），漏写 `finish()` 的返回值等于
-  把流截断在 `content_block_stop`，客户端会一直等流结束
-- **注入用新增独立文本块，不改写已有块**：不依赖「最后一个块是文本块」的假设。在
-  tool_use 块上追加 `text_delta` 是非法事件；新增块的 index 取「已见最大 index + 1」，
-  index 由任意带 index 的事件推进（兼容省略 `content_block_start` 的网关）
-- **只注入 end_turn**：tool_use 轮的文本会进 agent loop 被模型回读，模型名混进去
-  既无意义又污染历史
-- **只注入 anthropic 输出格式**：注入体是 Anthropic 内容块。OpenAI 格式输出不注入
-  （无实际使用方，不值得再写一套流状态机）
-- 新增/修改注入逻辑后跑 `/tmp/test_model_tag.py`（单元，含跨 chunk 切分与流完整性）
-  与 `/tmp/e2e/tag_client.py`（端到端，含 fastpath 排除与 tool_use 零注入）
 
 ### 项目扫描
 - 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册

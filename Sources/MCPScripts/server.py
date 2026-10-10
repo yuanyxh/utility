@@ -68,6 +68,8 @@ from server_embed import (
     embed_query,
 )
 from server_search import (
+    DEFAULT_PROJECT_SEARCH_LIMIT,
+    DEFAULT_PROJECT_STRUCTURE_LIMIT,
     tool_project_search,
     tool_project_structure,
     tool_project_packages,
@@ -76,6 +78,7 @@ from server_search import (
 )
 import llm_client
 import prompt_loader
+from tool_defaults import arg_default
 from tool_text import param_text
 from log_utils import setup_logging
 
@@ -119,10 +122,14 @@ SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
-#: recall 默认返回条数。工具 schema 的 default 与运行时兜底共用此常量——
-#: 两处各写一份字面量会漂移成「schema 声明 8、实际取 10」，客户端按声明
-#: 省略 limit 时拿到的条数与它看到的不一致。
-DEFAULT_RECALL_LIMIT = 8
+#: recall 默认返回条数。权威在 `tool_defaults.arg_default`（配置面见 config.yaml
+#: `mcp.toolDefaults`）；工具 schema 的 default 与运行时兜底共用此常量，避免
+#: 两处各写一份字面量而漂移成「schema 声明 6、实际取 8」。
+DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
+
+#: project_notes 默认返回条数。同上：schema 的 default 与 handler 兜底共用，
+#: 原先两处各写一个字面量 5，与其它工具走同一张表后不再有漂移面。
+DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
 TOOL_DEFAULTS: dict[str, str] = {
     "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。content: 记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按三要素组织——场景(项目/上下文)、决策(怎么做/选)、演进(当前状态/后续变化), 缺的要素省略不硬凑。多条内容请用 remember_batch。",
@@ -604,6 +611,65 @@ def _load_tool_descriptions() -> dict[str, str]:
     return result
 
 
+def _dumps(obj) -> str:
+    """工具输出统一出口：ensure_ascii=False 让中文按 UTF-8 原样输出。
+
+    ASCII 转义把每个非 ASCII 字符膨胀成 6 字节 \\uXXXX —— recall 实测占其输出 30%。
+    """
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def _int_arg(arguments: dict, key: str, default: int) -> int:
+    """取整数参数；缺失/None/非整数一律回退 default。
+
+    客户端显式传 `null` 时 `arguments.get` 会返回 None，直接拿去切片
+    (`all_found[:None]`) 是**不截断**——静默地把 token 治理关掉。
+    """
+    try:
+        return int(arguments.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# mem0 热层结果原样透出，字段随其版本增删；黑名单会漏，故用白名单。
+# 剔除理由：memory 与 content 逐字重复（实测 248/248，占输出 38%）；hash/role/user_id
+# 模型用不到或恒为同值；metadata 内 archived 服务端已过滤、heat_score 已提到顶层。
+_HOT_RESULT_KEYS = (
+    "id",
+    "content",
+    "score",
+    "created_at",
+    "updated_at",
+    "agent_id",
+    "attributed_to",
+    "heat_score",
+    "layer",
+)
+_HOT_META_KEYS = (
+    "tags",
+    "confidence",
+    "last_accessed_at",
+    "access_count",
+    "disputed",
+    "disputed_by",
+    "dispute_reason",
+)
+
+
+def _project_hot_result(r: dict) -> dict:
+    """热层结果 → 面向模型的形态。`content` 缺失时从 `memory` 归一——
+    `get_all` 的原始结果只有 `memory`，直接按白名单裁会把正文裁没。"""
+    out = {k: r[k] for k in _HOT_RESULT_KEYS if k in r}
+    if "content" not in out:
+        out["content"] = r.get("memory", "")
+    meta = r.get("metadata")
+    if isinstance(meta, dict):
+        kept = {k: meta[k] for k in _HOT_META_KEYS if k in meta}
+        if kept:
+            out["metadata"] = kept
+    return out
+
+
 def _heat_sort_key(item: dict) -> float:
     score = item.get("score", 0)
     heat = item.get("heat_score", item.get("metadata", {}).get("heat_score", 0.5))
@@ -995,6 +1061,11 @@ async def handle_list_tools() -> list[Tool]:
                         "type": "string",
                         "description": param_text("param.symbol_kind"),
                     },
+                    "limit": {
+                        "type": "integer",
+                        "default": DEFAULT_PROJECT_SEARCH_LIMIT,
+                        "description": param_text("param.max_results"),
+                    },
                 },
                 "required": ["dbPath", "query"],
             },
@@ -1014,6 +1085,11 @@ async def handle_list_tools() -> list[Tool]:
                     "path": {
                         "type": "string",
                         "description": param_text("param.subpath"),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": DEFAULT_PROJECT_STRUCTURE_LIMIT,
+                        "description": param_text("param.max_results"),
                     },
                 },
                 "required": ["dbPath"],
@@ -1071,8 +1147,8 @@ async def handle_list_tools() -> list[Tool]:
                     },
                     "limit": {
                         "type": "integer",
+                        "default": DEFAULT_PROJECT_NOTES_LIMIT,
                         "description": param_text("param.max_results"),
-                        "default": 5,
                     },
                 },
                 "required": ["query", "path"],
@@ -1125,7 +1201,7 @@ async def _handle_remember(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
+                text=_dumps(
                     {
                         "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
@@ -1151,7 +1227,7 @@ async def _handle_remember(arguments: dict) -> list[TextContent]:
     return [
         TextContent(
             type="text",
-            text=json.dumps(
+            text=_dumps(
                 {
                     "success": memory_id is not None,
                     "memory_id": memory_id,
@@ -1169,7 +1245,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
+                text=_dumps(
                     {
                         "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
@@ -1180,9 +1256,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
     memories = arguments.get("memories", [])
     if not memories:
         return [
-            TextContent(
-                type="text", text=json.dumps({"error": "memories array is empty"})
-            )
+            TextContent(type="text", text=_dumps({"error": "memories array is empty"}))
         ]
     results = []
     now_iso = datetime.now().isoformat()
@@ -1213,7 +1287,7 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
     return [
         TextContent(
             type="text",
-            text=json.dumps(
+            text=_dumps(
                 {
                     "results": results,
                     "total": len(results),
@@ -1228,8 +1302,12 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
 @_register("recall")
 async def _handle_recall(arguments: dict) -> list[TextContent]:
     query = arguments["query"]
-    limit = arguments.get("limit", DEFAULT_RECALL_LIMIT)
+    limit = _int_arg(arguments, "limit", DEFAULT_RECALL_LIMIT)
     include_archived = arguments.get("include_archived", False)
+    # 热层惰性初始化：漏掉这一步时，重启后的第一次 recall 会静默丢掉整个热层
+    # （`if hot_memory` 为假直接跳过，hot_count 填 0）。初始化失败不终止——
+    # 冷层与 notes 不依赖热层，recall 应当降级而非失败。
+    await _ensure_hot_memory()
     results = []
     if hot_memory:
         try:
@@ -1251,22 +1329,26 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
                 r["layer"] = "hot"
                 r["content"] = r.get("memory", r.get("content", ""))
                 r["heat_score"] = meta.get("heat_score", DEFAULT_HEAT_SCORE)
-                results.append(r)
+                results.append(_project_hot_result(r))
         except Exception as e:
             logger.warning(f"Hot search failed: {e}")
     cold = search_cold_layer(query, limit, include_archived=include_archived)
     results.extend(cold)
     results.sort(key=_heat_sort_key, reverse=True)
+    # 分层计数必须与 `count` 同一口径——都取自截断后的列表。原先对 `results`
+    # 全量统计，三类之和可达 count 的两倍（实测 10+1+9 对 count=10），
+    # 调用方据此以为拿到了全部热层命中。
+    top = results[:limit]
     return [
         TextContent(
             type="text",
-            text=json.dumps(
+            text=_dumps(
                 {
-                    "results": results[:limit],
-                    "count": len(results[:limit]),
-                    "hot_count": sum(1 for r in results if r.get("layer") == "hot"),
-                    "cold_count": sum(1 for r in results if r.get("layer") == "cold"),
-                    "notes_count": sum(1 for r in results if r.get("layer") == "notes"),
+                    "results": top,
+                    "count": len(top),
+                    "hot_count": sum(1 for r in top if r.get("layer") == "hot"),
+                    "cold_count": sum(1 for r in top if r.get("layer") == "cold"),
+                    "notes_count": sum(1 for r in top if r.get("layer") == "notes"),
                 }
             ),
         )
@@ -1279,7 +1361,7 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
+                text=_dumps(
                     {
                         "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
@@ -1307,7 +1389,12 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
         reverse=True,
     )
     return [
-        TextContent(type="text", text=json.dumps({"results": data, "count": len(data)}))
+        TextContent(
+            type="text",
+            text=_dumps(
+                {"results": [_project_hot_result(m) for m in data], "count": len(data)}
+            ),
+        )
     ]
 
 
@@ -1327,7 +1414,7 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
             qdrant.delete(collection_name=COLD_COLLECTION, points_selector=[point_id])
         except Exception:
             pass
-    return [TextContent(type="text", text=json.dumps({"success": True}))]
+    return [TextContent(type="text", text=_dumps({"success": True}))]
 
 
 @_register("set_memory_processed")
@@ -1336,7 +1423,7 @@ async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
+                text=_dumps(
                     {
                         "error": ERR_HOT_LAYER_NOT_READY,
                         "retry_after_seconds": HOT_INIT_RUNTIME_COOLDOWN,
@@ -1348,21 +1435,19 @@ async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
     bit = int(arguments.get("bit", 0))
     value = int(arguments.get("value", 1))
     if not memory_ids:
-        return [
-            TextContent(type="text", text=json.dumps({"error": ERR_MEMORY_IDS_EMPTY}))
-        ]
+        return [TextContent(type="text", text=_dumps({"error": ERR_MEMORY_IDS_EMPTY}))]
     if not (0 <= bit <= PROCESSED_MAX_BIT):
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": err_bit_out_of_range()}),
+                text=_dumps({"error": err_bit_out_of_range()}),
             )
         ]
     if value not in (0, 1):
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": ERR_VALUE_INVALID}),
+                text=_dumps({"error": ERR_VALUE_INVALID}),
             )
         ]
     results = []
@@ -1375,13 +1460,12 @@ async def _handle_set_memory_processed(arguments: dict) -> list[TextContent]:
     return [
         TextContent(
             type="text",
-            text=json.dumps(
+            text=_dumps(
                 {
                     "results": results,
                     "updated": sum(1 for r in results if r.get("success")),
                     "failed": sum(1 for r in results if not r.get("success")),
-                },
-                ensure_ascii=False,
+                }
             ),
         )
     ]
@@ -1396,8 +1480,9 @@ async def _handle_project_search(arguments: dict) -> list[TextContent]:
             arguments["query"],
             file_path=arguments.get("file_path", ""),
             kind=arguments.get("kind", ""),
+            limit=_int_arg(arguments, "limit", DEFAULT_PROJECT_SEARCH_LIMIT),
         )
-        return [TextContent(type="text", text=json.dumps(result))]
+        return [TextContent(type="text", text=_dumps(result))]
     except Exception:
         # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
         # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
@@ -1408,9 +1493,12 @@ async def _handle_project_search(arguments: dict) -> list[TextContent]:
 async def _handle_project_structure(arguments: dict) -> list[TextContent]:
     try:
         result = await asyncio.to_thread(
-            tool_project_structure, arguments["dbPath"], arguments.get("path", "")
+            tool_project_structure,
+            arguments["dbPath"],
+            arguments.get("path", ""),
+            _int_arg(arguments, "limit", DEFAULT_PROJECT_STRUCTURE_LIMIT),
         )
-        return [TextContent(type="text", text=json.dumps(result))]
+        return [TextContent(type="text", text=_dumps(result))]
     except Exception:
         # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
         # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
@@ -1423,7 +1511,7 @@ async def _handle_project_packages(arguments: dict) -> list[TextContent]:
         result = await asyncio.to_thread(
             tool_project_packages, arguments["dbPath"], arguments.get("type", "")
         )
-        return [TextContent(type="text", text=json.dumps(result))]
+        return [TextContent(type="text", text=_dumps(result))]
     except Exception:
         # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
         # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
@@ -1436,7 +1524,7 @@ async def _handle_project_exports(arguments: dict) -> list[TextContent]:
         result = await asyncio.to_thread(
             tool_project_exports, arguments["dbPath"], arguments["path"]
         )
-        return [TextContent(type="text", text=json.dumps(result))]
+        return [TextContent(type="text", text=_dumps(result))]
     except Exception:
         # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
         # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
@@ -1448,20 +1536,20 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
     try:
         query = arguments["query"]
         path = arguments["path"]
-        limit = int(arguments.get("limit", 5))
+        limit = _int_arg(arguments, "limit", DEFAULT_PROJECT_NOTES_LIMIT)
 
         if not query or not query.strip():
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps({"error": "query must not be empty"}),
+                    text=_dumps({"error": "query must not be empty"}),
                 )
             ]
         if not os.path.isdir(path):
             return [
                 TextContent(
                     type="text",
-                    text=json.dumps({"error": f"project directory not found: {path}"}),
+                    text=_dumps({"error": f"project directory not found: {path}"}),
                 )
             ]
 
@@ -1469,7 +1557,7 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
         result = await asyncio.to_thread(
             _query_project_notes, path, query.strip(), limit
         )
-        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+        return [TextContent(type="text", text=_dumps(result))]
 
     except Exception:
         # 同上：日志与 isError 由 handle_call_tool 兜底层统一处理
@@ -1484,7 +1572,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": "parentName and path are required"}),
+                text=_dumps({"error": "parentName and path are required"}),
             )
         ]
     skill_dir = _find_skill_dir(parent_name)
@@ -1492,7 +1580,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": f"skill not found: {parent_name}"}),
+                text=_dumps({"error": f"skill not found: {parent_name}"}),
             )
         ]
     # 只允许引用附属子目录（references/agents/scripts）内资源
@@ -1501,7 +1589,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
+                text=_dumps(
                     {"error": f"path must be under one of: {sorted(_SKILL_SKIP_DIRS)}"}
                 ),
             )
@@ -1511,7 +1599,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": "path escapes the skill directory"}),
+                text=_dumps({"error": "path escapes the skill directory"}),
             )
         ]
     # symlink 防护：normpath 只挡语法层 ../，不解析 symlink。
@@ -1524,9 +1612,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps(
-                    {"error": "path escapes the skill directory via symlink"}
-                ),
+                text=_dumps({"error": "path escapes the skill directory via symlink"}),
             )
         ]
     full = real_full
@@ -1534,7 +1620,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": f"resource not found: {rel_path}"}),
+                text=_dumps({"error": f"resource not found: {rel_path}"}),
             )
         ]
     try:
@@ -1544,7 +1630,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         return [
             TextContent(
                 type="text",
-                text=json.dumps({"error": "resource is not utf-8 text"}),
+                text=_dumps({"error": "resource is not utf-8 text"}),
             )
         ]
     except Exception as e:
@@ -1567,9 +1653,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         if normalized in skills:
             return [TextContent(type="text", text=skills[normalized]["content"])]
         return [
-            TextContent(
-                type="text", text=json.dumps({"error": f"Unknown tool: {name}"})
-            )
+            TextContent(type="text", text=_dumps({"error": f"Unknown tool: {name}"}))
         ]
     except Exception as e:
         # 必须继续上抛：此处若 return 一个 {"error": ...} 的 TextContent，
@@ -1673,6 +1757,10 @@ def _run_archive_sync_impl() -> tuple[int, int, int]:
 
 
 async def _run_archive_sync() -> tuple[int, int, int]:
+    # 与 recall 同源：`_run_archive_sync_impl` 只判断 `if hot_memory`，不初始化。
+    # 超过一个归档周期(24h)没有热层调用时，归档会一直空转且只报 hot_deleted=0。
+    # 必须在事件循环上调用(impl 跑在执行器里)，故放在此处。
+    await _ensure_hot_memory()
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run_archive_sync_impl)
 
@@ -1830,7 +1918,11 @@ async def main():
     async def api_project_search(request):
         body = await request.json()
         try:
-            result = tool_project_search(body.get("dbPath", ""), body.get("query", ""))
+            result = tool_project_search(
+                body.get("dbPath", ""),
+                body.get("query", ""),
+                limit=_int_arg(body, "limit", DEFAULT_PROJECT_SEARCH_LIMIT),
+            )
             return JSONResponse(result)
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -1839,7 +1931,9 @@ async def main():
         body = await request.json()
         try:
             result = tool_project_structure(
-                body.get("dbPath", ""), body.get("path", "")
+                body.get("dbPath", ""),
+                body.get("path", ""),
+                _int_arg(body, "limit", DEFAULT_PROJECT_STRUCTURE_LIMIT),
             )
             return JSONResponse(result)
         except Exception as e:

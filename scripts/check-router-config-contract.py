@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 """校验 Swift ↔ Python 之间的跨语言契约是否一致。
 
-**文件名保留历史名**（最初只覆盖 router）；实际覆盖范围已扩展到全部跨语言契约面，
-共七组，每组都由「Swift 侧真实源码」与「Python 侧真实源码」交叉断言：
+**文件名保留历史名**（最初只覆盖 router，该特性已移除）；实际覆盖范围已扩展到
+全部跨语言契约面，共六组，每组都由「Swift 侧真实源码」与「Python 侧真实源码」
+交叉断言：
 
-  1. router    —— `MODEL_PROXY_ROUTER`    ←→ `proxy_router.CONTRACT_KEYS`
-  2. providers —— `MODEL_PROXY_PROVIDERS` ←→ `proxy_provider.KEY_*`
-  3. client    —— `MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT`
+  1. providers —— `MODEL_PROXY_PROVIDERS` ←→ `proxy_provider.KEY_*`
+  2. client    —— `MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT`
                   ←→ `proxy_client.ACCEL_CONTRACT_KEYS` / `ACCEL_CLIENT_KEYS` /
                      `CLIENT_TEXT_CONTRACT_KEYS`
-  4. env 名     —— Swift 侧**实际注入点**（`env["NAME"] = …` / `env[EnvKeys.xxx] = …`）
+  3. env 名     —— Swift 侧**实际注入点**（`env["NAME"] = …` / `env[EnvKeys.xxx] = …`）
                   ⊇ `config.py` 读取的环境变量名；反向断言 `EnvKeys` 声明的常量都有注入点
-  5. 进程/约定 —— 服务名（server.py ↔ MCPProcessManager.swift）、脚本名
+  4. 进程/约定 —— 服务名（server.py ↔ MCPProcessManager.swift）、脚本名
                   （`PythonScripts` ↔ `Sources/MCPScripts/*.py` 实际文件）、
-                  同义词表 env 名（`synonyms.SYNONYMS_ENV_KEY` ↔ `synonymsEnvKey`）
-  6. 提示词     —— `MCPScripts/prompts/<lang>/<feature>.md` 可被**生产解析器**
+                  同义词表 env 名（`synonyms.SYNONYMS_ENV_KEY` ↔ `synonymsEnvKey`）、
+                  工具默认值 env 名（`tool_defaults.TOOL_DEFAULTS_ENV_KEY` ↔ `toolDefaultsEnvKey`）
+  5. 提示词     —— `MCPScripts/prompts/<lang>/<feature>.md` 可被**生产解析器**
                   （`prompt_loader.parse_template`）接受、占位符与基线登记一致、
                   翻译版的 `json_keys` 与基线一致；Swift 侧有 L10n 兜底的 feature
                   还要求正文与 `Resources/<lang>.json` 逐字一致；基线语言两侧同值
-  7. 参数描述   —— `server.py` 的 `handle_list_tools()` 里每个参数描述都必须经
+  6. 参数描述   —— `server.py` 的 `handle_list_tools()` 里每个参数描述都必须经
                   `tool_text.param_text(...)` 取（无裸字面量）、引用的键存在于
                   `PARAM_TEXT`、表中无孤儿键、各键语言集合一致且含基线；
-                  基线语言与第 6 组同值
+                  基线语言与第 5 组同值
 
 背景：两侧一旦不同步，Python 只会静默回退到兜底值——功能看起来正常，
 实际配置没生效。历史上 `max_retries` 等 4 个键就这样失效了很久，因为兜底值
@@ -33,7 +34,7 @@ anthropic 的静默路径，而那个默认值会让协议转换方向直接错�
   - Swift：解析 `TokenProxyManager.swift` 的 `*Payload: Encodable` 字段（providers
     的 `Payload` 另按 `CodingKeys` 映射，才是最终写进 JSON 的键）、`Constants.swift`
     的 `EnvKeys`/`PythonScripts`、`MCPProcessManager.swift` 的服务名。
-  - Python：导入 `proxy_router` / `proxy_provider` / `proxy_client` 的契约常量，
+  - Python：导入 `proxy_provider` / `proxy_client` 的契约常量，
     并正则读取 `config.py` 的环境变量名、`server.py` 的服务名。
 
 不满足即退出码 1。用法（仓库根目录）：
@@ -61,6 +62,7 @@ MCP_MANAGER = os.path.join(SOURCES, "MCP", "MCPProcessManager.swift")
 CONFIG_PY = os.path.join(SCRIPTS, "config.py")
 SERVER_PY = os.path.join(SCRIPTS, "server.py")
 SYNONYMS_PY = os.path.join(SCRIPTS, "synonyms.py")
+TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
 TOOL_TEXT_PY = os.path.join(SCRIPTS, "tool_text.py")
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
@@ -72,7 +74,7 @@ PROMPT_FEATURES = {
     # Swift 侧（Translator）
     "translate": ("source", "target"),
     "translate_auto": ("first", "second"),
-    # Python 侧（summarize / summary_rules / server / proxy_router）
+    # Python 侧（summarize / summary_rules / server）
     "quality_judge": (),
     "quality_judge_user": ("text",),
     "aggregate": ("label", "facts_text"),
@@ -88,7 +90,6 @@ PROMPT_FEATURES = {
     "gen_merge": ("topic", "facts", "target", "context"),
     "extract_rules": ("facts_text", "level_labels", "titles_block"),
     "contradiction": ("items_text", "content"),
-    "classify_tier": ("tier_lines", "last_user_message"),
 }
 #: 基线语言：所有 feature 都必须有它（它是任何语言的回退目标，缺了就是普遍性损坏）
 PROMPT_BASELINE_LANG = "zh-Hans"
@@ -98,15 +99,6 @@ PROMPT_OTHER_LANGS = ("en",)
 #: 有 L10n JSON 兜底的 feature——只有它们要求 `Resources/<lang>.json` 里
 #: 有同文正文（Swift 侧文件缺失时回退该文案；Python 侧无此路径）。
 L10N_BACKED_FEATURES = ("translate", "translate_auto")
-
-#: JSON 分组 → Swift 中承载该分组的 Payload 结构体名
-GROUP_STRUCT = {
-    "root": "RouterPayload",
-    "classifier": "ClassifierPayload",
-    "policy": "PolicyPayload",
-    "conversation": "ConversationPayload",
-    "profile": "ProfilePayload",
-}
 
 #: providers 的 Payload 结构体名（定义在 `providersJSON()` 内层作用域）
 PROVIDER_STRUCT = "Payload"
@@ -122,14 +114,14 @@ _STATIC_LET_RE = re.compile(r'static\s+let\s+(\w+)\s*=\s*"([^"]+)"')
 #: Swift 里**把 env 名送进子进程环境**的写法：`env["NAME"] = …` / `env[EnvKeys.xxx] = …`
 #: （方括号前的标识符任意：env / overrides / 局部变量都算，已核对本仓无其它形态）。
 #: 刻意**不**匹配「任意 `"UPPER_SNAKE"` 字面量」——`EnvKeys` 的声明本身就是一串这种字面量，
-#: 按「出现过」收集会让第 4 组恒真，详见 `collect_swift_env_injections`。
+#: 按「出现过」收集会让第 3 组恒真，详见 `collect_swift_env_injections`。
 _SWIFT_ENV_ASSIGN_RE = re.compile(
     r'\b\w+\[\s*(?:"([A-Z][A-Z0-9_]{2,})"|EnvKeys\.(\w+))\s*\]\s*='
 )
 #: Python `get("NAME", ...)`。`config.py` 是公共 env 层的唯一读取入口
 _PY_ENV_READ_RE = re.compile(r'\bget\(\s*"([A-Z][A-Z0-9_]+)"')
 #: Python 脚本**直读**的 env（`os.environ.get("NAME"`）。脚本专属 env 不进 `config.py`
-#: 公共层，故第 4 组原先看不到它们——`MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT`
+#: 公共层，故第 3 组原先看不到它们——`MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT`
 #: 这类两侧各写一份字面量的名字因此长期无断言：Swift 改名而 Python 没跟时，配置静默回退
 #: 内置默认，零报错（`MCP_SYNONYMS` 曾被单独兜住，正是同一个问题）。
 _PY_SCRIPT_ENV_READ_RE = re.compile(r'os\.environ\.get\(\s*"([A-Z][A-Z0-9_]+)"')
@@ -153,11 +145,14 @@ _PY_SERVER_NAME_RE = re.compile(r'SERVER_NAME\s*=\s*"([^"]+)"')
 _SWIFT_SERVICE_RE = re.compile(r'service:\s*"([^"]+)"')
 #: `PromptManager.fallbackLanguage = "zh-Hans"`
 _SWIFT_FALLBACK_LANG_RE = re.compile(r'fallbackLanguage\s*=\s*"([^"]+)"')
-#: 同义词表 env 名两侧的写法（该 env 不进 config.py，故不在第 4 组的覆盖范围内，
+#: 同义词表 env 名两侧的写法（该 env 不进 config.py，故不在第 3 组的覆盖范围内，
 #: 单独交叉断言——否则 Swift 改了名而 Python 没跟，表现是「内置表照常工作、
 #: 我配的同义词静默失效」）
 _PY_SYNONYMS_ENV_RE = re.compile(r'SYNONYMS_ENV_KEY\s*=\s*"([^"]+)"')
 _SWIFT_SYNONYMS_ENV_RE = re.compile(r'synonymsEnvKey\s*=\s*"([^"]+)"')
+#: 工具默认值 env 名两侧的写法（同上，脚本专属 env 不走 config.py）
+_PY_TOOL_DEFAULTS_ENV_RE = re.compile(r'TOOL_DEFAULTS_ENV_KEY\s*=\s*"([^"]+)"')
+_SWIFT_TOOL_DEFAULTS_ENV_RE = re.compile(r'toolDefaultsEnvKey\s*=\s*"([^"]+)"')
 
 
 def _read(path: str) -> str | None:
@@ -207,7 +202,7 @@ def parse_swift_payloads(path: str) -> dict[str, set[str]]:
         sys.exit(2)
 
     out: dict[str, set[str]] = {}
-    for name in (*GROUP_STRUCT.values(), PROVIDER_STRUCT, *CLIENT_STRUCTS):
+    for name in (PROVIDER_STRUCT, *CLIENT_STRUCTS):
         body = _extract_struct_body(src, name)
         if body is not None:
             out[name] = set(_FIELD_RE.findall(body))
@@ -241,31 +236,6 @@ def parse_provider_json_keys(path: str) -> set[str]:
     return {mapped.get(p, p) for p in props}
 
 
-def find_violations(
-    payloads: dict[str, set[str]], contract: dict[str, tuple[str, ...]]
-) -> list[str]:
-    """纯函数：router 分组的契约违反清单。
-
-    抽成纯函数是为了能被反向测试——一个永远为空的检查器和没有检查器是一回事。
-    """
-    violations: list[str] = []
-    for group, keys in contract.items():
-        struct = GROUP_STRUCT.get(group)
-        if struct is None:
-            violations.append(f"分组 {group!r} 在脚本的 GROUP_STRUCT 里没有对应结构体")
-            continue
-        fields = payloads.get(struct)
-        if fields is None:
-            violations.append(f"Swift 侧找不到结构体 {struct}（分组 {group}）")
-            continue
-        for key in keys:
-            if key not in fields:
-                violations.append(
-                    f"{struct}.{key} 缺失 —— Python 的 {group}.{key} 会静默走兜底值"
-                )
-    return violations
-
-
 def find_provider_violations(
     json_keys: set[str], contract: tuple[str, ...]
 ) -> list[str]:
@@ -288,11 +258,13 @@ def parse_static_lets(path: str, enum_name: str) -> dict[str, str]:
     return dict(_STATIC_LET_RE.findall(body)) if body else {}
 
 
-def collect_swift_env_injections(sources_dir: str, env_keys: dict[str, str]) -> set[str]:
+def collect_swift_env_injections(
+    sources_dir: str, env_keys: dict[str, str]
+) -> set[str]:
     """Swift 侧**实际注入**的 env 名集合——而不是「源码里出现过这个名字」。
 
     两者的差别就是这条判据的全部意义。`EnvKeys` 的声明本身就是一串 `"UPPER_SNAKE"`
-    字面量，按「出现过」来收集时它自己就满足了「Python 读了必须有人注入」，第 4 组于是
+    字面量，按「出现过」来收集时它自己就满足了「Python 读了必须有人注入」，第 3 组于是
     **恒真**：它抓不到真正要防的那类漏加。`AI_LLM_TIMEOUT` 与 `UTILITY_LANG` 只加进了
     `baseEnvironment()`、没加进内部 `.sh` 任务的白名单，就是这样溜过去的——配了超时和
     语言的用户，在定时总结链路上拿到的是默认 120s 与中文提示词，且没有任何报错。
@@ -349,7 +321,9 @@ def parse_python_script_envs(scripts_dir: str) -> tuple[set[str], set[str]]:
     return reads, self_set
 
 
-def find_env_violations(python_reads: set[str], swift_injections: set[str]) -> list[str]:
+def find_env_violations(
+    python_reads: set[str], swift_injections: set[str]
+) -> list[str]:
     """纯函数：Python 读了、但 Swift 侧没有任何**注入点**的 env 名。
 
     这类名字在运行期恒为空——访问器返回默认值，功能静默停摆（如 AI key 读不到时
@@ -380,7 +354,7 @@ def find_script_env_violations(
     """纯函数：脚本**直读**、但 Swift 侧没有任何注入点的专属 env。
 
     公共层那条（`find_env_violations`）只看 `config.py`，覆盖不到脚本直读的那批：
-    `MODEL_PROXY_PORT` / `MODEL_PROXY_PROVIDERS` / `MODEL_PROXY_ROUTER` /
+    `MODEL_PROXY_PORT` / `MODEL_PROXY_PROVIDERS` /
     `MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT` 等。它们的名字在两侧各写一份
     字面量，改名只改一侧时配置**静默回退内置默认**——与 `MCP_SYNONYMS` 是同一类问题，
     区别只是后者曾被单独兜住。
@@ -495,7 +469,7 @@ def find_synonym_env_violations(
 ) -> list[str]:
     """纯函数：同义词表 env 名两侧必须一致。
 
-    该 env 不由 `config.py` 读取（脚本专属 env 不进公共层），故第 4 组的「Python 读了
+    该 env 不由 `config.py` 读取（脚本专属 env 不进公共层），故第 3 组的「Python 读了
     Swift 必须注入」覆盖不到它：Swift 改了名而 Python 没跟时，内置表照常工作、**用户配的
     同义词静默失效**——没有任何报错。
     """
@@ -505,6 +479,24 @@ def find_synonym_env_violations(
         label="同义词表 env 名",
         py_hint="synonyms.py 的 SYNONYMS_ENV_KEY",
         swift_hint="MCPProcessManager.swift 的 synonymsEnvKey",
+    )
+
+
+def find_tool_defaults_env_violations(
+    py_name: str | None, swift_name: str | None
+) -> list[str]:
+    """纯函数：工具默认值 env 名两侧必须一致。
+
+    与同义词表同理——该 env 不进 `config.py`，第 3 组覆盖不到；Swift 改了名而
+    Python 没跟时，内置默认照常生效、**用户配的默认值静默失效**，表现为
+    「我调小了返回条数但用量没降」。
+    """
+    return find_cross_language_const_violations(
+        py_name,
+        swift_name,
+        label="工具默认值 env 名",
+        py_hint="tool_defaults.py 的 TOOL_DEFAULTS_ENV_KEY",
+        swift_hint="MCPProcessManager.swift 的 toolDefaultsEnvKey",
     )
 
 
@@ -819,6 +811,8 @@ class ContractInputs:
     python_fallback_lang: str | None
     py_synonyms_env: str | None
     swift_synonyms_env: str | None
+    py_tool_defaults_env: str | None
+    swift_tool_defaults_env: str | None
     param_ref_keys: set[str]
     param_problems: list[str]
     param_table: dict[str, dict[str, str]]
@@ -878,6 +872,12 @@ def collect_inputs(
         swift_synonyms_env=_first_match(
             _SWIFT_SYNONYMS_ENV_RE, _read(MCP_MANAGER) or ""
         ),
+        py_tool_defaults_env=_first_match(
+            _PY_TOOL_DEFAULTS_ENV_RE, _read(TOOL_DEFAULTS_PY) or ""
+        ),
+        swift_tool_defaults_env=_first_match(
+            _SWIFT_TOOL_DEFAULTS_ENV_RE, _read(MCP_MANAGER) or ""
+        ),
         param_ref_keys=param_ref_keys,
         param_problems=param_problems,
         param_table=param_table,
@@ -887,14 +887,12 @@ def collect_inputs(
 
 def check_all(
     inp: ContractInputs,
-    router_contract: dict[str, tuple[str, ...]],
     provider_contract: tuple[str, ...],
     parse_template,
 ) -> list[str]:
     """全部跨语言契约的违反清单（分组顺序同模块 docstring 的编号）。"""
     return (
-        find_violations(inp.swift_payloads, router_contract)
-        + find_provider_violations(inp.provider_keys, provider_contract)
+        find_provider_violations(inp.provider_keys, provider_contract)
         + find_client_violations(inp.swift_payloads, inp.client_groups)
         + find_env_violations(inp.python_env_reads, inp.swift_env_injections)
         + find_script_env_violations(
@@ -907,6 +905,9 @@ def check_all(
         + find_script_violations(inp.python_scripts, SCRIPTS)
         + find_service_name_violations(inp.py_server_name, inp.swift_service_name)
         + find_synonym_env_violations(inp.py_synonyms_env, inp.swift_synonyms_env)
+        + find_tool_defaults_env_violations(
+            inp.py_tool_defaults_env, inp.swift_tool_defaults_env
+        )
         + find_prompt_violations(inp.prompt_files, inp.l10n_prompts, parse_template)
         + find_param_text_violations(
             inp.param_ref_keys,
@@ -936,7 +937,6 @@ def _blank_json_keys(raw: str) -> str:
 
 def selftest(
     inp: ContractInputs,
-    router_contract: dict[str, tuple[str, ...]],
     provider_contract: tuple[str, ...],
     parse_template,
 ) -> int:
@@ -948,22 +948,6 @@ def selftest(
     """
     base = copy.deepcopy(inp)
     cases: dict[str, ContractInputs] = {
-        # router
-        "router: 删 PolicyPayload.checkpoint_interval": replace(
-            base,
-            swift_payloads=_drop_from_payload(
-                base, "PolicyPayload", "checkpoint_interval"
-            ),
-        ),
-        "router: 删 ClassifierPayload.total_budget_ms": replace(
-            base,
-            swift_payloads=_drop_from_payload(
-                base, "ClassifierPayload", "total_budget_ms"
-            ),
-        ),
-        "router: 删整个 ProfilePayload": replace(
-            base, swift_payloads=_drop_struct(base, "ProfilePayload")
-        ),
         # providers
         "providers: 删 api_format": replace(
             base, provider_keys=base.provider_keys - {"api_format"}
@@ -991,11 +975,13 @@ def selftest(
             base, swift_env_injections=base.swift_env_injections - {"AI_LLM_TIMEOUT"}
         ),
         "env: EnvKeys 声明了却无注入点": replace(
-            base, env_keys={**base.env_keys, "ghostKey": "SWIFT_DECLARED_NEVER_INJECTED"}
+            base,
+            env_keys={**base.env_keys, "ghostKey": "SWIFT_DECLARED_NEVER_INJECTED"},
         ),
         "env: 脚本直读的专属 env 无 Swift 注入点": replace(
             base,
-            python_script_env_reads=base.python_script_env_reads | {"SCRIPT_READS_NEVER_INJECTED"},
+            python_script_env_reads=base.python_script_env_reads
+            | {"SCRIPT_READS_NEVER_INJECTED"},
         ),
         # 进程约定
         "脚本名: PythonScripts 指向不存在的文件": replace(
@@ -1004,6 +990,9 @@ def selftest(
         "服务名: 两侧不一致": replace(base, swift_service_name="other-service"),
         "同义词 env 名: 两侧不一致": replace(
             base, swift_synonyms_env="MCP_SYNONYM_RENAMED"
+        ),
+        "工具默认值 env 名: 两侧不一致": replace(
+            base, swift_tool_defaults_env="MCP_TOOL_DEFAULT_RENAMED"
         ),
         # 提示词模板（阶段 6 新增）
         "prompt: md 正文与 L10n 兜底不一致": replace(
@@ -1071,7 +1060,7 @@ def selftest(
     for name, mutated in cases.items():
         if mutated == base:
             ineffective.append(name)
-        elif not check_all(mutated, router_contract, provider_contract, parse_template):
+        elif not check_all(mutated, provider_contract, parse_template):
             missed.append(name)
 
     if ineffective:
@@ -1094,7 +1083,7 @@ VENV_PYTHON = os.path.expanduser("~/.config/utility/mcp-venv/bin/python3")
 def _reexec_with_venv() -> None:
     """用项目 venv 的解释器重启自身。
 
-    本脚本要 import `proxy_router` / `proxy_provider` / `proxy_client` 取契约常量，
+    本脚本要 import `proxy_provider` / `proxy_client` 取契约常量，
     这些模块连带 `httpx` / `aiohttp` / `db` 等依赖——只有 venv 里有。用系统 python3
     跑会在 import 阶段就失败，而报错（`No module named 'httpx'`）看起来与「契约不一致」
     毫无关系，排查者会以为是契约坏了。自举后 `python3 scripts/...` 的用法保持不变。
@@ -1123,7 +1112,6 @@ def main() -> int:
             KEY_NAME,
             KEY_URL,
         )
-        from proxy_router import CONTRACT_KEYS
 
         # 提示词组的判据取自生产解析器本体，避免「校验器与运行期解析器不同源」
         from prompt_loader import (
@@ -1155,11 +1143,9 @@ def main() -> int:
         return int(e.code or 2)
 
     if "--selftest" in sys.argv[1:]:
-        return selftest(inputs, CONTRACT_KEYS, provider_contract, parse_prompt_template)
+        return selftest(inputs, provider_contract, parse_prompt_template)
 
-    violations = check_all(
-        inputs, CONTRACT_KEYS, provider_contract, parse_prompt_template
-    )
+    violations = check_all(inputs, provider_contract, parse_prompt_template)
     if violations:
         print("[contract] ✗ 跨语言契约不一致：")
         for v in violations:
@@ -1170,13 +1156,11 @@ def main() -> int:
         )
         return 1
 
-    total = (
-        sum(len(v) for v in CONTRACT_KEYS.values())
-        + len(provider_contract)
-        + sum(len(keys) for _, keys in client_groups.values())
+    total = len(provider_contract) + sum(
+        len(keys) for _, keys in client_groups.values()
     )
     print(
-        f"[contract] ✓ 跨语言契约一致（router + providers + client 共 {total} 个键；"
+        f"[contract] ✓ 跨语言契约一致（providers + client 共 {total} 个键；"
         f"env 注入点 {len(inputs.swift_env_injections)} 个（EnvKeys {len(inputs.env_keys)}）、"
         f"脚本 {len(inputs.python_scripts)} 个、"
         f"服务名 {inputs.py_server_name!r}、提示词 "

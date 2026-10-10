@@ -68,8 +68,8 @@ final class TokenProxyManager {
             let apiKey: String
             let models: [String]
 
-            /// JSON 侧统一 snake_case，与 routerJSON() 的配置块保持一致
-            /// （Python `proxy_provider.py` 按该命名解析）。属性名保持 Swift 惯例。
+            /// JSON 侧统一 snake_case（Python `proxy_provider.py` 按该命名解析）。
+            /// 属性名保持 Swift 惯例，由 CodingKeys 映射。
             enum CodingKeys: String, CodingKey {
                 case name, url, models
                 case apiFormat = "api_format"
@@ -83,114 +83,6 @@ final class TokenProxyManager {
                 models: $0.models,
             )
         }
-        guard let data = try? JSONEncoder().encode(payload) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    /// 路由配置序列化为 JSON 传给 Python（config.yaml modelProxy.router）。
-    ///
-    /// JSON 侧统一 snake_case——Python `proxy_router.RouterConfig` 按该命名解析。
-    /// tiers 编码为**数组**：档位顺序（索引 0 最强）是策略语义，Swift Dictionary
-    /// 编码不保证顺序，必须显式保序。
-    private func routerJSON() -> String? {
-        guard let router = proxyConfig?.router, router.enabled else { return nil }
-
-        struct TierPayload: Encodable {
-            let name: String
-            let model: String
-            let description: String
-        }
-        struct ClassifierPayload: Encodable {
-            let provider: String
-            let prompt_template: String
-            let max_retries: Int
-            let retry_delay_ms: Int
-            let timeout_ms: Int
-            let total_budget_ms: Int
-        }
-        struct PolicyPayload: Encodable {
-            let classifier_fast_path: Bool
-            let switch_cost_turns: Int
-            let loop_streak: Int
-            let escalate_error_streak: Int
-            let checkpoint_interval: Int
-            let downgrade_window: Int
-            let escalate_patterns: [String]
-            let readonly_tools: [String]
-            let normal_stop_reasons: [String]
-            let require_paired_history: Bool
-        }
-        struct ConversationPayload: Encodable {
-            let key_parts: [String]
-            let max_sessions: Int
-            let ttl_seconds: Int
-        }
-        struct ProfilePayload: Encodable {
-            let enabled: Bool
-            let min_samples: Int
-            let window: Int
-            let upgrade_rate_threshold: Double
-            let prior_tier: String
-            let max_profiles: Int
-        }
-        struct RouterPayload: Encodable {
-            let enabled: Bool
-            let tiers: [TierPayload]
-            let classifier: ClassifierPayload
-            let default_tier: String
-            let policy: PolicyPayload
-            let conversation: ConversationPayload
-            let profile: ProfilePayload
-        }
-
-        let c = router.classifier
-        let classifier = ClassifierPayload(
-            provider: c.provider,
-            prompt_template: c.promptTemplate,
-            max_retries: c.maxRetries,
-            retry_delay_ms: c.retryDelayMs,
-            timeout_ms: c.timeoutMs,
-            total_budget_ms: c.totalBudgetMs,
-        )
-        let pol = router.policy
-        let policy = PolicyPayload(
-            classifier_fast_path: pol.classifierFastPath,
-            switch_cost_turns: pol.switchCostTurns,
-            loop_streak: pol.loopStreak,
-            escalate_error_streak: pol.escalateErrorStreak,
-            checkpoint_interval: pol.checkpointInterval,
-            downgrade_window: pol.downgradeWindow,
-            escalate_patterns: pol.escalatePatterns,
-            readonly_tools: pol.readonlyTools,
-            normal_stop_reasons: pol.normalStopReasons,
-            require_paired_history: pol.requirePairedHistory,
-        )
-        let conv = router.conversation
-        let conversation = ConversationPayload(
-            key_parts: conv.keyParts,
-            max_sessions: conv.maxSessions,
-            ttl_seconds: conv.ttlSeconds,
-        )
-        let prof = router.profile
-        let profile = ProfilePayload(
-            enabled: prof.enabled,
-            min_samples: prof.minSamples,
-            window: prof.window,
-            upgrade_rate_threshold: prof.upgradeRateThreshold,
-            prior_tier: prof.priorTier,
-            max_profiles: prof.maxProfiles,
-        )
-        let payload = RouterPayload(
-            enabled: router.enabled,
-            tiers: router.tiers.map {
-                TierPayload(name: $0.name, model: $0.model, description: $0.description)
-            },
-            classifier: classifier,
-            default_tier: router.defaultTier,
-            policy: policy,
-            conversation: conversation,
-            profile: profile,
-        )
         guard let data = try? JSONEncoder().encode(payload) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -257,15 +149,15 @@ final class TokenProxyManager {
         } else {
             overrides["MODEL_PROXY_URL"] = upstreamURL
         }
-        if let routerJSON = routerJSON() {
-            overrides["MODEL_PROXY_ROUTER"] = routerJSON
-        }
         if let clientAccelJSON = clientAccelJSON() {
             overrides["MODEL_PROXY_CLIENT_ACCEL"] = clientAccelJSON
         }
         if let clientTextJSON = clientTextJSON() {
             overrides["MODEL_PROXY_CLIENT_TEXT"] = clientTextJSON
         }
+        // skill 全文去重开关：总是注入（"1"/"0"），让 Python 侧不依赖自己的缺省值
+        overrides["MODEL_PROXY_SKILL_DEDUP"] =
+            (proxyConfig?.skillDedupEnabled ?? true) ? "1" : "0"
         return PythonScriptRunner.environment(overrides: overrides)
     }
 

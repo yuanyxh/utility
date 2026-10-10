@@ -204,6 +204,15 @@ mcp:
   synonyms:
     部署: "deploy release publish"
     请求: "request http call"
+  # 工具参数默认值：tool name → args name → 默认值，增量补充——同名覆盖内置。
+  # 默认值直接决定每次工具调用的返回量（token 消耗），内置表在 tool_defaults.py
+  toolDefaults:
+    recall:
+      limit: 6
+    project_search:
+      limit: 15
+    project_structure:
+      limit: 15
 ```
 </details>
 
@@ -224,6 +233,9 @@ modelProxy:
   # 代理进程崩溃后的最大重启次数 / 重启前等待毫秒数
   maxRestarts: 3
   restartDelayMs: 2000
+  # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
+  # 短提示文案按 general.language 选（内置 zh-Hans / en）。
+  skillDedupEnabled: true
   # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider；
   # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
   # apiFormat: anthropic | openai，客户端格式不同时自动做协议转换。
@@ -241,72 +253,8 @@ modelProxy:
       apiKey: ""
       models:
         - mimo-v2.5-pro
-  # 分级路由（可选）：按任务分类选档位，用一个便宜模型跑重复劳动、强模型兜推理。
-  # 判据全部来自 Anthropic / OpenAI 协议字段，不依赖任何特定客户端。
-  router:
-    enabled: false
-    # 档位定义。数组顺序 = 强度从高到低（索引 0 最强）；model 须在 providers 中。
-    # description 会被拼进分类 prompt，因此加档（如 medium）只需改配置。
-    tiers:
-      - name: strong
-        model: deepseek-v4-flash
-        description: 需要深度推理、多步分析、复杂调试、架构设计
-      - name: weak
-        model: mimo-v2.5-pro
-        description: 日常编码、简单问答、工具执行、文件操作
-    classifier:
-      provider: deepseek        # 用哪个 provider 做分类（引用 providers 的 name）
-      maxRetries: 3
-      timeoutMs: 10000
-    defaultTier: weak           # 分类失败兜底档
-    policy:
-      # 每次切档都会让上游前缀缓存失效、以整个上下文重付一次 prefill，
-      # 所以此值要按 provider 的缓存折扣反推（Anthropic 量级 ≈12，deepseek ≈4.5）
-      switchCostTurns: 12
-      # 检查点间隔必须 ≥ switchCostTurns，否则弱档段撑不到回本、降档恒亏
-      checkpointInterval: 8     # 每 N 轮强制升档一次，0=禁用
-      # 降档判定回看的工具调用次数（尾部 N 次，反映「当前段」而非全量历史）
-      downgradeWindow: 8
-      readonlyTools: []         # 只读工具白名单；留空 = 永不降档（最保守）
-    profile:
-      enabled: true             # 同类 agent（子 agent 重复劳动）按历史免检
-      minSamples: 5
-      window: 50                # 真实滑动窗口，升级率与预期轮数都只取窗口内样本
 ```
 
-**两级策略**：一级按任务分类并缓存到**会话**（system + 工具集 + **首条**真实用户
-消息的指纹）——整个对话命中同一档位，中途的反馈确认、决策回复（「A 吧」「继续」）
-不会触发重新分类；二级在会话内按**段性质**双向切换：纯只读段降档、写操作段升回，
-且可多次往复。子 agent 的 system prompt 与工具集与主 agent 不同，按其指纹自动
-分离统计，历史升级率低的一类任务直接免检走低档。
-
-会话键用 `first_user` 而非 `latest_user`：后者让每次用户发言都开新会话，同一任务
-内的确认/决策回复被当成独立新任务重新分类，任务执行段的档位与初始判定脱节。
-代价是同一对话里换新任务不再自动重分类，由上述「段性质」切换补上。
-
-降档需要同时满足：白名单非空、最近 `downgradeWindow` 次工具调用全在白名单内、
-最近一次工具回传的 `is_error` 全部为 `False`（协议未提供该字段时视为未知、不予
-放行）、预期剩余轮数够回本、历史工具调用配对完整。任何一条不满足都保持原档。
-降档后若窗口内出现非只读工具（进入写操作段），立即升回强档——降档的前提失效了。
-
-决策原因逐条记入 `token_usage.sqlite` 的 `route_tier` / `route_reason` /
-`profile_hash` / `route_detail` 四列（`route_detail` 存决策明细 JSON，如降档被拦时
-的 `outside` 工具列表），可用
-`SELECT route_tier, route_reason, COUNT(*) FROM api_usage GROUP BY 1,2` 核对路由行为。
-`enabled: false` 时行为与不启用本特性完全一致。
-
-**模型名回显**：客户端的模型指示器（statusLine、`/model`）显示的是你**请求的**模型，
-看不出代理实际路由到了哪个上游。路由接管时，代理会在每条**最终回复**末尾追加一行
-实际使用的模型名，例如：
-
-```
-任务完成。
-
-deepseek-v4-flash
-```
-
-只在 `end_turn` 的最终回复上追加——工具调用轮不追加（那一轮的文本会被模型回读，
-模型名混进去没有意义）。客户端不接代理、路由未接管、或响应是 OpenAI 格式时不追加。
 </details>
 
 ---

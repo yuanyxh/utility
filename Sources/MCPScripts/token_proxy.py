@@ -7,10 +7,8 @@ usage 记录 → proxy_usage.py；本入口保留 providers 路由 + HTTP 端点
 """
 
 import asyncio
-import atexit
 import json
 import os
-import signal
 import sys
 import time
 
@@ -31,15 +29,7 @@ from proxy_protocol import (
     _inject_system_prompt,
 )
 from proxy_client import load_client_accel, matches_accel_client
-from proxy_model_tag import (
-    AnthropicSSETagger,
-    OpenAITagInserter,
-    tag_json_response,
-    tag_message_dict,
-    tag_openai_message,
-)
 from proxy_provider import api_format_of, api_key_of, missing_keys
-from proxy_router import ProfileStore, Reason, RouteDecision, build_router
 from proxy_usage import (
     DB_PATH,
     TOOL_OUTPUT_DB_PATH,
@@ -50,6 +40,8 @@ from proxy_usage import (
     extract_tool_outputs,
 )
 from db import conn as dbconn
+from config import ui_language
+from proxy_skill_dedup import dedup_tool_results
 
 # ---------------------------------------------------------------------------
 # 配置（专属 env；公共配置在 config.py，协议/usage 配置在各自子模块）
@@ -62,10 +54,12 @@ UPSTREAM_URL = os.environ.get("MODEL_PROXY_URL", "")  # 兼容：providers 为�
 # 路由规则：body.model 精确匹配某 provider.models → 该 provider（上游 model 用原值）；
 # 未匹配 → providers[0] 兜底，上游 model 用其 models[0]。
 PROVIDERS_JSON = os.environ.get("MODEL_PROXY_PROVIDERS", "")
-ROUTER_JSON = os.environ.get("MODEL_PROXY_ROUTER", "")  # 智能路由配置（JSON env）
 # classifier 加速的客户端白名单（JSON env，Swift 侧从 config.yaml modelProxy.clientAccel
 # 序列化；缺省为空串 → proxy_client 用内置默认白名单，即历史行为）
 CLIENT_ACCEL_JSON = os.environ.get("MODEL_PROXY_CLIENT_ACCEL", "")
+# skill 全文去重开关（config.yaml modelProxy.skillDedupEnabled → env）。缺省开：
+# 同一 skill 被反复调用时每次都把整份 SKILL.md 重复注入，纯浪费。
+SKILL_DEDUP_ENABLED = os.environ.get("MODEL_PROXY_SKILL_DEDUP", "1") != "0"
 
 logger = setup_logging("token_proxy", json_format=True)
 
@@ -114,21 +108,6 @@ PROVIDERS = _load_providers()
 CLIENT_ACCEL = load_client_accel(CLIENT_ACCEL_JSON)
 
 
-def _load_router() -> dict:
-    """加载智能路由配置。"""
-    if not ROUTER_JSON:
-        return {}
-    try:
-        return json.loads(ROUTER_JSON)
-    except json.JSONDecodeError:
-        logger.warning(json.dumps({"msg": "router_json_invalid", "error": "bad JSON"}))
-        return {}
-
-
-# 说明：分级路由的 tier 映射 / 分类 prompt / 阈值全部由 proxy_router.RouterConfig
-# 从 MODEL_PROXY_ROUTER 解析，本模块不再持有任何 tier 或分类相关常量。
-
-
 def _resolve_provider(model: str) -> tuple[dict, str]:
     """按 body.model 路由 provider，返回 (provider, 上游模型名)。
 
@@ -149,37 +128,6 @@ def _resolve_provider(model: str) -> tuple[dict, str]:
         "apiFormat": "anthropic",
         "apiKey": "",
     }, model
-
-
-# ---------------------------------------------------------------------------
-# 分级路由：会话级身份 + 段级档位（策略实现在 proxy_router.py）
-# ---------------------------------------------------------------------------
-
-
-def _find_provider_by_name(name: str) -> dict | None:
-    """按 name 查找 provider（用于分类器配置引用 providers 中的某个）。"""
-    for p in PROVIDERS:
-        if p.get("name") == name:
-            return p
-    return None
-
-
-def _find_provider_for_model(model_name: str) -> dict | None:
-    """按模型名查找所属 provider。"""
-    for p in PROVIDERS:
-        if model_name in p.get("models", []):
-            return p
-    return None
-
-
-# 分级路由实例：在所有依赖函数定义完成后构造。未配置 / enabled=false 时为 None，
-# 此时 handle_proxy 走原有 _resolve_provider 路径，行为与引入本特性前完全一致。
-ROUTER = build_router(
-    _load_router(),
-    _find_provider_by_name,
-    _find_provider_for_model,
-    store=ProfileStore(DB_PATH),
-)
 
 
 _logged_first_body: bool = False
@@ -261,37 +209,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 )
             )
 
-    # 分级路由：会话身份 + 段级档位。
-    # 归一化在协议转换与规则注入之前做——决策只看客户端的原始消息结构。
-    original_model = request_body.get("model", "")
-    route: RouteDecision | None = None
-    if ROUTER is not None:
-        route = await ROUTER.decide(request_body, api_format)
-    if route is not None and route.provider is not None:
-        # router 接管：直接使用其 provider 与模型，跳过 _resolve_provider
-        provider, upstream_model = route.provider, route.model
-        request_body["model"] = upstream_model
-        # 每条决策都带结构化 reason，保证降档 / 保持 / 升档均可归因
-        logger.info(
-            json.dumps(
-                {
-                    "msg": "route_decision",
-                    "tier": route.tier,
-                    "reason": route.reason,
-                    "original_model": original_model,
-                    "routed_model": upstream_model,
-                    "provider": provider.get("name", ""),
-                    "turn_index": route.turn_index,
-                    "detail": route.detail,
-                }
-            )
-        )
-    else:
-        # 未接管（禁用 / 出错 / 档位模型未配置）→ 走原有 _resolve_provider
-        provider, upstream_model = _resolve_provider(request_body.get("model", ""))
-        request_body["model"] = upstream_model
-        if route is not None:
-            logger.info(json.dumps({"msg": "route_skipped", "reason": route.reason}))
+    provider, upstream_model = _resolve_provider(request_body.get("model", ""))
+    request_body["model"] = upstream_model
 
     provider_format = api_format_of(provider)
     body_bytes = json.dumps(request_body).encode()
@@ -388,6 +307,22 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # 记录转换前的原始（注入后）请求体，供 record_usage 上下文提取（结构是客户端格式）
     record_request_body = json.loads(body_bytes) if body_bytes else {}
 
+    # skill 全文去重：第二份起换成短提示（判据是内容逐字节相同，代理拿不到
+    # skill 名单）。必须在 record 之后——记录层要留原样，否则度量标尺被自己毁掉。
+    if SKILL_DEDUP_ENABLED:
+        deduped = dedup_tool_results(request_body, api_format, ui_language())
+        if deduped:
+            body_bytes = json.dumps(request_body).encode()
+            logger.info(
+                json.dumps(
+                    {
+                        "msg": "skill_dedup",
+                        "replaced": deduped,
+                        "api_format": api_format,
+                    }
+                )
+            )
+
     # 请求协议转换：客户端 anthropic ↔ provider openai（网关标准映射）
     if api_format == "anthropic" and provider_format == "openai":
         request_body = json.loads(body_bytes)
@@ -441,6 +376,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     retry_max = llm_client.DEFAULT_RETRY_503_MAX
     retry_delay = llm_client.DEFAULT_RETRY_503_DELAY
     for attempt in range(retry_max + 1):
+        # 诊断(临时)：记录异常发生的阶段，用于定位流中断的第一现场。
+        # 必须在 try 内、循环体首句赋值，这样外层 proxy_error 一定能读到。
+        diag_stage = "connect"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.request(
@@ -472,25 +410,6 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         await asyncio.sleep(retry_delay)
                         continue
 
-                    # 模型名注入：把**实际路由到**的模型名写进助手回复末尾。
-                    # 客户端只能看到自己请求的 model（如 mimo-v2.5），路由改写到哪个
-                    # 上游模型此前不可见，这里是唯一的展示通道。
-                    # 只在「路由真的接管了」时开启——没接管说明用的就是客户端自己
-                    # 选的模型，用户无需被告知。classifier 快速路径是 Claude Code 的
-                    # safety 调用，不是用户的回复，排除。
-                    # 仅 anthropic 输出格式：注入体是 Anthropic 内容块。
-                    tagger = None
-                    if (
-                        upstream_resp.status < 400
-                        and route is not None
-                        and route.provider is not None
-                        and route.reason != Reason.FASTPATH_CLASSIFIER
-                    ):
-                        if api_format == "anthropic":
-                            tagger = AnthropicSSETagger(upstream_model)
-                        elif api_format == "openai":
-                            tagger = OpenAITagInserter(upstream_model)
-
                     # 流式转发响应
                     #
                     # content-encoding 与 content-length 必须**一起**剔除，二者是一对：
@@ -515,7 +434,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     response = web.StreamResponse(
                         status=upstream_resp.status, headers=forward_headers
                     )
+                    diag_stage = "prepare"
                     await response.prepare(request)
+                    diag_stage = "stream"
 
                     # 收集 SSE chunks 以提取 usage
                     collected_body = bytearray()
@@ -524,6 +445,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     )
                     # 流中断时的异常信息，供 record_usage 记录
                     stream_error = ""
+                    # 诊断(临时)：最后一次从上游收到数据的时间。用于区分
+                    # 「上游停顿时被客户端放弃」与「连接被直接重置」——
+                    # 前者 since_last_chunk_ms 大，后者接近于 0。
+                    last_chunk_at = time.monotonic()
 
                     # 上游 openai → 客户端 anthropic：响应需转换（Claude Code 场景）
                     convert_resp = (
@@ -538,6 +463,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             # 流式转换：逐行缓冲 openai SSE → anthropic SSE 事件
                             line_buffer = ""
                             async for chunk in upstream_resp.content.iter_any():
+                                last_chunk_at = time.monotonic()
                                 line_buffer += chunk.decode("utf-8", errors="replace")
                                 lines = line_buffer.split("\n")
                                 line_buffer = lines.pop()
@@ -575,6 +501,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             # 非流式转换：先收完整 JSON body 再整体转换
                             raw_body = bytearray()
                             async for chunk in upstream_resp.content.iter_any():
+                                last_chunk_at = time.monotonic()
                                 raw_body.extend(chunk)
                             try:
                                 resp_json = json.loads(bytes(raw_body))
@@ -583,61 +510,22 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         resp_json
                                     )
                                 )
-                                if tagger is not None:
-                                    tag_message_dict(converted, tagger.model)
                                 payload = json.dumps(converted).encode()
                             except Exception as e:
                                 stream_error = f"convert_error: {e}"
                                 payload = bytes(raw_body)
                             await response.write(payload)
                             collected_body.extend(payload)
-                        elif tagger is not None and not is_sse:
-                            # 非流式直通：注入前需先解析 JSON，故整体缓冲。
-                            # 上游本就是一次性 JSON，不存在流式延迟损失。
-                            # tagger 只在 status < 400 时创建，故此处必为成功响应。
-                            buf = bytearray()
-                            async for chunk in upstream_resp.content.iter_any():
-                                buf.extend(chunk)
-                            # 收集原始数据（一次，不重复）
-                            collected_body.extend(buf)
-                            # 按输出格式选择追加方式
-                            tag_fn = (
-                                tag_json_response
-                                if api_format == "anthropic"
-                                else tag_openai_message
-                            )
-                            await response.write(tag_fn(bytes(buf), tagger.model))
                         else:
                             # 直通（同格式）
                             async for chunk in upstream_resp.content.iter_any():
+                                last_chunk_at = time.monotonic()
                                 # 收集 SSE chunks 以提取 usage；400 等错误响应为非 SSE JSON，
                                 # 也收集以记录响应体定位错误（临时增强）
                                 if is_sse or upstream_resp.status >= 400:
                                     collected_body.extend(chunk)
-                                if tagger is None:
-                                    await response.write(chunk)
-                                else:
-                                    out = tagger.feed(chunk)
-                                    if out:
-                                        await response.write(out)
+                                await response.write(chunk)
 
-                        # 放行暂存的尾段事件（含注入）。必须在上面的流循环之后、
-                        # write_eof 之前——暂存的正是 message_delta / message_stop，
-                        # 不放行客户端会认为流没有结束。
-                        if tagger is not None and is_sse and not stream_error:
-                            tail_out = tagger.finish()
-                            if tail_out:
-                                await response.write(tail_out)
-                            if tagger.injected:
-                                logger.debug(
-                                    json.dumps(
-                                        {
-                                            "msg": "model_tag_injected",
-                                            "model": upstream_model,
-                                            "tier": route.tier,
-                                        }
-                                    )
-                                )
                     except (
                         ConnectionResetError,
                         BrokenPipeError,
@@ -646,8 +534,52 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     ) as e:
                         # 客户端已断开连接或 transport 关闭，停止转发
                         stream_error = f"{type(e).__name__}: {e}"
+                        # 诊断(临时)：这里才是流中断的第一现场，但它此前只被存进
+                        # stream_error 而不落日志；若随后 write_eof 再抛，外层
+                        # proxy_error 记下的将是**第二个**异常，第一现场永久丢失。
+                        # error_type 本身即带方向：Client* 系 → 写客户端失败，
+                        # ClientPayloadError/ServerDisconnectedError → 读上游失败。
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "msg": "stream_interrupted",
+                                    "stage": diag_stage,
+                                    "error_type": type(e).__name__,
+                                    "error": str(e),
+                                    "received": len(collected_body),
+                                    # 绝对时间：与客户端 debug 日志对照用
+                                    "ts": int(time.time()),
+                                    # 请求总时长（对比 API_TIMEOUT_MS=300000）
+                                    "elapsed_ms": int(
+                                        (time.monotonic() - start_time) * 1000
+                                    ),
+                                    # 距最后一次收到上游数据的间隔
+                                    "since_last_chunk_ms": int(
+                                        (time.monotonic() - last_chunk_at) * 1000
+                                    ),
+                                }
+                            )
+                        )
 
-                    await response.write_eof()
+                    # 诊断(临时)：write_eof 在内层 try 之外，连接已断时会**再抛一次**
+                    # ClientConnectionResetError，冒泡到外层 proxy_error 并覆盖第一现场；
+                    # 同时跳过其后的 record_usage，使中断在数据库侧也不留痕。
+                    # 此处吞掉并单独记日志，让第一现场得以保留、record_usage 得以执行。
+                    try:
+                        await response.write_eof()
+                    except Exception as e:
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "msg": "write_eof_failed",
+                                    "error_type": type(e).__name__,
+                                    "error": str(e),
+                                    "stream_error": stream_error,
+                                    "received": len(collected_body),
+                                }
+                            )
+                        )
+                    diag_stage = "done"
 
                     # 提取 usage / 输出预览 / 工具名
                     sse_bytes = bytes(collected_body) if collected_body else b""
@@ -680,24 +612,6 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             else None
                         )
                         out_format = api_format
-
-                    # 路由状态回填：stop_reason 不在请求体里，只能由响应侧提供，
-                    # 是「上一轮响应异常 → 本轮回升高档」判据的唯一来源。
-                    # 必须覆盖**所有**响应形态——若只挂在 `if usage_data` 里，
-                    # 错误响应（4xx/5xx）、非流式响应、SSE 末块无 usage 的响应都会
-                    # 漏掉，这条判据对这类客户端结构性失效，且旧值残留会被当成
-                    # 「上一轮终止原因」复用。
-                    if ROUTER is not None and route is not None and route.tier:
-                        stop_reason = ""
-                        if usage_data:
-                            stop_reason = usage_data.get("stop_reason", "") or ""
-                        if not stop_reason and converter is not None:
-                            stop_reason = converter.stop_reason or ""
-                        if not stop_reason and (
-                            upstream_resp.status >= 400 or stream_error
-                        ):
-                            stop_reason = "error"
-                        ROUTER.on_response(route.task_key, stop_reason)
 
                     if usage_data:
                         # 补充 model：部分 API 的 SSE 响应不含 model 字段
@@ -750,11 +664,6 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 error_message,
                                 tool_name_override=tool_name,
                                 api_format=api_format,
-                                # 路由诊断：档位 / 决策原因 / agent 类型指纹
-                                route_tier=(route.tier or "") if route else "",
-                                route_reason=route.reason if route else "",
-                                profile_hash=route.profile_key if route else "",
-                                route_detail=route.detail if route else None,
                                 tool_outputs=tool_outputs,
                             )
                         )
@@ -800,6 +709,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         "msg": "proxy_error",
                         "path": request.path,
                         "error": str(e),
+                        # 诊断(临时)：异常类型 + 发生阶段。此前只记 str(e)，而
+                        # "Cannot write to closing transport" 在 prepare / 写客户端 /
+                        # write_eof 三处都会抛出，仅凭消息无法区分是哪一个。
+                        "error_type": type(e).__name__,
+                        "stage": diag_stage,
                         "latency_ms": latency_ms,
                     }
                 )
@@ -1125,28 +1039,6 @@ def main():
             }
         )
     )
-
-    # 停机钩子：把在途会话的统计回填落库。没有这一步，能在单进程生命周期内被
-    # 统计的只有「TTL 到期或容量溢出」的会话，而进程会因配置重载 / 应用重启被
-    # PythonDaemon 反复重建——profile 统计只会覆盖有偏子集，`min_samples` 与
-    # 降档所需的 `expected_turns` 长期拿不到样本。用信号 + atexit 双保险：
-    # SIGTERM 覆盖被 terminate 的正常停止，atexit 覆盖 run_app 正常返回。
-    def _finalize_router(*_args) -> None:
-        if ROUTER is not None:
-            try:
-                ROUTER.finalize_all()
-                logger.info(json.dumps({"msg": "router_finalized"}))
-            except Exception as e:
-                logger.warning(
-                    json.dumps({"msg": "router_finalize_failed", "error": str(e)})
-                )
-
-    atexit.register(_finalize_router)
-    for _sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            signal.signal(_sig, lambda s, f: (_finalize_router(), sys.exit(0)))
-        except (ValueError, OSError):
-            pass  # 非主线程 / 不支持的平台 → 退化为仅 atexit
 
     app = create_app()
     web.run_app(app, host="127.0.0.1", port=PORT, print=None)

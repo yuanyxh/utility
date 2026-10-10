@@ -1,8 +1,7 @@
 """模型代理 provider 配置的字段契约。
 
 providers 列表由 Swift `TokenProxyManager.providersJSON()` 序列化后经
-`MODEL_PROXY_PROVIDERS` 环境变量传入，`token_proxy.py`（路由到哪个上游）与
-`proxy_router.py`（分类器用哪个上游）都要读。
+`MODEL_PROXY_PROVIDERS` 环境变量传入，`token_proxy.py` 读它决定转发到哪个上游。
 
 本模块是这些字段的**唯一解析入口**：字段名两处各写一遍时，Swift 侧一改名就会
 两侧同时静默退回默认值——协议转换方向错掉、鉴权 key 丢失，而日志里什么都看不到。
@@ -18,7 +17,7 @@ from proxy_normalize import API_ANTHROPIC, API_OPENAI
 
 logger = setup_logging("token_proxy", json_format=True)
 
-#: JSON 侧键名。与 router 配置块统一使用 snake_case。
+#: JSON 侧键名，统一 snake_case（Swift 侧 CodingKeys 映射；YAML 用户面仍是 camelCase）。
 KEY_NAME = "name"
 KEY_URL = "url"
 KEY_API_FORMAT = "api_format"

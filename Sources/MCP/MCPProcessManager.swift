@@ -105,6 +105,12 @@ final class MCPProcessManager {
             if let json = Self.synonymsJSON(mcp.synonyms) {
                 overrides[Self.synonymsEnvKey] = json
             }
+
+            // 工具参数默认值：工具名与参数名都由代码侧定义，用户只改值；合并
+            // （内置 + 增量）同样留在 Python 侧一处完成。
+            if let json = Self.toolDefaultsJSON(mcp.toolDefaults) {
+                overrides[Self.toolDefaultsEnvKey] = json
+            }
         }
         return PythonScriptRunner.environment(overrides: overrides)
     }
@@ -117,6 +123,21 @@ final class MCPProcessManager {
     static func synonymsJSON(_ synonyms: [String: String]) -> String? {
         guard !synonyms.isEmpty,
               let data = try? JSONEncoder().encode(synonyms),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+        return json
+    }
+
+    /// 工具默认值的 env 名（跨语言契约，Python 侧 `tool_defaults.TOOL_DEFAULTS_ENV_KEY`
+    /// 同值，由 `scripts/check-router-config-contract.py` 交叉断言）。
+    static let toolDefaultsEnvKey = "MCP_TOOL_DEFAULTS"
+
+    /// 工具默认值 → JSON；空表返回 nil（不注入，Python 侧用内置默认）。
+    static func toolDefaultsJSON(_ defaults: [String: [String: Int]]) -> String? {
+        guard !defaults.isEmpty,
+              let data = try? JSONEncoder().encode(defaults),
               let json = String(data: data, encoding: .utf8)
         else {
             return nil
