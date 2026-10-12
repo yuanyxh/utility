@@ -89,6 +89,9 @@ enum PythonScriptRunner {
     static func baseEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        // 禁止写 __pycache__：脚本随 .app bundle 分发且被签名,运行时生成 .pyc
+        // 会在 bundle 内新增文件,破坏签名封印(codesign 报 sealed resource missing)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
 
         // 当前系统用户名（传给 Python 层 DEFAULT_USER_ID）
@@ -173,6 +176,7 @@ enum PythonScriptRunner {
         excludeTags: String,
     ) -> [String: String] {
         var overrides = aiEnvironment()
+        overrides["PYTHONDONTWRITEBYTECODE"] = "1" // 同 baseEnvironment:不在已签名 bundle 内写 .pyc
         if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         overrides["MEMORY_SERVER_URL"] = memoryServerURL

@@ -430,7 +430,8 @@ def _filter_processed(memories: list[dict]) -> list[dict]:
     """跳过已被成功处理的记忆（metadata.processed bit0=1），避免重复处理。"""
     kept = []
     for m in memories:
-        flags = int(m.get("metadata", {}).get(PROCESSED_FIELD, 0) or 0)
+        # metadata 可能显式为 null(键在、值为 None),`.get("metadata", {})` 会返回 None 致 AttributeError
+        flags = int((m.get("metadata") or {}).get(PROCESSED_FIELD, 0) or 0)
         if flags & PROCESSED_BIT_SUMMARIZED:
             continue
         kept.append(m)
@@ -449,7 +450,7 @@ def _filter_by_tags(memories: list[dict]) -> list[dict]:
     kept = []
     skipped = 0
     for m in memories:
-        tags = set(m.get("metadata", {}).get("tags", []))
+        tags = set((m.get("metadata") or {}).get("tags", []))
         if tags & exclude:
             skipped += 1
             logger.debug(
@@ -1474,7 +1475,9 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
 
 
 def _collect_tags(memories: list[dict]) -> list[str]:
-    return list(set(t for m in memories for t in m.get("metadata", {}).get("tags", [])))
+    return list(
+        set(t for m in memories for t in (m.get("metadata") or {}).get("tags", []))
+    )
 
 
 def _max_segment_similarity(new_content: str, existing_text: str) -> float:

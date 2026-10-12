@@ -31,8 +31,9 @@ public final class NotificationManager: NSObject {
         #else
             let center = UNUserNotificationCenter.current()
             center.delegate = self
-            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
                 self.granted = granted
+                debugLog("[Notify] Authorization granted=\(granted) error=\(error?.localizedDescription ?? "nil")")
             }
         #endif
 
@@ -51,9 +52,15 @@ public final class NotificationManager: NSObject {
     // MARK: - Post (private)
 
     private func post(title: String, body: String) {
-        guard ConfigManager.shared.config.notifications.enabled else { return }
+        guard ConfigManager.shared.config.notifications.enabled else {
+            debugLog("[Notify] Dropped (notifications disabled): \(title)")
+            return
+        }
         #if DEBUG
-            guard enabled else { return }
+            guard enabled else {
+                debugLog("[Notify] Dropped (debug center unavailable): \(title)")
+                return
+            }
             let note = NSUserNotification()
             note.title = title
             note.informativeText = body
@@ -61,7 +68,10 @@ public final class NotificationManager: NSObject {
             note.deliveryDate = Date()
             NSUserNotificationCenter.default.scheduleNotification(note)
         #else
-            guard granted else { return }
+            guard granted else {
+                debugLog("[Notify] Dropped (authorization not granted): \(title)")
+                return
+            }
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body

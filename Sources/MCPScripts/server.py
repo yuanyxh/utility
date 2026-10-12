@@ -672,7 +672,7 @@ def _project_hot_result(r: dict) -> dict:
 
 def _heat_sort_key(item: dict) -> float:
     score = item.get("score", 0)
-    heat = item.get("heat_score", item.get("metadata", {}).get("heat_score", 0.5))
+    heat = item.get("heat_score", (item.get("metadata") or {}).get("heat_score", 0.5))
     if isinstance(heat, (int, float)):
         heat = float(heat)
     else:
@@ -762,9 +762,20 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
         hot_memory.delete(memory_id)
         try:
             hot_memory.add(old_content, user_id=DEFAULT_USER_ID, metadata=old_meta)
-        except Exception:
+        except Exception as e:
+            # 主路径失败必须记日志:原先静默退化到无 metadata 的 add,
+            # 会写入 metadata=null,令该记忆绕过 processed 位被反复重扫
+            logger.warning(f"[dispute] 带 metadata 重建失败,退化重建: {e}")
+            fallback_meta = {
+                "processed": old_meta.get("processed", 0),
+                "disputed": True,
+                "disputed_by": disputed_by,
+                "dispute_reason": reason,
+            }
             try:
-                hot_memory.add(old_content, user_id=DEFAULT_USER_ID)
+                hot_memory.add(
+                    old_content, user_id=DEFAULT_USER_ID, metadata=fallback_meta
+                )
             except Exception:
                 return False
         return True
@@ -1323,7 +1334,7 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
             for r in hot:
                 if isinstance(r, str):
                     continue
-                meta = r.get("metadata", {})
+                meta = r.get("metadata") or {}
                 if not include_archived and meta.get("archived"):
                     continue
                 r["layer"] = "hot"
