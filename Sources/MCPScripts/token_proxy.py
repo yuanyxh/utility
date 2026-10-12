@@ -72,6 +72,25 @@ OUTPUT_FILTER_JSON = os.environ.get(OUTPUT_FILTER_ENV_KEY, "")
 # 响应侧追加「本轮改写了什么」（config.yaml modelProxy.responseAnnotation → env）。
 RESPONSE_NOTE_ENABLED = os.environ.get(RESPONSE_NOTE_ENV_KEY, "1") != "0"
 
+#: 转发上游时**自己声明**的响应压缩编码白名单（不透传客户端的 Accept-Encoding）。
+#:
+#: 上游按这个头挑压缩方式——deepseek 实测：声明 zstd 就回 zstd、声明 br 就回 br，
+#: **连 200 的 SSE 流也一样压**，不是只压错误响应。而本代理必须读并改写响应体
+#: （SSE usage 提取、模型名注入、skill 去重、输出过滤），解不开就等于把整条响应
+#: 连同**上游真实状态码**一起丢掉：aiohttp 的解码器不可用时抛
+#: `ContentEncodingError`（继承 `PayloadEncodingError` → `BadHttpMessage`，
+#: **code 恒为 400**），在 `ClientResponse.start()` 被包成
+#: `ClientResponseError(status=400, message='Can not decode content-encoding: …')`，
+#: 由下面那个 except 转成 502 —— 报错文本里的 `400` **不是上游状态码**，
+#: 客户端只看得到一个来路不明的 502，于是反复重试（2026-10-12 用户报障即此形态）。
+#:
+#: 只声明 aiohttp 在本 venv 里确实解得开的编码：gzip/deflate 走 stdlib zlib，
+#: br 需要 Brotli、zstd 需要 backports.zstd（aiohttp 3.14 才支持 zstd，且只随
+#: speedups extra 装）——两者已装并写进 requirements.txt。契约脚本第 7 组断言
+#: 「声明的编码本进程都解得开」，**没装库的机器上写进来即红**（那正是它要拦的东西：
+#: 声明了解不开的编码，等于把整条响应连真实状态码一起丢掉）。要加新编码先装库。
+UPSTREAM_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
+
 logger = setup_logging("token_proxy", json_format=True)
 
 #: 后台任务的强引用池。asyncio 的事件循环对 create_task 只持**弱引用**，
@@ -383,11 +402,23 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         )
 
     # 转发 headers（透传，但按 provider 替换鉴权 key）
+    #
+    # accept-encoding 是**例外**：客户端的值不透传（Claude Code 声明
+    # `gzip, deflate, br, zstd`），改由本进程声明解得开的白名单——理由见
+    # UPSTREAM_ACCEPT_ENCODING 的注释。跳过它再显式赋值，两处都要：
+    # 只赋值不跳过时，dict 里会同时留下 `accept-encoding`（客户端原值）与
+    # `Accept-Encoding`（白名单）两个键，两条头都会发出去。
     headers = {}
-    skip_headers = {"host", "content-length", "transfer-encoding"}
+    skip_headers = {
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "accept-encoding",
+    }
     for k, v in request.headers.items():
         if k.lower() not in skip_headers:
             headers[k] = v
+    headers["Accept-Encoding"] = UPSTREAM_ACCEPT_ENCODING
     api_key = api_key_of(provider)
     if api_key:
         headers.pop("x-api-key", None)

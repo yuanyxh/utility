@@ -4,6 +4,9 @@ fastembed>=0.8.0
 numpy>=1.24.0
 httpx>=0.28.0
 aiohttp>=3.10.0
+# aiohttp 解压上游响应体（br/zstd）所需；缺了只能声明 gzip/deflate
+Brotli>=1.2
+backports.zstd
 qdrant-client>=1.13.0
 uvicorn>=0.34.0
 starlette>=0.46.0

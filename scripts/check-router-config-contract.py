@@ -2,8 +2,9 @@
 """校验 Swift ↔ Python 之间的跨语言契约是否一致。
 
 **文件名保留历史名**（最初只覆盖 router，该特性已移除）；实际覆盖范围已扩展到
-全部跨语言契约面，共六组，每组都由「Swift 侧真实源码」与「Python 侧真实源码」
-交叉断言：
+全部跨语言契约面，共七组，每组都由「Swift 侧真实源码」与「Python 侧真实源码」
+交叉断言（第 6/7 组是 Python 侧静态 AST 不变量：它们的错误同样是「静默失效」，
+只是不跨语言）：
 
   1. providers —— `MODEL_PROXY_PROVIDERS` ←→ `proxy_provider.KEY_*`
   2. client    —— `MODEL_PROXY_CLIENT_ACCEL` / `MODEL_PROXY_CLIENT_TEXT`
@@ -25,6 +26,9 @@
                   `tool_text.param_text(...)` 取（无裸字面量）、引用的键存在于
                   `PARAM_TEXT`、表中无孤儿键、各键语言集合一致且含基线；
                   基线语言与第 5 组同值
+  7. 上游编码  —— `token_proxy.py` 转发上游时不得透传客户端的 `accept-encoding`、
+                  必须显式声明白名单，且白名单里每个编码本进程都解得开
+                  （判据取自 aiohttp 的 `HAS_BROTLI`/`HAS_ZSTD`）
 
 背景：两侧一旦不同步，Python 只会静默回退到兜底值——功能看起来正常，
 实际配置没生效。历史上 `max_retries` 等 4 个键就这样失效了很久，因为兜底值
@@ -55,6 +59,14 @@ import re
 import sys
 from dataclasses import dataclass, replace
 
+try:
+    #: 第 7 组的判据取自 aiohttp 自身的响应解码能力探测，不另写一份「哪些编码可解」的表
+    #: （重写一份必然与真实能力漂移）。aiohttp 若改了内部布局，这里会**报红**而不是静默：
+    #: 探测不到一律当「解不开」，偏向大声报错，不偏向放行。
+    from aiohttp.compression_utils import HAS_BROTLI, HAS_ZSTD
+except ImportError:  # pragma: no cover
+    HAS_BROTLI = HAS_ZSTD = False
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "Sources")
 SWIFT = os.path.join(SOURCES, "MCP", "TokenProxyManager.swift")
@@ -68,6 +80,7 @@ TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
 OUTPUT_FILTER_PY = os.path.join(SCRIPTS, "proxy_output_filter.py")
 RESPONSE_NOTE_PY = os.path.join(SCRIPTS, "proxy_response_note.py")
 TOOL_TEXT_PY = os.path.join(SCRIPTS, "tool_text.py")
+TOKEN_PROXY_PY = os.path.join(SCRIPTS, "token_proxy.py")
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
 PROMPT_MANAGER = os.path.join(SOURCES, "Core", "PromptManager.swift")
@@ -545,6 +558,161 @@ def find_response_note_env_violations(
     )
 
 
+#: 转发上游时要排除的入站头（第 7 组）
+_ACCEPT_ENCODING_HEADER = "accept-encoding"
+
+
+def _module_string_constants(path: str) -> dict[str, str]:
+    """模块级 `NAME = "字面量"` 常量表（Python 版 `parse_static_lets`）。"""
+    src = _read(path)
+    if src is None:
+        return {}
+    out: dict[str, str] = {}
+    for node in ast.parse(src).body:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    out[target.id] = node.value.value
+    return out
+
+
+def _set_literals_by_name(tree: ast.AST) -> dict[str, set[str] | None]:
+    """`NAME = {…字面量…}` 的集合表；同一名字被赋值多次记为 `None`（歧义）。
+
+    歧义**不静默放行**：解析不出来时 `collect_upstream_accept_encoding` 会报 red，
+    而不是当作「守卫里没有它」或「有它」——两种情况都会让判据骗人。
+    """
+    out: dict[str, set[str] | None] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Set):
+            continue
+        values = {
+            elt.value.lower()
+            for elt in node.value.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        }
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = None if target.id in out else values
+    return out
+
+
+def collect_upstream_accept_encoding(
+    path: str,
+) -> tuple[set[str], str | None, list[str]]:
+    """提取 `token_proxy.py` 的 (透传守卫集合, 显式声明的白名单, 采集问题)。
+
+    采的是**实际代码结构**而非「源码里出现过这个名字」（后者会被常量的声明本身满足、
+    判据恒真，看不见「少跳过一个头」「声明与能力不符」这类集合覆盖问题）：
+      - 守卫：透传循环里 `if k.lower() not in <集合>`（内联字面量或**变量**，
+        变量按 `NAME = {…}` 的赋值解一层，即本仓 `skip_headers` 的写法）
+        —— 客户端的 `accept-encoding` 不在其中就会被原样送给上游；
+        注意这是**并集**：本仓同形状的写法有两处（转发上游的 `skip_headers` 与
+        回程响应头剥离的 `forward_headers`），都算数。判据是「存在排除它的守卫」
+        且「存在显式声明」两条同时成立，不会因为合并而放宽；
+      - 声明：形状为 `headers[<accept-encoding>] = <模块常量 | 字面量>` 的赋值，
+        常量名按模块级常量表展开成真实值。返回 `None` 即没有显式声明。
+    """
+    src = _read(path)
+    if src is None:
+        return set(), None, [f"读不到 {path}"]
+    tree = ast.parse(src)
+    consts = _module_string_constants(path)
+    sets_by_name = _set_literals_by_name(tree)
+    guards: set[str] = set()
+    declared: str | None = None
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        # 透传守卫：`<X>.lower() not in <集合>`
+        if (
+            isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Call)
+            and isinstance(node.left.func, ast.Attribute)
+            and node.left.func.attr == "lower"
+            and any(isinstance(op, ast.NotIn) for op in node.ops)
+        ):
+            for side in node.comparators:
+                if isinstance(side, ast.Set):
+                    for elt in side.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            guards.add(elt.value.lower())
+                elif isinstance(side, ast.Name):
+                    resolved = sets_by_name.get(side.id, None)
+                    if resolved is None:
+                        problems.append(
+                            f"透传守卫 {side.id!r} 不是唯一的集合字面量 —— "
+                            "本检查无法判定它排除了哪些头(不接受解析不出来的形式)"
+                        )
+                    else:
+                        guards |= resolved
+        # 显式声明：`headers["Accept-Encoding"] = UPSTREAM_ACCEPT_ENCODING`
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.slice, ast.Constant)
+                and isinstance(target.slice.value, str)
+                and target.slice.value.lower() == _ACCEPT_ENCODING_HEADER
+            ):
+                if isinstance(node.value, ast.Constant) and isinstance(
+                    node.value.value, str
+                ):
+                    declared = node.value.value
+                elif isinstance(node.value, ast.Name):
+                    declared = consts.get(node.value.id)
+    return guards, declared, problems
+
+
+def _decodable_encodings() -> set[str]:
+    """本进程能解的响应压缩编码。"""
+    out = {"identity", "gzip", "deflate"}
+    if HAS_BROTLI:
+        out.add("br")
+    if HAS_ZSTD:
+        out.add("zstd")
+    return out
+
+
+def find_upstream_accept_encoding_violations(
+    guards: set[str], declared: str | None, problems: list[str]
+) -> list[str]:
+    """纯函数：代理向上游声明的响应压缩编码，必须是自己解得开的。
+
+    上游按 `Accept-Encoding` 挑压缩方式（deepseek 实测：声明 zstd 就回 zstd，
+    **200 的 SSE 流也一样压**）。代理要读并改写响应体（usage 提取、模型名注入、
+    skill 去重、输出过滤），解不开就等于把整条响应连**上游真实状态码**一起丢掉：
+    aiohttp 解码器不可用时抛 `ContentEncodingError`（继承 `PayloadEncodingError`
+    → `BadHttpMessage`，**code 恒为 400**），被包成 `ClientResponseError` 后由
+    `token_proxy` 转成 502 —— 报错里的 400 不是上游状态码，客户端只会反复重试
+    （2026-10-12 用户报障即此形态：客户端的 `gzip, deflate, br, zstd` 被原样透传，
+    而本 venv 既无 Brotli 也无 backports.zstd）。
+    """
+    out: list[str] = list(problems)
+    if _ACCEPT_ENCODING_HEADER not in guards:
+        out.append(
+            "token_proxy 转发上游的请求头透传循环未排除 accept-encoding —— "
+            "客户端的 Accept-Encoding 会被原样送给上游"
+        )
+    if declared is None:
+        out.append(
+            "token_proxy 未显式声明转发上游的 Accept-Encoding（缺 "
+            "`headers[...] = <模块常量>`）—— 退回 aiohttp 默认值会与本进程能力脱钩"
+        )
+        return out
+    names = {e.strip().lower() for e in declared.split(",") if e.strip()}
+    undecodable = names - _decodable_encodings()
+    if undecodable:
+        out.append(
+            f"token_proxy 向上游声明的编码 {sorted(undecodable)} 本进程解不开"
+            f"（aiohttp: brotli={HAS_BROTLI}, zstd={HAS_ZSTD}）—— 先装库再声明"
+        )
+    return out
+
+
 def find_client_violations(
     payloads: dict[str, set[str]], groups: dict[str, tuple[str, tuple[str, ...]]]
 ) -> list[str]:
@@ -866,6 +1034,9 @@ class ContractInputs:
     param_problems: list[str]
     param_table: dict[str, dict[str, str]]
     python_tool_text_lang: str | None
+    upstream_header_guards: set[str]
+    upstream_accept_encoding: str | None
+    upstream_encoding_problems: list[str]
 
 
 def _first_match(pattern: re.Pattern[str], src: str) -> str | None:
@@ -898,6 +1069,11 @@ def collect_inputs(
     param_ref_keys, param_problems = collect_param_descriptions(SERVER_PY)
     # EnvKeys 要先解析：注入点的常量键（`env[EnvKeys.xxx] = …`）按它展开成真实 env 名
     env_keys = parse_static_lets(CONSTANTS, "EnvKeys")
+    (
+        upstream_guards,
+        upstream_accept_encoding,
+        upstream_encoding_problems,
+    ) = collect_upstream_accept_encoding(TOKEN_PROXY_PY)
     script_env_reads, script_env_sets = parse_python_script_envs(SCRIPTS)
     return ContractInputs(
         swift_payloads=parse_swift_payloads(SWIFT),
@@ -943,6 +1119,9 @@ def collect_inputs(
         param_problems=param_problems,
         param_table=param_table,
         python_tool_text_lang=python_tool_text_lang,
+        upstream_header_guards=upstream_guards,
+        upstream_accept_encoding=upstream_accept_encoding,
+        upstream_encoding_problems=upstream_encoding_problems,
     )
 
 
@@ -974,6 +1153,11 @@ def check_all(
         )
         + find_response_note_env_violations(
             inp.py_response_note_env, inp.swift_response_note_env
+        )
+        + find_upstream_accept_encoding_violations(
+            inp.upstream_header_guards,
+            inp.upstream_accept_encoding,
+            inp.upstream_encoding_problems,
         )
         + find_prompt_violations(inp.prompt_files, inp.l10n_prompts, parse_template)
         + find_param_text_violations(
@@ -1066,6 +1250,23 @@ def selftest(
         ),
         "响应注记 env 名: 两侧不一致": replace(
             base, swift_response_note_env="MODEL_PROXY_NOTE_RENAMED"
+        ),
+        # 上游响应编码（阶段 8 新增）
+        "accept-encoding: 透传循环不再排除它": replace(
+            base,
+            upstream_header_guards=base.upstream_header_guards
+            - {_ACCEPT_ENCODING_HEADER},
+        ),
+        "accept-encoding: 删掉显式声明": replace(base, upstream_accept_encoding=None),
+        "accept-encoding: 声明了本进程解不开的编码": replace(
+            base, upstream_accept_encoding="gzip, deflate, snappy"
+        ),
+        "accept-encoding: 守卫集合解析不出来": replace(
+            base,
+            upstream_encoding_problems=[
+                *base.upstream_encoding_problems,
+                "透传守卫 'guard' 不是唯一的集合字面量",
+            ],
         ),
         # 提示词模板（阶段 6 新增）
         "prompt: md 正文与 L10n 兜底不一致": replace(
