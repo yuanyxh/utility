@@ -8,10 +8,18 @@ No Dock icon, no main window.
 
 ---
 
+> **⚠️ Features that are on by default and consume tokens**
+>
+> - **Daily knowledge summary** (`mcp.summaryEnabled: true`, fires at 17:00 by default) — several LLM calls (aggregate, refine, rule extraction)
+>
+> Turn the relevant switches off in `~/.config/utility/config.yaml` if you don't want them.
+
+---
+
 ## Install
 
 ```bash
-git clone <your-repo-url> utility
+git clone <https://github.com/yuanyxh/utility.git> utility
 cd utility
 swift build -c release
 .build/release/utility &
@@ -467,6 +475,23 @@ description: fetch this behavioral spec before acting; global general convention
 **Extracts**
 
 Intermediate extraction products of the daily summary, grouped into topic directories, generated automatically.
+
+**Example configuration**
+
+`examples/` ships complete, ready-to-use examples, one set per language:
+
+| Path | Contents |
+|---|---|
+| `examples/zh-Hans/MCP/` | Chinese |
+| `examples/en/MCP/` | English |
+
+Each set contains `System_Prompts.md`, `DESCRIPTIONS.md`, and 8 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`). To use one, copy it into the notes directory's `MCP/`:
+
+```bash
+cp -R examples/en/MCP/* ~/.config/utility/notes/MCP/
+```
+
+`Rules/` (maintained automatically by the daily summary) are not included.
 
 Restart the service after adding or changing a skill.
 

@@ -8,10 +8,18 @@ macOS 菜单栏工具：剪切板历史、AI 翻译、OCR 区域翻译、拖拽�
 
 ---
 
+> **⚠️ 默认开启、可能会消耗大量 token 的功能**
+>
+> - **每日知识总结**(`mcp.summaryEnabled: true`,默认 17:00 触发)—— 多轮 LLM 调用(聚合、精炼、规则提炼)
+>
+> 不需要时在 `~/.config/utility/config.yaml` 关掉对应开关。
+
+---
+
 ## 安装
 
 ```bash
-git clone <your-repo-url> utility
+git clone <https://github.com/yuanyxh/utility.git> utility
 cd utility
 swift build -c release
 .build/release/utility &
@@ -471,6 +479,25 @@ description: 操作前，获取本行为规范；全局通用规范。
 **Extracts**
 
 每日总结的中间提取产物，按主题分目录，自动生成，将每日记忆提炼落到持久化的 markdown 文件。
+
+**示例配置**
+
+`examples/` 下有可直接取用的完整示例(中英各一套):
+
+| 路径 | 内容 |
+|---|---|
+| `examples/zh-Hans/MCP/` | 中文版 |
+| `examples/en/MCP/` | 英文版 |
+
+每套含 `System_Prompts.md`、`DESCRIPTIONS.md` 与 8 个 skill(`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`)。取用时把对应语言目录下的内容复制到笔记目录的 `MCP/`:
+
+```bash
+cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
+```
+
+不含 `Rules/`(由每日总结自动提炼维护)。
+
+新增或修改后需重启服务。
 
 **配置项**
 
