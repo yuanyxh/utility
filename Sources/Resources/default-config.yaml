@@ -1,86 +1,94 @@
-# Utility 配置文件
-# 修改后通过菜单栏「重载配置」或重启生效
+# Utility configuration file
+# Apply changes via the menu bar's "Reload config" or a restart
 
-# ---------- 通知 ----------
+# ---------- Notifications ----------
 notifications:
   enabled: true
 
-# ---------- 通用 ----------
+# ---------- General ----------
 general:
-  # 界面语言。留空跟随系统，可选值: zh / en
-  # 同时决定提示词语言与 MCP 工具参数描述的语言：Python 侧按它选择 `prompts/<lang>/*.md`
-  # 与 `tool_text.PARAM_TEXT` 的文案（未翻译的条目自动回退中文基线）
+  # UI language. Leave empty to follow the system; valid values: zh / en
+  # It also decides the prompt language and the language of MCP tool parameter
+  # descriptions: the Python side uses it to pick `prompts/<lang>/*.md` and the
+  # text in `tool_text.PARAM_TEXT` (untranslated entries fall back to the Chinese baseline).
   language: ''
 
-  # 是否启用系统代理。启用时自动读取 macOS 系统代理设置
+  # Enable the system proxy. When on, macOS system proxy settings are read automatically.
   proxyEnabled: false
 
-  # 日志配置
-  logMaxSize: 10485760  # 日志文件最大大小（字节），默认 10MB
-  logBackupCount: 3     # 日志备份数量
+  # Logging
+  logMaxSize: 10485760  # max log file size in bytes (default 10MB)
+  logBackupCount: 3     # number of rotated backups
 
-  # HTTP 超时配置
-  httpTimeout: 30       # HTTP 请求默认超时（秒）
-  httpRetryCount: 0     # HTTP 请求重试次数
+  # HTTP timeout
+  httpTimeout: 30       # default HTTP request timeout in seconds
+  httpRetryCount: 0     # HTTP request retry count
 
-  # AI 客户端超时（默认值见 Swift `ConfigDefaults.defaultAITimeout`）
-  aiTimeout: 120        # AI API 请求超时（秒），0 = 不限制
+  # AI client timeout (default in Swift `ConfigDefaults.defaultAITimeout`)
+  aiTimeout: 120        # AI API request timeout in seconds; 0 = unlimited
 
 # ---------- AI ----------
 ai:
-  # OpenAI 兼容 API 地址（只需 host，客户端自动追加 /chat/completions）
+  # OpenAI-compatible API base URL (host only; the client appends /chat/completions)
   baseURL: ''
-  # API 密钥
+  # API key
   apiKey: ''
-  # 模型名，例如 deepseek-v4-flash / gpt-4o-mini
+  # Model name, e.g. deepseek-v4-flash / gpt-4o-mini
   model: ''
-  # LLM 单次推理超时（秒），0 或负值 = 用默认（Swift `ConfigDefaults.llmTimeout`）。
-  # 作用于 Python 侧三处 LLM 调用（单次摘要 / 批量聚合 / 规则提炼），换慢模型
-  # （推理模型、长上下文）时会真撞到。**与上面 general.aiTimeout 不是一回事**：
-  # 那一项是 agent 子进程超时（AGENT_TIMEOUT），量级与语义都不同。
+  # Single-shot LLM inference timeout in seconds; 0 or negative = use the default
+  # (Swift `ConfigDefaults.llmTimeout`). Applies to the three LLM call sites on the
+  # Python side (single summary / batch aggregate / rule extraction) and really gets
+  # hit with a slow model (reasoning models, long context).
+  # **Not the same as general.aiTimeout above**: that one is the agent subprocess
+  # timeout (AGENT_TIMEOUT) — a different order of magnitude and meaning.
   llmTimeout: 120
 
-# ---------- 模型代理 ----------
+# ---------- Model proxy ----------
 modelProxy:
   enabled: false
-  # 兼容：providers 为空时的单一上游地址
+  # Compat: the single upstream address when providers is empty
   url: ''
-  # 本地代理监听端口，0 = 自动检测可用端口
+  # Local proxy listen port; 0 = auto-detect a free port
   port: 0
-  # 代理进程崩溃后的最大重启次数 / 重启前等待毫秒数（与 mcp 段同义）
+  # Max restarts after the proxy process crashes / delay in ms before restarting (same as the mcp section)
   maxRestarts: 3
   restartDelayMs: 2000
-  # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
-  # 短提示文案按 general.language 选（内置 zh-Hans / en）。
+  # Full-text skill dedup: when the same skill is called repeatedly, the second copy
+  # onward is replaced with a short notice (the first full text is kept).
+  # The notice language follows general.language (built-in zh-Hans / en).
   skillDedupEnabled: true
-  # 响应末尾追加一行「本轮代理改写了什么」，如
-  # `mimo-v2.5 | 已执行: Bash 过滤/Skill 短提示`。只加在最终文本回复上，工具调用轮不加。
+  # Append one line at the end of the response showing what the proxy rewrote this round,
+  # e.g. `mimo-v2.5 | 已执行: Bash 过滤/Skill 短提示`. Added only to final text replies,
+  # not to tool-call turns.
   responseAnnotationEnabled: true
-  # shell 工具输出瘦身：超长砍头尾（带自证标记）+ JSON 无损 minify。只对 shell 类
-  # 工具生效——Read/Edit 等是模型点名要的文件内容，截断等于损坏。
+  # Shell tool output slimming: trim head/tail of overlong output (with a self-evident
+  # marker) + lossless JSON minify. Only applies to shell-like tools — Read/Edit etc.
+  # return file content the model explicitly asked for, truncating it is corruption.
   outputFilter:
     enabled: true
-    # 单条输出超此字节数才砍头尾。实测 Bash 输出 P95=5398、P99=13161，
-    # 12000 留了 2.2 倍余量——98.9% 的调用一个字节都不改。
+    # Only outputs larger than this many bytes are trimmed. Measured Bash output:
+    # P95=5398, P99=13161 — 12000 keeps a 2.2x margin, so 98.9% of calls are untouched.
     maxBytes: 12000
     formatCompress: true
-    # 连续重复行折叠会改行数、并非无损，故默认关。
+    # Folding consecutive repeated lines changes the line count (not lossless), so off by default.
     foldRepeatedLines: false
     bypassTools: []
-    # 额外声明的 shell 工具名。跨客户端名字各不相同（Gemini=run_shell_command、
-    # Cursor=run_terminal_cmd、Codex=local_shell），故为配置面；增量补充。
+    # Extra shell tool names. Names differ across clients (Gemini=run_shell_command,
+    # Cursor=run_terminal_cmd, Codex=local_shell), hence a config surface; incremental.
     shellTools: []
-    # 按命令配的规则，默认空表（实测本项目 shell 输出无模板噪音，硬写只会误删）。
+    # Per-command rules; empty by default (measured: this project's shell output has no
+    # template noise, so hardcoded rules would only delete the wrong things).
     #  - command: npm
     #    subcommand: install
     #    maxBytes: 2000
     #    dropLines: ["^npm warn"]
     #    keepLines: []
     rules: []
-  # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider（上游 model 用原值）；
-  # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
-  # apiFormat: anthropic | openai，客户端格式不同时做协议转换。
-  # apiKey: 转发时替换的 provider key，为空则透传客户端 key。
+  # Model routing table: body.model exactly matches a provider's models -> that provider
+  # (the upstream model keeps the original value); no match -> providers[0] fallback
+  # (the upstream model uses its models[0]).
+  # apiFormat: anthropic | openai; protocol conversion is applied when the client format differs.
+  # apiKey: provider key substituted when forwarding; if empty, the client key is passed through.
   providers:
     - name: deepseek
       url: 'https://api.deepseek.com/anthropic'
@@ -95,10 +103,12 @@ modelProxy:
       models:
         - mimo-v2.5-pro
 
-  # 客户端白名单：哪些客户端享受 classifier（安全分类）请求的 thinking disabled 加速。
-  # 客户端身份不是协议事实，因此不写死在代码里——其他 agent 客户端按同样格式追加即可。
-  # 内置默认已含 claude-code；本段为**增量补充**（同名覆盖、异名追加）。
-  # 匹配语义：userAgentContains 任一命中 **且** headerPresent 全部存在（两类都空则不命中）。
+  # Client allowlist: which clients get the thinking-disabled speedup for classifier
+  # (safety classification) requests. Client identity is not a protocol fact, so it is not
+  # hardcoded — other agent clients just append in the same shape.
+  # Built-in defaults already include claude-code; this section is **incremental**
+  # (same name overrides, new names append).
+  # Matching: any userAgentContains hits **and** all headerPresent are present (both empty = no match).
   clientAccel:
     enabled: true
     clients: []
@@ -106,10 +116,12 @@ modelProxy:
     #    userAgentContains: ['my-agent']
     #    headerPresent: []
 
-  # 客户端注入文案/标签：续接提示词、压缩摘要前缀、客户端注入标签。
-  # 各客户端取值不同且随版本变化，故为可配置表；本段为**增量补充**（内置默认在前）。
-  # 未命中任何已登记文案的长消息会记 client_text_miss（debug），便于发现新客户端的文案，
-  # 而不是让它静默污染 actual_user_input 与会话标识锚点。
+  # Client-injected text/labels: continuation prompts, summary prefixes, injected tags.
+  # Values differ per client and change across versions, hence a config table; this section
+  # is **incremental** (built-in defaults come first).
+  # A long message matching no registered text logs client_text_miss (debug), so a new
+  # client's text can be discovered instead of silently polluting actual_user_input and
+  # the session-key anchor.
   clientText:
     continuationPrefixes: []
     summaryPrefixes: []
@@ -118,39 +130,43 @@ modelProxy:
 # ---------- MCP ----------
 mcp:
   enabled: true
-  # 本地 MCP 服务端口，0 = 自动检测可用端口
+  # Local MCP service port; 0 = auto-detect a free port
   port: 0
 
-  # 数据存储路径（空字符串 = 使用默认路径 ~/.utility/data/ 和 ~/.utility/notes/）
+  # Data storage paths (empty string = use the defaults ~/.utility/data/ and ~/.utility/notes/)
   qdrantPath: ''
   knowledgeBasePath: ''
 
-  # fastembed 模型缓存（空字符串 = 使用默认路径 ~/.cache/utility/fastembed/）
+  # fastembed model cache (empty string = default ~/.cache/utility/fastembed/)
   fastembedCacheDir: ''
-  # 空字符串 = 使用内置默认模型 sentence-transformers/all-MiniLM-L6-v2
+  # Empty string = use the built-in default model sentence-transformers/all-MiniLM-L6-v2
   embedderModel: ''
 
-  # 记忆生命周期
+  # Memory lifecycle
   hotRetentionDays: 180
   archiveDays: 90
 
-  # 每日总结（由 TaskScheduler 触发 summarize.py）
+  # Daily summary (triggered by TaskScheduler, runs summarize.py)
   summaryEnabled: true
   summaryHour: 17
 
-  # 总结排除 tag：含这些 tag 的记忆不进入知识库沉淀（工作流/格式类，非技术知识）
+  # Summary exclude tags: memories carrying these tags do not sediment into the knowledge
+  # base (workflow/format-ish, not technical knowledge)
   excludeTags:
 
-  # 检索同义词扩展：中文查询词扩展出对应英文术语，供 project_search 等全文检索使用。
-  # **增量补充**语义——同名覆盖内置、异名追加，只写你要加的，不必抄回整张内置表
-  # （内置表在 Sources/MCPScripts/synonyms.py）。改后需重启 MCP 服务生效。
+  # Search synonym expansion: expand Chinese query terms into the matching English terms,
+  # used by full-text search such as project_search.
+  # **Incremental** semantics — same key overrides a built-in, new keys append; write only
+  # what you want to add, no need to copy the whole built-in table (it lives in
+  # Sources/MCPScripts/synonyms.py). Restart the MCP service for changes to take effect.
   synonyms: {}
     # 部署: "deploy release publish"
     # 请求: "request http call"
 
-  # 工具参数默认值：tool name → args name → 默认值。**增量补充**语义——同名覆盖
-  # 内置，只写你要改的（内置表在 Sources/MCPScripts/tool_defaults.py）。
-  # 这些默认值直接决定每次工具调用的返回量(token 消耗)。改后需重启 MCP 服务生效。
+  # Tool argument defaults: tool name -> args name -> value. **Incremental** semantics —
+  # same name overrides a built-in; write only what you want to change (the built-in table
+  # is in Sources/MCPScripts/tool_defaults.py). These defaults directly decide how much each
+  # tool call returns (token cost). Restart the MCP service for changes to take effect.
   toolDefaults:
     recall:
       limit: 6
@@ -159,7 +175,7 @@ mcp:
     project_structure:
       limit: 15
 
-  # 进程守护
+  # Process supervision
   maxRestarts: 3
   restartDelayMs: 2000
 
@@ -171,18 +187,23 @@ clipboard:
   hotkey: cmd+shift+c
   pollInterval: 0.3
 
-# ---------- 提示词 ----------
-# 提示词模板以**文件**为准（Swift 翻译与 Python 摘要共用同一目录与同一契约）：
-#   用户覆盖: <配置目录>/prompts/<feature>.md          （~/.config/utility/prompts/，与语言无关）
-#   随包内置: MCPScripts/prompts/<lang>/<feature>.md
-# 自定义文件不按语言分目录——写 prompt 的人只有一种母语，切换界面语言不该让它失效。
-# 内置模板按语言分目录：语言取 general.language，该语言没有某文件时回退 zh-Hans 基线（并记 warning）。
-# 定制方式：把内置文件复制到配置目录下同名路径再改；文件头的 front-matter
-# （name / placeholders）必须与正文一致，写错会被拒绝并自动回退内置版本。
+# ---------- Prompts ----------
+# Prompt templates are **file**-based (Swift translation and Python summarization share the
+# same directory and the same contract):
+#   user override: <config dir>/prompts/<feature>.md   (~/.config/utility/prompts/, language-independent)
+#   bundled: MCPScripts/prompts/<lang>/<feature>.md
+# A custom file is not split by language — whoever writes a prompt has one native language,
+# and switching the UI language should not invalidate it.
+# Bundled templates are split by language: the language comes from general.language, and a
+# missing file for that language falls back to the zh-Hans baseline (with a warning).
+# To customize: copy a bundled file to the same relative path under the config directory and
+# edit it; the front-matter (name / placeholders) must match the body, or it is rejected and
+# the bundled version is used instead.
 prompts:
-  # 内联模板，优先级**高于**上面的文件，适合临时试验；键为 feature
-  # （translate / translate_auto），值为带 {source}/{target} 等占位符的模板。
-  # 长期定制建议用文件，便于版本管理与复用。
+  # Inline templates, taking precedence **over** the files above; handy for a quick experiment.
+  # The key is the feature (translate / translate_auto) and the value is a template with
+  # {source}/{target} placeholders. For long-term customization prefer files, which are
+  # easier to version and reuse.
   templates: {}
 
 translation:
@@ -192,21 +213,21 @@ translation:
   targetLang: auto
   firstLang: zh
   secondLang: en
-  # 翻译 system prompt 的内联覆盖（最高优先级，留空则走提示词模板文件）。
-  # 支持 {source} / {target} 两个占位符。
+  # Inline override of the translation system prompt (highest priority; when empty, the prompt
+  # template file is used). Supports the {source} / {target} placeholders.
   prompt: ''
 
 stage:
   moveOnDragOut: true
 
-# 定时任务
+# Scheduled tasks
 tasks: []
-  # - name: 日报提醒
+  # - name: daily-report
   #   trigger: '0 18 * * *'
-  #   exec: shortcuts://日报汇总
+  #   exec: shortcuts://daily-summary
   #   enabled: true
-  #   mode: cron     # cron (默认) 或 manual
-  # - name: 清理临时文件
+  #   mode: cron     # cron (default) or manual
+  # - name: cleanup-temp
   #   trigger: '0 3 * * 1'
   #   exec:
   #     type: sh
