@@ -1,18 +1,18 @@
 import Foundation
 import GRDB
 
-/// 剪切板条目模型（GRDB Record）
+/// Clipboard item model (GRDB Record)
 public struct ClipboardItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
-    /// UUID 字符串作为主键
+    /// UUID string as primary key
     public var id: String
     public var timestamp: Date
     /// text / file / image
     public var type: String
-    /// 存储的内容数据
+    /// Stored content data
     public var content: Data
-    /// 来源应用名称
+    /// Source application name
     public var application: String?
-    /// 文本内容的纯文本副本（用于去重）
+    /// Plain-text copy of the text content (used for deduplication)
     public var plainText: String?
 
     public static let databaseTableName = "clipboard_item"

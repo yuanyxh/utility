@@ -1,615 +1,685 @@
-# Utility — macOS 桌面工具集
+# Utility
 
-菜单栏常驻、快捷键驱动的 macOS 工具集，包含剪切板管理、AI 翻译（含 OCR 区域截图）、
-拖拽暂存、RSS 订阅、MCP 记忆服务、定时任务调度和实时网速监控七个核心功能。
+A macOS menu-bar tool: clipboard history, AI translation, OCR capture, drag-and-drop staging, RSS, scheduled tasks, network monitor, plus a local AI layer.
 
----
+No Dock icon, no main window.
 
-## 目录
-
-- [安装与启动](#安装与启动)
-- [配置](#配置)
-- [快捷键一览](#快捷键一览)
-- [功能说明](#功能说明)
-  - [剪切板管理](#剪切板管理)
-  - [翻译](#翻译)
-  - [OCR 区域截图翻译](#ocr-区域截图翻译)
-  - [拖拽暂存](#拖拽暂存)
-  - [RSS 订阅](#rss-订阅)
-  - [定时任务调度](#定时任务调度)
-  - [MCP 记忆服务](#mcp-记忆服务)
-  - [网速监控](#网速监控)
-- [命令行接口](#命令行接口)
-- [菜单栏](#菜单栏)
-- [错误通知](#错误通知)
-- [技术栈](#技术栈)
-- [日志与调试](#日志与调试)
+[中文说明](README.zh.md)
 
 ---
 
-## 安装与启动
+## Install
 
 ```bash
-# 编译（首次需要下载依赖，约 1-2 分钟）
-cd ~/Documents/it/project/utility && swift build -c release
-
-# 启动（菜单栏出现图标即为成功）
+git clone <your-repo-url> utility
+cd utility
+swift build -c release
 .build/release/utility &
+```
 
-# 开机自启（菜单栏 → 开机自启，使用系统登录项）
+Requirements: macOS 14+, Swift 5.9+ (Xcode Command Line Tools).
+
+The AI layer also needs Python 3.12 and its own virtual environment. The app looks for the interpreter at a fixed path:
+
+```bash
+python3 -m venv ~/.config/utility/mcp-venv
+~/.config/utility/mcp-venv/bin/pip install -r Sources/MCPScripts/requirements.txt
 ```
 
 ---
 
-## 配置
+## Paths
 
-配置文件：**`~/.config/utility/config.yaml`**
+| Path | Default | Content | Setting |
+|---|---|---|---|
+| Config dir | `~/.config/utility/` | all config and data | — |
+| Config file | `~/.config/utility/config.yaml` | app configuration | — |
+| Python venv | `~/.config/utility/mcp-venv/` | AI-layer runtime | — |
+| Notes dir | `~/.config/utility/notes/` | sedimented documents; the `MCP/` subdir holds Skills, Rules, DESCRIPTIONS.md | `mcp.knowledgeBasePath` |
+| Vector store | `~/.config/utility/data/qdrant/` | hot / cold vectors | `mcp.qdrantPath` |
+| App data | `~/.config/utility/data.sqlite` | clipboard, RSS, … | — |
+| Token usage | `~/.config/utility/token_usage.sqlite` | recorded by the proxy | — |
+| Tool output | `~/.config/utility/tool_output.sqlite` | full tool-output log | — |
+| Model cache | `~/.cache/utility/fastembed/` | embedding model | `mcp.fastembedCacheDir` |
+| Logs | `~/.cache/utility/` | per-process logs | — |
+| Project index | `<project root>/.utility/deps.sqlite` | data source for `project_*` | — |
 
-首次启动自动生成默认配置。修改后通过菜单栏「重载配置」立即生效，无需重启 app。
+```bash
+tail -f ~/.cache/utility/debug.log         # runtime trace
+tail -f ~/.cache/utility/token_proxy.log   # proxy
+tail -f ~/.cache/utility/server.log        # memory service
+tail -f ~/.cache/utility/summarize.log     # daily summary
+tail -f ~/.cache/utility/llm_client.log    # Python-side LLM calls
+```
 
-语言切换：设置 `general.language` 为 `zh` 或 `en`，留空跟随系统语言。翻译面板的语种选择器以各语种母语显示，不受此设置影响。
+---
 
-### 完整配置项
+## Quick start
+
+| Hotkey | Action |
+|---|---|
+| `cmd+shift+c` | open clipboard history |
+| `option+d` | translate the selection |
+| `option+s` | capture a screen region and translate it |
+| drag to the bottom-left corner | stage a file, a text selection, or a URL |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph app["Utility.app · Swift/AppKit"]
+    direction TB
+    ui["menu bar · panels · hotkeys"]
+    feat["clipboard · translation · OCR<br/>staging · RSS · tasks · network"]
+  end
+  subgraph engine["Python AI layer"]
+    direction TB
+    proxy["model proxy"]
+    mem["MCP memory service"]
+    sum["daily summary"]
+  end
+  agentCli(["Agent CLI<br/>Claude Code / any CLI"])
+
+  app <-->|HTTP| engine
+  agentCli -->|LLM requests| proxy
+  agentCli -->|MCP tool calls| mem
+  sum -->|REST| mem
+```
+
+---
+
+## Other features
+
+### Clipboard history
+
+Copied text, files, images and HTML are recorded.
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| `cmd+shift+c` | open the panel |
+| `↑` / `↓` | move the selection |
+| `Enter` | paste into the app you were in and close |
+| `Esc` | close |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `clipboard.maxDays` | `3` | entries older than this many days are deleted |
+| `clipboard.excludeApps` | `["SecurityAgent", "KeychainAccess"]` | apps never recorded from |
+| `clipboard.hotkey` | `cmd+shift+c` | opens the panel |
+| `clipboard.pollInterval` | `0.3` | pasteboard poll interval, seconds |
+
+### Translation
+
+Requires `ai.apiKey`.
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| `option+d` | translate the selection |
+| `cmd+Enter` | translate what you typed |
+| `Enter` | paste and close |
+| `Shift+Enter` | newline |
+| `Esc` | close |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `translation.hotkey` | `option+d` | translate the selection |
+| `translation.hotkeyOCR` | `option+s` | capture a screen region, then translate it |
+| `translation.targetLang` | `auto` | starting target language; `auto` lets the model pick between `firstLang` and `secondLang` |
+| `translation.firstLang` | `zh` | one candidate for `auto` |
+| `translation.secondLang` | `en` | the other |
+| `translation.prompt` | `""` | inline system prompt overriding the template file; `{source}`/`{target}` substituted |
+
+### OCR capture
+
+Needs Screen Recording permission.
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| `option+s` | dim the screen, drag a rectangle, release to recognize and translate into the panel |
+| `Esc` | cancel |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `translation.hotkeyOCR` | `option+s` | trigger the capture |
+
+### Drag-and-drop staging
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| drag a file / text selection / URL to the bottom-left corner | stage it |
+| drag it out of the floating window into any app | retrieve it |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `stage.moveOnDragOut` | `true` | whether dragging out may move the source file: `true` offers copy+move, `false` copy only |
+
+### RSS
+
+**Actions**
+
+| Command | Purpose |
+|---|---|
+| `utility rss --fetch` | pull new items |
+| `utility rss --unread` | list unread as JSON |
+| `utility rss --mark-read <id>` | mark one read |
+| `utility rss --mark-all-read` | mark everything read |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `rss.feeds[].name` | — | label in the menu bar |
+| `rss.feeds[].url` | — | feed URL |
 
 ```yaml
-# ~/.config/utility/config.yaml
-
-# ---------- 通用 ----------
-general:
-  # 界面语言。留空跟随系统，可选: zh / en
-  language: ""
-
-# ---------- 通知 ----------
-notifications:
-  enabled: true   # false 关闭所有通知
-
-# ---------- AI ----------
-ai:
-  baseURL: "https://api.deepseek.com"
-  apiKey: ""
-  model: "deepseek-v4-flash"
-
-# ---------- 剪切板 ----------
-clipboard:
-  maxDays: 3
-  excludeApps:
-    - "SecurityAgent"
-    - "KeychainAccess"
-  hotkey: "cmd+shift+c"
-  pollInterval: 0.3
-
-# ---------- 翻译 ----------
-translation:
-  hotkey: "option+d"
-  hotkeyOCR: "option+s"
-  sourceLang: "auto"
-  targetLang: "auto"
-  firstLang: "zh"
-  secondLang: "en"
-  prompt: ""
-
-# ---------- 暂存 ----------
-stage:
-  moveOnDragOut: false
-
-# ---------- RSS 订阅 ----------
 rss:
   feeds:
     - name: "MDN Blog"
       url: "https://developer.mozilla.org/en-US/blog/rss.xml"
+```
 
-# ---------- 定时任务 ----------
+### Scheduled tasks
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| click a task in the menu bar | run it |
+| click again (`manual` mode) | kill the running process |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `tasks[].name` | `""` | label in the menu bar |
+| `tasks[].trigger` | `""` | 5-field cron: `minute hour day month weekday` |
+| `tasks[].exec` | — | `{type: sh \| js \| shortcuts \| py, command: …}`, or a bare string `shortcuts://xxx` (type inferred) |
+| `tasks[].enabled` | `true` | whether the scheduler registers it |
+| `tasks[].mode` | `cron` | `cron` runs on schedule and catches up after sleep; `manual` runs only on menu click, clicking again kills the process |
+
+```yaml
 tasks:
-  - name: RSS 日报
+  - name: daily rss digest
     trigger: '0 10 * * *'
-    exec:
-      type: sh
-      command: ~/.hermes/scripts/utility-rss-daily.sh
+    exec: { type: sh, command: ~/.hermes/scripts/utility-rss-daily.sh }
     enabled: true
+    mode: cron
 ```
 
-### 配置示例：接入不同 AI 服务
+### Network monitor
 
-<details>
-<summary>DeepSeek</summary>
+**Actions**
 
-```yaml
-ai:
-  baseURL: "https://api.deepseek.com"
-  apiKey: "sk-你的key"
-  model: "deepseek-v4-flash"
-```
-</details>
+| Action | Effect |
+|---|---|
+| menu bar | shows up/down throughput for active interfaces (`0.00M` when offline) |
+| `Cmd`-drag | reposition |
 
-<details>
-<summary>OpenAI</summary>
+### Menu bar
 
-```yaml
-ai:
-  baseURL: "https://api.openai.com"
-  apiKey: "sk-你的key"
-  model: "gpt-4o-mini"
-```
-</details>
-
-<details>
-<summary>本地 Ollama</summary>
-
-```yaml
-ai:
-  baseURL: "http://localhost:11434"
-  apiKey: "ollama"
-  model: "llama3.2"
-```
-</details>
-
-<details>
-<summary>自定义翻译提示词</summary>
-
-```yaml
-translation:
-  prompt: "你是一个专业的技术翻译。将{source}翻译成{target}。\n规则：\n1. 保留代码、变量名、命令行不翻译\n2. 技术术语首次出现保留英文括号标注\n3. 只返回翻译结果，不要解释"
-```
-</details>
-
-<details>
-<summary>自定义提示词模板</summary>
-
-提示词以**文件**为准（内置模板与 Python 摘要/记忆管线共用同一套文件）：
-
-```
-~/.config/utility/prompts/<feature>.md            # 自定义，与界面语言无关
+```mermaid
+flowchart TD
+  menu["Menu bar"]
+  menu --> reload["Reload Config ⌘R"]
+  menu --> login["Launch at Login"]
+  menu --> rss["RSS (3 unread)"]
+  rss --> fetch["Fetch RSS"]
+  rss --> read["Mark All Read"]
+  menu --> mcp["● MCP"]
+  mcp --> status["Running"]
+  mcp --> restart["Restart Service"]
+  mcp --> path["Data Path"]
+  menu --> tasks["Tasks (2)"]
+  tasks --> run["Click to Run"]
+  menu --> clear["Clear Clipboard"]
+  menu --> quit["Quit ⌘Q"]
 ```
 
-把内置模板（随包的 `MCPScripts/prompts/<lang>/`，文件名即 feature 名）复制到上述路径再改即可。
-自定义文件**不按语言分目录**——你写的就是给自己用的那一份，切换界面语言不会让它失效。
-内置模板则按语言分目录：用哪一套由 `general.language` 决定，该语言没有这个文件时回退中文基线
-并记一条 warning。
+---
 
-文件头部的 front-matter（`name` / `placeholders`）必须与正文一致——`name` 要和文件名相同，
-`placeholders` 要和正文里实际出现的 `{占位符}` 完全相同，写错会被拒绝并自动回退内置版本
-（不会静默生效，也不会让功能停摆）。
+## The AI Agent layer
 
-也可以在配置里写内联模板，优先级高于文件（仅翻译功能，且只认 `translate` / `translate_auto`）：
+| Component | Responsibility |
+|---|---|
+| Model proxy | reverse-proxy LLM requests: routing, protocol conversion, usage recording, token governance |
+| MCP memory service | expose memory and codebase search as MCP tools |
+| Daily summary | sediment memories into notes |
 
-```yaml
-prompts:
-  templates:
-    translate: "你是一个专业的技术翻译。将{source}翻译成{target}。只返回译文，不要解释"
+```mermaid
+flowchart LR
+  agent(["Agent"])
+  subgraph P["Proxy layer"]
+    direction LR
+    p1["forward"] --> p2["record"] --> p3["inject"] --> p4["govern"] --> p5["…extendable"]
+  end
+  subgraph M["Memory / knowledge base"]
+    direction LR
+    m1["memory · knowledge base"] --> m2["produce"] --> m3["sediment"] --> m4["consume"]
+    m4 --> m2
+    m4 -.-> m5["…article generation / experience summary"]
+  end
+  agent --> p1
+  agent --> m1
 ```
-</details>
 
-<details>
-<summary>MCP 记忆服务</summary>
+---
 
-```yaml
-mcp:
-  # 是否启用 MCP 记忆服务（需先安装 Python 依赖）
-  enabled: false
-  # MCP 服务端口
-  port: 9001
-  # Qdrant 向量数据库路径
-  qdrantPath: "~/Documents/selfdata/database/qdrant_data"
-  # 知识库路径（笔记目录）
-  knowledgeBasePath: "~/Documents/selfdata/notes"
-  # fastembed 模型缓存目录
-  fastembedCacheDir: "~/.cache/fastembed_cache"
-  # 嵌入模型
-  embedderModel: "sentence-transformers/all-MiniLM-L6-v2"
-  # 每日记忆总结
-  summaryEnabled: true
-  summaryHour: 17
-  # 检索同义词扩展：中文查询词扩展出英文术语，供项目检索使用。
-  # 增量补充——同名覆盖内置、异名追加，只写你要加的（内置表在 synonyms.py）
-  synonyms:
-    部署: "deploy release publish"
-    请求: "request http call"
-  # 工具参数默认值：tool name → args name → 默认值，增量补充——同名覆盖内置。
-  # 默认值直接决定每次工具调用的返回量（token 消耗），内置表在 tool_defaults.py
-  toolDefaults:
-    recall:
-      limit: 6
-    project_search:
-      limit: 15
-    project_structure:
-      limit: 15
-```
-</details>
+### 1. Model proxy
 
-<details>
-<summary>模型代理（Token Proxy）</summary>
+Reverse-proxies Anthropic / OpenAI protocol requests, with model switching, token governance and usage recording.
 
-本地反向代理，将 Claude Code 的 API 请求转发到上游 provider 并记录 token 用量。
-将 `ANTHROPIC_BASE_URL=http://localhost:8613/open/v1` 指向本代理即可接入。
+**Enable**
 
 ```yaml
 modelProxy:
-  # 是否启用模型代理
-  enabled: false
-  # 兼容：providers 为空时的单一上游地址
-  url: ""
-  # 本地代理监听端口，0 = 自动检测可用端口
-  port: 8613
-  # 代理进程崩溃后的最大重启次数 / 重启前等待毫秒数
-  maxRestarts: 3
-  restartDelayMs: 2000
-  # skill 全文去重：同一 skill 被反复调用时，第二份起换成短提示（保留第一次全文）。
-  # 短提示文案按 general.language 选（内置 zh-Hans / en）。
-  skillDedupEnabled: true
-  # 响应末尾追加一行「本轮代理改写了什么」，如
-  # `mimo-v2.5 | 已执行: Bash 过滤/Skill 短提示`。只加在最终文本回复上，工具调用轮不加。
-  responseAnnotationEnabled: true
-  # shell 工具输出瘦身：超长砍头尾（带自证标记）+ JSON 无损 minify。只对 shell 类
-  # 工具生效——Read/Edit 等是模型点名要的文件内容，截断等于损坏。
-  outputFilter:
-    enabled: true
-    maxBytes: 8000
-    formatCompress: true
-    foldRepeatedLines: false   # 连续重复行折叠会改行数、并非无损，故默认关
-    bypassTools: []
-    shellTools: []             # 额外声明的 shell 工具名（跨客户端名字不同）
-    rules: []                  # 按命令配的规则，默认空表
-  # 模型路由表：body.model 精确匹配某 provider.models → 路由到该 provider；
-  # 未匹配 → providers[0] 兜底（上游 model 用其 models[0]）。
-  # apiFormat: anthropic | openai，客户端格式不同时自动做协议转换。
-  # apiKey: 转发时替换的 provider key，为空则透传客户端 key。
+  enabled: true
+  port: 0
   providers:
     - name: deepseek
       url: "https://api.deepseek.com/anthropic"
       apiFormat: anthropic
-      apiKey: ""
-      models:
-        - deepseek-v4-flash
-    - name: mimo
-      url: "https://api.xiaomimimo.com/anthropic"
-      apiFormat: anthropic
-      apiKey: ""
-      models:
-        - mimo-v2.5-pro
+      apiKey: "xxxx-xxxx-xxxx-xxxx"
+      models: [deepseek-flash]
 ```
 
-</details>
+Set the agent's base URL to `http://localhost:[PORT]/open/v1`. `/open/v1` is a compatibility alias, `/v1` is the protocol-native entry.
+
+**Routing**
+
+```mermaid
+flowchart TD
+  req["request body.model"] --> match{"matches a provider's models?"}
+  match -->|yes| hit["route to that provider<br/>upstream model = original"]
+  match -->|no| miss["fall back to providers[0]<br/>upstream model = models[0]"]
+```
+
+**Token governance**
+
+| Mechanism | Toggle | Effect |
+|---|---|---|
+| Full-text de-dup | `skillDedupEnabled` | a short note replaces duplicated content |
+| Shell output trimming | `outputFilter.enabled` | shell output filtered, JSON losslessly minified |
+| Classifier acceleration | `clientAccel` | disables thinking for safety-classifier requests |
+
+**De-dup**: when a tool result is byte-identical to one already sent, replace the content with a short note:
+
+```
+[Tool_Name] result already exists; see above
+```
+
+**Shell trimming**: oversized output truncated head/tail (keep 70% + 30%) with a self-labeling marker:
+
+```
+[... N bytes truncated ...]
+```
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `modelProxy.enabled` | `false` | start the proxy with the app |
+| `modelProxy.port` | `0` | listening port; `0` auto-picks a free one (the `[PORT]` in the URLs above) |
+| `modelProxy.url` | `""` | single upstream, used only when `providers` is empty |
+| `modelProxy.providers[].name` | — | label in the menu bar |
+| `modelProxy.providers[].url` | — | upstream endpoint |
+| `modelProxy.providers[].apiFormat` | — | `anthropic` or `openai`; differing from the client's protocol converts both ways |
+| `modelProxy.providers[].apiKey` | `""` | key substituted when forwarding; empty passes the client's key through |
+| `modelProxy.providers[].models` | — | model IDs routed to this provider |
+| `modelProxy.skillDedupEnabled` | `true` | collapse duplicated content |
+| `modelProxy.outputFilter.enabled` | `true` | trim oversized shell output |
+| `modelProxy.outputFilter.maxBytes` | `12000` | only outputs above this size are trimmed |
+| `modelProxy.responseAnnotationEnabled` | `true` | append `model \| rewrote: …` to final replies |
+| `modelProxy.clientAccel` | `{enabled: true, clients: []}` | clients that get classifier acceleration |
+| `modelProxy.clientText` | — | client-injected continuation/summary text and tags |
+| `modelProxy.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
 
 ---
 
-## 快捷键一览
+### 2. MCP memory service
 
-| 快捷键 | 功能 | 配置项 |
-|--------|------|--------|
-| `cmd+shift+c` | 弹出剪切板面板 | `clipboard.hotkey` |
-| `option+d` | 弹出翻译面板 | `translation.hotkey` |
-| `option+s` | OCR 区域截图翻译 | `translation.hotkeyOCR` |
-| **拖拽文件/文本到屏幕左下角** | 自动暂存 | 全局拖拽监听，无需快捷键 |
+Exposes MCP tools over streamable HTTP at `http://127.0.0.1:[PORT]`. Register it with an MCP client:
 
-### 翻译面板内快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `Enter` | 粘贴译文到原焦点应用并关闭 |
-| `cmd+Enter` | 翻译原文 |
-| `shift+Enter` | 换行 |
-| `Esc` | 关闭面板 |
-| `cmd+c` / `cmd+x` / `cmd+v` | 复制 / 剪切 / 粘贴 |
-| `cmd+a` | 全选 |
-| `cmd+z` | 撤销 |
-| 切换语种下拉 | 自动重新翻译（有内容时） |
-
-### 快捷键格式
-
-`modifier+key`，支持修饰键：
-
-| 修饰符 | 写法 |
-|--------|------|
-| Command | `cmd` / `command` |
-| Option | `option` / `alt` |
-| Shift | `shift` |
-| Control | `ctrl` / `control` |
-
----
-
-## 功能说明
-
-### 剪切板管理
-
-复制任意内容后自动记录，快捷键弹出面板浏览/粘贴。
-
-- **记录内容**：文本、文件（含多文件）、图片、网页 HTML
-- **排除应用**：可配置不记录指定 app 的复制
-- **自动清理**：按 `maxDays` 定期清理过期条目
-- **存储**：SQLite
-
-**面板操作：**
-
-| 操作 | 效果 |
-|------|------|
-| `cmd+shift+c` | 打开面板，显示所有历史条目 |
-| `↑` / `↓` | 选择条目 |
-| `Enter` | 粘贴选中条目到原焦点应用并关闭 |
-| `Esc` | 关闭面板 |
-
----
-
-### 翻译
-
-AI 驱动的文本翻译面板，带原文/译文双区布局。支持 26 种语言。
-
-**方式一：选中即译**
-1. 任意应用中选中文本
-2. 按 `option+d` → 自动填入原文区并翻译
-
-**方式二：手动输入**
-1. 按 `option+d` → 空白面板
-2. 输入文本，按 `cmd+Enter` 翻译
-
-**翻译方向自动判定（`targetLang: "auto"`）：**
-- 原文是 `firstLang` → 译到 `secondLang`
-- 原文是 `secondLang` → 译到 `firstLang`
-- 其他 → 译到 `firstLang`
-
----
-
-### OCR 区域截图翻译
-
-1. 按 `option+s`
-2. 鼠标拖拽框选屏幕区域
-3. 松开 → Vision OCR 识别 → 填入翻译面板并翻译
-4. `Esc` 取消
-
----
-
-### 拖拽暂存
-
-类似 Yoink 的临时暂存功能，屏幕左下角浮动窗口。
-
-- **存入**：拖拽文件/文本/网页到屏幕左下角窗口
-- **取用**：从窗口拖出到目标应用，自动移除
-- 有数据常驻显示，无数据时拖拽靠近才显示
-
----
-
-### RSS 订阅
-
-无界面 RSS 引擎，数据存入 SQLite。通过菜单栏或 CLI 手动触发抓取。
-
-- **菜单栏**：显示未读数，可「抓取 RSS」或「全部已读」
-- **CLI**：`utility rss --fetch` / `--unread` / `--mark-all-read`
-- **存储**：SQLite（`rss_item` 表）
-
-配合 Hermes Agent 可实现每日自动筛选总结（见下方定时任务）。
-
----
-
-### MCP 记忆服务
-
-基于 Mem0 + Qdrant 双层的个人知识记忆服务，通过后台 Python 子进程提供 MCP Tools。
-
-**架构：**
-- **热层**（Mem0 → Qdrant）：原始碎片记忆，自动提取/去重/冲突解决
-- **冷层**（Qdrant 独立集合）：已归档知识索引，定期衰减热度
-- **笔记搜索**：`grep` 兜底全文搜索本地 Markdown/TXT
-- **项目依赖图**：SQLite FTS5 索引 Swift/JS/Python 符号定义（含起止行号，可定位代码范围）
-
-**MCP Tools（通过 HTTP SSE 通道）：**
-| Tool | 功能 |
-|------|------|
-| `remember` | 写入单条事实到热层 |
-| `remember_batch` | 批量写入多条记忆 |
-| `recall` | 搜索记忆库（热层 + 冷层 + 笔记全文） |
-| `catch_up` | 获取最近记忆列表 |
-| `forget` | 删除指定记忆 |
-| `project_notes` | 语义搜索项目本地 .md 笔记文件（向量索引 + 增量缓存；目标路径无工程特征文件时降级为纯内存 keyword 搜索，不创建 `.utility` 缓存） |
-| `project_search/structure/packages/exports` | 项目符号/结构/依赖/导出查询 |
-| `tool_resource` | 返回已注册 skill 的附属资源内容（references/agents/scripts 目录） |
-
-**每日总结流水线：** 定时（默认每日 17 点）从热层拉取 3 天记忆 → LLM 聚合去重/分类 → 关键词检索 `Extracts/` 已有笔记，同主题自动归并、全新主题新建 → 写入 `Extracts/` 目录 + 同步冷层。
-
-**菜单栏：** 显示 MCP 运行状态（● 运行中 / ◐ 初始化 / ○ 已停止 / ✕ 崩溃），可重启服务。
-
-**前置条件：**
 ```bash
-# 安装 Python 依赖
-cd Sources/MCPScripts && pip3 install -r requirements.txt
+claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
+```
+
+**Three-layer memory**
+
+| Layer | Storage | Content | Lifecycle |
+|---|---|---|---|
+| hot | mem0 + Qdrant (local) | raw fragment facts | `hotRetentionDays` (default 180 days) |
+| cold | Qdrant collection `knowledge_base` | structured knowledge entries | long-lived |
+| notes | `.md`/`.txt` under the notes dir | sedimented documents | permanent |
+
+**Tools**
+
+| Tool | Purpose |
+|---|---|
+| `remember` / `remember_batch` | write memories (hot layer) |
+| `recall` | three-layer joint retrieval |
+| `catch_up` | pull recent memories |
+| `forget` | delete a memory |
+| `set_memory_processed` | read/write the processed bit |
+| `project_search` | multi-layer codebase search |
+| `project_structure` | project directory structure |
+| `project_packages` | third-party dependency list |
+| `project_exports` | a file's or directory's public interface |
+| `project_notes` | search project-local notes |
+| `tool_resource` | read a skill's companion resources |
+| (dynamic) | each skill under `MCP/Skills` registers as a tool |
+
+**Notes directory**
+
+Configured by `mcp.knowledgeBasePath`, default `~/.config/utility/notes/`:
+
+| Path | Meaning |
+|---|---|
+| `MCP/Skills/` | each `.md` or directory containing `SKILL.md` registers as an MCP tool |
+| `MCP/Rules/` | rules / conventions the daily summary distilled from memories |
+| `MCP/DESCRIPTIONS.md` | override built-in tool descriptions by `### <tool name>` |
+| `MCP/System_Prompts.md` | rules the proxy injects into each turn's user message |
+| `Extracts/` | intermediate extraction products of the daily summary |
+| other `.md` / dirs | sedimented knowledge articles |
+
+**Skills**
+
+Each `.md` under `<notes dir>/MCP/Skills/` (or a `SKILL.md` inside such a directory) registers as an MCP tool; `-` in the name normalizes to `_`. Frontmatter:
+
+```markdown
+---
+name: my-skill
+description: when it should trigger and what it does; the model uses this to decide when to call it
+---
+
+The body returned when the tool is called.
+```
+
+A directory skill may carry companion resources (`references/`, `agents/`, `scripts/` are read via `tool_resource` and are not registered as tools):
+
+```
+MCP/Skills/my-skill/
+├── SKILL.md
+├── references/
+├── agents/
+└── scripts/
+```
+
+**DESCRIPTIONS.md**
+
+Override a tool's description by `### <tool name>` (tool names as in the MCP tools table above):
+
+```markdown
+### remember
+Write a single fact to shared memory.
+
+### recall
+Search memories, the knowledge base, and local notes.
+```
+
+**System_Prompts.md**
+
+Plain text, no format requirement; injected verbatim into each turn's user message:
+
+```markdown
+## Rules
+- Always answer in Chinese
+- Move deleted files to the Trash instead of removing them
+```
+
+**Rules**
+
+`norms_<level>.md` (e.g. `norms_global`, `norms_backend`), distilled and maintained by the daily summary; each file's own frontmatter registers it as a tool:
+
+```markdown
+---
+name: norms_global
+description: fetch this behavioral spec before acting; global general conventions.
+---
+
+# Global conventions
+
+## Entries
+
+### Verify the current code state before reporting a feature's status
+- domain: collaboration
+- norm: ...
+- source: ...
+```
+
+**Extracts**
+
+Intermediate extraction products of the daily summary, grouped into topic directories, generated automatically.
+
+Restart the service after adding or changing a skill.
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `mcp.enabled` | `true` | start the service with the app |
+| `mcp.port` | `0` | listening port; `0` auto-picks a free one (the `[PORT]` in the URLs above) |
+| `mcp.hotRetentionDays` | `180` | how long raw fragments stay in the hot layer |
+| `mcp.archiveDays` | `90` | age at which memories move to the cold layer |
+| `mcp.summaryEnabled` | `true` | run the daily summary pipeline |
+| `mcp.summaryHour` | `17` | hour of day it runs |
+| `mcp.excludeTags` | — | memories carrying these tags skip the knowledge-base pipeline |
+| `mcp.synonyms` | `{}` | search synonyms, an increment over the built-in table |
+| `mcp.toolDefaults` | e.g. `recall: 6` | default result caps per tool |
+| `mcp.qdrantPath` / `knowledgeBasePath` | `""` | storage paths; empty uses the default paths |
+| `mcp.embedderModel` | `""` | embedding model; empty uses `sentence-transformers/all-MiniLM-L6-v2` |
+| `mcp.fastembedCacheDir` | `""` | model cache; empty uses `~/.cache/utility/fastembed/` |
+| `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
+
+Restart from **menu bar → MCP** after changing any of these.
+
+---
+
+### 3. Daily summary
+
+Fired daily at `mcp.summaryHour` (default 17:00) by the TaskScheduler; sediments hot-layer memories into notes and syncs into the cold layer.
+
+```mermaid
+flowchart LR
+    A["Aggregate<br/>cluster the last 3 days of memories by topic, dedupe"] --> B["Refine<br/>extract keywords → search similar topics<br/>decide merge / new → generate body"] --> C["Rules<br/>rule-like memories → MCP/Rules/*.md"]
+```
+
+Written articles go into the notes directory, then an automatic `git commit` runs. Log: `~/.cache/utility/summarize.log`.
+
+---
+
+### 4. Prompt system
+
+Each LLM call site's system / user text is not hardcoded but externalized to `Sources/MCPScripts/prompts/<lang>/<feature>.md`, one file each for system and user.
+
+| Call site | feature | Purpose |
+|---|---|---|
+| Daily summary · value judgement | `quality_judge` / `quality_judge_user` | decide whether a memory is worth sedimenting |
+| Daily summary · aggregate | `aggregate` / `merge_cross_batch` | cluster by topic, merge and dedupe within and across batches |
+| Daily summary · refine | `extract_keywords` / `decide_merge` / `gen_new` / `gen_merge` | extract keywords, decide merge or create, generate the body |
+| Daily summary · rule extraction | `extract_rules` | write rule memories to `MCP/Rules/*.md` |
+| MCP memory service | `contradiction` | detect contradictions against similar memories on write |
+| Menu-bar translation | `translate` / `translate_auto` | translate the selection; `translate_auto` detects the direction |
+
+Lookup order: `<config dir>/prompts/<feature>.md` (user override) → built-in `MCPScripts/prompts/<lang>/<feature>.md` (by language, falling back to `zh-Hans`).
+
+The front-matter's `name` must match the filename; `placeholders` and the body's actual placeholders are cross-validated.
+
+---
+
+### 5. Project index and Agent parasitic mode
+
+The data behind the `project_*` tools comes from `ProjectScanner` (full scan) + `FileWatcher` (incremental), which write to `.utility/deps.sqlite` under the project root. Multi-language extractors register by extension (Swift / JS-TS / Python / Vue / Java / Kotlin); extraction precedence is AST script → regex fallback. Symbols carry `start_line`/`end_line`.
+
+| Command | Purpose |
+|---|---|
+| `utility init [--path <dir>]` | scan the project (default: CWD) and generate `.utility/deps.sqlite` |
+| `utility -a "<agent command>" [--dir <dir>]` | Agent parasitic mode: build the index, start the file watcher, launch the Agent |
+
+What `utility -a` does:
+
+```mermaid
+flowchart LR
+    A["ensure deps.sqlite<br/>auto-init when missing"] --> B["full scan<br/>catch changes outside the watcher's lifetime"] --> C["start FSEvents watcher"] --> D["spawn the Agent CLI<br/>stdin / stdout / stderr passthrough"] --> E["Agent exits → stop watcher → exit"]
+```
+
+Environment injected into the Agent subprocess: `UTILITY_PROJECT_DIR` (project root), `UTILITY_PROJECT_DB` (index path), `MCP_PORT` / `MINO_BRAIN_MCP_PORT` (MCP service port).
+
+```bash
+utility -a "claude -p 'analyze this module'"
+utility --dir ~/myapp -a claude
 ```
 
 ---
 
-### 定时任务调度
+## Configuration
 
-基于 cron 表达式的 one-shot Timer 调度器，支持补触发和睡眠唤醒。
+Config lives in `~/.config/utility/config.yaml`, written with defaults on first launch. After editing, pick **Reload Config** (`⌘R`) in the menu bar. Changes to `mcp.*` or `modelProxy.*` need the matching service restarted from the menu bar.
 
-**触发模式：**
+### Global
 
-| mode | 说明 |
-|------|------|
-| `cron`（默认） | cron 定时调度，支持补触发 |
-| `manual` | 仅手动触发，不参与 cron 调度。运行中菜单打 ✓，再点击终止进程 |
+| Setting | Default | Purpose |
+|---|---|---|
+| `general.language` | `""` | UI language; empty follows the system. Also selects the prompt set and the MCP tool-argument text |
+| `general.proxyEnabled` | `false` | use the macOS system proxy settings |
+| `general.httpTimeout` | `30` | HTTP request timeout, seconds |
+| `general.httpRetryCount` | `0` | HTTP retry count |
+| `general.aiTimeout` | `120` | agent subprocess timeout, seconds; `0` = unlimited |
+| `general.logMaxSize` | `10485760` | max size of one log file, bytes |
+| `general.logBackupCount` | `3` | rotated log files kept |
+| `notifications.enabled` | `true` | master switch for system notifications |
 
-**触发方式：** 每天 60s 轮询改为精确到秒的 one-shot Timer。
-**补触发：** 启动/重载/唤醒时检查上次触发时间，错过则补执行一次。
-**并发：** 每个任务在后台队列独立执行，不阻塞调度循环。
+### AI provider
 
-**支持四种执行类型：**
-
-| type | 说明 | 示例 |
-|------|------|------|
-| `sh` | Shell 脚本 | `command: ~/.hermes/scripts/cleanup.sh` |
-| `js` | JXA (JavaScript for Automation) | `command: Application("Music").play()` |
-| `shortcuts` | 快捷指令 | `command: 播放喜欢音乐` |
-| `py` | Python 脚本 | `command: print("hello")` |
-
-**配置示例：**
+| Setting | Default | Purpose |
+|---|---|---|
+| `ai.baseURL` | `""` | OpenAI-compatible endpoint host (e.g. `https://api.deepseek.com`) |
+| `ai.apiKey` | `""` | API key; translation and the summary pipeline are unavailable without it |
+| `ai.model` | `""` | model name, e.g. `deepseek-v4-flash` |
+| `ai.llmTimeout` | `120` | Python-side single LLM inference timeout, seconds; `0` or negative falls back to the default |
 
 ```yaml
-tasks:
-  - name: RSS 日报
-    trigger: '0 10 * * *'
-    exec:
-      type: sh
-      command: ~/.hermes/scripts/utility-rss-daily.sh
-    enabled: true
-    mode: cron     # cron（默认）或 manual
+# DeepSeek
+ai: { baseURL: "https://api.deepseek.com", apiKey: "sk-your-key", model: "deepseek-v4-flash" }
 
-  - name: Alist 服务
-    mode: manual   # 手动触发，菜单点击启动/终止
-    exec:
-      type: sh
-      command: cd ~/Documents/alist && ./alist server
-    enabled: true
+# OpenAI
+ai: { baseURL: "https://api.openai.com", apiKey: "sk-your-key", model: "gpt-4o-mini" }
 
-  - name: 清理临时文件
-    trigger: '0 3 * * 1'
-    exec:
-      type: sh
-      command: rm -rf /tmp/myapp-*
-    enabled: true
+# local Ollama
+ai: { baseURL: "http://localhost:11434", apiKey: "ollama", model: "llama3.2" }
 ```
 
-**Cron 表达式格式：** `分 时 日 月 周`（5 字段，标准 cron）
-
-- **菜单栏**：`任务 (N)` 列出所有任务，点击即可立即触发；禁用项置灰不可点击
+`mcp.*` and `modelProxy.*` are listed in their sections above.
 
 ---
 
-### 网速监控
-
-菜单栏直接显示主网卡实时上行/下行速度，无需点击。每 2 秒刷新。
-
-```
-菜单栏：  ↑ 01.23M
-          ↓ 00.08M
-```
-
-- **单位**：MB / GB，2 位小数
-- **接口**：自动汇总所有 enX 网卡（WiFi + 以太网 + 雷电网桥）
-- **布局**：上下两行，等宽数字右对齐，整数位自动补 0 保证宽度一致不跳
-- **位置**：启动后 Cmd+拖拽到菜单栏左侧，`autosaveName` 固定位置
-- **无网络时**：显示 `0.00M`，不会异常
-- **内存占用**：增量 < 1MB（仅一个 Timer + getifaddrs 临时分配）
-
----
-
-## 命令行接口
+## Packaging
 
 ```bash
-utility rss [选项]
+SIGNING_IDENTITY=<cert name or SHA1> ./scripts/package-utility.sh
 ```
 
-| 选项 | 说明 |
-|------|------|
-| `--fetch`, `-f` | 抓取所有订阅源的新文章 |
-| `--unread`, `-u` | 列出所有未读文章（JSON 格式） |
-| `--mark-read <id>` | 按 ID 标记单篇已读 |
-| `--mark-all-read` | 全部标记已读 |
+Five steps: clean build → sign the binary → assemble `Utility.app` → sign the bundle (with a hard `codesign --verify`) → produce `Utility-<version>.dmg`.
 
-**使用示例：**
+### Choosing a certificate
+
+`SIGNING_IDENTITY` accepts either the certificate name or its SHA1 hash; look it up with `security find-identity -v -p codesigning`.
+
+| Use | Certificate | Notes |
+|---|---|---|
+| Local use only | self-signed certificate | generated locally, no Apple involvement; an app signed this way is blocked by Gatekeeper on other Macs and cannot be notarized |
+| Distribution | Developer ID Application | issued by Apple, can be notarized; requires an Apple Developer Program membership |
+
+A self-signed certificate is generated locally: Keychain Access → Certificate Assistant → *Create a Certificate…* (type "Code Signing", self-signed), or generate one with `openssl` and import it into the login keychain.
+
+### Getting a Developer ID certificate
+
+Requires an **Apple Developer Program** membership ($99/year). Only the Account Holder can create Developer ID certificates, up to 5.
+
+**Option A — Xcode.** Xcode → Settings → Accounts → add your Apple ID → select your team → **Manage Certificates…** → `+` → **Developer ID Application**.
+
+**Option B — manual CSR.** Keychain Access → Certificate Assistant → *Request a Certificate from a Certificate Authority*, save the `.certSigningRequest`. On [developer.apple.com](https://developer.apple.com/account/resources/certificates/list) → Certificates → `+` → **Developer ID Application** → upload the CSR → download the `.cer` → double-click to install into the **login** keychain.
+
+Confirm it's usable:
 
 ```bash
-# 抓取更新
-utility rss --fetch
-
-# 查看未读（JSON）
-utility rss --unread
-
-# 标记全部已读
-utility rss --mark-all-read
+security find-identity -v -p codesigning
+# "Developer ID Application: Your Name (TEAMID)"  — the TEAMID is what you need
 ```
 
----
+Don't use the *"Developer ID Application **Managed**"* certificate — its private key lives on Apple's servers and it can't be used from the command line.
 
-## 菜单栏
+### Notarization
 
-菜单栏直接显示网速监控，点击弹出功能菜单：
-
-```
-重载配置 ⌘R
-─────────
-开机自启
-─────────
-RSS (3 未读)  ▸ 抓取 RSS
-                 全部已读
-─────────
-● MCP        ▸ 运行中
-                 重启服务
-                 Qdrant: ~/Documents/selfdata/database/qdrant_data
-                 知识库: ~/Documents/selfdata/notes
-─────────
-任务 (2)     ▸ RSS 日报
-                清理临时文件（灰色，已禁用）
-─────────
-清空剪切板
-─────────
-退出 ⌘Q
-```
-
-- **重载配置**：热加载 `~/.config/utility/config.yaml`，同时刷新 RSS 未读数、任务列表和定时抓取间隔
-- **开机自启**：通过系统登录项（SMAppService）自动启动
-- **RSS**：显示未读数量，子菜单可手动触发抓取或全部已读
-- **MCP**：显示服务运行状态，子菜单可重启服务、查看数据路径。未启用时显示「○ MCP（未启用）」
-- **任务**：列出所有任务，点击立即执行一次；运行中打 ✓，再点击终止进程；禁用的任务置灰不可点击
-- **清空剪切板**：删除所有剪切板记录
-- **退出**：完全退出 app
-
----
-
-## 通知
-
-> 配置 `notifications.enabled: false` 可全局关闭所有通知。
-
-| 场景 | 通知 |
-|------|------|
-| 启动时配置加载失败 | 「配置加载失败」 |
-| 启动时数据库初始化失败 | 「数据库初始化失败」 |
-| 菜单栏重载配置失败 | 「配置重载失败」 |
-| 热键注册失败（格式错误/被占用） | 「热键注册/解析失败」 |
-| 定时任务执行失败 | 「任务失败: \<name\>」 |
-| 任务执行成功 | 「任务完成: \<name\>」 |
-| MCP 进程崩溃超过重试阈值 | 「MCP 服务 — 连续崩溃 N 次，已停止」 |
-
----
-
-## 技术栈
-
-| 层面 | 选型 |
-|------|------|
-| 语言 | Swift 5.9+ / Python 3 |
-| UI 框架 | AppKit（菜单栏 + NSPanel） |
-| 存储 | GRDB（SQLite）+ Qdrant（向量数据库） |
-| 配置 | Yams（YAML） |
-| 热键 | Carbon EventHotKey |
-| 翻译 API | OpenAI 兼容格式 |
-| OCR | Vision（VNRecognizeTextRequest） |
-| 暂存拖拽 | CGEventTap 全局监听 |
-| 定时调度 | Timer + CronExpression |
-| MCP 协议 | mcp.server + StreamableHTTPServerTransport |
-| 记忆引擎 | Mem0（热层）+ fastembed + Qdrant（冷层） |
-| 项目扫描 | AST + 正则 + FTS5 多语言符号提取（含符号起止行号，Swift/JS/Python/Java/Kotlin） |
-| 通知 | UNUserNotificationCenter / NSUserNotificationCenter |
-| 网速 | getifaddrs（POSIX 网卡字节计数） |
-| 登录项 | SMAppService |
-| CLI | swift-argument-parser |
-| 依赖 | GRDB.swift, Yams, swift-argument-parser, mcp, qdrant-client, fastembed, mem0ai |
-
----
-
-## 日志与调试
+An un-notarized app is blocked by Gatekeeper on other machines. Notarize and staple the `.dmg`:
 
 ```bash
-# 运行时追踪日志
+# store credentials once (app-specific password from appleid.apple.com)
+xcrun notarytool store-credentials "utility-notary" \
+  --apple-id "you@example.com" --team-id "TEAMID" --password "xxxx-xxxx-xxxx-xxxx"
+
+xcrun notarytool submit Utility-<version>.dmg --keychain-profile utility-notary --wait
+xcrun stapler staple Utility-<version>.dmg
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Memory service crashes or won't start | Python venv missing or broken | Recreate it (see [Install](#install)); check `~/.cache/utility/server.log` |
+| Proxy unreachable (`ECONNREFUSED`) | Proxy disabled, or wrong base URL | Set `modelProxy.enabled: true`; confirm `ANTHROPIC_BASE_URL` points at the proxy port |
+| OCR selects but returns nothing | Screen Recording not granted | System Settings → Privacy & Security → Screen Recording → enable Utility, restart |
+| Hotkeys do nothing | Accessibility not granted, or the combo is taken | Grant Accessibility, or rebind |
+| Gateway lists no third-party models | The client filters discovery to `claude*` | Type the model directly: `/model mimo-v2.5-pro` |
+| Memory service alive but requests time out | A stale process holds the port | Restart from the menu bar; `lsof -nP -iTCP -sTCP:LISTEN \| grep [PORT]` |
+| Upstream 502 out of nowhere | Proxy/upstream compression mismatch | Ensure the venv has Brotli/backports.zstd, restart the proxy |
+
+```bash
 tail -f ~/.cache/utility/debug.log
-
-# 数据文件
-~/.config/utility/config.yaml     # 配置文件
-~/.config/utility/data.sqlite     # SQLite 数据库
-~/.config/utility/task_state.yaml # 任务状态（已废弃，现在用 task_state 表）
-~/.cache/utility/clip/            # 剪切板图片缓存
-~/.cache/utility/stage/           # 暂存图片缓存
-
-# MCP 服务日志
-tail -f ~/Documents/selfdata/notes/logs/server.log      # MCP 服务
-tail -f ~/Documents/selfdata/notes/logs/summarize.log   # 每日总结流水线
-~/Documents/selfdata/notes/流水线错误日志.jsonl            # 总结流水线异常记录
-
-# 查看数据库
 sqlite3 ~/.config/utility/data.sqlite ".tables"
-# clipboard_item  stage_item  rss_item  task_state
 ```
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Language | Swift 5.9+ / Python 3.12 |
+| UI | AppKit (menu bar + `NSPanel`) |
+| Storage | GRDB (SQLite) + Qdrant (vector DB) |
+| Config | Yams (YAML) |
+| Hotkeys | Carbon EventHotKey |
+| OCR | Vision (`VNRecognizeTextRequest`) |
+| Proxy | aiohttp reverse proxy |
+| MCP protocol | `mcp.server` + `StreamableHTTPServerTransport` |
+| Memory engine | Mem0 (hot) + fastembed + Qdrant (cold) |
+| Project index | AST + regex + FTS5 multi-language symbol extraction |
+| Network | `getifaddrs` |
+| Login item | `SMAppService` |
+| CLI | swift-argument-parser |
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

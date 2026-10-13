@@ -1,6 +1,6 @@
 import Cocoa
 
-/// 全局键盘事件拦截 — 委托 PanelManager 从栈顶派发
+/// Global keyboard event interception — delegates to PanelManager to dispatch from the top of the stack
 final class KeyDispatcher {
     static let shared = KeyDispatcher()
     private var monitor: Any?

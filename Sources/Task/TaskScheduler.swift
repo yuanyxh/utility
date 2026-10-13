@@ -6,7 +6,7 @@ public final class TaskScheduler {
     private var timer: Timer?
     private let stateDB = TaskStateDB.shared
 
-    /// 内部任务（由模块注册，非用户配置），优先级高于用户 tasks
+    /// Internal tasks (registered by modules, not user config), take priority over user tasks
     private(set) var internalTasks: [TaskConfig] = []
 
     private init() {
@@ -18,9 +18,9 @@ public final class TaskScheduler {
 
     // MARK: - Internal task registration
 
-    /// 注册内部任务（由各模块如 MCP 注册），启动时自动加入调度
+    /// Register an internal task (registered by modules such as MCP), automatically added to the schedule at startup
     public func registerInternalTask(_ task: TaskConfig) {
-        // 同名替换
+        // Replace by name
         internalTasks.removeAll { $0.name == task.name }
         internalTasks.append(task)
         reschedule()
@@ -31,7 +31,7 @@ public final class TaskScheduler {
         reschedule()
     }
 
-    /// 合并用户配置 + 内部任务
+    /// Merge user config + internal tasks
     private func allTasks() -> [TaskConfig] {
         ConfigManager.shared.config.tasks + internalTasks
     }
@@ -48,7 +48,7 @@ public final class TaskScheduler {
         timer = nil
     }
 
-    /// 配置重载后：清理过期任务状态、补触发、重排下一轮
+    /// After a config reload: clean up stale task state, catch up missed runs, reschedule the next round
     public func reschedule() {
         timer?.invalidate()
         cleanupStaleTaskStates()
@@ -77,16 +77,16 @@ public final class TaskScheduler {
         for task in configs {
             guard let expr = CronExpression(task.trigger) else { continue }
 
-            // 以「今天 00:00 之后第一个 cron 匹配点」为补触发基准：
-            // - 该点尚未到达（今天还没到触发时间段）→ 不补，交给 scheduleNext 等时间到
-            // - 该点已过且今天尚未触发过 → 立即补触发当天
-            // 不再以 lastFire 为基准，避免 lastFire 距今多天时从历史旧点逐点补触发
-            // （如每天 10:00 的任务前天触发过，今天 09:00 打开 app 会立即补跑昨天的）。
+            // Use "the first cron match point after today 00:00" as the catch-up baseline:
+            // - That point has not yet arrived (today's trigger window not reached) → do not catch up, leave it to scheduleNext to wait
+            // - That point has passed and it has not fired today → catch up immediately for today
+            // No longer uses lastFire as the baseline, to avoid catching up point by point from old historical points when lastFire is days ago
+            // (e.g. a task at 10:00 daily that fired the day before yesterday would immediately re-run yesterday's when the app opens today at 09:00).
             guard let todayPoint = nextCronDate(after: calendar.startOfDay(for: now), expr: expr),
                   todayPoint <= now
             else { continue }
 
-            // 今天已触发过（lastFire 不早于今天的 cron 点），不重复补
+            // Already fired today (lastFire is not earlier than today's cron point), do not catch up again
             if let lastFire = stateDB.lastFire(for: task.name), lastFire >= todayPoint { continue }
 
             fireTask(task)
@@ -103,9 +103,9 @@ public final class TaskScheduler {
 
         for task in configs {
             guard let expr = CronExpression(task.trigger) else { continue }
-            // 未来最近触发点：从 now 之后找，不用 lastFire 作基准
-            // （lastFire 距今多天时 nextCronDate 会找到过去点被 next > now 过滤，
-            // 导致今天 cron 点失去调度，永远不会触发）
+            // Nearest future trigger point: search after now, do not use lastFire as baseline
+            // (when lastFire is days ago, nextCronDate would find a past point that gets filtered out by next > now,
+            // causing today's cron point to lose scheduling and never fire)
             if let next = nextCronDate(after: now, expr: expr) {
                 if earliest == nil || next < earliest! {
                     earliest = next
@@ -128,7 +128,7 @@ public final class TaskScheduler {
     // MARK: - Timer fired
 
     private func onTimerFired() {
-        // 复用 handleMissed 的补触发判断：以「今天」为基准，到点即触发
+        // Reuse handleMissed's catch-up judgment: baseline on "today", fire when the point is reached
         handleMissed()
         scheduleNext()
     }
@@ -198,9 +198,9 @@ public final class TaskScheduler {
         var comps = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         comps.second = 0
         guard var current = calendar.date(from: comps) else { return nil }
-        current = current.addingTimeInterval(60) // 从下一分钟开始搜
+        current = current.addingTimeInterval(60) // Start searching from the next minute
 
-        // 最多搜索 366 天
+        // Search at most 366 days
         for _ in 0 ..< 527_040 {
             let c = calendar.dateComponents([.minute, .hour, .day, .month, .weekday], from: current)
             guard let min = c.minute, let hr = c.hour, let day = c.day,

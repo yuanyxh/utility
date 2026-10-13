@@ -391,9 +391,11 @@ def _extract_vue(content: str, file_path: str) -> list[dict]:
     if not script_content:
         return []
 
-    # 行号偏移:parse 结果行号相对 strip 后的 script 块,需补偿回原文件。
-    # content[:m.start(2)].count("\n") = `<script>` 的 `>` 之前的换行总数;
-    # lead_newlines = script 块前导空白(被 strip 掉)里的换行数,相加即 parse 行 → 文件行 的加数。
+    # Line-number offset: parse-result lines are relative to the stripped
+    # script block and must be shifted back to the original file.
+    # content[:m.start(2)].count("\n") = total newlines before the `>` of `<script>`;
+    # lead_newlines = newlines in the script block's leading whitespace (stripped away);
+    # their sum is the addend from parse line → file line.
     lead_newlines = raw[: len(raw) - len(raw.lstrip())].count("\n")
     offset = content[: m.start(2)].count("\n") + lead_newlines
     script_tag_line = content[: m.start()].count("\n") + 1

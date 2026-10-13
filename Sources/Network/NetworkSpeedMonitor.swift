@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// 每 3 秒轮询 enX 网卡流量，计算上行/下行速度
+/// Poll enX interface traffic every 3 seconds, compute upload/download speed
 final class NetworkSpeedMonitor {
     static let shared = NetworkSpeedMonitor()
 
@@ -61,7 +61,7 @@ final class NetworkSpeedMonitor {
 
     // MARK: - getifaddrs
 
-    /// 汇总所有 enX (en0, en1, ...) 的 ifi_ibytes / ifi_obytes
+    /// Sum ifi_ibytes / ifi_obytes across all enX (en0, en1, ...)
     private func interfaceBytes() -> (rx: UInt64, tx: UInt64)? {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }

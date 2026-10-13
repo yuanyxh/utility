@@ -1,11 +1,13 @@
-"""server 的共享 embedder 模块。
+"""Shared embedder module for the server.
 
-从 server.py 拆分（2026-08-30，重构阶段4）：fastembed 配置与单一 embedder 实例。
-被记忆热层（server.py 的 MEM0_CONFIG/_patch_mem0_fastembed）、冷层（search_cold_layer）
-与项目向量搜索（server_search.py）共用。代码原样搬移不改逻辑。
+Split out of server.py (2026-08-30, refactor phase 4): fastembed configuration and
+the single embedder instance. Shared by the hot layer (server.py's
+MEM0_CONFIG/_patch_mem0_fastembed), the cold layer (search_cold_layer) and project
+vector search (server_search.py). Code moved as-is, no logic changes.
 
-注意：本模块不 import mem0/qdrant——server.py 的模块级副作用顺序
-（POSTHOG_DISABLED/MEM0_TELEMETRY + _patch_mem0_fastembed 先于 import mem0）不受影响。
+Note: this module does not import mem0/qdrant — server.py's module-level side-effect
+ordering (POSTHOG_DISABLED/MEM0_TELEMETRY + _patch_mem0_fastembed before import mem0)
+is unaffected.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from fastembed import TextEmbedding
 from log_utils import setup_logging
 
 # ---------------------------------------------------------------------------
-# 配置（与拆分前 server.py 一致；由 Swift MCPProcessManager 经 env 注入）
+# Configuration (same as pre-split server.py; injected by Swift MCPProcessManager via env)
 # ---------------------------------------------------------------------------
 
 EMBEDDER_MODEL = os.environ.get(
@@ -33,13 +35,16 @@ os.environ.setdefault("FASTEMBED_CACHE_PATH", FASTEMBED_CACHE_DIR)
 
 logger = setup_logging("server")
 
-#: 维度兜底值。**是兜底不是默认值**：只有在 fastembed 元数据里查不到该模型时才用。
-#: 384 = `all-MiniLM-L6-v2` 的维度，也是引入本机制前写死的值（故默认路径零行为变化）。
+#: Fallback dims value. **A fallback, not a default**: only used when the model
+#: cannot be found in the fastembed metadata. 384 = the dims of `all-MiniLM-L6-v2`,
+#: the value hardcoded before this mechanism was introduced (so the default path
+#: is byte-for-byte unchanged).
 _FALLBACK_EMBEDDER_DIMS = 384
 
-#: fastembed 元数据（`TextEmbedding.list_supported_models()` 条目）的字段名。
-#: 单列常量是因为它们是**外部库的字段名**：库改名时在这里一处红，而不是各处静默取不到
-#: 值、全体回退兜底。
+#: Field names of the fastembed metadata (`TextEmbedding.list_supported_models()`
+#: entries). They are single-source constants because they are **external library
+#: field names**: when the library renames them, it fails loudly here in one place,
+#: instead of every lookup silently returning nothing and falling back across the board.
 _META_MODEL_FIELD = "model"
 _META_DIM_FIELD = "dim"
 
@@ -47,13 +52,17 @@ _META_DIM_FIELD = "dim"
 def resolve_embedder_dims(
     model_name: str, *, fallback: int = _FALLBACK_EMBEDDER_DIMS
 ) -> int:
-    """从 fastembed 元数据解析模型的向量维度。
+    """Resolve a model's vector dims from the fastembed metadata.
 
-    维度是**模型固有属性**，故只从 fastembed 自己的元数据取：交给 Swift 注入等于另建一份
-    「模型名 → 维度」映射，与真实值必然漂移（换模型忘了改映射 → 集合维度与向量维度不符）。
-    查不到/字段不可用/查询异常一律回退 `fallback` 并记 warning。
+    Dims are an **intrinsic property of the model**, so they are read only from
+    fastembed's own metadata: having Swift inject them would mean building a second
+    "model name → dims" mapping, which is bound to drift from the real value (swap
+    the model, forget to update the mapping → collection dims no longer match vector
+    dims). A missing entry / unusable field / lookup exception all fall back to
+    `fallback` and log a warning.
 
-    纯元数据读取：不加载 ONNX 模型、不走网络（实测 30 个条目开销可忽略）。
+    Pure metadata read: no ONNX model is loaded and no network is used (measured at
+    ~30 entries, the cost is negligible).
     """
     try:
         for entry in TextEmbedding.list_supported_models():
@@ -76,31 +85,35 @@ def resolve_embedder_dims(
 
     logger.warning(
         f"Model {model_name!r} is not in fastembed supported models; "
-        f"falling back to {fallback} dims. 若该模型维度不是 {fallback}，"
-        "向量检索会以维度不符失败——先核对 EMBEDDER_MODEL 拼写"
+        f"falling back to {fallback} dims. If this model's dims are not {fallback}, "
+        "vector search will fail on a dims mismatch — check the EMBEDDER_MODEL spelling first"
     )
     return fallback
 
 
-#: 当前 embedder 的向量维度（由模型元数据解析，见 `resolve_embedder_dims`）。
+#: Vector dims of the current embedder (resolved from model metadata, see `resolve_embedder_dims`).
 EMBEDDER_DIMS = resolve_embedder_dims(EMBEDDER_MODEL)
 
 
 def describe_dim_mismatch(existing_dims: int | None, expected_dims: int) -> str | None:
-    """集合维度与当前 embedder 维度不一致时的处置建议；一致或无法判定返回 None。
+    """Remediation advice when the collection dims disagree with the current embedder
+    dims; returns None when they match or cannot be determined.
 
-    为什么必须显式报错：**集合维度在首次创建时固定**。换模型（维度变化）后旧向量与
-    新查询向量不可比，Qdrant 会在 query 时报 dimension 错误——而 `search_cold_layer`
-    把异常吞成一条 warning，表现为「冷层检索静默失效、用户只觉得结果变少」。
-    启动时点出来，比事后从「检索结果不对」倒查便宜得多。
+    Why an explicit error is required: **collection dims are fixed at first creation**.
+    After swapping the model (dims change) the old vectors are not comparable with the
+    new query vectors, and Qdrant raises a dimension error on query — while
+    `search_cold_layer` swallows the exception into a single warning, presenting as
+    "cold-layer search silently fails, users just see fewer results". Calling it out at
+    startup is far cheaper than tracing back from "the search results look wrong".
     """
     if existing_dims is None or existing_dims == expected_dims:
         return None
     return (
-        f"冷层集合维度不一致：集合 {existing_dims} 维，当前 embedder "
-        f"{EMBEDDER_MODEL!r} 为 {expected_dims} 维。处置（集合维度不可修改）："
-        f"改回原模型（EMBEDDER_MODEL / config.yaml mcp.embedderModel），"
-        f"或删除冷层集合让其按新维度重建、向量全量重扫"
+        f"Cold-layer collection dims mismatch: collection has {existing_dims} dims, the "
+        f"current embedder {EMBEDDER_MODEL!r} has {expected_dims} dims. Remediation "
+        f"(collection dims are immutable): revert to the original model "
+        f"(EMBEDDER_MODEL / config.yaml mcp.embedderModel), or delete the cold-layer "
+        f"collection so it is recreated with the new dims and all vectors are rescanned"
     )
 
 
@@ -108,11 +121,12 @@ _shared_embedder = None
 
 
 def _get_shared_embedder():
-    """单一 embedder 实例，冷层和项目向量搜索共用，避免重复加载 ONNX 模型。
+    """Single embedder instance, shared by the cold layer and project vector search to
+    avoid reloading the ONNX model.
 
-    优化：enable_cpu_mem_arena=False 禁用 ONNX Runtime CPU arena 预分配（默认会 malloc
-    ~1GB 大块）；threads=1 限制线程数；CPUExecutionProvider 避免 CoreML/Azure 提供者
-    的额外内存。
+    Optimizations: enable_cpu_mem_arena=False disables ONNX Runtime's CPU arena
+    pre-allocation (which mallocs a ~1GB block by default); threads=1 limits the thread
+    count; CPUExecutionProvider avoids the extra memory of the CoreML/Azure providers.
     """
     global _shared_embedder
     if _shared_embedder is None:
@@ -130,24 +144,28 @@ def _get_shared_embedder():
 
 
 # ---------------------------------------------------------------------------
-# 查询向量缓存
+# Query vector cache
 # ---------------------------------------------------------------------------
 
-#: 查询嵌入 LRU 容量（条）。0 表示不缓存。
+#: Query-embedding LRU capacity (entries). 0 disables caching.
 _QUERY_CACHE_SIZE = int(os.environ.get("EMBED_QUERY_CACHE_SIZE", "64"))
 _query_cache: OrderedDict[str, np.ndarray] = OrderedDict()
 _query_cache_lock = threading.Lock()
 
 
 def embed_query(text: str) -> np.ndarray | None:
-    """嵌入单个查询串，带小容量 LRU。embedder 不可用时返回 None。
+    """Embed a single query string, with a small LRU cache. Returns None when the
+    embedder is unavailable.
 
-    同一轮 agent 常对同一 query 并发调用多个检索工具（recall / project_notes /
-    project_search 都在提示里被要求「并行调用」），此前各自独立嵌入一次查询。
-    查询嵌入是纯函数、单条约 45ms，缓存可消除这类重复计算。
-    注意 mem0 内部走它自己的 embedder，不经过本函数，那一路无法共享。
+    Within one agent turn, several search tools are often called concurrently with the
+    same query (recall / project_notes / project_search are all told in the prompt to
+    be called "in parallel"), and each used to embed the query independently. Query
+    embedding is a pure function, ~45ms per call, so the cache eliminates this
+    duplicated work. Note that mem0 internally uses its own embedder and does not go
+    through this function, so that path cannot be shared.
 
-    返回 float32 ndarray。**调用方只读**——缓存里存的就是这个对象本身。
+    Returns a float32 ndarray. **Read-only for callers** — the object itself is stored
+    in the cache.
     """
     emb = _get_shared_embedder()
     if emb is None:

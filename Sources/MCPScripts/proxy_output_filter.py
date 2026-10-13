@@ -1,16 +1,22 @@
-"""入站请求的 shell 工具输出瘦身。
+"""Shell tool output slimming for inbound requests.
 
-三层，安全度递减：
-  L1 砍头尾——超 max_bytes 保留前 70% + 后 30% 并插自证标记（默认开）
-  L2 格式压缩——JSON 无损 minify（默认开）；重复行折叠默认关，它改行数不算无损
-  L3 命令规则——按 shell 命令配 drop_lines/keep_lines/max_bytes（默认空表：实测
-     本项目 Bash 输出 ≤4KB 占 61%、>8KB 全是内容型，没有 snip 那种模板化噪音）
+Three layers, decreasing in safety:
+  L1 head/tail trim — over max_bytes keep the first 70% + last 30% and insert a
+     self-evident marker (on by default)
+  L2 format compression — lossless JSON minify (on by default); repeated-line
+     folding is off by default, since it changes the line count and is not lossless
+  L3 command rules — drop_lines/keep_lines/max_bytes per shell command (empty table
+     by default: measured, this project's Bash output ≤4KB accounts for 61% and
+     everything >8KB is content-type, with none of snip's template noise)
 
-**只对 shell 类工具生效**：Read/Edit 等是模型点名要的文件内容，截断等于损坏；
-shell 输出才是「命令五花八门、结果不可预期」的来源。识别见 `_shell_kind`。
+**Only effective for shell-like tools**: Read/Edit etc. are file contents the model
+explicitly asked for, and truncating them is corruption; shell output is the source
+of "commands vary wildly and results are unpredictable". See `_shell_kind` for
+detection.
 
-与 proxy_skill_dedup 同构：都在代理转发前就地改 messages，都在 record 之后调用
-（记录层留原文，否则度量标尺被自己毁掉）。
+Isomorphic with proxy_skill_dedup: both modify messages in place before the proxy
+forwards, and both are called after record (the record layer keeps the original
+text, otherwise the measurement yardstick destroys itself).
 """
 
 from __future__ import annotations
@@ -22,13 +28,15 @@ from proxy_skill_dedup import FALLBACK_LANG
 
 API_OPENAI = "openai"
 
-#: 配置 env 名（Swift `TokenProxyManager.outputFilterEnvKey` 注入）。该 env 不经
-#: `config.py`，契约第 3 组覆盖不到，故两侧同值由契约脚本单独断言。
+#: The config env name (injected by Swift `TokenProxyManager.outputFilterEnvKey`). This
+#: env does not go through `config.py`, so contract group 3 cannot cover it; the two
+#: sides' identical value is therefore asserted separately by the contract script.
 OUTPUT_FILTER_ENV_KEY = "MODEL_PROXY_OUTPUT_FILTER"
 
-#: 内置 shell 工具名。跨客户端名字各不相同（Gemini=`run_shell_command`、
-#: Cursor=`run_terminal_cmd`、Codex=`local_shell`），故这只是**兜底名单**，
-#: 真正的判据是 input 里的 `command`（协议级事实）。配置可增量补充。
+#: Built-in shell tool names. The name differs across clients
+#: (Gemini=`run_shell_command`, Cursor=`run_terminal_cmd`, Codex=`local_shell`), so this
+#: is only a **fallback list**; the real criterion is the `command` in the input (a
+#: protocol-level fact). Config can supplement it incrementally.
 SHELL_TOOLS_DEFAULT = ("Bash",)
 
 DEFAULT_MAX_BYTES = 8000
@@ -48,7 +56,7 @@ def _mark(lang: str, n: int) -> str:
 
 
 def _get_text(container: dict) -> str | None:
-    """取容器文本：Anthropic 的 tool_result 块与 OpenAI 的 tool 消息都是 content。"""
+    """Get the container text: both the Anthropic tool_result block and the OpenAI tool message use content."""
     content = container.get("content")
     if isinstance(content, str):
         return content
@@ -63,10 +71,11 @@ def _get_text(container: dict) -> str | None:
 
 
 def _set_text(container: dict, text: str) -> None:
-    """就地替换文本，保留外壳与配对字段（tool_use_id/tool_call_id 动不得）。
+    """Replace text in place, preserving the shell and pairing fields
+    (tool_use_id/tool_call_id must not be touched).
 
-    与 proxy_skill_dedup 的同名函数差别只有一处：这里不校验块类型，因为
-    OpenAI 的 tool 消息没有 type 字段。
+    The only difference from the same-named function in proxy_skill_dedup is that this
+    one does not check the block type, because OpenAI tool messages have no type field.
     """
     if isinstance(container.get("content"), str):
         container["content"] = text
@@ -75,7 +84,7 @@ def _set_text(container: dict, text: str) -> None:
 
 
 def _anthropic_items(messages: list[dict]):
-    """产出 (容器, 工具名, 命令)。命令取自 assistant 的 tool_use.input。"""
+    """Yield (container, tool name, command). The command is taken from the assistant's tool_use.input."""
     names: dict[str, tuple[str, str | None]] = {}
     for msg in messages:
         content = msg.get("content")
@@ -99,7 +108,7 @@ def _anthropic_items(messages: list[dict]):
 
 
 def _openai_items(messages: list[dict]):
-    """产出 (容器, 工具名, 命令)。OpenAI 的 function.arguments 是 JSON 字符串。"""
+    """Yield (container, tool name, command). The OpenAI function.arguments is a JSON string."""
     names: dict[str, tuple[str, str | None]] = {}
     for msg in messages:
         for call in msg.get("tool_calls") or []:
@@ -124,7 +133,7 @@ def _openai_items(messages: list[dict]):
 
 
 def _shell_kind(name: str, command, shell_tools: set[str]) -> str:
-    """``listed``＝名字在名单里；``struct``＝名单外但 input 带 command；``""``＝非 shell。"""
+    """``listed`` = name is in the list; ``struct`` = not in the list but input carries command; ``""`` = not shell."""
     if name in shell_tools:
         return "listed"
     if isinstance(command, str) and command.strip():
@@ -133,7 +142,7 @@ def _shell_kind(name: str, command, shell_tools: set[str]) -> str:
 
 
 def _truncate(text: str, max_bytes: int, lang: str) -> tuple[str, int]:
-    """超限则保留头尾并插标记，返回 (新文本, 省下字节)。"""
+    """If over the limit, keep head and tail and insert a marker; returns (new text, bytes saved)."""
     data = text.encode()
     if max_bytes <= 0 or len(data) <= max_bytes:
         return text, 0
@@ -148,7 +157,7 @@ def _truncate(text: str, max_bytes: int, lang: str) -> tuple[str, int]:
 
 
 def _minify_json(text: str) -> tuple[str, int]:
-    """JSON 无损 minify（只去空白）；非 JSON 或解析失败原样返回。"""
+    """Lossless JSON minify (whitespace only); returns as-is for non-JSON or parse failure."""
     stripped = text.strip()
     if not stripped or stripped[0] not in "[{":
         return text, 0
@@ -165,7 +174,7 @@ def _minify_json(text: str) -> tuple[str, int]:
 
 
 def _fold_repeated(text: str) -> tuple[str, int]:
-    """连续 ≥3 行完全相同折叠为 `行 (xN)`。**非无损**（行数变了），故默认关闭。"""
+    """Fold ≥3 consecutive identical lines into `line (xN)`. **Not lossless** (the line count changes), hence off by default."""
     lines = text.split("\n")
     out: list[str] = []
     saved = 0
@@ -187,7 +196,7 @@ def _fold_repeated(text: str) -> tuple[str, int]:
 
 
 def _match_rule(rules: list, command) -> dict | None:
-    """按 shell 命令首个 token 匹配规则（与 snip 的 match.command 同义）。"""
+    """Match a rule by the shell command's first token (synonymous with snip's match.command)."""
     if not isinstance(command, str) or not command.strip():
         return None
     parts = command.split()
@@ -202,7 +211,7 @@ def _match_rule(rules: list, command) -> dict | None:
 
 
 def _apply_rule(text: str, rule: dict) -> tuple[str, int]:
-    """先按规则删/留行，返回 (新文本, 省下字节)。"""
+    """First drop/keep lines per the rule; returns (new text, bytes saved)."""
     drops = rule.get("drop_lines") or []
     keeps = rule.get("keep_lines") or []
     if not drops and not keeps:
@@ -234,7 +243,7 @@ def filter_tool_outputs(
     raw_config: str,
     lang: str,
 ) -> dict:
-    """就地瘦身 shell 工具的 tool_result 文本，返回统计；无改动返回 {}。"""
+    """Slim the shell tools' tool_result text in place, returning stats; returns {} when unchanged."""
     cfg = _parse_config(raw_config)
     if not cfg.get("enabled", True):
         return {}

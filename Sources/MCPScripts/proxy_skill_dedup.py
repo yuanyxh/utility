@@ -1,24 +1,30 @@
-"""入站请求的 tool_result 内容去重。
+"""De-duplication of tool_result content in inbound requests.
 
-同一会话里同一 skill（MCP 工具）被反复调用时，每次都把整份 SKILL.md 再插一遍
-——实测 6 份逐字节相同的 15184 B。本模块把第二份起换成短提示，保留第一次
-（模型仍能在上文读到完整内容）。
+When the same skill (MCP tool) is called repeatedly within one session, the
+whole SKILL.md is re-inserted each time — measured: 6 byte-identical copies of
+15184 B. This module replaces the second copy onward with a short note, keeping
+the first (the model can still read the full content above).
 
-判据是**内容逐字节相同**而非工具名：代理拿不到 skill 名单（那份名单在 MCP
-server 内），且内容相同即语义相同。副作用是重复的非 skill 输出（两次相同的
-ls）也被折叠——无害且同样省 token。
+The criterion is **byte-identical content**, not the tool name: the proxy cannot
+see the skill list (that list lives inside the MCP server), and identical
+content means identical semantics. A side effect is that repeated non-skill
+output (two identical `ls`) is also collapsed — harmless and token-saving all
+the same.
 
-放代理层而非 MCP server 层：server 无会话历史视野，只能靠进程内状态记
-「已返回过」，多会话共用时会把 A 会话的加载状态泄漏给 B（B 收到「已加载」
-而上文没有 → 静默失效，属最难排查的一类）。
+Placed at the proxy layer rather than the MCP server layer: the server has no
+view of session history and can only track "already returned" via in-process
+state; with multiple sessions sharing it, session A's load state leaks to B (B
+receives "already loaded" while the content above is missing → silent failure,
+among the hardest to troubleshoot).
 """
 
 from __future__ import annotations
 
 API_OPENAI = "openai"
 
-#: 短提示文案（按 UI 语言选，缺该语言回退 `FALLBACK_LANG`）。
-#: 语言判据与 tool_text / prompt_loader 同源（`config.ui_language()`）。
+#: The short-note text (selected by UI language; falls back to `FALLBACK_LANG`
+#: when that language is missing). The language criterion is shared with
+#: tool_text / prompt_loader (`config.ui_language()`).
 SKILL_DEDUP_NOTES: dict[str, str] = {
     "zh-Hans": "{name} 的结果已存在，见上文",
     "en": "{name} result already exists; see above",
@@ -26,18 +32,18 @@ SKILL_DEDUP_NOTES: dict[str, str] = {
 
 FALLBACK_LANG = "zh-Hans"
 
-#: 工具名映射不到时的占位，避免渲染出「技能  已于上文加载」
+#: Placeholder when the tool name cannot be mapped, avoiding rendering "skill  loaded above"
 UNKNOWN_NAME = "?"
 
 
 def note_for(name: str, lang: str) -> str:
-    """选语言并渲染短提示；未翻译的语言回退基线。"""
+    """Select the language and render the short note; untranslated languages fall back to the baseline."""
     template = SKILL_DEDUP_NOTES.get(lang) or SKILL_DEDUP_NOTES[FALLBACK_LANG]
     return template.replace("{name}", name or UNKNOWN_NAME)
 
 
 def _tool_result_text(block: dict) -> str | None:
-    """Anthropic tool_result 块 → 文本；非 tool_result 返回 None。"""
+    """Anthropic tool_result block → text; returns None for non-tool_result."""
     if block.get("type") != "tool_result":
         return None
     content = block.get("content")
@@ -54,8 +60,9 @@ def _tool_result_text(block: dict) -> str | None:
 
 
 def _set_tool_result_text(block: dict, text: str) -> None:
-    """就地替换文本，**保留块的其余字段与消息外壳**——配对信息（tool_use_id）
-    动不得，上游会以「tool_use 缺少配对的 tool_result」直接 400。"""
+    """Replace the text in place, **preserving the block's other fields and the
+    message shell** — the pairing info (tool_use_id) must not be touched, or the
+    upstream directly returns 400 for "tool_use missing its paired tool_result"."""
     content = block.get("content")
     if isinstance(content, str):
         block["content"] = text
@@ -64,7 +71,7 @@ def _set_tool_result_text(block: dict, text: str) -> None:
 
 
 def _resolve_anthropic_names(messages: list[dict]) -> dict[str, str]:
-    """tool_use_id → 工具名（名字在 assistant 消息的 tool_use 块上）。"""
+    """tool_use_id → tool name (the name is on the tool_use block of the assistant message)."""
     names: dict[str, str] = {}
     for msg in messages:
         content = msg.get("content")
@@ -77,7 +84,7 @@ def _resolve_anthropic_names(messages: list[dict]) -> dict[str, str]:
 
 
 def _resolve_openai_names(messages: list[dict]) -> dict[str, str]:
-    """tool_call_id → 工具名（名字在 assistant 消息的 tool_calls 里）。"""
+    """tool_call_id → tool name (the name is in the assistant message's tool_calls)."""
     names: dict[str, str] = {}
     for msg in messages:
         for call in msg.get("tool_calls") or []:
@@ -133,9 +140,11 @@ def _dedup_openai(messages: list[dict], lang: str) -> int:
 
 
 def dedup_tool_results(body: dict, api_format: str, lang: str) -> int:
-    """就地去除重复的 tool_result 文本，返回被替换的条数。
+    """De-duplicate repeated tool_result text in place, returning the number of
+    entries replaced.
 
-    只保留每个文本的**第一次**出现——模型仍能在上文读到完整内容。
+    Only the **first** occurrence of each text is kept — the model can still read
+    the full content above.
     """
     messages = body.get("messages")
     if not isinstance(messages, list):

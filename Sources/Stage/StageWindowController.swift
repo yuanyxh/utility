@@ -1,6 +1,6 @@
 import Cocoa
 
-/// 暂存窗口 — 屏幕左下角垂直列表
+/// Stage window — vertical list at the bottom-left of the screen
 public final class StageWindowController: NSWindowController {
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -32,7 +32,7 @@ public final class StageWindowController: NSWindowController {
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
         )
-        // 确保 window.frame 已就绪供 StageDropMonitor 判断位置
+        // Ensure window.frame is ready for StageDropMonitor to determine position
         panel.orderFront(nil)
         panel.orderOut(nil)
 
@@ -46,7 +46,7 @@ public final class StageWindowController: NSWindowController {
     private func setupUI() {
         guard let panel = window else { return }
 
-        // 清空按钮（右上角）
+        // Clear button (top-right corner)
         clearButton.title = L10n.Stage.clear
         clearButton.bezelStyle = .rounded
         clearButton.controlSize = .small
@@ -54,7 +54,7 @@ public final class StageWindowController: NSWindowController {
         clearButton.target = self
         clearButton.action = #selector(clearAll)
 
-        // 表格
+        // Table
         let col = NSTableColumn(identifier: .init("item"))
         col.title = ""
         col.width = 180
@@ -69,7 +69,7 @@ public final class StageWindowController: NSWindowController {
         tableView.selectionHighlightStyle = .regular
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
 
-        // 拖拽排序/移出
+        // Drag to reorder / move out
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         scrollView.documentView = tableView
@@ -171,7 +171,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let cell = NSTableCellView()
         cell.identifier = .init("StageCell")
 
-        // 图标
+        // Icon
         let iconView = NSImageView()
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -181,7 +181,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             iconView.isHidden = true
         }
 
-        // 文本
+        // Text
         let label = NSTextField(labelWithString: item.displayText)
         label.lineBreakMode = .byTruncatingTail
         label.cell?.truncatesLastVisibleLine = true
@@ -191,7 +191,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         label.textColor = NSColor.labelColor
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        // 删除按钮
+        // Delete button
         let del = NSButton()
         del.title = "×"
         del.bezelStyle = .inline
@@ -235,7 +235,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
         let item = items[row]
         pboard.clearContents()
 
-        // 拖出操作 mask：moveOnDragOut=true 时允许 Finder 移动（系统级 cmd+option+v）
+        // Drag-out operation mask: when moveOnDragOut=true, allow Finder to move (system-level cmd+option+v)
         let config = ConfigManager.shared.config.stage
         tableView.setDraggingSourceOperationMask(
             config.moveOnDragOut ? [.copy, .move] : .copy, forLocal: false,
@@ -270,7 +270,7 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             return false
         }
 
-        // 不在此删除 — 等 draggingSession:endedAt: 确认有效目标后再移除
+        // Do not delete here — wait for draggingSession:endedAt: to confirm a valid target before removing
         draggingItemId = item.id
         draggingItem = item
         return true
@@ -299,12 +299,12 @@ extension StageWindowController: NSTableViewDataSource, NSTableViewDelegate {
             try? StageManager.shared.remove(item.id)
             return
         }
-        // Finder 已执行移动（cmd+opt+v）→ 只删 DB
+        // Finder already performed the move (cmd+opt+v) → only delete from DB
         if operation == .move {
             try? StageManager.shared.remove(item.id)
             return
         }
-        // operation == .copy: 非磁盘目标（微信/浏览器等），即使配置为 move 也只 copy，不删源文件
+        // operation == .copy: non-disk target (WeChat/browser, etc.), even if configured as move only copy, do not delete the source file
         try? StageManager.shared.remove(item.id)
     }
 }

@@ -1,9 +1,9 @@
 import Cocoa
 
-/// 通用加载指示器 — 预配置的 NSProgressIndicator 子类
+/// Generic loading indicator — a preconfigured NSProgressIndicator subclass
 ///
-/// 自动设置 `.spinning` 样式 + `isDisplayedWhenStopped = false`。
-/// 图标色、大小、布局由外部控制：
+/// Automatically sets the `.spinning` style + `isDisplayedWhenStopped = false`.
+/// Icon color, size, and layout are controlled externally:
 ///
 /// ```swift
 /// let spinner = LoadingSpinner()

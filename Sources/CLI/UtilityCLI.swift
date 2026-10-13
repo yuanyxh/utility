@@ -5,12 +5,12 @@ import Foundation
 /// Usage: utility <subcommand> [options]
 ///   utility rss --fetch
 ///   utility init --path <path>
-///   utility -a "claude -p '分析这个模块'"
+///   utility -a "claude -p 'analyze this module'"
 ///   utility --dir ~/myapp -a claude
 struct UtilityCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "utility",
-        abstract: "macOS 桌面工具集 CLI",
+        abstract: "macOS desktop toolkit CLI",
         subcommands: [
             RSSCommand.self,
             InitCommand.self,
@@ -18,14 +18,14 @@ struct UtilityCLI: ParsableCommand {
         defaultSubcommand: nil,
     )
 
-    // ── Agent mode flags (仅无子命令时生效) ──
+    // ── Agent mode flags (only effective when there is no subcommand) ──
 
     @Option(name: .shortAndLong,
-            help: ArgumentHelp("Agent 命令，如 \"claude -p '分析模块'\" 或 \"aider --model sonnet\""))
+            help: ArgumentHelp("Agent command, e.g. \"claude -p 'analyze module'\" or \"aider --model sonnet\""))
     var agent: String?
 
     @Option(name: .customLong("dir"),
-            help: ArgumentHelp("项目目录路径（默认：当前目录）"))
+            help: ArgumentHelp("Project directory path (default: current directory)"))
     var projectDir: String?
 
     func run() throws {

@@ -1,8 +1,9 @@
-"""token_proxy 的协议转换与请求注入层。
+"""Protocol conversion and request injection layer for token_proxy.
 
-从 token_proxy.py 拆分（2026-08-30，重构阶段2）：anthropic↔openai 协议转换
-（ProtocolConverter/OpenAIToAnthropicStream）、safety classifier 识别与注入、
-系统规则注入（_inject_system_prompt）、SSE 流提取。代码原样搬移不改逻辑。
+Split out from token_proxy.py (2026-08-30, refactor stage 2): anthropic↔openai
+protocol conversion (ProtocolConverter/OpenAIToAnthropicStream), safety classifier
+detection and injection, system rule injection (_inject_system_prompt), SSE stream
+extraction. The code was moved verbatim without logic changes.
 """
 
 from __future__ import annotations
@@ -13,13 +14,15 @@ import os
 from config import notes_dir
 from log_utils import setup_logging
 
-# 「如何读 Anthropic system 字段」的单一权威实现在归一化层，此处复用，
-# 避免同一事实两处推导（system 结构扩展时只改一处）。
-# 依赖方向：proxy_protocol → proxy_normalize（后者只依赖标准库，无环）。
+# The single authoritative implementation of "how to read the Anthropic system
+# field" lives in the normalization layer and is reused here, avoiding deriving the
+# same fact twice (when the system structure is extended, only one place changes).
+# Dependency direction: proxy_protocol → proxy_normalize (the latter depends only on
+# the standard library, so no cycle).
 from proxy_normalize import system_to_text as _system_to_text
 
 # ---------------------------------------------------------------------------
-# 配置（与拆分前 token_proxy.py 一致）
+# Configuration (identical to token_proxy.py before the split)
 # ---------------------------------------------------------------------------
 
 NOTES_DIR = notes_dir()
@@ -28,20 +31,25 @@ SYSTEM_PROMPTS_FILE = os.path.join(NOTES_DIR, "MCP", "System_Prompts.md")
 logger = setup_logging("token_proxy", json_format=True)
 
 
-#: 规则注入块的首尾标记。由注入方（本模块）定义，剥离方（proxy_usage 的用量
-#: 摘取）复用同一常量——避免「注入用什么标记」与「剥离认什么标记」两处推导。
+#: The start/end markers of the rule-injection block. Defined by the injector (this
+#: module); the stripper (usage extraction in proxy_usage) reuses the same constants —
+#: avoiding deriving "which marker the injector uses" and "which marker the stripper
+#: recognizes" in two places.
 RULE_START_MARK = "---rule_start"
 RULE_END_MARK = "---rule_end"
 
 
 def strip_injected_rules(text: str) -> str:
-    """剥离 `_inject_system_prompt` 注入的规则块，保留其余用户文本。
+    """Strip the rule block injected by `_inject_system_prompt`, keeping the rest of the user text.
 
-    注入块是一整份 `System_Prompts.md`（可达数千字符），而用量记录的摘取上限
-    只有 100~500 字符——不剥离的话 `context_summary` / `input_preview` /
-    `actual_user_input` 三个字段看到的全是守则开头，真正的用户输入被整个挤出。
+    The injected block is a whole `System_Prompts.md` (up to several thousand
+    characters), while the extraction caps for usage records are only 100~500
+    characters — without stripping, the three fields `context_summary` /
+    `input_preview` / `actual_user_input` would all show the beginning of the rules
+    and the real user input would be pushed out entirely.
 
-    支持剥离多块；未闭合的块丢弃到结尾（防残留半块）。
+    Supports stripping multiple blocks; an unclosed block is discarded to the end
+    (guarding against a leftover half-block).
     """
     if not text or RULE_START_MARK not in text:
         return text
@@ -55,7 +63,7 @@ def strip_injected_rules(text: str) -> str:
         out.append(rest[:i])
         j = rest.find(RULE_END_MARK, i + len(RULE_START_MARK))
         if j < 0:
-            break  # 块未闭合 → 丢弃剩余部分，不把半块规则当用户输入
+            break  # block unclosed → discard the remainder, do not treat a half rule as user input
         rest = rest[j + len(RULE_END_MARK) :]
     return "".join(out).strip()
 
@@ -65,16 +73,20 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 协议常量
+# Protocol constants
 # ---------------------------------------------------------------------------
 
-#: OpenAI `finish_reason` → Anthropic `stop_reason` 的映射。**单一权威定义**，
-#: 流式转换 / 非流式转换 / SSE usage 提取三处共用。
+#: OpenAI `finish_reason` → Anthropic `stop_reason` mapping. **Single authoritative
+#: definition**, shared by the streaming conversion / non-streaming conversion / SSE
+#: usage extraction.
 #:
-#: 分头维护会让同一次上游响应在不同路径上得出不同结论：曾出现 content_filter
-#: 只在记录层的表里有映射，两个转换层都缺，于是 `mapping.get(finish, "end_turn")`
-#: 把「内容被过滤」当成「正常结束」——客户端看到 end_turn，路由层也据此认定
-#: 正常终止，异常信号整个丢失，而数据库里却如实写着 content_filter。
+#: Maintaining it in separate places makes the same upstream response yield different
+#: conclusions on different paths: content_filter once had a mapping only in the
+#: record layer's table while both conversion layers lacked it, so
+#: `mapping.get(finish, "end_turn")` treated "content filtered" as "normal end" — the
+#: client saw end_turn and the routing layer also concluded normal termination from
+#: it, the anomaly signal was lost entirely, while the database faithfully recorded
+#: content_filter.
 FINISH_REASON_MAP: dict[str, str] = {
     "stop": "end_turn",
     "tool_calls": "tool_use",
@@ -82,13 +94,14 @@ FINISH_REASON_MAP: dict[str, str] = {
     "content_filter": "content_filter",
 }
 
-#: 转换层遇到未知 finish_reason 时的兜底——必须是 Anthropic 的合法枚举值，
-#: 否则客户端会因非法 stop_reason 拒绝整个响应。
+#: Fallback when the conversion layer meets an unknown finish_reason — must be a legal
+#: Anthropic enum value, otherwise the client rejects the entire response for an
+#: illegal stop_reason.
 FALLBACK_STOP_REASON = "end_turn"
 
 
 def _tool_choice_anthropic_to_openai(choice):
-    """Anthropic tool_choice → OpenAI tool_choice。
+    """Anthropic tool_choice → OpenAI tool_choice.
 
     Anthropic: {"type": "auto"|"any"|"tool"|"none"[, "name": ...]}
     OpenAI:    "auto"|"required"|"none" | {"type":"function","function":{"name":...}}
@@ -104,7 +117,7 @@ def _tool_choice_anthropic_to_openai(choice):
 
 
 def _tool_choice_openai_to_anthropic(choice):
-    """OpenAI tool_choice → Anthropic tool_choice（上一个函数的逆向）。"""
+    """OpenAI tool_choice → Anthropic tool_choice (the inverse of the previous function)."""
     if isinstance(choice, str):
         return {"type": {"required": "any", "none": "none"}.get(choice, "auto")}
     if isinstance(choice, dict):
@@ -114,7 +127,7 @@ def _tool_choice_openai_to_anthropic(choice):
 
 
 class ProtocolConverter:
-    """Anthropic Messages API ↔ OpenAI Chat Completions 请求体双向转换。"""
+    """Bidirectional conversion of Anthropic Messages API ↔ OpenAI Chat Completions request bodies."""
 
     @staticmethod
     def request_anthropic_to_openai(body: dict) -> dict:
@@ -128,8 +141,9 @@ class ProtocolConverter:
             out["temperature"] = body["temperature"]
         if body.get("top_p") is not None:
             out["top_p"] = body["top_p"]
-        # Anthropic 的停止序列字段是 `stop_sequences`（数组），OpenAI 对应 `stop`。
-        # 此处曾读 `stop`——Anthropic 请求体里没有该键，转换恒不生效（静默丢配置）。
+        # Anthropic's stop-sequence field is `stop_sequences` (an array); the OpenAI
+        # equivalent is `stop`. This used to read `stop` — Anthropic request bodies
+        # have no such key, so the conversion never took effect (silently dropping config).
         if body.get("stop_sequences") is not None:
             out["stop"] = body["stop_sequences"]
         if body.get("tool_choice") is not None:
@@ -225,7 +239,7 @@ class ProtocolConverter:
                 if isinstance(t, dict)
             ]
         if body.get("stream"):
-            # openai 流式默认不返回 usage，显式要求末尾携带
+            # openai streaming does not return usage by default; explicitly request it be carried at the end
             out["stream_options"] = {"include_usage": True}
         return out
 
@@ -241,7 +255,7 @@ class ProtocolConverter:
             out["temperature"] = body["temperature"]
         if body.get("top_p") is not None:
             out["top_p"] = body["top_p"]
-        # OpenAI `stop` ↔ Anthropic `stop_sequences`：两侧字段名不同，必须显式转换
+        # OpenAI `stop` ↔ Anthropic `stop_sequences`: the field names differ on the two sides and must be converted explicitly
         if body.get("stop") is not None:
             out["stop_sequences"] = body["stop"]
 
@@ -325,7 +339,7 @@ class ProtocolConverter:
 
     @staticmethod
     def response_openai_to_anthropic(resp: dict) -> dict:
-        """OpenAI Chat Completions 非流式响应 → Anthropic Messages 响应。"""
+        """OpenAI Chat Completions non-streaming response → Anthropic Messages response."""
         choice = (resp.get("choices") or [{}])[0]
         message = choice.get("message", {}) or {}
         content_blocks = []
@@ -365,11 +379,12 @@ class ProtocolConverter:
 
 
 class OpenAIToAnthropicStream:
-    """openai SSE 流式响应 → anthropic SSE 事件（增量转换）。
+    """openai SSE streaming response → anthropic SSE events (incremental conversion).
 
-    状态机：首个内容块攒够后发 content_block_start，再逐 delta；工具调用按
-    openai 的 index 映射为独立 content block；末尾发 message_delta（stop_reason
-    + usage）与 message_stop。块顺序按「首次出现」分配 index。
+    State machine: after the first content block has accumulated enough, emit
+    content_block_start, then deltas one by one; tool calls are mapped by the openai
+    index to independent content blocks; at the end emit message_delta (stop_reason +
+    usage) and message_stop. Block order assigns indices by "first appearance".
     """
 
     def __init__(self):
@@ -505,9 +520,10 @@ class OpenAIToAnthropicStream:
                     {"type": "content_block_stop", "index": block_idx},
                 )
             )
-        # input_tokens 必须在这里补发：OpenAI 的 prompt_tokens 只在流的最后一个
-        # chunk 才出现，而 message_start 早就发出去了（那时只能写 0）。只发
-        # output_tokens 会让客户端（Claude Code 的 statusLine）永远显示 input 为 0。
+        # input_tokens must be sent here: OpenAI's prompt_tokens only appears in the
+        # last chunk of the stream, whereas message_start was sent long ago (which could
+        # only write 0). Sending only output_tokens would make the client (Claude Code's
+        # statusLine) always show input as 0.
         events.append(
             _sse_event(
                 "message_delta",
@@ -529,7 +545,7 @@ class OpenAIToAnthropicStream:
 
 
 def _detect_api_format(body: dict) -> str:
-    """从请求体检测 API 格式：'anthropic' 或 'openai'。"""
+    """Detect the API format from the request body: 'anthropic' or 'openai'."""
     if "system" in body and isinstance(body.get("system"), list):
         return "anthropic"
     messages = body.get("messages", [])
@@ -537,9 +553,10 @@ def _detect_api_format(body: dict) -> str:
         return "openai"
     tools = body.get("tools", [])
     if tools and isinstance(tools[0], dict):
-        # Anthropic 的工具定义字段是 `input_schema`（snake_case）。此处曾误写成
-        # `inputSchema`（那是 MCP tools/list 的拼写，不属于任何一种 API 格式），
-        # 使这个分支永不命中、退化成死代码，只靠末尾的 anthropic 兜底「碰巧正确」。
+        # Anthropic's tool-definition field is `input_schema` (snake_case). This used to
+        # be mistakenly written as `inputSchema` (that is the spelling of MCP tools/list,
+        # not any API format), making this branch never match and degenerate into dead
+        # code, relying only on the trailing anthropic fallback to be "coincidentally correct".
         if "input_schema" in tools[0]:
             return "anthropic"
         if tools[0].get("type") == "function":
@@ -548,11 +565,12 @@ def _detect_api_format(body: dict) -> str:
 
 
 def _is_classifier_candidate(body: dict) -> bool:
-    """结构启发式判断是否 classifier 候选：stream != true + tools 空 + messages ≤ 2。
+    """Structural heuristic for whether this is a classifier candidate: stream != true + empty tools + messages ≤ 2.
 
-    不匹配任何硬编码签名（签名随 Claude Code 版本变化，泛化避免静默失效）。
-    v2.1.160+ 的 classifier 请求带 assistant pre-fill，messages 为 2 条；
-    真实对话几十到上百条。
+    Does not match any hard-coded signature (the signature changes with the Claude Code
+    version; generalization avoids silent failure). The v2.1.160+ classifier request
+    carries an assistant pre-fill, with messages = 2; a real conversation has dozens to
+    hundreds.
     """
     if body.get("stream"):
         return False
@@ -562,13 +580,13 @@ def _is_classifier_candidate(body: dict) -> bool:
 
 
 def _inject_classifier_disabled(body: dict, api_format: str) -> None:
-    """向请求体注入 thinking disabled（deepseek 兼容层），并移除旧版参数。"""
+    """Inject thinking disabled (deepseek compatibility layer) into the request body and remove the old-version parameters."""
     if api_format == "anthropic":
         body["thinking"] = {"type": "disabled"}
         for k in ("reasoning_effort", "output_config"):
             body.pop(k, None)
     else:
-        # openai 格式：无 thinking 参数，移除 reasoning_effort 即可
+        # openai format: no thinking parameter, removing reasoning_effort suffices
         body.pop("reasoning_effort", None)
 
 
@@ -578,14 +596,16 @@ _sys_prompt_mtime: float = 0
 
 
 def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
-    """读取 System_Prompts.md，注入到最后一条真实用户输入前。
+    """Read System_Prompts.md and inject it before the last real user input.
 
-    从后往前找 role==user 且 content 为字符串 / 数组含 text 块的真实
-    用户输入（纯 tool_result 消息不含 text，会被跳过），在其前插入规则块；
-    若该消息本身也含 tool_result（用户在工具执行中插话的形态），则改插到
-    最后一个 tool_result 之后——该块必须始终保持在这条消息的首位。返回
-    (body_bytes, 命中索引)，命中索引为注入目标的 messages 下标，
-    文件缺失 / 读取失败 / 未命中时为 -1。mtime 未变时跳过读盘。
+    Search backwards for the real user input with role==user and content being a
+    string / an array containing a text block (a pure tool_result message contains no
+    text and is skipped), and insert the rule block before it; if that message itself
+    also contains a tool_result (the form where the user interjects while a tool is
+    executing), insert after the last tool_result instead — that block must always
+    remain first in this message. Returns (body_bytes, matched index); the matched
+    index is the messages subscript of the injection target, and is -1 when the file
+    is missing / read fails / no match. Skips disk reads when mtime is unchanged.
     """
     global _sys_prompt_content, _sys_prompt_mtime
 
@@ -611,7 +631,7 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
     if _sys_prompt_content is None:
         return None, -1
 
-    # 用户消息注入：只注入到真实用户输入（跳过 tool_result 消息）
+    # User message injection: only inject into the real user input (skip tool_result messages)
     messages = body.get("messages", [])
     target_index = -1
     for i in range(len(messages) - 1, -1, -1):
@@ -619,7 +639,7 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
             continue
         msg = messages[i]
         content = msg.get("content", "")
-        # 判断是否为真实用户输入：字符串类型，或数组中含 text 类型块
+        # Determine whether it is the real user input: a string type, or an array containing a text-type block
         is_real_user_input = False
         if isinstance(content, str):
             is_real_user_input = True
@@ -630,17 +650,20 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
         if not is_real_user_input:
             continue
         target_index = i
-        # 注入规则
+        # Inject the rule
         rule_block = (
             f"{RULE_START_MARK}\n" + _sys_prompt_content + f"\n{RULE_END_MARK}\n\n"
         )
         if isinstance(content, str):
             msg["content"] = rule_block + content
         elif isinstance(content, list):
-            # Anthropic 硬约束：响应 tool_use 的消息里 tool_result 必须是首个块
-            # （官方 Troubleshooting 明列此错因）。插到首位会把 tool_result 挤后，
-            # 上游按「tool_use 后未紧跟 tool_result」直接 400，故插到最后一个
-            # tool_result **之后**；无 tool_result 时退化为首位，行为不变。
+            # Anthropic hard constraint: in a message responding to tool_use,
+            # tool_result must be the first block (officially listed under
+            # Troubleshooting as a cause of this error). Inserting it first would push
+            # tool_result back and the upstream would directly return 400 for "tool_use
+            # not immediately followed by tool_result", so insert **after** the last
+            # tool_result; with no tool_result it degenerates to the first position,
+            # behavior unchanged.
             last_tool_result = -1
             for idx, block in enumerate(content):
                 if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -648,7 +671,7 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
             content.insert(last_tool_result + 1, {"type": "text", "text": rule_block})
         break
 
-    # 文件存在但未找到真实用户输入（如全部 user 消息都是 tool_result）→ 记录告警防静默失效
+    # File exists but no real user input found (e.g. all user messages are tool_result) → log a warning to guard against silent failure
     if target_index == -1:
         logger.warning(
             json.dumps(
@@ -667,12 +690,12 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
 def _extract_usage_from_sse(
     sse_data: bytes, api_format: str = "anthropic"
 ) -> dict | None:
-    """从 SSE 流中提取最后一个包含 usage 的 chunk。
+    """Extract the last chunk containing usage from the SSE stream.
 
-    api_format="openai" 时：
-      - usage 字段使用 prompt_tokens/completion_tokens
-      - finish_reason 映射为 stop_reason
-      - 归一化为 input_tokens/output_tokens/cache_read_input_tokens 字段名
+    When api_format="openai":
+      - the usage fields use prompt_tokens/completion_tokens
+      - finish_reason is mapped to stop_reason
+      - normalized to the input_tokens/output_tokens/cache_read_input_tokens field names
     """
     last_usage = None
     detected_model = ""
@@ -697,13 +720,14 @@ def _extract_usage_from_sse(
                 if sr:
                     detected_stop_reason = sr
             else:
-                # OpenAI: finish_reason 在 choices[0]
+                # OpenAI: finish_reason is in choices[0]
                 choices = chunk.get("choices", [])
                 if choices:
                     fr = choices[0].get("finish_reason")
                     if fr:
-                        # 统一映射表（见 FINISH_REASON_MAP）。未知值保留原样：
-                        # 记录层要如实落库，不能把未知原因伪装成 end_turn。
+                        # Unified mapping table (see FINISH_REASON_MAP). Unknown values
+                        # are kept as-is: the record layer must faithfully persist, and
+                        # must not disguise an unknown reason as end_turn.
                         detected_stop_reason = FINISH_REASON_MAP.get(fr, fr)
 
             if "usage" in chunk:
@@ -718,7 +742,7 @@ def _extract_usage_from_sse(
             last_usage["stop_reason"] = detected_stop_reason
 
         if api_format == "openai":
-            # 归一化 OpenAI usage 字段名到统一格式
+            # Normalize the OpenAI usage field names to the unified format
             u = last_usage.get("usage", {})
             if "prompt_tokens" in u:
                 u["input_tokens"] = u["prompt_tokens"]
@@ -732,7 +756,7 @@ def _extract_usage_from_sse(
 
 
 def _extract_output_from_sse(sse_data: bytes, api_format: str = "anthropic") -> str:
-    """从 SSE 流中提取输出文本内容（取前 2000 字符）。"""
+    """Extract the output text content from the SSE stream (first 2000 chars)."""
     output_text = []
     for line in sse_data.decode("utf-8", errors="replace").split("\n"):
         if not line.startswith("data: "):
@@ -744,11 +768,11 @@ def _extract_output_from_sse(sse_data: bytes, api_format: str = "anthropic") -> 
             chunk = json.loads(data_str)
 
             if api_format == "anthropic":
-                # 提取 content_delta 中的文本
+                # extract text from content_delta
                 delta = chunk.get("delta", {})
                 if "text" in delta:
                     output_text.append(delta["text"])
-                # 提取 content 数组中的文本
+                # extract text from the content array
                 content = chunk.get("content", [])
                 if isinstance(content, list):
                     for block in content:
@@ -764,13 +788,13 @@ def _extract_output_from_sse(sse_data: bytes, api_format: str = "anthropic") -> 
                         output_text.append(content)
         except json.JSONDecodeError:
             continue
-    # 截取前 2000 字符
+    # take the first 2000 chars
     full_text = "".join(output_text)
     return full_text[:2000] if full_text else ""
 
 
 def _extract_tool_name_from_sse(sse_data: bytes, api_format: str = "anthropic") -> str:
-    """从 SSE 流中提取 tool_use/tool_calls 的工具名。"""
+    """Extract the tool name of tool_use/tool_calls from the SSE stream."""
     if api_format == "anthropic":
         # Anthropic: content_block_start → content_block.name
         for line in sse_data.decode("utf-8", errors="replace").split("\n"):

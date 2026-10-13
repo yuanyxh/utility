@@ -1,17 +1,17 @@
 import Foundation
 
-/// 独立 SSE（Server-Sent Events）解析器
-/// 逐行解析 `data: {...}` 帧，提取 content delta 并回调
+/// Standalone SSE (Server-Sent Events) parser
+/// Parses `data: {...}` frames line by line, extracts content deltas, and invokes callbacks
 public final class SSEParser {
     private var buffer = ""
 
     public init() {}
 
-    /// 喂入 Data chunk，回调每个解析到的 token
+    /// Feeds in a Data chunk, invoking the callback for each parsed token
     /// - Parameters:
-    ///   - data: 流式响应 chunk
-    ///   - onToken: 每个 content delta（非空字符串）
-    ///   - onComplete: 收到 `[DONE]` 信号时调用
+    ///   - data: streaming response chunk
+    ///   - onToken: each content delta (non-empty string)
+    ///   - onComplete: invoked when the `[DONE]` signal is received
     public func feed(
         _ data: Data,
         onToken: @escaping (String) -> Void,

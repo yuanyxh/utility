@@ -1,24 +1,24 @@
 import Foundation
 import SystemConfiguration
 
-/// 统一 URLSession 管理器，自动读取系统代理配置
+/// Unified URLSession manager, automatically reads system proxy settings
 final class URLSessionManager {
     static let shared = URLSessionManager()
 
-    /// 所有网络请求应使用的 session（启用代理时走系统代理）
+    /// The session all network requests should use (goes through the system proxy when proxy is enabled)
     let session: URLSession
 
-    /// 不走代理的 session（用于本地 loopback 等）
+    /// A session that bypasses the proxy (for local loopback, etc.)
     let directSession: URLSession
 
-    /// 读取到的系统代理 URL（供 Python 进程注入使用）
+    /// The read system proxy URL (used for injection into the Python process)
     private(set) var systemProxyURL: URL?
 
-    // MARK: - 私有常量
+    // MARK: - Private Constants
 
-    // kCFStreamProperty* 标记为弃用，但 connectionProxyDictionary 仍是
-    // URLSession 配置代理的唯一官方方式，Apple 未提供替代 API
-    // 使用字符串字面量避免弃用警告
+    // kCFStreamProperty* is marked deprecated, but connectionProxyDictionary is still
+    // the only official way to configure a proxy on URLSession; Apple provides no alternative API
+    // Use string literals to avoid deprecation warnings
     private static let proxyHTTPHost = "kCFStreamPropertyHTTPProxyHost"
     private static let proxyHTTPPort = "kCFStreamPropertyHTTPProxyPort"
     private static let proxyHTTPSHost = "kCFStreamPropertyHTTPSProxyHost"
@@ -32,7 +32,7 @@ final class URLSessionManager {
         let directConfig = URLSessionConfiguration.default
         directConfig.timeoutIntervalForRequest = 30
 
-        // 读取系统代理
+        // Read the system proxy
         systemProxyURL = Self.readSystemProxy()
 
         let proxyEnabled = ConfigManager.shared.config.general.proxyEnabled
@@ -51,13 +51,13 @@ final class URLSessionManager {
         directSession = URLSession(configuration: directConfig)
     }
 
-    /// 从 macOS 系统偏好设置读取代理配置
+    /// Read proxy settings from macOS System Preferences
     static func readSystemProxy() -> URL? {
         guard let proxies = SCDynamicStoreCopyProxies(nil) as? [String: Any] else {
             return nil
         }
 
-        // 优先 HTTPS 代理，其次 HTTP 代理
+        // Prefer the HTTPS proxy, then the HTTP proxy
         if proxies["HTTPSEnable"] as? Bool == true,
            let host = proxies["HTTPSProxy"] as? String
         {

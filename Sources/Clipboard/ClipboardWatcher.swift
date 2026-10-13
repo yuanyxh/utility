@@ -1,7 +1,7 @@
 import Cocoa
 
-/// 剪切板监视器
-/// 以 config 中配置的间隔（默认 0.3s）轮询 NSPasteboard changeCount
+/// Clipboard watcher
+/// Polls NSPasteboard changeCount at the interval configured in config (default 0.3s)
 public final class ClipboardWatcher {
     private let pasteboard = NSPasteboard.general
     private var lastChangeCount: Int
@@ -28,8 +28,8 @@ public final class ClipboardWatcher {
 
     // MARK: - Check
 
-    /// 标记当前 pasteboard 变化为"已处理"，让下次 check() 跳过
-    /// 用于面板自己写入 pasteboard 后避免 watcher 重复处理
+    /// Mark the current pasteboard change as "already handled" so the next check() skips it
+    /// Used so that after the panel itself writes to the pasteboard the watcher does not re-process it
     public func skipCurrentChange() {
         lastChangeCount = pasteboard.changeCount
     }
@@ -47,7 +47,7 @@ public final class ClipboardWatcher {
 
         guard let pbItems = pasteboard.pasteboardItems, !pbItems.isEmpty else { return }
 
-        // ── 1. 文件 URL（Finder 复制，含图片/文件夹/任意文件）──
+        // ── 1. File URL (Finder copy, including images/folders/arbitrary files) ──
         let allFileURLs: [URL] = pbItems.compactMap { item in
             guard let urlStr = item.string(forType: .fileURL),
                   let url = URL(string: urlStr)
@@ -60,13 +60,13 @@ public final class ClipboardWatcher {
             return
         }
 
-        // ── 2. 无文件 URL，有图片数据（浏览器右键复制图片、截图）──
+        // ── 2. No file URL, but image data (copy image via browser context menu, screenshot) ──
         if let imageData = extractImageData(from: pbItems) {
             storeImageFromData(imageData)
             return
         }
 
-        // ── 3. 富文本 HTML（网页复制）──
+        // ── 3. Rich-text HTML (copied from a web page) ──
         if let htmlItem = pbItems.first(where: { $0.types.contains(.html) }),
            let html = htmlItem.string(forType: .html)
         {
@@ -79,7 +79,7 @@ public final class ClipboardWatcher {
             return
         }
 
-        // ── 4. 纯文本 ──
+        // ── 4. Plain text ──
         if let textItem = pbItems.first(where: { $0.types.contains(.string) }),
            let str = textItem.string(forType: .string)
         {
@@ -92,12 +92,12 @@ public final class ClipboardWatcher {
             return
         }
 
-        // 无匹配类型，静默忽略
+        // No matching type, silently ignore
     }
 
     // MARK: - File storage
 
-    /// 统一存储文件：1 个 → file，多个 → file_batch
+    /// Unified file storage: 1 → file, multiple → file_batch
     private func storeFiles(_ urls: [URL]) {
         if urls.count == 1 {
             if let data = try? JSONEncoder().encode(["path": urls[0].path]) {
@@ -119,7 +119,7 @@ public final class ClipboardWatcher {
         }
     }
 
-    /// 浏览器图片数据 → 写临时文件 → 存为 file
+    /// Browser image data → write temp file → store as file
     private func storeImageFromData(_ imageData: Data) {
         let filename = "clip_\(Int(Date().timeIntervalSince1970)).png"
         let fileURL = AppPaths.clipCacheDir.appendingPathComponent(filename)
@@ -135,11 +135,11 @@ public final class ClipboardWatcher {
         } catch {
             debugLog("[Clipboard] image write failed: \(error)")
         }
-        // 保存成功后顺带清理过期图片缓存（保留期与剪贴板 maxDays 一致），移入废纸篓
+        // After a successful save, also clean up expired image cache (retention matches clipboard maxDays), move to Trash
         cleanupOldClips()
     }
 
-    /// 清理过期的剪贴板图片缓存（保留期与 clipboard.maxDays 一致），移入废纸篓
+    /// Clean up expired clipboard image cache (retention matches clipboard.maxDays), move to Trash
     private func cleanupOldClips() {
         let maxDays = ConfigManager.shared.config.clipboard.maxDays
         let cutoff = Date().addingTimeInterval(-Double(maxDays * 86400))
@@ -160,7 +160,7 @@ public final class ClipboardWatcher {
         }
     }
 
-    /// 从 pasteboard items 提取第一张图片的原始数据
+    /// Extract the raw data of the first image from pasteboard items
     private func extractImageData(from items: [NSPasteboardItem]) -> Data? {
         for item in items {
             for type in PasteboardImageTypes.all {

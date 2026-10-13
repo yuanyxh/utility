@@ -1,30 +1,30 @@
 import Cocoa
 
-/// 选中文本获取服务
+/// Selected-text retrieval service
 ///
-/// 策略（按优先级）：
-/// 1. AX Accessibility API — 从指定 app 聚焦元素的选中文本属性直接读取，最快且无副作用
-/// 2. 剪贴板模拟 — 兜底方案（浏览器等不支持 AX 选中文本的属性时），通过 CGEvent 模拟 cmd+c
+/// Strategy (by priority):
+/// 1. AX Accessibility API — read the selected-text attribute of the focused element in the given app directly; fastest and side-effect-free
+/// 2. Clipboard simulation — fallback (for browsers etc. that don't support the AX selected-text attribute); simulates cmd+c via CGEvent
 ///
-/// ⚠️ AX API 和 NSPasteboard 都必须在主线程调用（Carbon 回调等同步路径可直接调用）
+/// ⚠️ Both AX API and NSPasteboard must be called on the main thread (synchronous paths such as Carbon callbacks may call directly)
 public enum SelectedTextService {
-    /// 异步获取指定 app 的当前选中文本
-    /// - Parameter targetApp: 目标 app（通常为面板打开前记录的前台 app）
-    /// - Returns: 选中文本，获取失败或为空时返回 nil
+    /// Asynchronously get the current selected text of the given app
+    /// - Parameter targetApp: Target app (usually the frontmost app recorded before the panel opens)
+    /// - Returns: The selected text; returns nil on failure or when empty
     public static func getSelectedText(from targetApp: NSRunningApplication) async -> String? {
-        // 1. AX 快速路径 — 无副作用
+        // 1. AX fast path — no side effects
         if let text = _tryAXSelectedText(from: targetApp) {
             return text
         }
 
-        // 2. 剪贴板模拟 — 有副作用的兜底
+        // 2. Clipboard simulation — the side-effecting fallback
         return await _clipboardFallbackSelectedText()
     }
 
     // MARK: - AX
 
-    /// 通过 AX API 获取选中文本（同步，必须在主线程调用）
-    /// 适用于快速路径：无副作用，仅读取属性。
+    /// Get selected text via the AX API (synchronous, must be called on the main thread)
+    /// Suitable for the fast path: no side effects, only reads attributes.
     public static func tryAXSelectedText(from app: NSRunningApplication) -> String? {
         let appRef = AXUIElementCreateApplication(app.processIdentifier)
         var value: CFTypeRef?
@@ -43,23 +43,23 @@ public enum SelectedTextService {
         return text
     }
 
-    /// 内部私有的 AX 版本（供 getSelectedText 调用）
+    /// Internal private AX version (called by getSelectedText)
     private static func _tryAXSelectedText(from app: NSRunningApplication) -> String? {
         tryAXSelectedText(from: app)
     }
 
     // MARK: - Clipboard Fallback
 
-    /// 通过模拟 cmd+c 从剪贴板获取选中文本（异步轮询，不阻塞调用方）
-    /// 不恢复原始剪贴板 — 让选中的内容留在剪贴板上，用户可直接粘贴
+    /// Get selected text via clipboard by simulating cmd+c (async polling, does not block the caller)
+    /// Does not restore the original clipboard — leaves the selected content on the clipboard so the user can paste directly
     private static func _clipboardFallbackSelectedText() async -> String? {
         let pb = NSPasteboard.general
 
-        // 清空剪贴板，准备接收 cmd+c 写入
+        // Clear the clipboard to prepare for the cmd+c write
         pb.clearContents()
         let postClearCount = pb.changeCount
 
-        // 模拟 cmd+c
+        // Simulate cmd+c
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return nil }
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false)
@@ -69,7 +69,7 @@ public enum SelectedTextService {
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
 
-        // 异步轮询等待 cmd+c 写入（最多 ~120ms，通过 continuation 不阻塞调用方）
+        // Async poll waiting for the cmd+c write (up to ~120ms; via continuation, does not block the caller)
         return await withCheckedContinuation { continuation in
             _pollClipboard(
                 pb, sinceChangeCount: postClearCount, remainingAttempts: 6, continuation: continuation,
@@ -77,14 +77,14 @@ public enum SelectedTextService {
         }
     }
 
-    /// 递归轮询剪贴板变化（每次间隔 20ms，最多 6 次 = 120ms）
+    /// Recursively poll clipboard changes (20ms interval, up to 6 times = 120ms)
     private static func _pollClipboard(
         _ pb: NSPasteboard, sinceChangeCount: Int,
         remainingAttempts: Int,
         continuation: CheckedContinuation<String?, Never>,
     ) {
         if pb.changeCount > sinceChangeCount {
-            // 剪贴板已变化，读取文本
+            // Clipboard changed, read the text
             continuation.resume(returning: pb.string(forType: .string))
         } else if remainingAttempts > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
@@ -95,7 +95,7 @@ public enum SelectedTextService {
                 )
             }
         } else {
-            // 超时，放弃
+            // Timed out, give up
             continuation.resume(returning: nil)
         }
     }

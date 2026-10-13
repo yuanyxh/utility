@@ -6,10 +6,10 @@ import Foundation
 struct InitCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "init",
-        abstract: "扫描项目并生成依赖图 (.utility/deps.sqlite)",
+        abstract: "Scan the project and generate a dependency graph (.utility/deps.sqlite)",
     )
 
-    @Option(name: .shortAndLong, help: ArgumentHelp("项目路径（默认：当前目录）"))
+    @Option(name: .shortAndLong, help: ArgumentHelp("Project path (default: current directory)"))
     var path: String?
 
     func run() throws {
@@ -20,13 +20,13 @@ struct InitCommand: ParsableCommand {
         guard FileManager.default.fileExists(atPath: projectPath, isDirectory: &isDir),
               isDir.boolValue
         else {
-            print("错误：路径无效或不是目录 — \(projectPath)")
+            print("Error: invalid path or not a directory — \(projectPath)")
             Darwin.exit(1)
         }
 
-        print("扫描项目: \(projectPath)")
+        print("Scanning project: \(projectPath)")
         let summary = try ProjectScanner.shared.scan(projectPath: projectPath)
         print(summary)
-        print("已写入: \((projectPath as NSString).appendingPathComponent(".utility/deps.sqlite"))")
+        print("Written: \((projectPath as NSString).appendingPathComponent(".utility/deps.sqlite"))")
     }
 }

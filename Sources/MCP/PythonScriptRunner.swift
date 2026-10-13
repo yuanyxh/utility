@@ -1,23 +1,25 @@
 import Foundation
 
-/// Python 脚本统一执行入口。
+/// Unified entry point for executing Python scripts.
 ///
-/// 所有 py 脚本（清单见 `PythonScripts`，对应 `Sources/MCPScripts/*.py`）的 venv 定位、
-/// 脚本路径解析、环境变量构造、一次性执行与常驻守护都收敛到这里，各调用方不再各自实现。
-/// 业务决策（状态语义、事件广播、复用探测、通知）仍由组合方（MCPProcessManager /
-/// TokenProxyManager）负责，本类只提供通用骨架。
+/// For all py scripts (see the list in `PythonScripts`, corresponding to `Sources/MCPScripts/*.py`), venv
+/// location, script path resolution, environment variable construction, one-shot execution, and the resident
+/// daemon are all consolidated here; callers no longer each implement their own.
+/// Business decisions (state semantics, event broadcast, reuse probing, notification) remain with the
+/// composing parties (MCPProcessManager / TokenProxyManager); this class only provides the generic skeleton.
 enum PythonScriptRunner {
-    // MARK: - venv 路径（唯一来源）
+    // MARK: - venv path (single source of truth)
 
     /// Path to the Python venv where MCP dependencies are installed.
-    /// 自动探测系统 Python 版本，构造对应的 venv 路径。
+    /// Auto-detect the system Python version and construct the corresponding venv path.
     /// Created by: `python3.X -m venv ~/.config/utility/mcp-venv && pip install -r requirements.txt`
-    /// 惰性解析一次并缓存。
+    /// Lazily resolved once and cached.
     ///
-    /// 解析过程要 spawn 一个子进程（`/usr/bin/env python3 --version`）并同步等它
-    /// 退出，而本属性被 `resolvePython`、`shellCommand`、`pythonCheck` 等多处调用
-    /// ——做成每次重新解析的 computed property，会让每处调用都白付一次进程创建
-    /// 与阻塞等待。venv 路径在进程生命周期内不会变化，缓存是安全的。
+    /// Resolution spawns a child process (`/usr/bin/env python3 --version`) and synchronously waits
+    /// for it to exit, and this property is called from many places (`resolvePython`, `shellCommand`,
+    /// `pythonCheck`, etc.) -- making it a computed property that re-resolves each time would make every
+    /// call point pay for a process creation and blocking wait for nothing. The venv path does not change
+    /// during the process lifetime, so caching is safe.
     static let pythonVenvPath: String = resolveVenvPath()
 
     private static func resolveVenvPath() -> String {
@@ -25,20 +27,20 @@ enum PythonScriptRunner {
             .appendingPathComponent(".config/utility/mcp-venv")
             .path
 
-        // 探测系统 Python 版本（如 python3.12）
+        // Detect the system Python version (e.g. python3.12)
         if let version = detectPythonVersion() {
-            // 尝试精确版本路径：~/.config/utility/mcp-venv/bin/python3.12
+            // Try the exact versioned path: ~/.config/utility/mcp-venv/bin/python3.12
             let versionedPath = "\(venvDir)/bin/python\(version)"
             if FileManager.default.fileExists(atPath: versionedPath) {
                 return versionedPath
             }
         }
 
-        // 回退到通用路径：~/.config/utility/mcp-venv/bin/python3
+        // Fall back to the generic path: ~/.config/utility/mcp-venv/bin/python3
         return "\(venvDir)/bin/python3"
     }
 
-    /// 探测系统 Python 版本号（如 "12"），失败返回 nil
+    /// Detect the system Python version number (e.g. "12"); returns nil on failure
     private static func detectPythonVersion() -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -50,12 +52,12 @@ enum PythonScriptRunner {
         guard task.terminationStatus == 0 else { return nil }
         let data = (task.standardOutput as! Pipe).fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // 解析 "Python 3.12.1" → "12"
+        // Parse "Python 3.12.1" -> "12"
         let components = output.components(separatedBy: " ").last?.components(separatedBy: ".")
         return components?.first
     }
 
-    /// 解析可用的 python 可执行文件：优先 mcp venv，缺失时回退系统 python3。
+    /// Resolve an available python executable: prefer the mcp venv, fall back to the system python3 when missing.
     static func resolvePython() -> String? {
         if FileManager.default.fileExists(atPath: pythonVenvPath) {
             return pythonVenvPath
@@ -72,33 +74,33 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - 脚本路径解析（唯一来源）
+    // MARK: - Script path resolution (single source of truth)
 
     /// Resolve path to a script in MCPScripts bundle directory.
     /// Checks bundle first (packaged app), then dev source directory.
-    /// 路径推导收在 `MCPScriptsResources`（提示词模板读取共用同一套候选目录）。
+    /// Path derivation lives in `MCPScriptsResources` (the prompt template reader shares the same set of candidate directories).
     static func findScript(named name: String) -> String? {
         MCPScriptsResources.path(relative: name)
     }
 
-    // MARK: - 环境变量（唯一来源）
+    // MARK: - Environment variables (single source of truth)
 
-    /// 公共基础环境变量：AI 配置 + 数据目录 + 笔记目录 + 非缓冲输出 + 用户名 + 超时配置。
-    /// 各脚本专属变量（MCP_PORT / MODEL_PROXY_* / QDRANT_PATH 等）由调用方经
-    /// `environment(overrides:)` 追加，保持「Swift 侧 env 收敛」。
+    /// Common base environment variables: AI config + data directory + notes directory + unbuffered output + username + timeout config.
+    /// Script-specific variables (MCP_PORT / MODEL_PROXY_* / QDRANT_PATH, etc.) are appended by callers via
+    /// `environment(overrides:)`, keeping "Swift-side env consolidation".
     static func baseEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
-        // 禁止写 __pycache__：脚本随 .app bundle 分发且被签名,运行时生成 .pyc
-        // 会在 bundle 内新增文件,破坏签名封印(codesign 报 sealed resource missing)
+        // Forbid writing __pycache__: scripts ship inside the .app bundle and are signed; generating .pyc at
+        // runtime adds files inside the bundle, breaking the signature seal (codesign reports sealed resource missing)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
 
-        // 当前系统用户名（传给 Python 层 DEFAULT_USER_ID）
+        // Current system username (passed to the Python layer's DEFAULT_USER_ID)
         let username = NSUserName()
         if !username.isEmpty { env["UTILITY_USER_ID"] = username }
 
-        // 超时配置（从 GeneralConfig 读取）
+        // Timeout config (read from GeneralConfig)
         let general = ConfigManager.shared.config.general
         if general.httpTimeout > 0 {
             env["SERVER_TIMEOUT"] = String(general.httpTimeout)
@@ -107,7 +109,7 @@ enum PythonScriptRunner {
             env["AGENT_TIMEOUT"] = String(Int(general.aiTimeout))
         }
 
-        // 系统代理配置
+        // System proxy config
         if general.proxyEnabled, let proxyURL = URLSessionManager.shared.systemProxyURL {
             let proxyString = proxyURL.absoluteString
             env["HTTP_PROXY"] = proxyString
@@ -116,67 +118,70 @@ enum PythonScriptRunner {
             env["https_proxy"] = proxyString
         }
 
-        // ai 配置 + 语言（取值与 `.sh` 任务同源，见 aiEnvironment()）
+        // ai config + language (values share the same source as the `.sh` tasks, see aiEnvironment())
         for (key, value) in aiEnvironment() {
             env[key] = value
         }
 
-        // mcp 路径配置（token_proxy 也需要 NOTES_DIR，故放在公共层）
+        // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
         if let notesDir = resolvedNotesDir() {
             env["NOTES_DIR"] = notesDir
         }
         return env
     }
 
-    // MARK: - 跨语言 env 取值（服务进程与 `.sh` 任务共用）
+    // MARK: - Cross-language env values (shared by the service process and `.sh` tasks)
 
-    /// AI 相关 env：key / baseURL / model / llmTimeout / 语言。
+    /// AI-related env: key / baseURL / model / llmTimeout / language.
     ///
-    /// 抽成一份是因为**跨语言 env 有两个注入点**：服务进程走 `baseEnvironment()`，
-    /// 内部 `.sh` 定时任务走 `shellCommand(environmentOverrides:)`。两处各写一遍取值逻辑时，
-    /// 新增一个 env 只会加进其中一处，表现为「服务进程里配置生效、定时任务里静默回退默认」
-    /// ——`AI_LLM_TIMEOUT` 与 `UTILITY_LANG` 就这样漏过一次：定时总结恒用 120s 超时
-    /// （而 `ai.llmTimeout` 的消费方恰好全在 summarize 链路上），英文界面下也仍用中文提示词。
+    /// Extracted into one place because **cross-language env has two injection points**: the service process
+    /// goes through `baseEnvironment()`, while the internal `.sh` scheduled tasks go through
+    /// `shellCommand(environmentOverrides:)`. When the value logic is written twice, a newly added env only
+    /// lands in one of the two, showing up as "config takes effect in the service process, but scheduled tasks
+    /// silently fall back to the default" -- `AI_LLM_TIMEOUT` and `UTILITY_LANG` leaked exactly like this once:
+    /// scheduled summaries always used a 120s timeout (and `ai.llmTimeout`'s consumers happen to all be on the
+    /// summarize path), and the English UI still used Chinese prompts.
     static func aiEnvironment() -> [String: String] {
         var env: [String: String] = [:]
         let ai = ConfigManager.shared.config.ai
         if !ai.apiKey.isEmpty { env[EnvKeys.aiAPIKey] = ai.apiKey }
         if !ai.baseURL.isEmpty { env["SUMMARY_API_URL"] = ai.baseURL }
         if !ai.model.isEmpty { env["SUMMARY_MODEL"] = ai.model }
-        // 0 / 负值 = 用内置默认，不注入（Python 侧 `config.llm_timeout()` 同约定回退）。
-        // **保留小数**：`String(Int(…))` 会把 0.5 变成 "0"，而 Python 把 0 当作「未配置」
-        // 回退默认 120s——Swift 认为已注入、Python 认为没配，同一个 0 在两处含义相反。
+        // 0 / negative = use the built-in default, do not inject (the Python side `config.llm_timeout()` falls back by the same convention).
+        // **Keep the fraction**: `String(Int(...))` turns 0.5 into "0", and Python treats 0 as "not configured" and
+        // falls back to the default 120s -- Swift thinks it was injected, Python thinks it was not configured; the same 0 means opposite things in the two places.
         if ai.llmTimeout > 0 { env[EnvKeys.aiLLMTimeout] = String(ai.llmTimeout) }
-        // 语言：Python 侧提示词按它选 `prompts/<lang>/`。判据复用 L10n（唯一来源），
-        // 否则会出现「界面中文、提示词英文」这类没人想得到的组合。
+        // Language: the Python side picks `prompts/<lang>/` by it. The criterion reuses L10n (single source of truth),
+        // otherwise you get combinations no one expects like "Chinese UI, English prompts".
         env[EnvKeys.utilityLang] = L10n.resolvedLanguage(
             configured: ConfigManager.shared.config.general.language,
         )
         return env
     }
 
-    /// 知识库笔记目录（空配置 → `<配置域>/notes`）。同样两个注入点共用。
+    /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
     static func resolvedNotesDir() -> String? {
         guard let mcp = ConfigManager.shared.config.mcp else { return nil }
-        // 空字符串 = 使用默认路径
+        // Empty string = use the default path
         return mcp.knowledgeBasePath.isEmpty
             ? AppPaths.configDir.appendingPathComponent("notes").path
             : (mcp.knowledgeBasePath as NSString).expandingTildeInPath
     }
 
-    /// 内部 `.sh` 任务需要内联的 env（**服务进程与定时任务的最小公共集**）。
+    /// The env the internal `.sh` tasks need inlined (**the minimal common set for the service process and scheduled tasks**).
     ///
-    /// 与 `baseEnvironment()` 的差别是**有意的**：`.sh` 走 `/bin/bash -c`，把 baseEnvironment
-    /// 全体（继承环境、代理设置等）内联进命令串既污染又可能因值含空格而截断，故这里只列脚本
-    /// 真正需要的键。但**取值必须与 baseEnvironment 同源**（`aiEnvironment()` /
-    /// `resolvedNotesDir()`）——新增跨语言 env 时两处都要照顾到。
-    /// `MEMORY_SERVER_URL` / `SUMMARY_EXCLUDE_TAGS` 是 `.sh` 侧独有的，由调用方传入。
+    /// The difference from `baseEnvironment()` is **intentional**: `.sh` runs through `/bin/bash -c`, and inlining all of
+    /// baseEnvironment (inherited environment, proxy settings, etc.) into the command string both pollutes it and can be
+    /// truncated if a value contains spaces, so only the keys the script truly needs are listed here. But **the values must
+    /// share the same source as baseEnvironment** (`aiEnvironment()` / `resolvedNotesDir()`) -- when adding a cross-language
+    /// env, both places must be handled.
+    /// `MEMORY_SERVER_URL` / `SUMMARY_EXCLUDE_TAGS` are unique to the `.sh` side and passed by the caller.
     static func taskEnvironmentOverrides(
         memoryServerURL: String,
         excludeTags: String,
     ) -> [String: String] {
         var overrides = aiEnvironment()
-        overrides["PYTHONDONTWRITEBYTECODE"] = "1" // 同 baseEnvironment:不在已签名 bundle 内写 .pyc
+        overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
         if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         overrides["MEMORY_SERVER_URL"] = memoryServerURL
@@ -184,7 +189,7 @@ enum PythonScriptRunner {
         return overrides
     }
 
-    /// baseEnvironment + 脚本专属 overrides。
+    /// baseEnvironment + script-specific overrides.
     static func environment(overrides: [String: String]) -> [String: String] {
         var env = baseEnvironment()
         for (key, value) in overrides {
@@ -193,23 +198,24 @@ enum PythonScriptRunner {
         return env
     }
 
-    // MARK: - Shell 命令构造（TaskScheduler .sh 任务用）
+    // MARK: - Shell command construction (for TaskScheduler .sh tasks)
 
-    /// 生成 shell 命令字符串：`KEY=VALUE ... pythonVenv script args`。
-    /// TaskScheduler 的 .sh 走 `/bin/bash -c`，子进程继承 app 受限 PATH 且
-    /// TaskExecConfig.toProcess() 不设环境变量，故环境必须以 `KEY=VALUE` 前缀内联。
+    /// Build a shell command string: `KEY=VALUE ... pythonVenv script args`.
+    /// TaskScheduler's .sh runs through `/bin/bash -c`; the child process inherits the app's restricted PATH and
+    /// TaskExecConfig.toProcess() does not set environment variables, so the environment must be inlined as `KEY=VALUE` prefixes.
     ///
-    /// 注意：只内联调用方显式给出的变量（environmentOverrides），不要塞入
-    /// baseEnvironment()——它从 ProcessInfo.processInfo.environment 起步会引入
-    /// 全部继承环境变量，内联进命令会污染且值含空格/特殊字符。bash 本身会继承
-    /// 父进程环境，这里只需注入脚本需要的覆盖项（与既有调用行为一致）。
+    /// Note: only inline the variables the caller explicitly provides (environmentOverrides); do not stuff in
+    /// baseEnvironment() -- it starts from ProcessInfo.processInfo.environment and would bring in every inherited
+    /// environment variable, polluting the command and carrying values with spaces/special characters. bash itself
+    /// inherits the parent process environment, so only the overrides the script needs are injected here (consistent
+    /// with the existing call behavior).
     static func shellCommand(
         script: String,
         arguments: [String] = [],
         environmentOverrides: [String: String] = [:],
     ) -> String {
         var parts: [String] = []
-        // 排序保证输出稳定（KEY 顺序不影响 bash 语义）
+        // Sorting keeps the output stable (KEY order does not affect bash semantics)
         for key in environmentOverrides.keys.sorted() {
             parts.append("\(key)=\(environmentOverrides[key] ?? "")")
         }
@@ -219,11 +225,11 @@ enum PythonScriptRunner {
         return parts.joined(separator: " ")
     }
 
-    // MARK: - 一次性执行（AST batch / 单文件）
+    // MARK: - One-shot execution (AST batch / single file)
 
-    /// 以 venv python 执行脚本，写入可选 stdin，边读边存 stdout（避免 pipe buffer
-    /// 写满阻塞子进程），超时 kill 并抛错。
-    /// - Returns: stdout 完整字节。
+    /// Execute the script with venv python, writing optional stdin and reading/storing stdout as it goes (avoiding the
+    /// pipe buffer filling up and blocking the child process); on timeout, kill it and throw.
+    /// - Returns: the complete stdout bytes.
     static func runCaptureOutput(
         scriptPath: String,
         arguments: [String],
@@ -245,8 +251,8 @@ enum PythonScriptRunner {
         proc.standardOutput = outputPipe
         proc.standardError = errorPipe
 
-        // 边读边存 stdout：批量 AST 输出可能超过 pipe buffer(64KB)，
-        // 等待期间不读会导致子进程写满阻塞、无法退出，被超时误杀。
+        // Read and store stdout as it goes: batch AST output can exceed the pipe buffer (64KB), and not reading
+        // while waiting would cause the child process to fill up and block, never exit, and be wrongly killed by the timeout.
         var outputData = Data()
         let outputLock = NSLock()
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -273,7 +279,7 @@ enum PythonScriptRunner {
             while proc.isRunning, .now() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
-            // 停止异步读取，同步 drain 剩余（handler 可能没读完退出瞬间的尾部数据）
+            // Stop the async read and synchronously drain the rest (the handler may not have read the tail data at the moment of exit)
             outputPipe.fileHandleForReading.readabilityHandler = nil
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
@@ -302,11 +308,11 @@ enum PythonProcessError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .pythonUnavailable:
-            "没有可用的 Python（mcp-venv 与系统 python3 均不可用）"
+            "No usable Python (both mcp-venv and system python3 are unavailable)"
         case let .timeout(script):
-            "脚本 \(script) 执行超时"
+            "Script \(script) execution timed out"
         case let .launchFailed(msg):
-            "Python 进程启动失败: \(msg)"
+            "Python process failed to launch: \(msg)"
         }
     }
 }

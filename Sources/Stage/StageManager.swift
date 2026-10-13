@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// 暂存管理器（GRDB）
+/// Stage manager (GRDB)
 public final class StageManager {
     public static let shared = StageManager()
     private var db: DatabaseQueue {

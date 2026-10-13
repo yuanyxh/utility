@@ -7,7 +7,7 @@ public enum TaskExecutor {
         let error: String
     }
 
-    /// 同步执行（调用方负责放到后台线程）
+    /// Synchronous execution (caller is responsible for dispatching to a background thread)
     public static func execute(_ config: TaskExecConfig) -> Result {
         let pc = config.toProcess()
 
@@ -26,8 +26,8 @@ public enum TaskExecutor {
         }
     }
 
-    /// 流式执行——stdout/stderr 实时回调到主线程
-    /// - Returns: Process 对象，调用方可调用 `.terminate()` 取消执行并释放资源
+    /// Streaming execution — stdout/stderr are called back to the main thread in real time
+    /// - Returns: Process object; caller can call `.terminate()` to cancel execution and release resources
     @discardableResult
     public static func execute(
         _ config: TaskExecConfig,
@@ -70,7 +70,7 @@ public enum TaskExecutor {
                 try pc.task.run()
                 pc.task.waitUntilExit()
 
-                // 停止 handler 后再读残留数据，避免竞态
+                // Stop the handlers before reading remaining data to avoid a race
                 pc.outputPipe.fileHandleForReading.readabilityHandler = nil
                 pc.errorPipe.fileHandleForReading.readabilityHandler = nil
 

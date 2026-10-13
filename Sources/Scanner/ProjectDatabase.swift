@@ -3,7 +3,7 @@ import GRDB
 
 /// Manages `.utility/deps.sqlite` for a specific project directory.
 final class ProjectDatabase {
-    /// 依赖图数据库文件名（Scanner/FileWatcher/AgentRunner 共用单一权威）
+    /// Dependency graph database filename (single source of truth shared by Scanner/FileWatcher/AgentRunner)
     static let depsFilename = "deps.sqlite"
 
     let dbQueue: DatabaseQueue
@@ -12,8 +12,8 @@ final class ProjectDatabase {
         let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
         try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
         let dbPath = (utilityDir as NSString).appendingPathComponent(Self.depsFilename)
-        // 多连接并发写 deps.sqlite（Scanner 全量 + FileWatcher 增量 + MCP 读），
-        // GRDB 默认 busyMode=.immediateError 锁冲突立即失败；改 .timeout(5) 等锁而非失败
+        // Multiple connections write deps.sqlite concurrently (Scanner full scan + FileWatcher incremental + MCP reads);
+        // GRDB's default busyMode=.immediateError fails immediately on lock conflict; change to .timeout(5) to wait for the lock instead of failing
         var configuration = Configuration()
         configuration.busyMode = .timeout(5)
         dbQueue = try DatabaseQueue(path: dbPath, configuration: configuration)
@@ -96,9 +96,9 @@ final class ProjectDatabase {
 
     // MARK: - Helpers
 
-    // 清空逻辑不再作为独立方法暴露：它必须与写入处于同一事务，见
-    // `replaceScanResults`。单独留一个可从外部调用的 `clearAll()`，会诱导
-    // 后来者在扫描开头清库，从而把这个空窗重新引入。
+    // The clear logic is no longer exposed as a standalone method: it must be in the same transaction as the
+    // writes, see `replaceScanResults`. Leaving a separately externally callable `clearAll()` would tempt later
+    // developers to clear the DB at the start of a scan, reintroducing that empty window.
 
     /// Remove failed_files entries for files that no longer exist in the project.
     func pruneFailedFiles(knownPaths: Set<String>) throws {
@@ -159,19 +159,20 @@ final class ProjectDatabase {
 
     // MARK: - Batch writes
 
-    /// 原子替换全部扫描结果：单事务内完成「清空 → 写入 → 重建 FTS」。
+    /// Atomically replace all scan results: "clear -> write -> rebuild FTS" done within a single transaction.
     ///
-    /// 旧流程是 `clearAll()` 先独立提交，等 Phase 1 遍历与 Phase 2 提取（大项目
-    /// 数十秒）跑完才写回。这个窗口内库对 MCP 读者是空的——检索工具一律返回空
-    /// 结果，模型据此判定「代码不存在」，可能重复实现已有功能；扫描中途被中断
-    /// （Ctrl-C、OOM、抛错）则空库一直留到下次扫描才恢复。改为单事务后，读者
-    /// 要么看到完整的旧结果、要么看到完整的新结果，不存在中间态。
+    /// The old flow committed `clearAll()` separately first, and only wrote back after Phase 1 traversal and Phase 2
+    /// extraction (tens of seconds for large projects) finished. In that window the DB was empty to MCP readers --
+    /// search tools uniformly returned empty results, the model concluded "the code does not exist", and might
+    /// reimplement functionality that already exists; if the scan was interrupted (Ctrl-C, OOM, thrown error) the empty
+    /// DB persisted until the next scan. After switching to a single transaction, readers see either the complete old
+    /// results or the complete new results -- there is no intermediate state.
     ///
-    /// 目录写入也一并纳入：原先 `insertDirectory` 在空窗期内单独提交，库会停在
-    /// 「目录有了、符号还没有」的不一致状态。
+    /// Directory writes are brought in as well: previously `insertDirectory` committed separately during the empty
+    /// window, leaving the DB in an inconsistent "directories present, symbols not yet" state.
     ///
-    /// `failed_files` 有意不清空：AST 连败计数的 3-strike 记忆必须跨扫描保留，
-    /// 已消失文件的条目由 `pruneFailedFiles` 负责清理。
+    /// `failed_files` is intentionally not cleared: the 3-strike memory of consecutive AST failures must survive across
+    /// scans, and entries for files that have disappeared are cleaned up by `pruneFailedFiles`.
     func replaceScanResults(
         directories: [DirectoryRecord],
         files: [(file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)],
@@ -187,7 +188,7 @@ final class ProjectDatabase {
                 try dir.insert(db, onConflict: .replace)
             }
 
-            // 符号表已整体清空，无需再按 file_path 逐条删。
+            // The symbol table has been cleared entirely, so there is no need to delete row by row by file_path.
             for (fileRec, symbols, astFailed) in files {
                 for s in symbols {
                     try s.insert(db, onConflict: .ignore)
@@ -211,9 +212,9 @@ final class ProjectDatabase {
                 try pkg.insert(db, onConflict: .replace)
             }
 
-            // FTS 必须在同一事务内 rebuild：symbols_fts 是 external content 表，
-            // content 行被删后 `DELETE FROM symbols_fts` 摘不出词（是空操作），
-            // 只有 rebuild 能让倒排表与 symbols 对齐。放事务内保证提交瞬间两者一致。
+            // FTS must be rebuilt within the same transaction: symbols_fts is an external content table, and after the
+            // content rows are deleted `DELETE FROM symbols_fts` extracts no terms (it is a no-op); only rebuild can align
+            // the inverted index with symbols. Keeping it inside the transaction guarantees the two are consistent at commit time.
             try db.execute(sql: "INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
         }
     }
@@ -275,8 +276,8 @@ struct SymbolRecord: Codable, FetchableRecord, PersistableRecord {
              startLine = "start_line", endLine = "end_line"
     }
 
-    /// 自定义 init:startLine/endLine 带默认值 nil,既有调用点(filePath:name:kind:...)
-    /// 无需改动即可编译;提取器能算出行号时显式传入。
+    /// Custom init: startLine/endLine default to nil, so existing call sites (filePath:name:kind:...) compile
+    /// without changes; extractors explicitly pass them in when they can compute line numbers.
     init(filePath: String, name: String, kind: String, signature: String? = nil,
          docComment: String? = nil, visibility: String? = nil,
          startLine: Int? = nil, endLine: Int? = nil)

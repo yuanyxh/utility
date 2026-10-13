@@ -1,24 +1,24 @@
 import Foundation
 
-/// 统一 HTTP 请求工具，类似 axios
-/// - 默认 User-Agent、超时、JSON Content-Type
-/// - 重定向由 URLSession 自动跟随
-/// - 非 2xx 状态码抛 HTTPError
-/// - retryCount > 0 时失败自动重试
+/// Unified HTTP request utility, similar to axios
+/// - Default User-Agent, timeout, JSON Content-Type
+/// - Redirects are followed automatically by URLSession
+/// - Non-2xx status codes throw HTTPError
+/// - Auto-retry on failure when retryCount > 0
 enum HTTP {
-    /// 防反爬 UA，不含版本号和仓库信息
+    /// Anti-scraping UA, containing no version number or repository info
     static let defaultUserAgent = "Utility (macOS)"
 
-    /// 本机回环地址。统一用字面量 `127.0.0.1` 而非 `localhost`：后者可能解析到 `::1`，
-    /// 而本机服务（MCP server / token proxy）只监听 IPv4。本机客户端一律以此为准。
+    /// Local loopback address. Always use the literal `127.0.0.1` rather than `localhost`: the latter may resolve to `::1`,
+    /// while local services (MCP server / token proxy) listen only on IPv4. Local clients always use this one.
     static let localHost = "127.0.0.1"
 
-    /// 本机服务基地址，如 `http://127.0.0.1:8613`
+    /// Local service base URL, e.g. `http://127.0.0.1:8613`
     static func localBaseURL(port: Int) -> String {
         "http://\(localHost):\(port)"
     }
 
-    /// 本机服务 URL（可带路径），如 `HTTP.localURL(port: 8613, path: "/usage/summary")`
+    /// Local service URL (may include a path), e.g. `HTTP.localURL(port: 8613, path: "/usage/summary")`
     static func localURL(port: Int, path: String = "") -> URL? {
         URL(string: localBaseURL(port: port) + path)
     }
@@ -36,7 +36,7 @@ enum HTTP {
         case delete = "DELETE"
     }
 
-    /// 请求配置 — 一个 struct 收束所有控制参数
+    /// Request config — a single struct gathering all control parameters
     struct RequestConfig {
         var method: Method = .get
         var url: URL
@@ -46,7 +46,7 @@ enum HTTP {
         var retryCount: Int = 0
     }
 
-    /// 唯一入口：接受完整的 RequestConfig
+    /// Sole entry point: accepts a complete RequestConfig
     static func request(_ config: RequestConfig) async throws -> Response {
         var lastError: Error?
         let maxAttempts = max(config.retryCount + 1, 1)
@@ -84,7 +84,7 @@ enum HTTP {
                 )
             } catch {
                 lastError = error
-                // 继续下一次重试
+                // Continue to the next retry
             }
         }
 

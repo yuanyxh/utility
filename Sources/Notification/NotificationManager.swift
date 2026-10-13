@@ -4,10 +4,10 @@ import Cocoa
     import UserNotifications
 #endif
 
-/// 统一通知管理器
-/// DEBUG: NSUserNotificationCenter（原生二进制调试兼容）
-/// RELEASE: UNUserNotificationCenter（正式 .app bundle）
-/// 不再被外部直接调用 — 改为订阅 EventBus 事件自动转发系统通知
+/// Unified notification manager
+/// DEBUG: NSUserNotificationCenter (native binary debug compatibility)
+/// RELEASE: UNUserNotificationCenter (official .app bundle)
+/// No longer called directly from outside — instead subscribes to EventBus events to auto-forward system notifications
 public final class NotificationManager: NSObject {
     public static let shared = NotificationManager()
 

@@ -1,9 +1,9 @@
 import Foundation
 
-/// 轻量发布订阅管理器
-/// - 枚举 Key（Hashable）→ 多个 (ID, Handler)
-/// - 线程安全（NSLock）
-/// - 支持按 key 清除全部、按 ID 取消单个
+/// Lightweight publish-subscribe manager
+/// - Enum key (Hashable) → multiple (ID, Handler) pairs
+/// - Thread-safe (NSLock)
+/// - Supports clearing all by key and canceling a single one by ID
 public final class EventBus {
     public static let shared = EventBus()
 
@@ -14,11 +14,11 @@ public final class EventBus {
 
     // MARK: - Subscribe
 
-    /// 订阅指定 key 的事件
+    /// Subscribe to events for the given key
     /// - Parameters:
-    ///   - key: 事件键（枚举，需 Hashable）
-    ///   - id: subscriber 标识，用于后续取消订阅（默认 UUID）
-    ///   - handler: 事件处理闭包，payload 为发布方传入的可选数据
+    ///   - key: Event key (an enum, must be Hashable)
+    ///   - id: Subscriber identifier used for later unsubscription (default UUID)
+    ///   - handler: Event-handling closure; payload is optional data passed by the publisher
     @discardableResult
     public func subscribe(
         _ key: some Hashable,
@@ -37,14 +37,14 @@ public final class EventBus {
 
     // MARK: - Unsubscribe
 
-    /// 取消指定 key 下的单个 subscriber
+    /// Cancel a single subscriber under the given key
     public func unsubscribe(_ key: some Hashable, id: AnyHashable) {
         lock.lock()
         defer { lock.unlock() }
         handlers[AnyHashable(key)]?.removeAll { $0.id == id }
     }
 
-    /// 清除指定 key 的全部 subscriber
+    /// Clear all subscribers for the given key
     public func unsubscribeAll(for key: some Hashable) {
         lock.lock()
         defer { lock.unlock() }
@@ -53,10 +53,10 @@ public final class EventBus {
 
     // MARK: - Publish
 
-    /// 发布事件到所有订阅者
+    /// Publish an event to all subscribers
     /// - Parameters:
-    ///   - key: 事件键
-    ///   - payload: 可选负载数据
+    ///   - key: Event key
+    ///   - payload: Optional payload data
     public func publish(_ key: some Hashable, payload: Any? = nil) {
         lock.lock()
         let subs = handlers[AnyHashable(key)] ?? []

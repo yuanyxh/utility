@@ -14,7 +14,8 @@ struct SwiftExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var currentDocComment: String?
-        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开,等待本行/后续行开 brace 落地
+        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line,
+        // waiting for this or a later line to open the brace and settle it
         var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
         var pendingFunc: (visibility: String?, signature: String, parenDepth: Int, startLine: Int)?
 
@@ -85,7 +86,7 @@ struct SwiftExtractor: SymbolExtractor {
             // ── resolve symbol body end (brace depth fell below body start) ──
             while let top = bodyStack.last {
                 if top.bodyDepth == nil {
-                    // 等待体在后续行打开:本行开 brace 则落地
+                    // Waiting for the body to open on a later line: settles if this line opens a brace
                     if openBraces > 0 {
                         if newDepth == prevDepth {
                             symbols[top.symIdx].endLine = lineIdx + 1
@@ -144,16 +145,16 @@ struct SwiftExtractor: SymbolExtractor {
                 let idx = symbols.count - 1
                 if openBraces > 0 {
                     if newDepth == prevDepth {
-                        // 本行开又合(单行体,如 func f() {})
+                        // Opens and closes on the same line (single-line body, e.g. func f() {})
                         symbols[idx].endLine = lineIdx + 1
                     } else {
                         bodyStack.append((symIdx: idx, bodyDepth: newDepth))
                     }
                 } else if Self.kindHasBody(captures.keyword) {
-                    // 体在后续行打开
+                    // Body opens on a later line
                     bodyStack.append((symIdx: idx, bodyDepth: nil))
                 } else {
-                    // 无体声明(var/let/typealias 等)
+                    // Bodyless declaration (var/let/typealias, etc.)
                     symbols[idx].endLine = lineIdx + 1
                 }
 
@@ -242,7 +243,7 @@ struct SwiftExtractor: SymbolExtractor {
                     inBlockComment = false
                     i = text.index(after: next)
                 } else {
-                    // 保留换行,保证 cleaned 行数与原始一致(行号对齐)
+                    // Preserve newlines so cleaned keeps the same line count as the original (line-number alignment)
                     if c == "\n" || c == "\r" { result.append(c) }
                     i = next
                 }

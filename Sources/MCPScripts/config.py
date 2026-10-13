@@ -1,28 +1,35 @@
-"""共享配置读取层。
+"""Shared config reading layer.
 
-三大单体（server.py / summarize.py / token_proxy.py）重复的 env 读取与默认值统一收束于此，
-消除「同一变量在 2-3 个文件各读一遍、默认值硬编码散落」的重复。
+The duplicated env reads and defaults of the three monoliths
+(server.py / summarize.py / token_proxy.py) are consolidated here,
+eliminating "the same variable read in 2-3 files, defaults hardcoded
+and scattered" duplication.
 
-用法（同目录扁平 import，复用 log_utils/agent_call 成功模式）：
+Usage (flat same-directory import, reusing the log_utils/agent_call pattern):
     from config import ai_api_key, summary_model, summary_api_url, notes_dir, data_dir
 
-注意：
-- 本模块为纯函数层，仅依赖标准库 os，import 无任何副作用——server.py 必须在
-  import mem0 前设置 POSTHOG_DISABLED/MEM0_TELEMETRY 的模块级副作用顺序不受影响。
-- 返回均为展开后的字符串（默认值做 expanduser），调用方自行决定是否包 Path
-  （如 summarize.py 用 Path(...) 包裹）。
-- 各脚本专属 env（MCP_PORT / MODEL_PROXY_* / QDRANT_PATH / EMBEDDER_MODEL 等）不在此层——
-  只有多文件重复的公共变量收敛。
-- SUMMARY_MODEL / SUMMARY_API_URL 默认值因脚本而异：server/summarize 用真实默认值，
-  token_proxy 用空串做「未配置即禁用 LLM 调用」守卫（见 token_proxy _ask_model），
-  故访问器接受默认值参数，行为与拆分前完全一致。
+Notes:
+- This module is a pure function layer depending only on the os standard
+  library; importing it has no side effects -- server.py's module-level
+  side-effect ordering (setting POSTHOG_DISABLED/MEM0_TELEMETRY before
+  importing mem0) is unaffected.
+- All returns are expanded strings (defaults run through expanduser); the
+  caller decides whether to wrap them in Path (e.g. summarize.py wraps with
+  Path(...)).
+- Script-specific env (MCP_PORT / MODEL_PROXY_* / QDRANT_PATH / EMBEDDER_MODEL
+  etc.) is not in this layer -- only common variables duplicated across files
+  are consolidated.
+- SUMMARY_MODEL / SUMMARY_API_URL defaults differ per script: server/summarize
+  use the real defaults, token_proxy uses an empty string as a
+  "unconfigured = disable LLM calls" guard (see token_proxy _ask_model), so the
+  accessors accept a default argument and behave exactly as before the split.
 """
 
 from __future__ import annotations
 
 import os
 
-# 空字符串 = 由 Swift 层通过环境变量注入，未注入时禁用相关功能
+# Empty string = injected by the Swift layer via env var; when not injected, the related feature is disabled
 _DEFAULT_SUMMARY_MODEL = ""
 _DEFAULT_SUMMARY_API_URL = ""
 _DEFAULT_NOTES_DIR = ""
@@ -30,25 +37,28 @@ _DEFAULT_DATA_DIR = ""
 
 
 def get(key: str, default: str = "") -> str:
-    """统一 env 读取入口。"""
+    """Unified env read entry point."""
     return os.environ.get(key, default)
 
 
 def ai_api_key() -> str:
-    """通用 AI API key（文本生成与向量嵌入共用，与 provider 解绑）。
+    """Generic AI API key (shared by text generation and vector embedding, decoupled from provider).
 
-    环境变量 `AI_API_KEY` 由 Swift `EnvKeys.aiAPIKey` 注入，两侧一致性由
-    `scripts/check-router-config-contract.py` 断言。
+    The env var `AI_API_KEY` is injected by Swift `EnvKeys.aiAPIKey`; the
+    consistency of both sides is asserted by
+    `scripts/check-router-config-contract.py`.
     """
     return get("AI_API_KEY", "")
 
 
 def llm_timeout(default: float = 120.0) -> float:
-    """LLM 单次推理超时（秒）。环境变量 `AI_LLM_TIMEOUT` 由 Swift 从 `ai.llmTimeout` 注入。
+    """LLM single-inference timeout (seconds). The env var `AI_LLM_TIMEOUT` is injected by Swift from `ai.llmTimeout`.
 
-    缺省 / 非数字 / 非正值一律回退 `default`，与 Swift 侧 `OpenAIClient.init` 的
-    「0 = 用默认值」约定一致。**不要**套用 `general.httpTimeout` 那套「0 = 不限制」：
-    同一个 0 在两项配置里含义相反，是最容易被误配成「永不超时」的写法。
+    Missing / non-numeric / non-positive values all fall back to `default`,
+    consistent with the "0 = use default" convention of Swift's
+    `OpenAIClient.init`. **Do not** apply the `general.httpTimeout` convention
+    of "0 = unlimited": the same 0 means the opposite in the two configs and is
+    the easiest way to misconfigure "never timeout".
     """
     raw = get("AI_LLM_TIMEOUT", "")
     if not raw:
@@ -61,10 +71,12 @@ def llm_timeout(default: float = 120.0) -> float:
 
 
 def ui_language(default: str = "") -> str:
-    """界面/提示词语言（`zh-Hans` / `en`）。Swift 按 `general.language` 注入 `UTILITY_LANG`。
+    """UI/prompt language (`zh-Hans` / `en`). Swift injects `UTILITY_LANG` from `general.language`.
 
-    提示词目录按它选择（`prompts/<lang>/<feature>.md`），故与界面语言必须同源。
-    未注入时返回空串，由调用方（prompt_loader）回退基线语言。
+    The prompt directory is selected by it (`prompts/<lang>/<feature>.md`), so
+    it must share the same source as the UI language. When not injected it
+    returns an empty string, and the caller (prompt_loader) falls back to the
+    baseline language.
     """
     return get("UTILITY_LANG", default)
 
@@ -92,6 +104,6 @@ def data_dir(default: str = _DEFAULT_DATA_DIR) -> str:
 
 
 def summary_exclude_tags() -> set[str]:
-    """从环境变量 SUMMARY_EXCLUDE_TAGS 读取排除 tag 列表（逗号分隔）。"""
+    """Read the excluded tag list (comma-separated) from env var SUMMARY_EXCLUDE_TAGS."""
     raw = get("SUMMARY_EXCLUDE_TAGS", "")
     return {t.strip() for t in raw.split(",") if t.strip()}

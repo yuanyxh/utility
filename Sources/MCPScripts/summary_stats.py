@@ -1,7 +1,8 @@
-"""summarize 终端报告模块。
+"""Terminal report module for summarize.
 
-从 summarize.py 拆分（2026-08-30，重构阶段3）：记忆总结流水线的终端报告打印。
-自包含（无外部依赖）。代码原样搬移不改逻辑。
+Split out of summarize.py (2026-08-30, refactor phase 3): terminal report printing
+for the memory-summary pipeline. Self-contained (no external dependencies). Code was
+moved as-is, logic unchanged.
 """
 
 from __future__ import annotations
@@ -23,8 +24,7 @@ def _print_report_v2(
     print(f"   本次处理事实: {memory_count} 条")
     if skipped_processed or skipped_quality:
         print(
-            f"   输入过滤: 已处理跳过 {skipped_processed}，"
-            f"低质丢弃 {skipped_quality}"
+            f"   输入过滤: 已处理跳过 {skipped_processed}，低质丢弃 {skipped_quality}"
         )
     if refine_stats:
         print(

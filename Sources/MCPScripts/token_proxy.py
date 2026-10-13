@@ -1,9 +1,10 @@
-"""Token 代理监控服务。
+"""Token proxy monitoring service.
 
-拦截 Claude Code → API 的请求，记录 token 用量和请求上下文。
+Intercepts Claude Code → API requests and records token usage and request context.
 
-重构（2026-08-30，阶段2）：协议转换/注入 → proxy_protocol.py；
-usage 记录 → proxy_usage.py；本入口保留 providers 路由 + HTTP 端点 + 服务启动。
+Refactor (2026-08-30, stage 2): protocol conversion/injection → proxy_protocol.py;
+usage recording → proxy_usage.py; this entry point keeps providers routing + HTTP
+endpoints + service startup.
 """
 
 import asyncio
@@ -50,52 +51,65 @@ from proxy_response_note import (
 )
 
 # ---------------------------------------------------------------------------
-# 配置（专属 env；公共配置在 config.py，协议/usage 配置在各自子模块）
+# Configuration (dedicated env; common config in config.py, protocol/usage config in their own submodules)
 # ---------------------------------------------------------------------------
 
 PORT = int(os.environ.get("MODEL_PROXY_PORT", "8080"))
-UPSTREAM_URL = os.environ.get("MODEL_PROXY_URL", "")  # 兼容：providers 为空时的单一上游
-# providers 路由表（JSON env，Swift 侧从 config.yaml 序列化）：
+UPSTREAM_URL = os.environ.get(
+    "MODEL_PROXY_URL", ""
+)  # compatibility: single upstream when providers is empty
+# providers routing table (JSON env, serialized on the Swift side from config.yaml):
 #   [{"name","url","apiFormat":"anthropic|openai","apiKey","models":[".."]}, ...]
-# 路由规则：body.model 精确匹配某 provider.models → 该 provider（上游 model 用原值）；
-# 未匹配 → providers[0] 兜底，上游 model 用其 models[0]。
+# Routing rule: body.model exactly matches some provider.models → that provider (upstream
+# model uses the original value); no match → providers[0] as fallback, upstream model uses
+# its models[0].
 PROVIDERS_JSON = os.environ.get("MODEL_PROXY_PROVIDERS", "")
-# classifier 加速的客户端白名单（JSON env，Swift 侧从 config.yaml modelProxy.clientAccel
-# 序列化；缺省为空串 → proxy_client 用内置默认白名单，即历史行为）
+# classifier acceleration's client allowlist (JSON env, serialized on the Swift side from
+# config.yaml modelProxy.clientAccel; empty string by default → proxy_client uses the
+# built-in default allowlist, i.e. historical behavior)
 CLIENT_ACCEL_JSON = os.environ.get("MODEL_PROXY_CLIENT_ACCEL", "")
-# skill 全文去重开关（config.yaml modelProxy.skillDedupEnabled → env）。缺省开：
-# 同一 skill 被反复调用时每次都把整份 SKILL.md 重复注入，纯浪费。
+# skill full-text dedup switch (config.yaml modelProxy.skillDedupEnabled → env). On by
+# default: when the same skill is called repeatedly, the whole SKILL.md is re-injected each
+# time, pure waste.
 SKILL_DEDUP_ENABLED = os.environ.get("MODEL_PROXY_SKILL_DEDUP", "1") != "0"
-# 工具输出瘦身配置（config.yaml modelProxy.outputFilter → env，JSON 串）。
-# 缺省空串即用 Python 侧内置默认（开，max_bytes 8000），与 skill dedup 同构。
+# Tool-output slimming config (config.yaml modelProxy.outputFilter → env, JSON string).
+# Empty string by default means the Python-side built-in default (on, max_bytes 8000),
+# isomorphic with skill dedup.
 OUTPUT_FILTER_JSON = os.environ.get(OUTPUT_FILTER_ENV_KEY, "")
-# 响应侧追加「本轮改写了什么」（config.yaml modelProxy.responseAnnotation → env）。
+# Response-side append of "what was rewritten this turn" (config.yaml modelProxy.responseAnnotation → env).
 RESPONSE_NOTE_ENABLED = os.environ.get(RESPONSE_NOTE_ENV_KEY, "1") != "0"
 
-#: 转发上游时**自己声明**的响应压缩编码白名单（不透传客户端的 Accept-Encoding）。
+#: The response compression encoding whitelist **declared by ourselves** when forwarding to
+#: the upstream (not passing through the client's Accept-Encoding).
 #:
-#: 上游按这个头挑压缩方式——deepseek 实测：声明 zstd 就回 zstd、声明 br 就回 br，
-#: **连 200 的 SSE 流也一样压**，不是只压错误响应。而本代理必须读并改写响应体
-#: （SSE usage 提取、模型名注入、skill 去重、输出过滤），解不开就等于把整条响应
-#: 连同**上游真实状态码**一起丢掉：aiohttp 的解码器不可用时抛
-#: `ContentEncodingError`（继承 `PayloadEncodingError` → `BadHttpMessage`，
-#: **code 恒为 400**），在 `ClientResponse.start()` 被包成
-#: `ClientResponseError(status=400, message='Can not decode content-encoding: …')`，
-#: 由下面那个 except 转成 502 —— 报错文本里的 `400` **不是上游状态码**，
-#: 客户端只看得到一个来路不明的 502，于是反复重试（2026-10-12 用户报障即此形态）。
+#: The upstream picks the compression method by this header — measured on deepseek: declare
+#: zstd and it returns zstd, declare br and it returns br, and it **compresses even a 200 SSE
+#: stream**, not just error responses. Yet this proxy must read and rewrite the response body
+#: (SSE usage extraction, model-name injection, skill dedup, output filtering), so being
+#: unable to decode means discarding the whole response **along with the upstream's real
+#: status code**: when aiohttp's decoder is unavailable it raises `ContentEncodingError`
+#: (inheriting `PayloadEncodingError` → `BadHttpMessage`, **code always 400**), which in
+#: `ClientResponse.start()` is wrapped into `ClientResponseError(status=400, message='Can not
+#: decode content-encoding: …')` and turned into a 502 by the except below — the `400` in the
+#: error text is **not the upstream status code**; the client only sees an unexplained 502 and
+#: retries repeatedly (the 2026-10-12 user report had exactly this shape).
 #:
-#: 只声明 aiohttp 在本 venv 里确实解得开的编码：gzip/deflate 走 stdlib zlib，
-#: br 需要 Brotli、zstd 需要 backports.zstd（aiohttp 3.14 才支持 zstd，且只随
-#: speedups extra 装）——两者已装并写进 requirements.txt。契约脚本第 7 组断言
-#: 「声明的编码本进程都解得开」，**没装库的机器上写进来即红**（那正是它要拦的东西：
-#: 声明了解不开的编码，等于把整条响应连真实状态码一起丢掉）。要加新编码先装库。
+#: Only declare encodings aiohttp can actually decode in this venv: gzip/deflate go through
+#: the stdlib zlib, br needs Brotli, zstd needs backports.zstd (aiohttp 3.14 only then
+#: supports zstd, and only installs it via the speedups extra) — both are installed and
+#: written into requirements.txt. Contract group 7 asserts "every declared encoding is
+#: decodable by this process", so **writing one in on a machine without the library turns it
+#: red** (that is exactly what it is meant to catch: declaring an undecodable encoding
+#: amounts to discarding the whole response together with the real status code). Install the
+#: library before adding a new encoding.
 UPSTREAM_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
 
 logger = setup_logging("token_proxy", json_format=True)
 
-#: 后台任务的强引用池。asyncio 的事件循环对 create_task 只持**弱引用**，
-#: fire-and-forget 用法下任务可能在跑完前就被 GC 回收，表现为用量记录随机
-#: 丢失（官方文档明确要求保存引用）。完成回调负责及时释放。
+#: Strong-reference pool for background tasks. asyncio's event loop holds only **weak
+#: references** to create_task; under fire-and-forget usage a task may be garbage-collected
+#: before it finishes, manifesting as randomly lost usage records (the official docs
+#: explicitly require saving the reference). A completion callback releases it in time.
 _BACKGROUND_TASKS: set = set()
 
 
@@ -110,8 +124,9 @@ def _load_providers() -> list[dict]:
         )
         return []
 
-    # 缺键的 provider 无法路由到预期模型。不在装载时报出来，它就只表现为
-    # 「请求被静默转发到 providers[0]」——看起来像路由逻辑出错，实际是配置面断裂。
+    # A provider missing keys cannot be routed to the expected model. If it is not reported
+    # at load time, it only manifests as "the request is silently forwarded to providers[0]"
+    # — which looks like a routing logic error but is actually a broken config surface.
     out: list[dict] = []
     for p in parsed:
         if not isinstance(p, dict) or not p.get("url"):
@@ -124,7 +139,7 @@ def _load_providers() -> list[dict]:
                         "msg": "provider_config_missing",
                         "provider": p.get("name", ""),
                         "keys": absent,
-                        "effect": "该 provider 可能无法路由到预期模型",
+                        "effect": "this provider may not route to the expected model",
                     }
                 )
             )
@@ -134,16 +149,16 @@ def _load_providers() -> list[dict]:
 
 PROVIDERS = _load_providers()
 
-#: classifier 加速白名单（客户端身份的唯一来源；判据来自可配置白名单而非写死的客户端指纹）
+#: classifier acceleration allowlist (the sole source of client identity; the criterion comes from a configurable allowlist rather than a hard-coded client fingerprint)
 CLIENT_ACCEL = load_client_accel(CLIENT_ACCEL_JSON)
 
 
 def _resolve_provider(model: str) -> tuple[dict, str]:
-    """按 body.model 路由 provider，返回 (provider, 上游模型名)。
+    """Route a provider by body.model, returning (provider, upstream model name).
 
-    - model 匹配某 provider.models → 该 provider，上游 model 用原值
-    - 未匹配 → providers[0] 兜底，上游 model 用其 models[0]
-    - providers 为空 → 兼容旧单上游（url + 透传 key）
+    - model matches some provider.models → that provider, upstream model uses the original value
+    - no match → providers[0] as fallback, upstream model uses its models[0]
+    - providers empty → compatible with the legacy single upstream (url + passed-through key)
     """
     for p in PROVIDERS:
         if model in p.get("models", []):
@@ -163,20 +178,23 @@ def _resolve_provider(model: str) -> tuple[dict, str]:
 _logged_first_body: bool = False
 
 
-#: 入口路径 → 协议格式的映射前缀（在 `_upstream_path` 归一化之后比较）。
-#: **入口路径是协议的权威声明**，比从请求体推测可靠：启发式在「无 system、无 tools
-#: 的单轮请求」上必然落到兜底分支（见 `_detect_api_format`），会把 OpenAI 协议请求
-#: 误判成 anthropic 并做错误转换。
+#: Mapping prefixes of entry path → protocol format (compared after `_upstream_path`
+#: normalization). **The entry path is the authoritative declaration of the protocol**, more
+#: reliable than guessing from the request body: the heuristic necessarily falls to the
+#: fallback branch on a "single-turn request with no system and no tools" (see
+#: `_detect_api_format`), misjudging an OpenAI-protocol request as anthropic and performing a
+#: wrong conversion.
 ANTHROPIC_PATH_PREFIXES: tuple[str, ...] = ("v1/messages",)
 OPENAI_PATH_PREFIXES: tuple[str, ...] = ("v1/chat/completions", "v1/completions")
 
 
 def _upstream_path(request_path: str) -> str:
-    """客户端请求路径 → 上游相对路径（provider.url 之后的部分）。
+    """Client request path → upstream relative path (the part after provider.url).
 
-    `/open/v1/messages` → `v1/messages`；`/v1/messages` → `v1/messages`。
-    `/open` 是历史兼容入口（用户已配 `ANTHROPIC_BASE_URL=.../open/v1`），
-    `/v1` 是协议原生入口；两者在此归一，后续逻辑只面对一种形态。
+    `/open/v1/messages` → `v1/messages`; `/v1/messages` → `v1/messages`.
+    `/open` is the legacy compatibility entry (users who configured
+    `ANTHROPIC_BASE_URL=.../open/v1`), `/v1` is the protocol-native entry; the two are
+    normalized here and the subsequent logic faces only one form.
     """
     if request_path.startswith("/open/"):
         return request_path[len("/open/") :]
@@ -184,7 +202,7 @@ def _upstream_path(request_path: str) -> str:
 
 
 def _api_format_from_path(upstream_path: str) -> str | None:
-    """按入口路径判定协议格式；路径不表明协议时返回 None（交由启发式兜底）。"""
+    """Determine the protocol format by the entry path; returns None when the path does not indicate the protocol (falls back to the heuristic)."""
     for prefix in ANTHROPIC_PATH_PREFIXES:
         if upstream_path.startswith(prefix):
             return "anthropic"
@@ -195,22 +213,23 @@ def _api_format_from_path(upstream_path: str) -> str | None:
 
 
 async def handle_proxy(request: web.Request) -> web.StreamResponse:
-    """转发请求到上游 API，流式返回响应。"""
+    """Forward the request to the upstream API, returning the response in a streaming manner."""
     if not UPSTREAM_URL and not PROVIDERS:
         return web.json_response(
             {"error": "MODEL_PROXY_URL / MODEL_PROXY_PROVIDERS not configured"},
             status=503,
         )
 
-    # 上游相对路径：/open 兼容入口与 /v1 原生入口在此归一
+    # Upstream relative path: the /open compatibility entry and the /v1 native entry are normalized here
     path = _upstream_path(request.path)
 
-    # 网关模型发现：GET /v1/models（或 /open/v1/models）→ 返回 providers 全部模型，
-    # 供客户端模型选择器列出路由。响应 schema 按协议选择，见 _models_schema_for。
+    # Gateway model discovery: GET /v1/models (or /open/v1/models) → return all provider
+    # models, for the client model selector to list routes. The response schema is chosen by
+    # protocol, see _models_schema_for.
     if request.method == "GET" and path == "v1/models":
         return await _handle_models(request)
 
-    # 读取请求 body
+    # Read the request body
     body_bytes = await request.read()
     request_body = {}
     try:
@@ -218,9 +237,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
-    # 客户端 API 格式：**入口路径优先**（协议声明），路径不表明协议时才回退请求体启发式。
-    # 两者不一致时记 format_mismatch 而**不静默采信**——不一致本身是信号（客户端用了
-    # 非规范路径，或启发式误判），静默会让错误转换无从归因。
+    # Client API format: **entry path takes priority** (protocol declaration); only when the
+    # path does not indicate the protocol does it fall back to the request-body heuristic.
+    # When the two disagree, log format_mismatch and **do not silently trust either** — the
+    # disagreement itself is a signal (the client used a non-standard path, or the heuristic
+    # misjudged), and silence would make the wrong conversion unattributable.
     api_format = _api_format_from_path(path)
     if api_format is None:
         api_format = _detect_api_format(request_body)
@@ -234,7 +255,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         "path": request.path,
                         "by_path": api_format,
                         "by_body": by_body,
-                        "effect": "采用路径判据",
+                        "effect": "use the path criterion",
                     }
                 )
             )
@@ -245,19 +266,22 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     provider_format = api_format_of(provider)
     body_bytes = json.dumps(request_body).encode()
 
-    # 构建上游 URL（两种入口形态已在 path 归一）
-    # 例: /v1/messages 或 /open/v1/messages → path="v1/messages" → provider.url/v1/messages
+    # Build the upstream URL (the two entry forms are already normalized in path)
+    # e.g. /v1/messages or /open/v1/messages → path="v1/messages" → provider.url/v1/messages
     upstream = f"{provider['url']}/{path}"
     if request.query_string:
         upstream += f"?{request.query_string}"
 
-    # 安全分类请求（classifier）关闭 thinking，加速响应。
-    # 结构判据（_is_classifier_candidate）与客户端无关；**是否启用由可配置客户端
-    # 白名单决定**（config.yaml modelProxy.clientAccel）——客户端身份不是协议事实，
-    # 写死单一客户端会让其他客户端在同一结构的请求下拿不到加速、撞上游超时。
-    # 关键路径日志按三类返回点区分：命中白名单且为 candidate 记 info；命中白名单但
-    # 非 candidate 记 debug（观测形态变化）；未命中白名单记 debug（含 UA 摘要，
-    # 便于发现需要登记的新客户端）。
+    # Safety classification request (classifier) disables thinking to speed up the response.
+    # The structural criterion (_is_classifier_candidate) is client-independent; **whether it
+    # is enabled is decided by the configurable client allowlist** (config.yaml
+    # modelProxy.clientAccel) — client identity is not a protocol fact, and hard-coding a
+    # single client would leave other clients unable to get acceleration for requests of the
+    # same structure, hitting the upstream timeout.
+    # The critical-path log distinguishes three return points: matched allowlist and is a
+    # candidate logs info; matched allowlist but not a candidate logs debug (to observe shape
+    # changes); not matched logs debug (with a UA summary, to help discover new clients that
+    # need registering).
     accel_client = matches_accel_client(request.headers, CLIENT_ACCEL)
     if accel_client:
         if _is_classifier_candidate(request_body):
@@ -292,25 +316,25 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             json.dumps(
                 {
                     "msg": "classifier_client_not_allowed",
-                    # UA 截断：仅用于发现需要登记的新客户端，不整串落盘
+                    # UA truncation: only for discovering new clients that need registering, not persisting the whole string
                     "user_agent": request.headers.get("user-agent", "")[:80],
                     "api_format": api_format,
                 }
             )
         )
 
-    # System prompt 注入：从 System_Prompts.md 读取规则，注入到最后一条真实用户输入前
+    # System prompt injection: read the rules from System_Prompts.md and inject them before the last real user input
     injected, rule_target = _inject_system_prompt(request_body)
     if injected is not None:
         body_bytes = injected
 
-    # 首次请求日志：输出注入后的完整 body，用于验证系统提示词生效
+    # First-request log: output the full body after injection, to verify the system prompt takes effect
     global _logged_first_body
     if not _logged_first_body:
         _logged_first_body = True
         try:
             parsed = json.loads(body_bytes)
-            # 只输出 system 字段、rule 注入命中和 model，避免刷屏
+            # Output only the system field, the rule injection hit, and model, to avoid flooding
             log_body = {
                 "model": parsed.get("model", ""),
                 "rule_target": rule_target,
@@ -334,14 +358,17 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 json.dumps({"msg": "first_body_log_failed", "error": str(e)})
             )
 
-    # 记录转换前的原始（注入后）请求体，供 record_usage 上下文提取（结构是客户端格式）
+    # Record the original (post-injection) request body before conversion, for record_usage
+    # context extraction (the structure is the client format)
     record_request_body = json.loads(body_bytes) if body_bytes else {}
 
-    # 本轮触发的改写清单，供响应侧追加「已执行: …」用
+    # The list of rewrites triggered this turn, for the response-side "applied: …" append
     note_parts: list[str] = []
 
-    # skill 全文去重：第二份起换成短提示（判据是内容逐字节相同，代理拿不到
-    # skill 名单）。必须在 record 之后——记录层要留原样，否则度量标尺被自己毁掉。
+    # skill full-text dedup: from the second copy onward replace with a short note (the
+    # criterion is byte-identical content; the proxy cannot see the skill list). Must be
+    # after record — the record layer must keep the original, otherwise the measurement
+    # yardstick destroys itself.
     if SKILL_DEDUP_ENABLED:
         deduped = dedup_tool_results(request_body, api_format, ui_language())
         if deduped:
@@ -357,8 +384,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 )
             )
 
-    # 工具输出瘦身：超长砍头尾 + JSON 无损 minify，只对 shell 类工具（Read 等
-    # 是模型点名要的文件内容，截断等于损坏）。同样必须在 record 之后。
+    # Tool-output slimming: over-long head/tail trim + lossless JSON minify, only for
+    # shell-like tools (Read etc. are file contents the model explicitly asked for;
+    # truncating is corruption). Likewise must be after record.
     filtered = filter_tool_outputs(
         request_body,
         api_format,
@@ -373,7 +401,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             json.dumps({"msg": "output_filter", "api_format": api_format, **filtered})
         )
 
-    # 请求协议转换：客户端 anthropic ↔ provider openai（网关标准映射）
+    # Request protocol conversion: client anthropic ↔ provider openai (standard gateway mapping)
     if api_format == "anthropic" and provider_format == "openai":
         request_body = json.loads(body_bytes)
         request_body = ProtocolConverter.request_anthropic_to_openai(request_body)
@@ -401,13 +429,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             )
         )
 
-    # 转发 headers（透传，但按 provider 替换鉴权 key）
+    # Forward headers (pass through, but replace the auth key by provider)
     #
-    # accept-encoding 是**例外**：客户端的值不透传（Claude Code 声明
-    # `gzip, deflate, br, zstd`），改由本进程声明解得开的白名单——理由见
-    # UPSTREAM_ACCEPT_ENCODING 的注释。跳过它再显式赋值，两处都要：
-    # 只赋值不跳过时，dict 里会同时留下 `accept-encoding`（客户端原值）与
-    # `Accept-Encoding`（白名单）两个键，两条头都会发出去。
+    # accept-encoding is the **exception**: the client's value is not passed through (Claude
+    # Code declares `gzip, deflate, br, zstd`); instead this process declares the whitelist it
+    # can decode — see the comment on UPSTREAM_ACCEPT_ENCODING. Skip it and then assign it
+    # explicitly, both needed: assigning without skipping leaves both `accept-encoding` (the
+    # client's original) and `Accept-Encoding` (the whitelist) keys in the dict, and both
+    # headers get sent.
     headers = {}
     skip_headers = {
         "host",
@@ -430,16 +459,19 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
     start_time = time.monotonic()
 
-    # 503 瞬时重试：上游（deepseek 等 provider）偶发返回 503（"temporarily unavailable"）。
-    # 命中 agent 客户端的安全分类调用时会导致其关键操作被拦（故障与客户端无关，
-    # 早期观测来自 Claude Code）。
-    # 策略值取自 llm_client（**单一权威**）：同一类故障在「主转发」与「LLM 调用」两处
-    # 都要处理，就地各写一份必然漂移；换值时要能一处改全局生效。
+    # 503 transient retry: the upstream (deepseek etc. providers) occasionally returns 503
+    # ("temporarily unavailable"). When it hits an agent client's safety classification call
+    # it causes that client's key operations to be blocked (the failure is client-independent;
+    # the early observations came from Claude Code).
+    # The policy values come from llm_client (**single authority**): the same class of failure
+    # must be handled in both "main forwarding" and "LLM calls", and writing a copy in each
+    # place inevitably drifts; a change must take effect globally from one place.
     retry_max = llm_client.DEFAULT_RETRY_503_MAX
     retry_delay = llm_client.DEFAULT_RETRY_503_DELAY
     for attempt in range(retry_max + 1):
-        # 诊断(临时)：记录异常发生的阶段，用于定位流中断的第一现场。
-        # 必须在 try 内、循环体首句赋值，这样外层 proxy_error 一定能读到。
+        # Diagnostic (temporary): record the stage where the exception occurs, to locate the
+        # first scene of a stream interruption. Must be assigned inside try, at the first
+        # statement of the loop body, so the outer proxy_error can always read it.
         diag_stage = "connect"
         try:
             async with aiohttp.ClientSession() as session:
@@ -456,7 +488,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 ) as upstream_resp:
                     latency_ms = int((time.monotonic() - start_time) * 1000)
 
-                    # 上游瞬时 503：放弃本次连接，等待后重试
+                    # Upstream transient 503: abandon this connection, wait and retry
                     if upstream_resp.status == 503 and attempt < retry_max:
                         logger.warning(
                             json.dumps(
@@ -472,17 +504,20 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         await asyncio.sleep(retry_delay)
                         continue
 
-                    # 流式转发响应
+                    # Stream the forward response
                     #
-                    # content-encoding 与 content-length 必须**一起**剔除，二者是一对：
-                    # aiohttp 客户端默认 auto_decompress，转发出去的 body 已经不是上游
-                    # 声明的那份字节了。只剔 content-encoding 而不剔 content-length，
-                    # 等于把压缩前的长度谎报给客户端——要么按旧长度截断，要么协议错误。
+                    # content-encoding and content-length must be removed **together**; they
+                    # are a pair: the aiohttp client auto-decompresses by default, so the
+                    # forwarded body is no longer the bytes the upstream declared. Removing
+                    # only content-encoding without content-length is equivalent to lying to
+                    # the client with the pre-compression length — either truncating by the
+                    # old length or a protocol error.
                     #
-                    # 模型名注入会额外加长响应体，是同一类问题的第二个来源：上游若带
-                    # content-length，照抄会按旧长度截断、把注入的尾段整段吃掉。
+                    # Model-name injection additionally lengthens the response body, a second
+                    # source of the same problem: if the upstream carries content-length,
+                    # copying it truncates by the old length and eats the entire injected tail.
                     #
-                    # 剔除后交由 aiohttp 重新分帧（HTTP/1.1 走 chunked）。
+                    # After removal, aiohttp re-frames it (HTTP/1.1 uses chunked).
                     forward_headers = {
                         k: v
                         for k, v in upstream_resp.headers.items()
@@ -500,19 +535,20 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     await response.prepare(request)
                     diag_stage = "stream"
 
-                    # 收集 SSE chunks 以提取 usage
+                    # Collect SSE chunks to extract usage
                     collected_body = bytearray()
                     is_sse = "text/event-stream" in upstream_resp.headers.get(
                         "content-type", ""
                     )
-                    # 流中断时的异常信息，供 record_usage 记录
+                    # Exception info on stream interruption, for record_usage to record
                     stream_error = ""
-                    # 诊断(临时)：最后一次从上游收到数据的时间。用于区分
-                    # 「上游停顿时被客户端放弃」与「连接被直接重置」——
-                    # 前者 since_last_chunk_ms 大，后者接近于 0。
+                    # Diagnostic (temporary): the time of the last data received from the
+                    # upstream. Used to distinguish "the client gave up while the upstream
+                    # stalled" from "the connection was directly reset" — the former has a
+                    # large since_last_chunk_ms, the latter near 0.
                     last_chunk_at = time.monotonic()
 
-                    # 上游 openai → 客户端 anthropic：响应需转换（Claude Code 场景）
+                    # Upstream openai → client anthropic: the response needs conversion (Claude Code scenario)
                     convert_resp = (
                         provider_format == "openai" and api_format == "anthropic"
                     )
@@ -522,7 +558,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
                     try:
                         if converter is not None:
-                            # 流式转换：逐行缓冲 openai SSE → anthropic SSE 事件
+                            # Streaming conversion: buffer openai SSE line by line → anthropic SSE events
                             line_buffer = ""
                             async for chunk in upstream_resp.content.iter_any():
                                 last_chunk_at = time.monotonic()
@@ -544,13 +580,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                     parts.extend(converter.feed(oc))
                                 if parts:
                                     raw = "".join(parts).encode()
-                                    # collected_body 收未注入的原始流：usage / 输出
-                                    # 预览的提取口径不被注入内容影响
+                                    # collected_body collects the un-injected raw stream:
+                                    # the extraction yardstick for usage / output preview
+                                    # is not affected by injected content
                                     collected_body.extend(raw)
                                     await response.write(
                                         tagger.feed(raw) if tagger else raw
                                     )
-                            # 收尾：content_block_stop / message_delta / message_stop
+                            # Wrap up: content_block_stop / message_delta / message_stop
                             if not stream_error:
                                 tail = converter.finish()
                                 if tail:
@@ -560,7 +597,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         tagger.feed(raw) if tagger else raw
                                     )
                         elif convert_resp and not is_sse:
-                            # 非流式转换：先收完整 JSON body 再整体转换
+                            # Non-streaming conversion: collect the full JSON body first, then convert as a whole
                             raw_body = bytearray()
                             async for chunk in upstream_resp.content.iter_any():
                                 last_chunk_at = time.monotonic()
@@ -579,8 +616,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             await response.write(payload)
                             collected_body.extend(payload)
                         else:
-                            # 直通（同格式）。响应侧追加只在确有待报的改写时启用，
-                            # 否则维持纯透传——不解析即零开销、不引入新失败路径。
+                            # Pass-through (same format). The response-side append is only
+                            # enabled when there really is a rewrite to report; otherwise it
+                            # stays a pure pass-through — no parsing means zero overhead and
+                            # no new failure path.
                             note_sink = None
                             if RESPONSE_NOTE_ENABLED:
                                 if is_sse:
@@ -593,8 +632,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                     )
                             async for chunk in upstream_resp.content.iter_any():
                                 last_chunk_at = time.monotonic()
-                                # 收集 SSE chunks 以提取 usage；400 等错误响应为非 SSE JSON，
-                                # 也收集以记录响应体定位错误（临时增强）
+                                # Collect SSE chunks to extract usage; error responses such
+                                # as 400 are non-SSE JSON, also collected to record the
+                                # response body for locating the error (temporary enhancement)
                                 if is_sse or upstream_resp.status >= 400:
                                     collected_body.extend(chunk)
                                 if note_sink is not None:
@@ -614,13 +654,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         RuntimeError,
                         asyncio.CancelledError,
                     ) as e:
-                        # 客户端已断开连接或 transport 关闭，停止转发
+                        # The client has disconnected or the transport is closed; stop forwarding
                         stream_error = f"{type(e).__name__}: {e}"
-                        # 诊断(临时)：这里才是流中断的第一现场，但它此前只被存进
-                        # stream_error 而不落日志；若随后 write_eof 再抛，外层
-                        # proxy_error 记下的将是**第二个**异常，第一现场永久丢失。
-                        # error_type 本身即带方向：Client* 系 → 写客户端失败，
-                        # ClientPayloadError/ServerDisconnectedError → 读上游失败。
+                        # Diagnostic (temporary): this is the real first scene of the stream
+                        # interruption, but previously it was only stored in stream_error and
+                        # never logged; if a subsequent write_eof throws again, the outer
+                        # proxy_error would record the **second** exception and the first scene
+                        # would be lost forever. error_type itself carries direction: Client*
+                        # family → writing to the client failed;
+                        # ClientPayloadError/ServerDisconnectedError → reading the upstream failed.
                         logger.warning(
                             json.dumps(
                                 {
@@ -629,13 +671,13 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                     "error_type": type(e).__name__,
                                     "error": str(e),
                                     "received": len(collected_body),
-                                    # 绝对时间：与客户端 debug 日志对照用
+                                    # absolute time: for comparison with the client's debug logs
                                     "ts": int(time.time()),
-                                    # 请求总时长（对比 API_TIMEOUT_MS=300000）
+                                    # total request duration (compare API_TIMEOUT_MS=300000)
                                     "elapsed_ms": int(
                                         (time.monotonic() - start_time) * 1000
                                     ),
-                                    # 距最后一次收到上游数据的间隔
+                                    # interval since the last data received from the upstream
                                     "since_last_chunk_ms": int(
                                         (time.monotonic() - last_chunk_at) * 1000
                                     ),
@@ -643,10 +685,13 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             )
                         )
 
-                    # 诊断(临时)：write_eof 在内层 try 之外，连接已断时会**再抛一次**
-                    # ClientConnectionResetError，冒泡到外层 proxy_error 并覆盖第一现场；
-                    # 同时跳过其后的 record_usage，使中断在数据库侧也不留痕。
-                    # 此处吞掉并单独记日志，让第一现场得以保留、record_usage 得以执行。
+                    # Diagnostic (temporary): write_eof is outside the inner try; when the
+                    # connection is already broken it throws **again**
+                    # (ClientConnectionResetError), bubbling to the outer proxy_error and
+                    # overwriting the first scene; it also skips the subsequent record_usage,
+                    # leaving the interruption untraced on the database side too. Swallow it
+                    # here and log separately, so the first scene is preserved and
+                    # record_usage runs.
                     try:
                         await response.write_eof()
                     except Exception as e:
@@ -663,10 +708,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         )
                     diag_stage = "done"
 
-                    # 提取 usage / 输出预览 / 工具名
+                    # Extract usage / output preview / tool name
                     sse_bytes = bytes(collected_body) if collected_body else b""
                     if converter is not None:
-                        # 转换器已归一化 usage（含 input/output tokens）
+                        # the converter has already normalized usage (including input/output tokens)
                         usage_data = dict(converter.usage)
                         out_format = "anthropic"
                     elif convert_resp and not is_sse:
@@ -696,7 +741,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         out_format = api_format
 
                     if usage_data:
-                        # 补充 model：部分 API 的 SSE 响应不含 model 字段
+                        # Supplement model: some APIs' SSE responses lack a model field
                         if not usage_data.get("model"):
                             usage_data["model"] = request_body.get("model", "unknown")
                         output_preview = (
@@ -711,7 +756,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             if sse_bytes
                             else ""
                         )
-                        # 提取错误信息（优先流中断异常，其次上游 error body）
+                        # Extract error info (stream-interruption exception first, then the upstream error body)
                         error_message = stream_error
                         if not error_message and upstream_resp.status >= 400:
                             try:
@@ -728,11 +773,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                         error_message = str(error_data)
                             except (json.JSONDecodeError, UnicodeDecodeError):
                                 pass
-                        # 工具输出（最新一轮 tool_result）随 usage 一并入库。
-                        # 两表分属不同库文件，只有在这里才能拿到 api_usage 自增 id，
-                        # 分开写会让 api_usage_id 恒为 NULL，成本归因分析断链。
-                        # 覆盖范围与 api_usage 完全一致（usage 解析失败/非 200 时两表
-                        # 都不记），故 JOIN 不会有孤立行——这是有意对齐，不是遗漏。
+                        # Tool outputs (the latest round of tool_result) are persisted
+                        # together with usage. The two tables belong to different DB files, and
+                        # only here can the api_usage auto-increment id be obtained; writing
+                        # them separately would leave api_usage_id always NULL, breaking the
+                        # cost-attribution chain. The coverage is exactly the same as api_usage
+                        # (neither table records when usage resolution fails or the status is
+                        # non-200), so a JOIN has no orphan rows — this is deliberate
+                        # alignment, not an omission.
                         tool_outputs = extract_tool_outputs(
                             record_request_body, api_format=api_format
                         )
@@ -765,7 +813,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         )
                     )
 
-                    # 临时增强：记录 >=400 错误响应体，定位 deepseek 上下文超限 400 的具体错误
+                    # Temporary enhancement: record the >=400 error response body, to locate the specific error of deepseek's context over-limit 400
                     if upstream_resp.status >= 400 and sse_bytes:
                         logger.warning(
                             json.dumps(
@@ -791,9 +839,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         "msg": "proxy_error",
                         "path": request.path,
                         "error": str(e),
-                        # 诊断(临时)：异常类型 + 发生阶段。此前只记 str(e)，而
-                        # "Cannot write to closing transport" 在 prepare / 写客户端 /
-                        # write_eof 三处都会抛出，仅凭消息无法区分是哪一个。
+                        # Diagnostic (temporary): exception type + stage. Previously only
+                        # str(e) was logged, but "Cannot write to closing transport" is thrown
+                        # in all three of prepare / writing to the client / write_eof, and the
+                        # message alone cannot tell which one it was.
                         "error_type": type(e).__name__,
                         "stage": diag_stage,
                         "latency_ms": latency_ms,
@@ -806,20 +855,23 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             )
 
 
-#: OpenAI 兼容 schema 中 `created` 的取值（2026-01-01T00:00:00Z 的 epoch）。
-#: 用固定常量而非当前时间：同一份模型列表每次响应的 `created` 必须稳定，
-#: 否则按该字段做缓存的客户端会反复失效。
+#: The value of `created` in the OpenAI-compatible schema (the epoch of 2026-01-01T00:00:00Z).
+#: Use a fixed constant rather than the current time: the `created` of the same model list
+#: must be stable across responses, otherwise clients caching by that field would
+#: continually invalidate.
 _MODEL_CREATED_EPOCH = 1767225600
 
 
 def _models_schema_for(request: web.Request) -> str:
-    """模型发现响应的协议格式。判据取自**协议级请求头**，不用 UA：
+    """The protocol format of the model-discovery response. The criterion is taken from
+    **protocol-level request headers**, not the UA:
 
-    - 带 `anthropic-version`（Anthropic SDK / Claude Code 每条请求都带）→ anthropic
-    - 带 `Authorization: Bearer ...`（OpenAI SDK 的鉴权方式）→ openai
-    - 两者都无 → 按 `/open/*` 兼容入口兜底为 anthropic，并记 info 日志
+    - carries `anthropic-version` (the Anthropic SDK / Claude Code sends it on every request) → anthropic
+    - carries `Authorization: Bearer ...` (the OpenAI SDK's auth method) → openai
+    - neither → falls back to anthropic for the `/open/*` compatibility entry, and logs info
 
-    UA 是客户端产品指纹、与协议无关，拿它判协议正是本阶段要消除的那类写法。
+    The UA is a client product fingerprint, unrelated to the protocol; using it to judge the
+    protocol is exactly the kind of approach this stage aims to eliminate.
     """
     if request.headers.get("anthropic-version"):
         return "anthropic"
@@ -838,15 +890,15 @@ def _models_schema_for(request: web.Request) -> str:
 
 
 async def _handle_models(request: web.Request) -> web.Response:
-    """GET /v1/models（或 /open/v1/models）：返回 providers 全部模型。
+    """GET /v1/models (or /open/v1/models): return all provider models.
 
-    同一端点要服务两种协议客户端，响应 schema 不同：
-    - Anthropic（Claude Code 的 /model 选择器）：`{data:[{type,id,display_name,
+    The same endpoint must serve clients of both protocols, and the response schema differs:
+    - Anthropic (Claude Code's /model selector): `{data:[{type,id,display_name,
       created_at}], has_more, first_id, last_id}`
-    - OpenAI（SDK `models.list()`）：`{object:"list", data:[{id,object:"model",
+    - OpenAI (SDK `models.list()`): `{object:"list", data:[{id,object:"model",
       created, owned_by}]}`
 
-    只提供一种会让另一种协议的 SDK 解析失败。
+    Providing only one would make the other protocol's SDK fail to parse.
     """
     entries: list[tuple[str, str]] = [
         (p.get("name", ""), m) for p in PROVIDERS for m in p.get("models", [])
@@ -900,12 +952,12 @@ async def _handle_models(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """健康检查端点。"""
+    """Health check endpoint."""
     return web.json_response({"status": "ok"})
 
 
 async def handle_usage_summary(request: web.Request) -> web.Response:
-    """今日用量摘要（供 Swift 查询）。"""
+    """Today's usage summary (for Swift to query)."""
     try:
         with dbconn(DB_PATH) as conn:
             row = conn.execute("""
@@ -933,7 +985,7 @@ async def handle_usage_summary(request: web.Request) -> web.Response:
 
 
 async def handle_usage_layers(request: web.Request) -> web.Response:
-    """分层查询：核心交换（end_turn）+ 过程记录（tool_use）。"""
+    """Layered query: core exchange (end_turn) + process records (tool_use)."""
     try:
         level = request.query.get("level", "core")
         limit = int(request.query.get("limit", "50"))
@@ -941,7 +993,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
 
         with dbconn(DB_PATH) as conn:
             if level == "core":
-                # 只查询 end_turn（核心交换）
+                # query only end_turn (core exchange)
                 rows = conn.execute(
                     """
                     SELECT id, timestamp, actual_user_input, input_preview, output_preview,
@@ -963,7 +1015,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
                             "user_input": r[2]
                             or r[
                                 3
-                            ],  # actual_user_input 优先，fallback 到 input_preview
+                            ],  # actual_user_input first, fallback to input_preview
                             "output": r[4],
                             "input_tokens": r[5],
                             "output_tokens": r[6],
@@ -973,7 +1025,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
                         }
                     )
             elif level == "process":
-                # 查询 tool_use 过程记录
+                # query tool_use process records
                 rows = conn.execute(
                     """
                     SELECT id, timestamp, tool_name, input_tokens, output_tokens,
@@ -1000,7 +1052,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
                         }
                     )
             else:
-                # 查询所有
+                # query all
                 rows = conn.execute(
                     """
                     SELECT id, timestamp, request_level, input_preview, output_preview,
@@ -1035,15 +1087,17 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# 网关层日志：middleware 统一记录被拒/失败/超大请求，补 api_usage 的排查盲区。
-# 记录实现（record_gateway_log + 常量 + gateway_log 表）已归口 proxy_usage.py，
-# 本入口只保留 middleware 捕获异常并调用，不再重复维护连接样板。
+# Gateway-layer log: middleware uniformly records rejected/failed/oversized requests,
+# covering api_usage's troubleshooting blind spot. The recording implementation
+# (record_gateway_log + constants + gateway_log table) is consolidated into proxy_usage.py;
+# this entry point only keeps the middleware that catches exceptions and calls it, no longer
+# maintaining the connection boilerplate separately.
 # ---------------------------------------------------------------------------
 
 
 @web.middleware
 async def gateway_log_middleware(request, handler):
-    """包裹所有路由：捕获异常（含 aiohttp 413 超限）并记录网关日志，不改变原有行为。"""
+    """Wrap all routes: catch exceptions (including aiohttp 413 over-limit) and record the gateway log, without changing the original behavior."""
     start = time.monotonic()
     method = request.method
     path = request.path
@@ -1078,18 +1132,21 @@ async def gateway_log_middleware(request, handler):
 
 
 def create_app() -> web.Application:
-    # aiohttp 默认 client_max_size 仅 1MB，Claude Code 请求体（含 CLAUDE.md/skills/MCP 工具定义）
-    # 超过后直接 413 "Maximum request body size exceeded"，转发到不了上游。
-    # 设 64MB 留余量，由客户端 32MB 检查兜底，代理不再成为瓶颈。
+    # aiohttp's default client_max_size is only 1MB; once a Claude Code request body
+    # (including CLAUDE.md/skills/MCP tool definitions) exceeds it, it directly returns
+    # 413 "Maximum request body size exceeded" and never reaches the upstream.
+    # Set 64MB for headroom, with the client's 32MB check as a fallback; the proxy is no
+    # longer the bottleneck.
     app = web.Application(client_max_size=64 * 1024 * 1024)
     app.middlewares.append(gateway_log_middleware)
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)
-    # 两种入口并存：`/v1/*` 是协议原生入口（客户端无需把 base_url 配成非常规前缀），
-    # `/open/*` 是历史兼容别名（已配 ANTHROPIC_BASE_URL=.../open/v1 的用户不受影响）。
-    # 注册在 /usage/* 与 /health 之后，不会遮蔽它们；两条路由共用同一 handler，
-    # 路径在 _upstream_path 归一。
+    # Two entries coexist: `/v1/*` is the protocol-native entry (the client need not configure
+    # base_url to an unconventional prefix), `/open/*` is the legacy compatibility alias (users
+    # who already configured ANTHROPIC_BASE_URL=.../open/v1 are unaffected). Registered after
+    # /usage/* and /health so they are not shadowed; the two routes share the same handler and
+    # the path is normalized in _upstream_path.
     app.router.add_route("*", "/open/{path:.*}", handle_proxy)
     app.router.add_route("*", "/v1/{path:.*}", handle_proxy)
     return app

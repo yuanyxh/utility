@@ -106,7 +106,7 @@ public final class OpenAIClient {
     private let apiKey: String
     private let timeout: TimeInterval
 
-    /// timeout: 从配置读取，0 = 使用默认值（`ConfigDefaults.defaultAITimeout`）
+    /// timeout: read from config; 0 = use the default value (`ConfigDefaults.defaultAITimeout`)
     public init(apiKey: String, timeout: TimeInterval = 0) {
         self.apiKey = apiKey
         self.timeout = timeout > 0 ? timeout : ConfigDefaults.defaultAITimeout
@@ -199,7 +199,7 @@ public final class OpenAIClient {
 
     // MARK: - Stream
 
-    /// SSE 流式对话 — 每收到一个 content delta 调用 onToken
+    /// SSE streaming chat — invokes onToken for each content delta received
     @discardableResult
     public func stream(
         request req: OpenAIChatRequest,
@@ -224,7 +224,7 @@ public final class OpenAIClient {
             delegateQueue: nil,
         )
         let task = streamSession.dataTask(with: urlRequest)
-        // 保持 session 引用，防止 task 未 retain 时 session 被提前释放
+        // Retain the session reference to prevent the session from being released early when the task does not retain it
         delegate.session = streamSession
         task.resume()
         return task
@@ -237,7 +237,7 @@ public final class OpenAIClient {
         private let onToken: (String) -> Void
         private let onComplete: (Result<Void, Error>) -> Void
         private var hasCompleted = false
-        /// 保持 streamSession 引用，防止在 task 运行中被释放
+        /// Retain the streamSession reference to prevent it from being released while the task is running
         var session: URLSession?
 
         init(

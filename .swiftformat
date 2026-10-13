@@ -1,0 +1,9 @@
+# SwiftFormat 配置 — 与项目既有风格对齐
+# 工具链 Swift 6.4,Package.swift 声明 swift-tools-version 5.9
+# 4 空格缩进;保留既有换行风格;保留尾随逗号与显式类型标注
+--swiftversion 5.9
+--indent 4
+--indentcase false
+--wraparguments preserve
+--wrapparameters preserve
+--disable trailingCommas,redundantType

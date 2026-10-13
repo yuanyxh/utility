@@ -34,9 +34,9 @@ final class ProjectScanner {
         let db = try ProjectDatabase(projectPath: projectPath)
         let config = ScannerConfig(projectPath: projectPath)
 
-        // 不在扫描开始处清库：清空必须与写入同事务（见 `replaceScanResults`）。
-        // 否则采集阶段（目录遍历 + 读文件 + AST 提取，大项目可达数十秒）里库是
-        // 空的，期间任何检索工具都返回「什么都没有」。
+        // Do not clear the DB at the start of a scan: clearing must be in the same transaction as the writes (see `replaceScanResults`).
+        // Otherwise during the collection phase (directory traversal + file reads + AST extraction, which can take tens of
+        // seconds for large projects) the DB is empty, and any search tool during that time returns "nothing at all".
 
         let fm = FileManager.default
         // Standardize the root URL's symlinks (e.g. /tmp → /private/tmp) and
@@ -59,9 +59,9 @@ final class ProjectScanner {
         }
 
         var dirMap: [String: DirectoryRecord] = [:]
-        // 含清单文件的目录（相对路径）。遍历结束后统一回填到 dirMap：清单可能
-        // 先于或后于其目录被枚举，父目录也可能由下面的惰性创建补出，就地标记
-        // 会依赖枚举顺序。
+        // Directories containing manifest files (relative paths). Backfilled into dirMap uniformly after traversal ends:
+        // a manifest may be enumerated before or after its directory, and parent directories may also be supplied by the
+        // lazy creation below, so marking in place would depend on enumeration order.
         var manifestDirs: Set<String> = []
         var fileResults: [(FileRecord, String?)] = [] // (file, maybe content)
 
@@ -85,18 +85,19 @@ final class ProjectScanner {
                         moduleName: name,
                         parentPath: parent.isEmpty ? nil : parent,
                         fileCount: 0,
-                        // 清单标记在下面遇到清单文件时回填。此处若拿目录名去比对
-                        // `isManifestFile` 那组文件名，恒为 false。
+                        // The manifest flag is backfilled below when a manifest file is encountered. Comparing a directory name
+                        // against the `isManifestFile` set of filenames here would always be false.
                         hasPackageManifest: false,
                     )
                 }
                 continue
             }
 
-            // 清单判定必须在 includes 过滤**之前**：package.json / pyproject.toml
-            // / Podfile / build.gradle 都不匹配任何 include 模式（includes 只列了
-            // 源码扩展名），放到过滤后面就永远标不上模块根。
-            // 根目录下的清单无处可标（根目录本身不写进 directories），跳过即可。
+            // The manifest check must come **before** the includes filter: package.json / pyproject.toml
+            // / Podfile / build.gradle do not match any include pattern (includes lists only source
+            // extensions), so placing it after the filter would never mark the module root.
+            // A manifest directly under the root has nowhere to be marked (the root itself is not written into
+            // directories), so it is fine to skip it.
             if Self.isManifestFile(url.lastPathComponent) {
                 let dirPath = (relPath as NSString).deletingLastPathComponent
                 if !dirPath.isEmpty { manifestDirs.insert(dirPath) }
@@ -148,7 +149,7 @@ final class ProjectScanner {
             fileCount += 1
         }
 
-        // 回填模块根标记。统一放到遍历结束后做，不依赖枚举顺序。
+        // Backfill the module root flag. Uniformly done after traversal ends, not dependent on enumeration order.
         for dirPath in manifestDirs {
             if var dir = dirMap[dirPath] {
                 dir.hasPackageManifest = true
@@ -156,8 +157,8 @@ final class ProjectScanner {
             }
         }
 
-        // 目录不在此处落库：与文件、符号一起进 `replaceScanResults` 的单事务，
-        // 否则库会停在「目录已写、符号未写」的不一致态。
+        // Directories are not persisted here: they go with files and symbols into the single transaction of
+        // `replaceScanResults`, otherwise the DB would stop in an inconsistent "directories written, symbols not yet" state.
         // ── phase 2: extract symbols concurrently ──
         let totalFiles = fileResults.count
 
@@ -222,12 +223,12 @@ final class ProjectScanner {
             }
         }
 
-        // ── parse manifests（纯读，先算完再进写事务）──
+        // ── parse manifests (read-only, computed fully before entering the write transaction) ──
         let packages = ManifestParser.parseAll(in: projectPath).flatMap(\.packages)
         pkgCount = packages.count
 
-        // ── phase 3: 原子替换 ──
-        // 清空、写入与 FTS 重建在同一事务内完成，读者看不到空库或半成品。
+        // ── phase 3: atomic replacement ──
+        // Clearing, writing, and FTS rebuild are done in the same transaction; readers never see an empty DB or a half-finished one.
         try db.replaceScanResults(
             directories: Array(dirMap.values),
             files: (0 ..< totalFiles).compactMap { results[$0] },

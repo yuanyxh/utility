@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """
-MCP MinoBraiN — 冷热双层共享记忆 + 项目依赖图查询
+MCP MinoBraiN — hot/cold two-tier shared memory + project dependency-graph query
 
-热层: Mem0 → Qdrant (原始碎片记忆, 自动提取/去重/冲突解决)
-冷层: Qdrant 独立集合 (已归档知识索引)
-项目: SQLite 依赖图查询 (FTS5 + 同义词扩展)
+Hot layer: Mem0 → Qdrant (raw fragment memories, auto extract/dedup/conflict resolution)
+Cold layer: Qdrant separate collection (archived knowledge index)
+Project: SQLite dependency-graph query (FTS5 + synonym expansion)
 
-从 self-service-docker 移植, 适配 Utility.app 子进程模式。
+Ported from self-service-docker, adapted for the Utility.app subprocess model.
 
-重构（2026-08-30，阶段4）：共享 embedder → server_embed.py；项目依赖图查询与
-笔记语义检索 → server_search.py；本入口保留记忆操作/冷层/技能/HTTP 服务/main()。
+Refactor (2026-08-30, phase 4): shared embedder → server_embed.py; project
+dependency-graph query and note semantic search → server_search.py; this entry point
+keeps memory operations / cold layer / skills / HTTP service / main().
 """
 
-# mem0 内置 PostHog 遥测在无网络环境会卡死初始化, 必须在任何 import 前禁用
+# mem0's built-in PostHog telemetry hangs initialization in an offline environment,
+# so it must be disabled before any import
 import os
 
 os.environ["POSTHOG_DISABLED"] = "1"
-# mem0 自带 PostHog 遥测（独立实例，不受 posthog.disabled 影响）
-# 在 import 前设此环境变量让 AnonymousTelemetry 直接跳过初始化
+# mem0 ships its own PostHog telemetry (a separate instance, unaffected by
+# posthog.disabled); set this env var before import so AnonymousTelemetry skips init
 os.environ["MEM0_TELEMETRY"] = "False"
 
 import json
@@ -92,7 +94,7 @@ MEM0_QDRANT_PATH = os.path.join(QDRANT_PATH, "mem0")
 
 
 def _cleanup_qdrant_locks() -> None:
-    """Qdrant Local 模式崩溃后锁文件残留会阻塞下次启动, 启动前清理。"""
+    """After a Qdrant Local mode crash, a leftover lock file blocks the next startup, so clean it up before starting."""
     for root_dir in (
         QDRANT_PATH,
         MEM0_QDRANT_PATH,
@@ -122,13 +124,15 @@ SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 
 DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
 
-#: recall 默认返回条数。权威在 `tool_defaults.arg_default`（配置面见 config.yaml
-#: `mcp.toolDefaults`）；工具 schema 的 default 与运行时兜底共用此常量，避免
-#: 两处各写一份字面量而漂移成「schema 声明 6、实际取 8」。
+#: Default result limit for recall. Authoritative source is
+#: `tool_defaults.arg_default` (config surface: config.yaml `mcp.toolDefaults`); the
+#: tool schema's default and the runtime fallback both use this constant, avoiding two
+#: copies of the literal drifting into "schema declares 6, actually takes 8".
 DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
 
-#: project_notes 默认返回条数。同上：schema 的 default 与 handler 兜底共用，
-#: 原先两处各写一个字面量 5，与其它工具走同一张表后不再有漂移面。
+#: Default result limit for project_notes. Same as above: the schema's default and the
+#: handler fallback share it; previously both wrote the literal 5, and going through the
+#: same table as the other tools leaves no room for drift.
 DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
 TOOL_DEFAULTS: dict[str, str] = {
@@ -150,7 +154,7 @@ EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachm
 
 NOTE_EXTENSIONS = (".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml")
 
-# 通过环境变量 SERVER_TIMEOUT 可覆盖（Swift 层从 GeneralConfig.httpTimeout 读取）
+# Can be overridden via the SERVER_TIMEOUT env var (the Swift layer reads it from GeneralConfig.httpTimeout)
 DEFAULT_TIMEOUT = float(os.environ.get("SERVER_TIMEOUT", "60.0"))
 
 SUMMARY_LLM_MODEL = summary_model()
@@ -177,22 +181,26 @@ PROCESSED_FIELD = "processed"
 
 PROCESSED_MAX_BIT = 7
 
-#: `set_memory_processed` 的参数校验文案。HTTP 端点（`api_memories_processed`）与 MCP 工具
-#: （`_handle_set_memory_processed`）**共用同一批**——两处各写一份时改一处忘一处，会让同一个
-#: 错误在两条入口给出不同提示；而这是**给模型看**的文案，措辞不定只会让它更难判断该改哪个参数。
-#: 统一英文：这一层（工具返回/内部日志）不与 `UTILITY_LANG` 联动，面向终端用户的文案在 Swift
-#: 侧由 `L10n` 覆盖。
+#: Argument-validation text for `set_memory_processed`. The HTTP endpoint
+#: (`api_memories_processed`) and the MCP tool (`_handle_set_memory_processed`) **share
+#: the same set** — writing one copy each means changing one and forgetting the other,
+#: giving the same error different messages on the two entry points; and this text is
+#: *shown to the model*, so inconsistent wording only makes it harder to tell which
+#: argument to fix. Unified to English: this layer (tool returns / internal logs) is not
+#: tied to `UTILITY_LANG`; end-user-facing text is covered on the Swift side by `L10n`.
 ERR_MEMORY_IDS_EMPTY = "memory_ids must not be empty"
 ERR_VALUE_INVALID = "value must be 0 (reset) or 1 (set)"
 ERR_BIT_VALUE_NOT_INT = "bit/value must be integers"
 
-#: 入口层通用错误：热层未就绪。**6 处**（各工具 handler + HTTP 端点）共用一句——
-#: 各写一份时改一处忘一处，同一状态在不同工具下提示不同，调用方难以归纳该怎么重试。
+#: Entry-layer generic error: hot layer not ready. **6 places** (each tool handler + HTTP
+#: endpoint) share one string — writing one copy each means changing one and forgetting
+#: another, and the same state gets different messages under different tools, making it
+#: hard for the caller to generalize how to retry.
 ERR_HOT_LAYER_NOT_READY = "Hot layer not initialized"
 
 
 def err_bit_out_of_range(bit: int | None = None) -> str:
-    """bit 越界文案。带 `bit` 时附上实际值——内部异常用它，日志里能直接看出是哪个值越界。"""
+    """Out-of-range text for bit. When `bit` is given, the actual value is appended — internal exceptions use it, and the log shows directly which value is out of range."""
     return f"bit out of range 0-{PROCESSED_MAX_BIT}" + (
         "" if bit is None else f": {bit}"
     )
@@ -204,7 +212,7 @@ HOT_RETENTION_DAYS = 180
 
 ARCHIVE_INTERVAL_HOURS = 24
 
-# 空字符串 = 由 Swift 层通过环境变量注入（传入当前系统用户名）
+# Empty string = injected by the Swift layer via an env var (passes the current system username)
 DEFAULT_USER_ID = os.environ.get("UTILITY_USER_ID", "")
 
 CONTRADICTION_SIMILARITY_THRESHOLD = 0.8
@@ -219,10 +227,12 @@ MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
 
 
 def _patch_mem0_fastembed():
-    """Monkey-patch mem0 FastEmbedEmbedding 以启用内存优化参数。
+    """Monkey-patch mem0's FastEmbedEmbedding to enable memory-optimization parameters.
 
-    mem0 原始实现只传 model_name 给 TextEmbedding，缺失 cache_dir/threads/providers
-    等优化参数。此处直接替换 init 逻辑，跳过原始 TextEmbedding 创建再重建的浪费。
+    The original mem0 implementation passes only model_name to TextEmbedding, missing
+    optimization parameters like cache_dir/threads/providers. Here we replace the init
+    logic directly, skipping the waste of creating the original TextEmbedding and then
+    rebuilding it.
     """
     try:
         from mem0.embeddings.fastembed import FastEmbedEmbedding
@@ -230,8 +240,8 @@ def _patch_mem0_fastembed():
         import fastembed
 
         def _optimized_init(self, config=None):
-            # 直接调 EmbeddingBase.__init__ 设置 config，跳过 FastEmbedEmbedding 原始
-            # init 中的无优化 TextEmbedding 创建
+            # Call EmbeddingBase.__init__ directly to set config, skipping the
+            # unoptimized TextEmbedding creation in FastEmbedEmbedding's original init
             EmbeddingBase.__init__(self, config)
             self.config.model = self.config.model or "thenlper/gte-large"
             self.dense_model = fastembed.TextEmbedding(
@@ -291,7 +301,7 @@ _hot_last_init_attempt = 0.0
 
 def _init_hot_memory() -> bool:
     global hot_memory
-    # mem0 内置 PostHog 遥测会阻塞初始化，强制禁用
+    # mem0's built-in PostHog telemetry blocks initialization, so force-disable it
     try:
         import posthog
 
@@ -318,10 +328,12 @@ def _init_hot_memory() -> bool:
 
 
 def _collection_vector_size(client, collection_name: str) -> int | None:
-    """读集合的向量维度；读不到返回 None（调用方按「无法判定」跳过校验）。
+    """Read a collection's vector dims; returns None if unreadable (the caller treats it
+    as "cannot determine" and skips validation).
 
-    本项目用单向量配置；命名向量（dict）形态一并兼容——为读一个维度而崩在启动路径上，
-    代价远大于兼容它的几行代码。
+    This project uses a single-vector config; the named-vector (dict) form is also
+    supported — crashing on the startup path just to read one dims value costs far more
+    than the few lines it takes to support it.
     """
     try:
         vectors = client.get_collection(collection_name).config.params.vectors
@@ -349,14 +361,16 @@ try:
         )
         logger.info(f"Cold layer collection '{COLD_COLLECTION}' created")
     else:
-        # 集合维度在首次创建时固定：换模型（维度变化）后旧向量与新查询向量不可比，
-        # 而检索侧异常会被吞成一条 warning —— 表现为冷层检索静默失效。启动时点出来。
+        # Collection dims are fixed at first creation: after swapping the model (dims
+        # change) the old vectors are not comparable with the new query vectors, and the
+        # search side swallows the exception into a single warning — presenting as
+        # cold-layer search silently failing. Call it out at startup.
         advice = describe_dim_mismatch(
             _collection_vector_size(qdrant, COLD_COLLECTION), EMBEDDER_DIMS
         )
         if advice:
             logger.error(advice)
-            # 禁用冷层，但热层/项目检索照常（其余 qdrant 用法均有 `if qdrant` 守卫）
+            # Disable the cold layer, but hot layer / project search proceed as usual (all other qdrant usages have an `if qdrant` guard)
             qdrant = None
     if qdrant is not None:
         logger.info("Cold layer (Qdrant direct) initialized")
@@ -396,9 +410,11 @@ async def _ensure_hot_memory() -> bool:
 
 
 def _notes_snippet(text: str, needle: str, max_lines: int = 3) -> str:
-    """取前 max_lines 条含 needle 的行，格式与原 `grep -inF -m <max_lines>` 一致。
+    """Take the first max_lines lines containing needle, in the same format as the
+    original `grep -inF -m <max_lines>`.
 
-    输出形如 `12:foo\\n45:bar`（行号:行内容，换行连接）；无命中返回空串。
+    Output looks like `12:foo\\n45:bar` (line number:line content, joined by newlines);
+    returns an empty string when there is no hit.
     """
     if not needle:
         return ""
@@ -471,9 +487,10 @@ def search_cold_layer(
                         text = fh.read()
                 except OSError:
                     continue
-                # 任一词命中即算命中（等价于原 grep -iFq 的短路语义）。
-                # 原实现用 subprocess 逐文件逐词起 grep 进程，454 个文件 × N 词
-                # 实测 2.4s(N=1) / 4.5s(N=2) / 7.5s(N=4)，是 recall 的最大单项开销。
+                # A hit on any term counts as a hit (equivalent to the original
+                # grep -iFq short-circuit semantics). The original implementation spawned
+                # a grep subprocess per file per term; measured on 454 files × N terms:
+                # 2.4s (N=1) / 4.5s (N=2) / 7.5s (N=4), recall's single biggest cost.
                 low = text.lower()
                 if not any(n in low for n in needles):
                     continue
@@ -529,11 +546,12 @@ def _scan_skills() -> dict[str, dict]:
     if not os.path.isdir(SKILLS_DIR):
         return skills
     try:
-        # 递归遍历 SKILLS_DIR 下所有子目录，深度扫描 .md 文件。
-        # 仅当当前目录是 Waza 式目录 skill（含 SKILL.md）时，才跳过其
-        # references/agents/scripts 附属子目录，并只注册 SKILL.md 本身；
-        # 无 SKILL.md 的普通目录不跳过，其内所有 .md（含 references 等
-        # 子目录中的）照常注册。
+        # Recursively walk all subdirectories under SKILLS_DIR, scanning .md files deeply.
+        # Only when the current directory is a Waza-style directory skill (containing
+        # SKILL.md) do we skip its references/agents/scripts companion subdirectories and
+        # register only SKILL.md itself; a plain directory without SKILL.md is not
+        # skipped, and all .md files inside it (including those in references etc.
+        # subdirectories) are registered as usual.
         for root, dirs, files in os.walk(SKILLS_DIR):
             if "SKILL.md" in files:
                 dirs[:] = [d for d in dirs if d not in _SKILL_SKIP_DIRS]
@@ -561,11 +579,11 @@ def _scan_skills() -> dict[str, dict]:
 
 
 def _find_skill_dir(name: str) -> str | None:
-    """按注册名（normalize 后）定位 skill 目录；返回绝对路径，未找到返回 None。"""
+    """Locate a skill directory by its registered name (post-normalize); returns the absolute path, or None if not found."""
     direct = os.path.join(SKILLS_DIR, name)
     if os.path.isfile(os.path.join(direct, "SKILL.md")):
         return direct
-    # 注册名来自 SKILL.md frontmatter 的 name（normalize 后），目录名可能保留原名/连字符
+    # The registered name comes from SKILL.md frontmatter's name (post-normalize); the directory name may keep the original name/hyphens
     try:
         entries = os.listdir(SKILLS_DIR)
     except OSError:
@@ -612,18 +630,20 @@ def _load_tool_descriptions() -> dict[str, str]:
 
 
 def _dumps(obj) -> str:
-    """工具输出统一出口：ensure_ascii=False 让中文按 UTF-8 原样输出。
+    """Unified outlet for tool output: ensure_ascii=False lets CJK be emitted as UTF-8 as-is.
 
-    ASCII 转义把每个非 ASCII 字符膨胀成 6 字节 \\uXXXX —— recall 实测占其输出 30%。
+    ASCII escaping inflates each non-ASCII character to 6 bytes \\uXXXX — measured at
+    30% of recall's output.
     """
     return json.dumps(obj, ensure_ascii=False)
 
 
 def _int_arg(arguments: dict, key: str, default: int) -> int:
-    """取整数参数；缺失/None/非整数一律回退 default。
+    """Read an integer argument; missing/None/non-integer all fall back to default.
 
-    客户端显式传 `null` 时 `arguments.get` 会返回 None，直接拿去切片
-    (`all_found[:None]`) 是**不截断**——静默地把 token 治理关掉。
+    When the client explicitly passes `null`, `arguments.get` returns None, and slicing
+    with it directly (`all_found[:None]`) is **no truncation** — silently turning token
+    governance off.
     """
     try:
         return int(arguments.get(key, default))
@@ -631,9 +651,11 @@ def _int_arg(arguments: dict, key: str, default: int) -> int:
         return default
 
 
-# mem0 热层结果原样透出，字段随其版本增删；黑名单会漏，故用白名单。
-# 剔除理由：memory 与 content 逐字重复（实测 248/248，占输出 38%）；hash/role/user_id
-# 模型用不到或恒为同值；metadata 内 archived 服务端已过滤、heat_score 已提到顶层。
+# mem0 hot-layer results are emitted as-is, and fields vary across versions; a blacklist
+# would miss some, so a whitelist is used. Removal rationale: memory and content are
+# byte-identical duplicates (measured 248/248, 38% of output); hash/role/user_id are
+# unused by the model or always the same value; inside metadata, archived is already
+# filtered server-side and heat_score is already lifted to the top level.
 _HOT_RESULT_KEYS = (
     "id",
     "content",
@@ -657,8 +679,9 @@ _HOT_META_KEYS = (
 
 
 def _project_hot_result(r: dict) -> dict:
-    """热层结果 → 面向模型的形态。`content` 缺失时从 `memory` 归一——
-    `get_all` 的原始结果只有 `memory`，直接按白名单裁会把正文裁没。"""
+    """Hot-layer result → model-facing shape. When `content` is missing, normalize it
+    from `memory` — `get_all`'s raw result only has `memory`, and trimming strictly by
+    the whitelist would trim the body away."""
     out = {k: r[k] for k in _HOT_RESULT_KEYS if k in r}
     if "content" not in out:
         out["content"] = r.get("memory", "")
@@ -718,7 +741,7 @@ def _build_metadata(src: dict, now_iso: str) -> dict:
         "last_accessed_at": now_iso,
         "access_count": 0,
         "archived": False,
-        # 已处理位掩码：bit0=1 表示已被总结脚本成功处理（其余位预留）
+        # Processed bitmask: bit0=1 means successfully processed by the summarization script (remaining bits reserved)
         "processed": 0,
     }
 
@@ -755,7 +778,9 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
             return False
         old_content = old.get("memory", "")
         old_meta = dict(old.get("metadata", {}) or {})
-        old_meta.setdefault("processed", 0)  # 透传已处理位，避免 delete+add 重建丢失
+        old_meta.setdefault(
+            "processed", 0
+        )  # carry over the processed bit so delete+add rebuild does not lose it
         old_meta["disputed"] = True
         old_meta["disputed_by"] = disputed_by
         old_meta["dispute_reason"] = reason
@@ -763,9 +788,12 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
         try:
             hot_memory.add(old_content, user_id=DEFAULT_USER_ID, metadata=old_meta)
         except Exception as e:
-            # 主路径失败必须记日志:原先静默退化到无 metadata 的 add,
-            # 会写入 metadata=null,令该记忆绕过 processed 位被反复重扫
-            logger.warning(f"[dispute] 带 metadata 重建失败,退化重建: {e}")
+            # A failure on the main path must be logged: previously it silently
+            # degraded to an add without metadata, writing metadata=null and letting that
+            # memory bypass the processed bit and be rescanned repeatedly
+            logger.warning(
+                f"[dispute] metadata rebuild failed, falling back to rebuild without it: {e}"
+            )
             fallback_meta = {
                 "processed": old_meta.get("processed", 0),
                 "disputed": True,
@@ -784,10 +812,11 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
 
 
 def _set_processed_bit(memory_id: str, bit: int, value: int) -> bool:
-    """设置/重置记忆 metadata['processed'] 的指定位（bit0=已总结处理）。
+    """Set/reset a specific bit of a memory's metadata['processed'] (bit0=summarized).
 
-    经 mem0 update 只改 payload 不重建向量（data=None 跳过 embed），幂等；
-    HTTP 端点与 MCP 工具共用，单一实现。
+    Via mem0 update it changes only the payload without rebuilding vectors (data=None
+    skips embed), and is idempotent; shared by the HTTP endpoint and the MCP tool, a
+    single implementation.
     """
     if not hot_memory:
         return False
@@ -819,8 +848,9 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
     if not hot_memory:
         return
     try:
-        # 不传 rerank：MEM0_CONFIG 未配置 reranker，mem0 内部条件
-        # `if rerank and self.reranker` 恒假 —— 传了是空操作，徒增误导。
+        # No rerank passed: MEM0_CONFIG does not configure a reranker, so mem0's internal
+        # `if rerank and self.reranker` is always false — passing it is a no-op that only
+        # adds confusion.
         similar_raw = hot_memory.search(
             content,
             top_k=CONTRADICTION_TOP_K,
@@ -853,11 +883,11 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
 
 def _spawn_contradiction_check(coro) -> None:
     """Spawn a contradiction check task, limiting concurrent tasks to avoid memory leak."""
-    # 清理已完成的 task
+    # Clean up completed tasks
     done = {t for t in _pending_contradictions if t.done()}
     _pending_contradictions.difference_update(done)
     if len(_pending_contradictions) >= _MAX_CONTRADICTION_TASKS:
-        return  # 积压过多则跳过，等待下一轮
+        return  # too many backed up, skip and wait for the next round
     task = asyncio.create_task(coro)
     _pending_contradictions.add(task)
 
@@ -1049,7 +1079,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["memory_ids"],
             },
         ),
-        # ── 项目工具 ──
+        # ── Project tools ──
         Tool(
             name="project_search",
             description=desc.get("project_search", TOOL_DEFAULTS["project_search"]),
@@ -1315,15 +1345,17 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
     query = arguments["query"]
     limit = _int_arg(arguments, "limit", DEFAULT_RECALL_LIMIT)
     include_archived = arguments.get("include_archived", False)
-    # 热层惰性初始化：漏掉这一步时，重启后的第一次 recall 会静默丢掉整个热层
-    # （`if hot_memory` 为假直接跳过，hot_count 填 0）。初始化失败不终止——
-    # 冷层与 notes 不依赖热层，recall 应当降级而非失败。
+    # Lazy hot-layer init: skipping this step makes the first recall after a restart
+    # silently drop the entire hot layer (`if hot_memory` is false so it is skipped and
+    # hot_count is 0). Init failure does not terminate — the cold layer and notes do not
+    # depend on the hot layer, so recall should degrade rather than fail.
     await _ensure_hot_memory()
     results = []
     if hot_memory:
         try:
-            # 不传 rerank：MEM0_CONFIG 未配置 reranker，mem0 内部条件
-            # `if rerank and self.reranker` 恒假 —— 传了是空操作，徒增误导。
+            # No rerank passed: MEM0_CONFIG does not configure a reranker, so mem0's
+            # internal `if rerank and self.reranker` is always false — passing it is a
+            # no-op that only adds confusion.
             hot_raw = hot_memory.search(
                 query,
                 filters={"user_id": DEFAULT_USER_ID},
@@ -1346,9 +1378,10 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
     cold = search_cold_layer(query, limit, include_archived=include_archived)
     results.extend(cold)
     results.sort(key=_heat_sort_key, reverse=True)
-    # 分层计数必须与 `count` 同一口径——都取自截断后的列表。原先对 `results`
-    # 全量统计，三类之和可达 count 的两倍（实测 10+1+9 对 count=10），
-    # 调用方据此以为拿到了全部热层命中。
+    # Per-layer counts must use the same basis as `count` — both taken from the
+    # truncated list. Previously they were counted over the full `results`, and the sum
+    # of the three could reach twice `count` (measured 10+1+9 for count=10), leading the
+    # caller to think it got all the hot-layer hits.
     top = results[:limit]
     return [
         TextContent(
@@ -1495,8 +1528,9 @@ async def _handle_project_search(arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=_dumps(result))]
     except Exception:
-        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
-        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        # Re-raise to handle_call_tool: returning {"error": ...} here makes the SDK treat
+        # it as success, so a real failure is read by the client as "found it, just no
+        # results". Logging is done uniformly by the fallback layer.
         raise
 
 
@@ -1511,8 +1545,9 @@ async def _handle_project_structure(arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=_dumps(result))]
     except Exception:
-        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
-        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        # Re-raise to handle_call_tool: returning {"error": ...} here makes the SDK treat
+        # it as success, so a real failure is read by the client as "found it, just no
+        # results". Logging is done uniformly by the fallback layer.
         raise
 
 
@@ -1524,8 +1559,9 @@ async def _handle_project_packages(arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=_dumps(result))]
     except Exception:
-        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
-        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        # Re-raise to handle_call_tool: returning {"error": ...} here makes the SDK treat
+        # it as success, so a real failure is read by the client as "found it, just no
+        # results". Logging is done uniformly by the fallback layer.
         raise
 
 
@@ -1537,8 +1573,9 @@ async def _handle_project_exports(arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=_dumps(result))]
     except Exception:
-        # 上抛给 handle_call_tool：此处返回 {"error": ...} 会让 SDK 视为成功，
-        # 真实故障在客户端被读成「查到了、只是没结果」。日志由兜底层统一记录。
+        # Re-raise to handle_call_tool: returning {"error": ...} here makes the SDK treat
+        # it as success, so a real failure is read by the client as "found it, just no
+        # results". Logging is done uniformly by the fallback layer.
         raise
 
 
@@ -1564,14 +1601,14 @@ async def _handle_project_notes(arguments: dict) -> list[TextContent]:
                 )
             ]
 
-        # 在后台线程运行避免阻塞事件循环（ONNX embedding 是 CPU 密集操作）
+        # Run on a background thread to avoid blocking the event loop (ONNX embedding is CPU-intensive)
         result = await asyncio.to_thread(
             _query_project_notes, path, query.strip(), limit
         )
         return [TextContent(type="text", text=_dumps(result))]
 
     except Exception:
-        # 同上：日志与 isError 由 handle_call_tool 兜底层统一处理
+        # Same as above: logging and isError are handled uniformly by handle_call_tool's fallback layer
         raise
 
 
@@ -1594,7 +1631,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
                 text=_dumps({"error": f"skill not found: {parent_name}"}),
             )
         ]
-    # 只允许引用附属子目录（references/agents/scripts）内资源
+    # Only allow referencing resources inside the companion subdirectories (references/agents/scripts)
     top = rel_path.split("/", 1)[0]
     if top not in _SKILL_SKIP_DIRS:
         return [
@@ -1613,10 +1650,12 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
                 text=_dumps({"error": "path escapes the skill directory"}),
             )
         ]
-    # symlink 防护：normpath 只挡语法层 ../，不解析 symlink。
-    # 解析真实路径后仍须位于 skill 目录真实路径内，防 skill 附属目录内
-    # symlink 指向外部文件造成信息泄露。读取统一用 real_full（已解析），
-    # 避免校验后到 open 之间二次跟随（TOCTOU）。
+    # symlink protection: normpath only blocks syntactic ../ and does not resolve
+    # symlinks. After resolving the real path it must still be inside the skill
+    # directory's real path, preventing a symlink inside the skill's companion
+    # directories from pointing at an external file and leaking information. Reads
+    # uniformly use real_full (already resolved), avoiding a second follow between
+    # validation and open (TOCTOU).
     real_skill = os.path.realpath(skill_dir)
     real_full = os.path.realpath(full)
     if real_full != real_skill and not real_full.startswith(real_skill + os.sep):
@@ -1645,7 +1684,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
             )
         ]
     except Exception as e:
-        # 同 handle_call_tool：未预期异常必须上抛，否则 isError 恒为 False
+        # Same as handle_call_tool: unexpected exceptions must be re-raised, otherwise isError is always False
         logger.error(f"[tool_resource] {e}", exc_info=True)
         raise
     return [TextContent(type="text", text=content)]
@@ -1653,6 +1692,8 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+    started = time.perf_counter()
+    ok = True
     try:
         handler = HANDLERS.get(name)
         if handler:
@@ -1663,16 +1704,25 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         normalized = _normalize_name(name)
         if normalized in skills:
             return [TextContent(type="text", text=skills[normalized]["content"])]
+        ok = False
         return [
             TextContent(type="text", text=_dumps({"error": f"Unknown tool: {name}"}))
         ]
     except Exception as e:
-        # 必须继续上抛：此处若 return 一个 {"error": ...} 的 TextContent，
-        # 对 SDK 而言就是「工具正常返回」，isError 保持 False —— 真实故障
-        # 在客户端被当成成功、只是结果里多了个 error 字段，调用方无从据以
-        # 重试或降级。上抛后由 SDK 的 call_tool 兜底转成 isError=True。
+        # Must keep re-raising: returning a {"error": ...} TextContent here is, to the
+        # SDK, "the tool returned normally" with isError staying False — a real failure is
+        # treated as success by the client, just with an extra error field in the result,
+        # leaving the caller no basis to retry or degrade. After re-raising, the SDK's
+        # call_tool fallback turns it into isError=True.
+        ok = False
         logger.error(f"Error in {name}: {e}", exc_info=True)
         raise
+    finally:
+        # Measurement anchor for latency auditing: round-trip time and success/failure of each tool call
+        logger.info(
+            f"tool_call name={name} ok={ok} "
+            f"elapsed_ms={int((time.perf_counter() - started) * 1000)}"
+        )
 
 
 def _run_archive_sync_impl() -> tuple[int, int, int]:
@@ -1768,9 +1818,10 @@ def _run_archive_sync_impl() -> tuple[int, int, int]:
 
 
 async def _run_archive_sync() -> tuple[int, int, int]:
-    # 与 recall 同源：`_run_archive_sync_impl` 只判断 `if hot_memory`，不初始化。
-    # 超过一个归档周期(24h)没有热层调用时，归档会一直空转且只报 hot_deleted=0。
-    # 必须在事件循环上调用(impl 跑在执行器里)，故放在此处。
+    # Same reason as recall: `_run_archive_sync_impl` only checks `if hot_memory` and does
+    # not initialize it. If there is no hot-layer call for more than one archive period
+    # (24h), archiving spins idly and only reports hot_deleted=0. It must be invoked on the
+    # event loop (impl runs in the executor), hence it is placed here.
     await _ensure_hot_memory()
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run_archive_sync_impl)
@@ -1886,7 +1937,7 @@ async def main():
         return JSONResponse({"results": data, "count": len(data)})
 
     async def api_memories_processed(request):
-        """批量设置/重置记忆已处理位（bit0=已总结处理），幂等；供 summarize 写回与测试还原。"""
+        """Batch set/reset memory processed bits (bit0=summarized), idempotent; used by summarize write-back and test restoration."""
         if not await _ensure_hot_memory():
             return JSONResponse({"error": ERR_HOT_LAYER_NOT_READY}, status_code=503)
         try:

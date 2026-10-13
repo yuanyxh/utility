@@ -1,18 +1,27 @@
-"""Python 侧唯一 LLM 出口。
+"""The single LLM exit point on the Python side.
 
-迁移前三个调用点各写一份「读配置 → 拼 body/头 → POST → 取 content → 异常吞掉」：
-`summary_llm._llm_chat`（同步 httpx）、`server._check_contradiction`（异步 httpx）、
-`proxy_usage.UsageFieldResolver._ask_model`（异步 aiohttp）。差异都是偶然的，
-代价是：改鉴权/超时/thinking 注入要动三处，漏一处即静默降级；各处的失败日志名不同，
-无法统一观测；解析响应体的方式也各写一遍（`content[0].text` vs `choices[0].message.content`）。
+Before the migration, three call sites each wrote their own "read config ->
+assemble body/headers -> POST -> extract content -> swallow exceptions":
+`summary_llm._llm_chat` (sync httpx), `server._check_contradiction` (async
+httpx), `proxy_usage.UsageFieldResolver._ask_model` (async aiohttp). The
+differences were all incidental; the cost was: changing auth/timeout/thinking
+injection required touching three places, and missing one silently degraded;
+failure log names differed across sites, preventing unified observability; and
+response-body parsing was written once per site too (`content[0].text` vs
+`choices[0].message.content`).
 
-本模块统一**配置解析、请求构造、鉴权头、协议差异、超时默认、thinking 注入、响应提取、
-错误日志、503 重试策略**；**不统一调用风格**——summarize 是同步调用链（`chat`），
-server/proxy 在 asyncio 里（`achat`）。强行同步化会卡死事件循环，强行异步化要改
-summarize 的全部调用链，两者收益都为零。
+This module unifies **config parsing, request construction, auth headers,
+protocol differences, timeout defaults, thinking injection, response
+extraction, error logging, and the 503 retry policy**; it does **not** unify
+the calling style -- summarize is a synchronous call chain (`chat`), while
+server/proxy are in asyncio (`achat`). Forcing everything synchronous would
+deadlock the event loop, and forcing everything async would require changing
+summarize's entire call chain; neither yields any benefit.
 
-配置唯一来源是 `config.py`（env 由 Swift 注入），本模块不直接读 env、不持默认值。
-范围仅限 LLM：`summary_llm._HTTP`（本地记忆服务的通用 httpx 客户端）不属此列，保持原样。
+The sole source of config is `config.py` (env is injected by Swift); this
+module does not read env directly and holds no defaults.
+Scope is LLM-only: `summary_llm._HTTP` (the local memory service's generic
+httpx client) is not in this list and stays as-is.
 """
 
 from __future__ import annotations
@@ -28,42 +37,53 @@ import httpx
 from config import ai_api_key, llm_timeout, summary_api_url, summary_model
 from log_utils import setup_logging
 
-# 独立日志文件（~/.cache/utility/llm_client.log）：跨进程的唯一 LLM 失败观测面，
-# 按 `label` 区分调用点。`json_format=True` 是因为本模块输出全是 JSON 结构。
+# Dedicated log file (~/.cache/utility/llm_client.log): the single cross-process
+# observability surface for LLM failures, distinguishing call sites by `label`.
+# `json_format=True` because this module outputs only JSON structures.
 logger = setup_logging("llm_client", json_format=True)
 
-#: 协议标识。与 `proxy_provider` 的取值一致（那里是 provider 配置面的权威）。
+#: Protocol identifiers. Consistent with `proxy_provider`'s values (that is the authority for the provider config surface).
 API_OPENAI = "openai"
 API_ANTHROPIC = "anthropic"
 
-#: Anthropic 协议的版本头（单一来源：分类器与任何 anthropic 目标共用）
+#: Anthropic protocol version header (single source: shared by the classifier and any anthropic target)
 ANTHROPIC_VERSION = "2023-06-01"
 
-#: 同步链路默认超时（秒）。**单一权威 = `config.llm_timeout()`**（env `AI_LLM_TIMEOUT`
-#: ← `config.yaml ai.llmTimeout`）。三处 summarize 侧调用点原先各自写死 90 / 120 / 120：
-#: 值分散意味着「换个慢模型」要改三处、漏一处就在长上下文上超时失败，且没人知道
-#: 到底哪个值在生效。调用方显式传 `timeout=` 时以调用方为准（如分类器按自己的总预算
-#: 传剩余时间、resolver 用更短的探测超时）。
+#: Default timeout for the synchronous path (seconds). **Single authority =
+#: `config.llm_timeout()`** (env `AI_LLM_TIMEOUT` <- `config.yaml ai.llmTimeout`).
+#: The three summarize-side call sites originally hardcoded 90 / 120 / 120:
+#: scattered values mean "switching to a slower model" requires editing three
+#: places, and missing one times out on long context, with nobody knowing which
+#: value is actually in effect. When the caller passes `timeout=` explicitly,
+#: the caller wins (e.g. the classifier passes remaining time per its own total
+#: budget, resolver uses a shorter probe timeout).
 DEFAULT_SYNC_TIMEOUT = llm_timeout()
-#: 异步链路默认超时（= 迁移前 `proxy_usage` 的 15s）
+#: Default timeout for the async path (= `proxy_usage`'s 15s before the migration)
 DEFAULT_ASYNC_TIMEOUT = 15.0
 
-#: 503 瞬时重试策略——**单一权威**。代理主转发路径（`token_proxy.py`）也 import 这两个值：
-#: 同一类故障（上游偶发 503）在转发与 LLM 调用两处都要处理，值分开写必然漂移。
+#: 503 transient retry policy -- **single authority**. The proxy's main
+#: forwarding path (`token_proxy.py`) imports these two values as well: the same
+#: class of failure (occasional upstream 503) must be handled in both forwarding
+#: and LLM calls, and writing the values separately is bound to drift.
 #:
-#: 缺省 `retry_503=0` 即不重试——迁移前多数调用点本就没有重试，保持零行为变化。
-#: **已有自带重试环的调用方必须保持 0**（分类器按 `classifier.maxRetries` + 总预算重试）：
-#: 两层重试叠加会把「打转型」上游放大成 N×M 次调用，且预算账目失真。
+#: The default `retry_503=0` means no retry -- most call sites had no retry
+#: before the migration, preserving zero behavior change.
+#: **Callers that already have their own retry loop must keep it 0** (the
+#: classifier retries per `classifier.maxRetries` + total budget): stacking two
+#: retry layers amplifies a "bounce-type" upstream into N×M calls and distorts
+#: the budget accounting.
 DEFAULT_RETRY_503_MAX = 2
 DEFAULT_RETRY_503_DELAY = 0.5
 
 
 @dataclass(frozen=True)
 class LLMTarget:
-    """一次 LLM 调用的目标（端点/模型/key/协议）。
+    """The target of one LLM call (endpoint/model/key/protocol).
 
-    之所以能显式指定目标：分类器打的是 **providers 表里的某个 provider**，不是
-    `config.yaml ai` 段的主模型。不指定目标时用 `default_target()`（主模型）。
+    The reason the target can be specified explicitly: the classifier hits
+    **a particular provider from the providers table**, not the main model in
+    the `config.yaml ai` section. When no target is specified,
+    `default_target()` (the main model) is used.
     """
 
     endpoint: str
@@ -73,29 +93,34 @@ class LLMTarget:
 
     @property
     def ready(self) -> bool:
-        """端点与模型齐备 = 可发起请求。
+        """Endpoint and model both present = request can be issued.
 
-        **api_key 为空是合法的**：provider 配置的 `apiKey` 留空表示「透传客户端 key」，
-        这个目标仍然要能发出请求（不带鉴权头）。把它并进可发起判据会让所有
-        「透传 key」的 provider 分类直接失效。
+        **An empty api_key is legal**: a provider config with an empty `apiKey`
+        means "pass through the client key", and this target must still be able
+        to issue a request (without an auth header). Folding it into the
+        can-issue-check would directly break classification for every
+        "passthrough key" provider.
         """
         return bool(self.endpoint and self.model)
 
     @property
     def configured(self) -> bool:
-        """主模型路径的完整判据（含 key）。
+        """Full criterion for the main-model path (including key).
 
-        主模型是代理自己发起的调用，没有客户端 key 可透传，缺 key 必然 401，
-        故调用方用它提前跳过「注定失败还要构造 prompt」的路径。
+        The main model is a call the proxy issues itself, with no client key to
+        pass through; a missing key is necessarily a 401, so callers use this to
+        skip early the "construct a prompt only to fail" path.
         """
         return self.ready and bool(self.api_key)
 
 
 def default_target() -> LLMTarget:
-    """主模型目标（`config.yaml ai` 段 → Swift 注入的 env）。
+    """Main-model target (`config.yaml ai` section -> env injected by Swift).
 
-    endpoint 的 `/chat/completions` 只在这里拼一次：迁移前三个调用点各自拼同一字符串，
-    少拼/拼错一个字符就是 404，而 404 在旧实现里同样只表现为「返回 None」——静默失败。
+    The endpoint's `/chat/completions` is concatenated only here: before the
+    migration, three call sites each concatenated the same string, and one
+    missing/wrong character meant a 404, which in the old implementation also
+    showed only as "returns None" -- a silent failure.
     """
     base = summary_api_url()
     return LLMTarget(
@@ -107,12 +132,12 @@ def default_target() -> LLMTarget:
 
 
 def is_configured(target: LLMTarget | None = None) -> bool:
-    """目标是否可用于主模型调用（含 key 判据）。"""
+    """Whether the target can be used for a main-model call (including the key criterion)."""
     return (target or default_target()).configured
 
 
 # ---------------------------------------------------------------------------
-# 请求构造
+# Request construction
 # ---------------------------------------------------------------------------
 
 
@@ -148,28 +173,34 @@ def _body(
         body["max_tokens"] = max_tokens
 
     if disable_thinking:
-        # 关思考是**协议差异**：Anthropic 有 thinking 块；OpenAI 协议无标准字段，
-        # 只能删掉已知的推理参数（reasoning_effort / output_config）。
+        # Disabling thinking is a **protocol difference**: Anthropic has a
+        # thinking block; the OpenAI protocol has no standard field, so the
+        # known reasoning params (reasoning_effort / output_config) are removed.
         if target.api_format == API_ANTHROPIC:
             body["thinking"] = {"type": "disabled"}
         body.pop("reasoning_effort", None)
         body.pop("output_config", None)
 
     if extra_body:
-        # provider 私有扩展的**唯一入口**（如 deepseek 的 OpenAI 兼容端点接受 thinking）。
-        # 这类字段不是协议事实，写进公共层会让其他 openai provider 收到未知字段而 400，
-        # 故只能由调用方显式传出、显式承担 provider 绑定。
+        # The **sole entry point** for provider-private extensions (e.g. deepseek's
+        # OpenAI-compatible endpoint accepts thinking). Such fields are not a
+        # protocol fact; putting them in the common layer would make other openai
+        # providers receive an unknown field and 400, so the caller must pass
+        # them explicitly and explicitly accept the provider binding.
         body.update(extra_body)
     return body
 
 
 def _extract_text(data: dict, api_format: str) -> str | None:
-    """从响应体取文本，按协议走各自的路径。
+    """Extract text from the response body, following each protocol's path.
 
-    返回值语义与旧实现逐条对齐：
-    - anthropic：缺 `content` 视为**空答案**而非失败（分类器既有语义，返回 ""）；
-    - openai：缺 `choices` 视为**失败**（旧实现这里会抛 KeyError/IndexError → 返回 None）。
-    把后者也当成空字符串会让调用方拿到一个看似成功、实则没有任何内容的答案。
+    Return-value semantics align item-by-item with the old implementation:
+    - anthropic: a missing `content` is treated as an **empty answer**, not a
+      failure (the classifier's existing semantics, returns "");
+    - openai: a missing `choices` is treated as a **failure** (the old
+      implementation raised KeyError/IndexError here -> returned None).
+    Treating the latter as an empty string would hand the caller what looks like
+    a successful answer with no content at all.
     """
     if api_format == API_ANTHROPIC:
         blocks = data.get("content") or []
@@ -183,10 +214,11 @@ def _extract_text(data: dict, api_format: str) -> str | None:
 
 
 def _log_failure(label: str, error: str, **extra) -> None:
-    """统一的失败日志。
+    """Unified failure log.
 
-    `label` 保留各调用点原来的判定语义（如 `usage_resolver_ask_failed`），
-    使「统一日志名」不以丢失可归因性为代价——按旧名 grep 仍能命中。
+    `label` preserves each call site's original decision semantics (e.g.
+    `usage_resolver_ask_failed`), so "unifying the log name" does not come at
+    the cost of losing attributability -- grepping by the old name still works.
     """
     logger.warning(
         json.dumps({"msg": "llm_call_failed", "label": label, "error": error, **extra})
@@ -194,10 +226,10 @@ def _log_failure(label: str, error: str, **extra) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 调用
+# Calls
 # ---------------------------------------------------------------------------
 
-#: 同步链路共享客户端（连接复用；异步侧每次调用新建——见 `achat` 注释）
+#: Shared client for the synchronous path (connection reuse; the async side creates one per call -- see the `achat` docstring)
 _SYNC_CLIENT = httpx.Client()
 
 
@@ -215,7 +247,7 @@ def chat(
     retry_503: int = 0,
     retry_delay: float = DEFAULT_RETRY_503_DELAY,
 ) -> str | None:
-    """同步 LLM 调用（httpx）。失败/未配置返回 None，不抛异常。"""
+    """Synchronous LLM call (httpx). Returns None on failure/unconfigured; does not raise."""
     tgt = target or default_target()
     if not tgt.ready:
         logger.debug(json.dumps({"msg": "llm_not_configured", "label": label}))
@@ -271,12 +303,15 @@ async def achat(
     retry_503: int = 0,
     retry_delay: float = DEFAULT_RETRY_503_DELAY,
 ) -> str | None:
-    """异步 LLM 调用（httpx.AsyncClient，每次调用新建）。
+    """Asynchronous LLM call (httpx.AsyncClient, created per call).
 
-    每次新建而非共享模块级客户端：`AsyncClient` 的连接池绑定首次使用时的 event loop，
-    而本模块被两个不同进程（MCP server / token proxy）与各自的测试脚本导入，
-    共享实例会落在「跨 loop 复用」这一类偶发故障上。旧实现（aiohttp 每次建 session）
-    也是这个行为，故不改。
+    Created per call rather than shared at module level: an `AsyncClient`'s
+    connection pool binds to the event loop in use at first access, and this
+    module is imported by two different processes (MCP server / token proxy) and
+    their respective test scripts; a shared instance would fall into the class of
+    intermittent failures known as "cross-loop reuse". The old implementation
+    (aiohttp creating a session per call) behaved the same way, so this is
+    unchanged.
     """
     tgt = target or default_target()
     if not tgt.ready:
@@ -321,12 +356,12 @@ async def achat(
 
 
 # ---------------------------------------------------------------------------
-# JSON 解析（自 summary_llm 迁移，逐字保留逻辑）
+# JSON parsing (migrated from summary_llm, logic preserved verbatim)
 # ---------------------------------------------------------------------------
 
 
 def parse_json(raw: str | None) -> dict | None:
-    """从 LLM 输出里抠出 JSON 对象。尽力而为：围栏代码块 / 前后废话 / 尾逗号 / 裸引号。"""
+    """Extract a JSON object from LLM output. Best-effort: fenced code blocks / surrounding chatter / trailing commas / unescaped quotes."""
     if not raw:
         return None
     raw = raw.strip()
@@ -346,7 +381,7 @@ def parse_json(raw: str | None) -> dict | None:
         try:
             return json.loads(fixed, strict=False)
         except json.decoder.JSONDecodeError:
-            # LLM 复制原文时可能把英文双引号原样带进字符串值且未转义 → 转义后重试
+            # When the LLM copies source text it may bring literal ASCII double quotes into a string value unescaped -> escape and retry
             quoted = _escape_inline_quotes(fixed)
             try:
                 return json.loads(quoted, strict=False)
@@ -355,7 +390,7 @@ def parse_json(raw: str | None) -> dict | None:
 
 
 def _escape_inline_quotes(s: str) -> str:
-    """把字符串值内未转义的裸引号转义为 \\"（键结束/值结束引号不受影响）。"""
+    """Escape unescaped bare quotes inside string values as \\" (key-ending/value-ending quotes are unaffected)."""
     out = []
     in_str = False
     i = 0

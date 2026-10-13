@@ -1,0 +1,8 @@
+# Ruff 配置 — 与项目既有风格对齐
+# 项目 Python 3.12;格式化沿用 black 兼容默认(88 列、双引号)
+line-length = 88
+target-version = "py312"
+
+[format]
+quote-style = "double"
+indent-style = "space"

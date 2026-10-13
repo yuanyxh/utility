@@ -23,14 +23,14 @@ public final class AppDatabase {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1") { db in
-            // 剪切板条目
+            // Clipboard items
             try db.create(table: "clipboard_item", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("timestamp", .datetime).notNull()
                 t.column("type", .text).notNull() // text / file / image
                 t.column("content", .blob).notNull()
                 t.column("application", .text)
-                t.column("search_text", .text) // 文本纯内容索引
+                t.column("search_text", .text) // Plain-text content index
             }
             try db.execute(
                 literal: """
@@ -39,7 +39,7 @@ public final class AppDatabase {
                 """,
             )
 
-            // 暂存条目
+            // Stage items
             try db.create(table: "stage_item", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("timestamp", .datetime).notNull()
@@ -53,7 +53,7 @@ public final class AppDatabase {
                 """,
             )
 
-            // RSS 条目
+            // RSS items
             try db.create(table: "rss_item", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("title", .text).notNull()

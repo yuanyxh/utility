@@ -2,13 +2,13 @@ import Cocoa
 import GRDB
 import UniformTypeIdentifiers
 
-/// 暂存条目（GRDB Record）
+/// Stage item (GRDB Record)
 public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
     public var id: String
     public var timestamp: Date
     /// text / fileURL / fileGroup / html / url
     public var type: String
-    /// 文本内容 UTF-8 / 文件 bookmark / fileGroup JSON paths / html / URL UTF-8
+    /// Text content UTF-8 / file bookmark / fileGroup JSON paths / html / URL UTF-8
     public var content: Data
 
     public static let databaseTableName = "stage_item"
@@ -44,7 +44,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         }
     }
 
-    /// 显示用摘要
+    /// Summary for display
     public var displayText: String {
         switch type {
         case "text":
@@ -60,7 +60,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             return L10n.Stage.fileCount(count)
         case "html":
             let str = String(data: content, encoding: .utf8) ?? ""
-            // 取纯文本摘要（去标签）
+            // Get a plain-text summary (strip tags)
             let stripped = str.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return stripped.prefix(60) + (stripped.count > 60 ? "…" : "")
@@ -72,7 +72,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
         }
     }
 
-    /// 显示用图标（NSImage）
+    /// Icon for display (NSImage)
     public var iconImage: NSImage? {
         switch type {
         case "text":

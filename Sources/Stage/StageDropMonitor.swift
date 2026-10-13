@@ -1,13 +1,13 @@
 import Cocoa
 
-/// 全局拖拽监听器 — EventTap 驱动
+/// Global drag monitor — EventTap driven
 ///
-/// 核心规则:
-/// 1. 有暂存数据 → 窗口常驻显示（alpha=1.0）
-/// 2. 无数据时拖拽 → 鼠标靠近窗口区域才显示，远离则隐藏
-/// 3. 在窗口内松手 → 读 drag pasteboard 写入 StageManager
+/// Core rules:
+/// 1. Has stage data → window stays visible (alpha=1.0)
+/// 2. Dragging with no data → show only when the mouse is near the window area, hide when far away
+/// 3. Release inside the window → read the drag pasteboard and write to StageManager
 ///
-/// 不依赖 NSView 拖拽系统（nonactivatingPanel 窗口不收 drag 事件）
+/// Does not rely on the NSView drag system (nonactivatingPanel windows do not receive drag events)
 public final class StageDropMonitor {
     public static let shared = StageDropMonitor()
     private weak var stageWindow: StageWindowController?
@@ -15,7 +15,7 @@ public final class StageDropMonitor {
     private var isDragging = false
     private var isInternalClick = false
     private var dragCCAtMouseDown: Int = -1
-    /// pasteboard 读取节流 — 100ms 内返回上次缓存结果，避免阻塞系统事件管道
+    /// Pasteboard read throttle — returns the last cached result within 100ms to avoid blocking the system event pipeline
     private var lastPasteboardCheck: TimeInterval = 0
     private var lastPasteboardResult: Bool = false
 
@@ -113,13 +113,13 @@ public final class StageDropMonitor {
 
     // MARK: - Helpers
 
-    /// 与 processDrop 完全对齐的内容类型检测，无副作用
+    /// Content-type detection fully aligned with processDrop, side-effect free
     private func dragPasteboardHasContent() -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastPasteboardCheck > 0.1 else { return lastPasteboardResult }
         lastPasteboardCheck = now
         let pb = NSPasteboard(name: .drag)
-        // URL（与 processDrop 相同的过滤逻辑）
+        // URL (same filter logic as processDrop)
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             let fileURLs = urls.map(\.standardizedFileURL).filter {
                 $0.isFileURL && FileManager.default.fileExists(atPath: $0.path)
@@ -130,7 +130,7 @@ public final class StageDropMonitor {
                 return true
             }
         }
-        // 图片
+        // Image
         for type in PasteboardImageTypes.all {
             if pb.data(forType: type) != nil {
                 lastPasteboardResult = true
@@ -142,7 +142,7 @@ public final class StageDropMonitor {
             lastPasteboardResult = true
             return true
         }
-        // 纯文本
+        // Plain text
         if let text = pb.string(forType: .string), !text.isEmpty {
             lastPasteboardResult = true
             return true
@@ -164,7 +164,7 @@ public final class StageDropMonitor {
     private func processDrop() {
         let dragPb = NSPasteboard(name: .drag)
 
-        // URL（文件 + 链接）
+        // URL (file + link)
         if let urls = dragPb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
            !urls.isEmpty
         {
@@ -190,7 +190,7 @@ public final class StageDropMonitor {
             }
         }
 
-        // 图片（浏览器/截图 — 无文件 URL，只有原始数据）→ 写临时文件 → 统一为 fileURL
+        // Image (browser/screenshot — no file URL, only raw data) → write temp file → unify as fileURL
         for type in PasteboardImageTypes.all {
             if let data = dragPb.data(forType: type) {
                 let cacheDir = AppPaths.stageCacheDir
@@ -203,7 +203,7 @@ public final class StageDropMonitor {
             }
         }
 
-        // 富文本 HTML（网页拖入）
+        // Rich-text HTML (dragged in from a web page)
         if let html = dragPb.string(forType: .html) {
             let item = StageItem(type: "html", content: html.data(using: .utf8) ?? Data())
             try? AppDatabase.shared.dbQueue.write { db in try item.insert(db) }
@@ -211,7 +211,7 @@ public final class StageDropMonitor {
             return
         }
 
-        // 纯文本
+        // Plain text
         if let text = dragPb.string(forType: .string), !text.isEmpty {
             try? StageManager.shared.add(text: text)
             stageWindow?.reload()

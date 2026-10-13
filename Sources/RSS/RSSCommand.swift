@@ -1,24 +1,24 @@
 import ArgumentParser
 import Foundation
 
-/// RSS 命令行接口
-/// 用法: utility rss --fetch / --unread / --mark-read <id>
+/// RSS command-line interface
+/// Usage: utility rss --fetch / --unread / --mark-read <id>
 struct RSSCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "rss",
-        abstract: "RSS 订阅管理（Headless）",
+        abstract: "RSS subscription management (Headless)",
     )
 
-    @Flag(name: .shortAndLong, help: ArgumentHelp("抓取并更新所有订阅"))
+    @Flag(name: .shortAndLong, help: ArgumentHelp("Fetch and update all subscriptions"))
     var fetch = false
 
-    @Flag(name: .shortAndLong, help: ArgumentHelp("列出未读条目（JSON）"))
+    @Flag(name: .shortAndLong, help: ArgumentHelp("List unread entries (JSON)"))
     var unread = false
 
-    @Option(name: .shortAndLong, help: ArgumentHelp("标记已读（按 ID）"))
+    @Option(name: .shortAndLong, help: ArgumentHelp("Mark as read (by ID)"))
     var markRead: String?
 
-    @Flag(name: .long, help: ArgumentHelp("标记全部已读"))
+    @Flag(name: .long, help: ArgumentHelp("Mark all as read"))
     var markAllRead = false
 
     mutating func run() throws {

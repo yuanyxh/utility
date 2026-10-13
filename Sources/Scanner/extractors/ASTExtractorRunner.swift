@@ -84,9 +84,9 @@ enum ASTExtractorRunner {
         }
     }
 
-    // MARK: - JSON 解析
+    // MARK: - JSON parsing
 
-    /// 解析 batch 输出：JSON 字典 { filePath → { symbols } }。
+    /// Parse batch output: JSON dictionary { filePath → { symbols } }.
     private static func parseBatch(_ data: Data, fallbackFilePath _: String?) -> [String: [SymbolRecord]] {
         guard !data.isEmpty,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -109,7 +109,7 @@ enum ASTExtractorRunner {
         return results
     }
 
-    /// 解析单文件输出：JSON { error? / symbols }。
+    /// Parse single-file output: JSON { error? / symbols }.
     private static func parseSingle(_ data: Data, fallbackFilePath: String) -> [SymbolRecord]? {
         guard !data.isEmpty,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

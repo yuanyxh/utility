@@ -1,6 +1,6 @@
 import Cocoa
 
-/// 边框样式
+/// Border style
 public final class BorderStyle {
     public var color: NSColor
     public var width: CGFloat

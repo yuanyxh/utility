@@ -1,6 +1,6 @@
 import Foundation
 
-/// AI 翻译客户端
+/// AI translation client
 public final class Translator {
     public static let shared = Translator()
     private init() {}

@@ -34,7 +34,7 @@ public final class ConfigManager {
         try load()
     }
 
-    /// 将当前 config 编码写回配置文件（运行时修改持久化）。
+    /// Encodes the current config back to the config file (persists runtime changes).
     public func save() throws {
         let encoder = YAMLEncoder()
         let yaml = try encoder.encode(config)
@@ -45,8 +45,8 @@ public final class ConfigManager {
         try content.write(to: configFile, atomically: true, encoding: .utf8)
     }
 
-    /// 把指定 provider 移到数组首位作为默认（默认 = providers[0]），并持久化。
-    /// 未找到或已是首位时不修改。
+    /// Moves the specified provider to the front of the array as the default (default = providers[0]) and persists it.
+    /// Does not modify anything if it is not found or is already first.
     public func setDefaultProvider(named name: String) throws {
         guard var proxy = config.modelProxy else { return }
         guard let idx = proxy.providers.firstIndex(where: { $0.name == name }), idx != 0 else { return }

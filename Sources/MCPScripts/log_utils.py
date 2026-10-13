@@ -1,5 +1,5 @@
-"""所有 Python 子进程共享的日志模块。
-使用方式：
+"""Logging module shared by all Python subprocesses.
+Usage:
     from log_utils import setup_logging, write_error_log
     logger = setup_logging("server")       # → ~/.cache/utility/server.log
     logger = setup_logging("token_proxy", json_format=True)  # → JSON Lines
@@ -38,7 +38,7 @@ def setup_logging(name: str, level=logging.INFO, json_format=False):
 
     root.addHandler(fh)
 
-    # 静默第三方库，避免噪音
+    # Silence third-party libraries to avoid noise
     for lib in ("httpx", "httpcore", "uvicorn.access", "uvicorn.error"):
         logging.getLogger(lib).setLevel(logging.WARNING)
 

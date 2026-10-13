@@ -1,7 +1,7 @@
 import Cocoa
 
-/// 为目标 app 调度 Cmd+V 粘贴。
-/// target 为 nil 时轮询等待焦点离开 utility（每 20ms，最长 180ms）再粘贴到前台 app。
+/// Schedules a Cmd+V paste for the target app.
+/// When target is nil, polls waiting for focus to leave utility (every 20ms, up to 180ms) before pasting into the frontmost app.
 func schedulePaste(attempts: Int) {
     schedulePasteWhenFrontmostChange(attempts: attempts)
 }

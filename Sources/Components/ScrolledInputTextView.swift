@@ -2,7 +2,7 @@ import Cocoa
 
 // MARK: - InnerTextView
 
-/// 内部 NSTextView — 独立 undoManager，避免污染全局撤销栈
+/// Inner NSTextView — independent undoManager to avoid polluting the global undo stack
 private final class InnerTextView: NSTextView {
     private let _undoManager = UndoManager()
     override var undoManager: UndoManager? {
@@ -12,8 +12,8 @@ private final class InnerTextView: NSTextView {
 
 // MARK: - ScrolledInputTextView
 
-/// 自包含可滚动多行输入框组件
-/// 内部管理 NSScrollView + InnerTextView，对外暴露统一的 style / clear / scroll / setCursor API
+/// Self-contained scrollable multi-line input component
+/// Manages NSScrollView + InnerTextView internally, exposing a unified style / clear / scroll / setCursor API
 public final class ScrolledInputTextView: NSView {
     // MARK: - Subviews
 
@@ -45,12 +45,12 @@ public final class ScrolledInputTextView: NSView {
 
     // MARK: - Height management
 
-    /// 最小高度（仅当 maxHeight 非 nil 时生效，内容不足时保持此高度）
+    /// Minimum height (only takes effect when maxHeight is non-nil; keeps this height when content is insufficient)
     public var minHeight: CGFloat = 0 {
         didSet { updateContentHeight() }
     }
 
-    /// 最大高度（nil = 不限制，非 nil 时内容从 minHeight 起随文本增长到此值后停止）
+    /// Maximum height (nil = unlimited; when non-nil, content grows from minHeight with the text up to this value then stops)
     public var maxHeight: CGFloat? {
         didSet { updateContentHeight() }
     }
@@ -74,7 +74,7 @@ public final class ScrolledInputTextView: NSView {
 
     private var _style: InputViewStyle = .init()
 
-    /// 获取/设置样式 — 设置时全量应用
+    /// Get/set the style — setting applies it fully
     public var style: InputViewStyle {
         get { _style }
         set { applyStyle(newValue) }
@@ -82,7 +82,7 @@ public final class ScrolledInputTextView: NSView {
 
     // MARK: - Content proxy
 
-    /// 文本内容（直接代理到内部 NSTextView）
+    /// Text content (directly proxied to the inner NSTextView)
     public var string: String {
         get { textView.string }
         set {
@@ -91,7 +91,7 @@ public final class ScrolledInputTextView: NSView {
         }
     }
 
-    /// 是否可编辑（直接代理）
+    /// Whether editable (direct proxy)
     public var isEditable: Bool {
         get { textView.isEditable }
         set { textView.isEditable = newValue }
@@ -128,12 +128,12 @@ public final class ScrolledInputTextView: NSView {
 
     // MARK: - Layout
 
-    /// 保持文档视图宽度与滚动区一致。
+    /// Keep the document view width consistent with the scroll area.
     ///
-    /// 实机诊断到本组件的 `textView.frame.width` 停在 0（高度正常），
-    /// 而 `textContainer` 宽度已是 596 —— 排版正常、可绘制区域却是 0 宽，
-    /// 文字因此完全不可见。此处显式同步，不依赖 AppKit 的隐式时机。
-    public override func layout() {
+    /// On a real device we diagnosed this component's `textView.frame.width` stuck at 0 (height normal),
+    /// while `textContainer` width was already 596 — layout was fine but the drawable area was 0 wide,
+    /// so the text was completely invisible. We sync explicitly here rather than relying on AppKit's implicit timing.
+    override public func layout() {
         super.layout()
         let width = scrollView.contentSize.width
         guard width > 0, textView.frame.width != width else { return }
@@ -176,17 +176,17 @@ public final class ScrolledInputTextView: NSView {
 
     // MARK: - API: Undo
 
-    /// 撤销
+    /// Undo
     public func undo() {
         textView.undoManager?.undo()
     }
 
-    /// 重做
+    /// Redo
     public func redo() {
         textView.undoManager?.redo()
     }
 
-    /// 清空撤销栈
+    /// Clear the undo stack
     public func clearUndo() {
         textView.undoManager?.removeAllActions()
     }
@@ -221,19 +221,19 @@ public final class ScrolledInputTextView: NSView {
         textView.insertText(string, replacementRange: NSRange(location: textView.string.count, length: 0))
     }
 
-    /// 选中指定范围
+    /// Select the specified range
     public func select(range: NSRange) {
         textView.setSelectedRange(range)
     }
 
     // MARK: - API: Append
 
-    /// 追加文本（使用当前样式属性），自动滚到底部
+    /// Append text (using the current style attributes), auto-scroll to the bottom
     public func append(_ text: String) {
         append(text, attributes: nil)
     }
 
-    /// 追加文本（使用指定属性），自动滚到底部
+    /// Append text (using the specified attributes), auto-scroll to the bottom
     public func append(_ text: String, attributes: [NSAttributedString.Key: Any]?) {
         let attrs = attributes ?? [
             .font: _style.font,
@@ -246,7 +246,7 @@ public final class ScrolledInputTextView: NSView {
 
     // MARK: - API: Content Height
 
-    /// 文本内容实际高度（含 inset）
+    /// Actual text content height (including inset)
     public var contentHeight: CGFloat {
         guard let lm = textView.layoutManager,
               let tc = textView.textContainer

@@ -10,7 +10,7 @@ public final class TaskStateDB {
 
     private init() {}
 
-    /// 获取任务的上次触发时间
+    /// Get the task's last fire time
     public func lastFire(for taskName: String) -> Date? {
         guard let db = dbQueue else { return nil }
         return try? db.read { db in
@@ -23,7 +23,7 @@ public final class TaskStateDB {
         }
     }
 
-    /// 更新任务的上次触发时间
+    /// Update the task's last fire time
     public func setLastFire(_ date: Date, for taskName: String) {
         guard let db = dbQueue else { return }
         try? db.write { db in
@@ -34,7 +34,7 @@ public final class TaskStateDB {
         }
     }
 
-    /// 删除指定任务记录
+    /// Delete the record for the specified task
     public func remove(taskName: String) {
         guard let db = dbQueue else { return }
         try? db.write { db in
@@ -42,7 +42,7 @@ public final class TaskStateDB {
         }
     }
 
-    /// 获取所有已记录的任务名
+    /// Get all recorded task names
     public func allTaskNames() -> [String] {
         guard let db = dbQueue else { return [] }
         return

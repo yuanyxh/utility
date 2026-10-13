@@ -220,7 +220,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             stateItem.isEnabled = false
             sub.addItem(stateItem)
 
-            // providers 路由表：默认（providers[0]）勾选，点击切换默认
+            // providers routing table: the default (providers[0]) is checked; clicking switches the default
             if let providers = ConfigManager.shared.config.modelProxy?.providers, !providers.isEmpty {
                 sub.addItem(NSMenuItem.separator())
                 let defaultName = providers.first?.name ?? ""
@@ -241,7 +241,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
             sub.addItem(NSMenuItem.separator())
 
-            // 异步获取今日用量
+            // Asynchronously fetch today's usage
             let summaryItem = NSMenuItem(title: "Loading...", action: nil, keyEquivalent: "")
             summaryItem.isEnabled = false
             sub.addItem(summaryItem)
@@ -292,7 +292,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         return "\(dot) Proxy"
     }
 
-    /// 点击 provider 项 → 将其设为默认（移到 providers[0]）并重启代理
+    /// Click a provider item → set it as default (move to providers[0]) and restart the proxy
     @objc private func selectDefaultProvider(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         do {
@@ -412,7 +412,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - Task lifecycle
 
-    /// 终止所有正在运行的任务进程（应用退出时调用）
+    /// Terminate all running task processes (called on app exit)
     func terminateAllTasks() {
         for (name, process) in runningProcesses {
             process.terminate()
@@ -421,7 +421,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         runningProcesses.removeAll()
     }
 
-    /// 清理配置和内部任务中已不存在的运行进程
+    /// Clean up running processes that no longer exist in config or internal tasks
     private func cleanupOrphanProcesses() {
         let configNames = Set(ConfigManager.shared.config.tasks.map(\.name))
         let internalNames = Set(TaskScheduler.shared.internalTasks.map(\.name))
@@ -444,7 +444,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             return
         }
 
-        // 已在运行 → 终止
+        // Already running → terminate
         if let process = runningProcesses[name] {
             process.terminate()
             runningProcesses.removeValue(forKey: name)
@@ -453,7 +453,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             return
         }
 
-        // 启动执行（流式 API，获取 Process 句柄以支持终止）
+        // Start execution (streaming API, obtains the Process handle to support termination)
         sender.state = .on
         let process = TaskExecutor.execute(
             task.exec,

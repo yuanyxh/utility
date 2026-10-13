@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
 
-/// 管理 token_proxy.py 子进程生命周期。
-/// 在 MCP 启动后启动，崩溃自动重启，退出时停止。
-/// 进程生命周期（启动/崩溃重启/健康检查/停止）委托给 PythonDaemon；
-/// 本类只负责业务决策：State 语义、事件广播、配置读取、HTTP 查询 API。
+/// Manages the lifecycle of the token_proxy.py child process.
+/// Starts after MCP starts, restarts automatically on crash, stops on exit.
+/// Process lifecycle (launch / crash restart / health check / stop) is delegated to PythonDaemon;
+/// this class only handles business decisions: State semantics, event broadcast, config reading, HTTP query API.
 final class TokenProxyManager {
     static let shared = TokenProxyManager()
 
@@ -25,20 +25,20 @@ final class TokenProxyManager {
         ConfigManager.shared.config.modelProxy
     }
 
-    /// 自动检测出的端口（仅 `port` 配置为 0 时使用）。
+    /// Auto-detected port (used only when the `port` config is 0).
     ///
-    /// **必须缓存**：端口探测是 bind 测试，而代理起来之后自己就占着这个端口，
-    /// 再探测会跳过它返回下一个（8613 → 8614）。原先这里是「每次访问都重新探测」
-    /// 的 computed property，导致 `fetchTodaySummary()` 在代理运行时必定打错端口、
-    /// 菜单栏今日用量恒为空。
+    /// **Must be cached**: port probing is a bind test, and once the proxy is up it occupies that port
+    /// itself, so probing again skips it and returns the next one (8613 -> 8614). This used to be a computed
+    /// property that "re-probed on every access", causing `fetchTodaySummary()` to hit the wrong port whenever
+    /// the proxy was running, so the menu bar's today usage was always empty.
     private var cachedPort: Int?
     private let portLock = NSLock()
 
-    /// 本次运行实际使用的端口。服务端（daemon 启动参数与环境变量）与查询方
-    /// （`fetchTodaySummary`）共用同一来源，保证两侧一致。
+    /// The port actually used for this run. The server side (daemon launch arguments and environment variables) and
+    /// the query side (`fetchTodaySummary`) share the same source, keeping both sides consistent.
     var currentPort: Int {
         let configured = proxyConfig?.port ?? 0
-        // 显式配置的端口永远权威，不走缓存——用户改配置后应当立即生效
+        // An explicitly configured port is always authoritative and does not go through the cache -- user config changes should take effect immediately
         if configured > 0 { return configured }
 
         portLock.lock()
@@ -49,7 +49,7 @@ final class TokenProxyManager {
         return detected
     }
 
-    /// 上游 API 地址：modelProxy.url → ai.baseURL
+    /// Upstream API address: modelProxy.url -> ai.baseURL
     private var upstreamURL: String {
         if let url = proxyConfig?.url, !url.isEmpty { return url }
         let ai = ConfigManager.shared.config.ai
@@ -57,8 +57,8 @@ final class TokenProxyManager {
         return ""
     }
 
-    /// providers 序列化为 JSON 传给 Python（config.yaml modelProxy.providers）。
-    /// 为空时返回 nil，回退到旧单上游（MODEL_PROXY_URL）。
+    /// providers serialized to JSON and passed to Python (config.yaml modelProxy.providers).
+    /// Returns nil when empty, falling back to the legacy single upstream (MODEL_PROXY_URL).
     private func providersJSON() -> String? {
         guard let providers = proxyConfig?.providers, !providers.isEmpty else { return nil }
         struct Payload: Encodable {
@@ -68,8 +68,8 @@ final class TokenProxyManager {
             let apiKey: String
             let models: [String]
 
-            /// JSON 侧统一 snake_case（Python `proxy_provider.py` 按该命名解析）。
-            /// 属性名保持 Swift 惯例，由 CodingKeys 映射。
+            /// The JSON side uses snake_case uniformly (the Python `proxy_provider.py` parses by that naming).
+            /// Property names keep the Swift convention, mapped by CodingKeys.
             enum CodingKeys: String, CodingKey {
                 case name, url, models
                 case apiFormat = "api_format"
@@ -87,10 +87,10 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
-    /// classifier 加速白名单序列化为 JSON（config.yaml `modelProxy.clientAccel`）。
+    /// classifier acceleration whitelist serialized to JSON (config.yaml `modelProxy.clientAccel`).
     ///
-    /// JSON 侧统一 snake_case——Python `proxy_client.load_client_accel` 按该命名解析。
-    /// 未配置时返回 nil（不注入），Python 侧用内置默认白名单。
+    /// The JSON side uses snake_case uniformly -- the Python `proxy_client.load_client_accel` parses by that naming.
+    /// Returns nil when unconfigured (no injection); the Python side uses the built-in default whitelist.
     private func clientAccelJSON() -> String? {
         guard let accel = proxyConfig?.clientAccel else { return nil }
 
@@ -118,9 +118,9 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
-    /// 客户端注入文案/标签表序列化为 JSON（config.yaml `modelProxy.clientText`）。
+    /// Client injection text/tag table serialized to JSON (config.yaml `modelProxy.clientText`).
     ///
-    /// 未配置时返回 nil（不注入），Python 侧用内置默认表（= 历史行为）。
+    /// Returns nil when unconfigured (no injection); the Python side uses the built-in default table (= historical behavior).
     private func clientTextJSON() -> String? {
         guard let text = proxyConfig?.clientText else { return nil }
 
@@ -139,18 +139,18 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
-    /// shell 工具输出瘦身配置的 env 名（Python `proxy_output_filter.OUTPUT_FILTER_ENV_KEY` 同值）
+    /// Env name for the shell tool output slimming config (same value as Python `proxy_output_filter.OUTPUT_FILTER_ENV_KEY`)
     static let outputFilterEnvKey = "MODEL_PROXY_OUTPUT_FILTER"
-    /// 响应注记开关的 env 名（Python `proxy_response_note.RESPONSE_NOTE_ENV_KEY` 同值）
+    /// Env name for the response annotation switch (same value as Python `proxy_response_note.RESPONSE_NOTE_ENV_KEY`)
     static let responseNoteEnvKey = "MODEL_PROXY_RESPONSE_NOTE"
 
-    /// shell 工具输出瘦身配置。**总是注入**（proxyConfig 为空时除外），让 Python
-    /// 侧不依赖自己的缺省值——与 skill dedup 开关同理。
+    /// Shell tool output slimming config. **Always injected** (except when proxyConfig is nil), so the Python
+    /// side does not depend on its own default -- same reasoning as the skill dedup switch.
     private func outputFilterJSON() -> String? {
         guard let filter = proxyConfig?.outputFilter else { return nil }
 
-        // JSON 侧统一 snake_case（Python `proxy_output_filter._parse_config` 按该
-        // 命名解析），与 providers / clientAccel 的既有约定一致。
+        // The JSON side uses snake_case uniformly (the Python `proxy_output_filter._parse_config` parses by that
+        // naming), consistent with the existing convention for providers / clientAccel.
         struct RulePayload: Encodable {
             let command: String
             let subcommand: String
@@ -189,8 +189,8 @@ final class TokenProxyManager {
         return String(data: data, encoding: .utf8)
     }
 
-    /// 脚本专属环境变量（公共部分由 PythonScriptRunner.baseEnvironment() 提供）。
-    /// 实时读取——PythonDaemon 每次启动时经 environment 闭包调用本属性。
+    /// Script-specific environment variables (the common part is provided by PythonScriptRunner.baseEnvironment()).
+    /// Read live -- PythonDaemon calls this property through the environment closure on every launch.
     private var proxyEnvironment: [String: String] {
         var overrides: [String: String] = [:]
         overrides["MODEL_PROXY_PORT"] = String(currentPort)
@@ -205,13 +205,13 @@ final class TokenProxyManager {
         if let clientTextJSON = clientTextJSON() {
             overrides["MODEL_PROXY_CLIENT_TEXT"] = clientTextJSON
         }
-        // skill 全文去重开关：总是注入（"1"/"0"），让 Python 侧不依赖自己的缺省值
+        // skill full-text dedup switch: always injected ("1"/"0"), so the Python side does not depend on its own default
         overrides["MODEL_PROXY_SKILL_DEDUP"] =
             (proxyConfig?.skillDedupEnabled ?? true) ? "1" : "0"
         if let outputFilterJSON = outputFilterJSON() {
             overrides[Self.outputFilterEnvKey] = outputFilterJSON
         }
-        // 响应注记开关：总是注入（"1"/"0"），让 Python 侧不依赖自己的缺省值
+        // response annotation switch: always injected ("1"/"0"), so the Python side does not depend on its own default
         overrides[Self.responseNoteEnvKey] =
             (proxyConfig?.responseAnnotationEnabled ?? true) ? "1" : "0"
         return PythonScriptRunner.environment(overrides: overrides)
@@ -251,7 +251,7 @@ final class TokenProxyManager {
         daemon.forceRestart()
     }
 
-    // MARK: - Query API（供菜单栏调用）
+    // MARK: - Query API (called by the menu bar)
 
     struct TodaySummary: Codable {
         var input_tokens: Int = 0
@@ -262,8 +262,8 @@ final class TokenProxyManager {
     }
 
     func fetchTodaySummary() async -> TodaySummary {
-        // 必须用 currentPort（缓存值）：用每次重新探测的端口，代理运行时会因
-        // 自己占着 8613 而探测到 8614，请求打不到自己的查询端点。
+        // Must use currentPort (the cached value): with a freshly re-probed port, while the proxy is running it
+        // occupies 8613 itself and probes 8614, so the request cannot reach its own query endpoint.
         guard let url = HTTP.localURL(port: currentPort, path: "/usage/summary") else {
             return TodaySummary()
         }
@@ -275,7 +275,7 @@ final class TokenProxyManager {
         }
     }
 
-    // MARK: - Daemon 装配
+    // MARK: - Daemon assembly
 
     private func ensureDaemon() -> PythonDaemon? {
         if let daemon { return daemon }
@@ -283,22 +283,22 @@ final class TokenProxyManager {
             return nil
         }
         var config = PythonDaemon.Config(
-            // token_proxy.py 路径固定，捕获即可；端口可能随配置重载变化，走闭包
+            // token_proxy.py path is fixed, so capturing it is fine; the port may change on config reload, so use a closure
             scriptPath: { scriptPath },
             port: { [weak self] in
-                // 兜底值与 PortProbe.Base.tokenProxy 同源，避免两处字面量各自漂移
+                // The fallback value shares the same source as PortProbe.Base.tokenProxy, avoiding two literals drifting apart
                 self?.currentPort ?? PortProbe.Base.tokenProxy
             },
             healthPath: "/health",
-            service: nil, // token_proxy 不校验 service 字段
-            readySignals: [], // 静默启动，直接健康检查
+            service: nil, // token_proxy does not validate the service field
+            readySignals: [], // silent launch, health-check directly
             environment: { [weak self] in
                 self?.proxyEnvironment ?? [:]
             },
             logTag: "TokenProxy",
         )
-        // 崩溃重启参数与 mcp 段同义，从配置读——此前写死 3 / 2.0，与
-        // MCPProcessManager 读配置的行为不一致，改一处忘另一处就会分叉
+        // Crash restart parameters are synonymous with the mcp section and read from config -- previously hardcoded
+        // as 3 / 2.0, inconsistent with MCPProcessManager reading config, and changing one while forgetting the other would diverge
         if let proxy = proxyConfig {
             config.maxRestarts = proxy.maxRestarts
             config.restartDelaySec = Double(proxy.restartDelayMs) / 1000.0
@@ -314,8 +314,8 @@ final class TokenProxyManager {
         return daemon
     }
 
-    /// 把 PythonDaemon 通用状态映射到 TokenProxy 自身 State 并广播。
-    /// TokenProxy 无 starting/restarting 中间态——启动中保持现状，直到 running。
+    /// Map the PythonDaemon generic state to TokenProxy's own State and broadcast.
+    /// TokenProxy has no starting/restarting intermediate state -- it keeps the status quo while starting, until running.
     private func applyDaemonState(_ daemonState: PythonDaemon.State) {
         switch daemonState {
         case .running:

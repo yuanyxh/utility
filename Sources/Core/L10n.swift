@@ -1,8 +1,8 @@
 import Foundation
 
-/// 轻量 i18n — JSON 字典方案
-/// 默认中文（zh-Hans），支持英文（en）
-/// 语言变更通过 NotificationCenter 发布 L10n.languageDidChange
+/// Lightweight i18n — JSON dictionary approach
+/// Defaults to Chinese (zh-Hans), supports English (en)
+/// Language changes are broadcast via NotificationCenter as L10n.languageDidChange
 enum L10n {
     static let languageDidChange = Notification.Name("L10n.languageDidChange")
 
@@ -13,13 +13,13 @@ enum L10n {
 
     private static var _lang = "zh-Hans"
 
-    /// 首次访问任一字符串时自动加载（系统首选语言）
+    /// Auto-load on first access to any string (system preferred language)
     private static let _ready: Bool = {
         loadJSON(language: resolvedLanguage(), notify: false)
         return true
     }()
 
-    /// ConfigManager.load() 后调用 —— 按配置文件覆盖语言
+    /// Called after ConfigManager.load() — overrides the language per config file
     static func setup() {
         loadJSON(
             language: resolvedLanguage(
@@ -29,19 +29,19 @@ enum L10n {
         )
     }
 
-    // MARK: - 语言判据（唯一来源）
+    // MARK: - Language Resolution (Single Source)
 
-    /// 语言规范化：`zh*` → `zh-Hans`，其余 → `en`。
+    /// Language normalization: `zh*` → `zh-Hans`, everything else → `en`.
     static func normalize(_ language: String) -> String {
         language.hasPrefix("zh") ? "zh-Hans" : "en"
     }
 
-    /// 当前生效语言：配置优先，留空则跟随系统首选。
+    /// Currently effective language: config takes priority; empty follows the system preference.
     ///
-    /// 这是**跨语言唯一判据**——L10n 自己、以及注入给 Python 的 `UTILITY_LANG`
-    /// （决定 `prompts/<lang>/` 选哪套提示词）都走这里。两处各推导一份，迟早会出现
-    /// 「界面中文、提示词英文」这类谁也想不到的组合。
-    /// 默认参数不读 `ConfigManager`：`_ready` 可能在配置加载前就触发，那时读配置会崩。
+    /// This is the **single cross-language source of truth** — L10n itself, and the `UTILITY_LANG` injected into Python
+    /// (which decides which prompt set `prompts/<lang>/` selects) both go through here. Deriving it in two places will sooner or later produce
+    /// a combination nobody expects, such as "Chinese UI, English prompts".
+    /// The default parameter does not read `ConfigManager`: `_ready` may fire before config load, and reading config then would crash.
     static func resolvedLanguage(configured: String = "") -> String {
         normalize(configured.isEmpty ? preferredLanguage() : configured)
     }
@@ -380,6 +380,18 @@ extension L10n {
 
         static func notifyCrashedBody(_ n: Int) -> String {
             format("notify.mcp_crashed", n)
+        }
+
+        static var envCheckTitle: String {
+            string("notify.mcp_env_check_title")
+        }
+
+        static var envPythonMissing: String {
+            string("notify.mcp_env_python_missing")
+        }
+
+        static var envVenvMissing: String {
+            string("notify.mcp_env_venv_missing")
         }
     }
 }

@@ -17,7 +17,7 @@ struct JSTSExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var currentDocComment: String?
-        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开
+        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line
         var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
         for (lineIdx, rawLine) in lines.enumerated() {

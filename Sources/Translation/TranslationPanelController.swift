@@ -1,6 +1,6 @@
 import Cocoa
 
-/// 自定义 NSPanel：拦截 cmd+c/x/v/a/z 等编辑快捷键交给第一响应者
+/// Custom NSPanel: intercept cmd+c/x/v/a/z editing shortcuts and hand them to the first responder
 private final class TranslationPanel: NSPanel {
     weak var controller: TranslationPanelController?
 
@@ -28,7 +28,7 @@ private final class TranslationPanel: NSPanel {
                     textView.selectAll(nil)
                     return true
                 }
-            case 6: // z — 留给 keyDown 处理
+            case 6: // z — left to keyDown to handle
                 break
             default:
                 break
@@ -64,23 +64,23 @@ public final class TranslationPanelController: NSWindowController {
         border: BorderStyle(color: .separatorColor, width: 0.5, cornerRadius: 4),
     ))
 
-    /// 下面板遮罩层
+    /// Overlay for the lower panel
     private let overlay = OverlayView()
 
-    /// 当前翻译任务（用于取消）
+    /// Current translation task (used for cancellation)
     var currentTask: URLSessionTask?
-    /// 是否有正在运行的翻译
+    /// Whether a translation is running
     var isTranslating: Bool {
         currentTask != nil
     }
 
-    /// 翻译序列号（用于判断任务是否已过期）
+    /// Translation sequence number (used to tell whether a task is stale)
     private var translationSeq: UInt = 0
 
-    /// 面板打开前的前台 app（粘贴时恢复到该 app）
+    /// Frontmost app before the panel opened (restored when pasting)
     var previousFrontmostApp: NSRunningApplication?
 
-    /// 27 种语言（按使用量排序），名称用各语种母语显示
+    /// 27 languages (sorted by usage), names shown in each language's native script
     private let languages: [(code: String, name: String)] = [
         ("auto", "Auto"),
         ("zh", "中文"),
@@ -146,7 +146,7 @@ public final class TranslationPanelController: NSWindowController {
         guard let panel = window else { return }
         let content = panel.contentView!
 
-        // ---- 原文区 ----
+        // ---- Source area ----
         let sourceLabel = sourceLabel
         sourceLabel.stringValue = L10n.Translation.source
         sourceLabel.font = NSFont.boldSystemFont(ofSize: 12)
@@ -166,7 +166,7 @@ public final class TranslationPanelController: NSWindowController {
         sourceSection.spacing = 4
         sourceSection.translatesAutoresizingMaskIntoConstraints = false
 
-        // ---- 译文区 ----
+        // ---- Target area ----
         let targetLabel = targetLabel
         targetLabel.stringValue = L10n.Translation.target
         targetLabel.font = NSFont.boldSystemFont(ofSize: 12)
@@ -187,11 +187,11 @@ public final class TranslationPanelController: NSWindowController {
         targetSection.spacing = 4
         targetSection.translatesAutoresizingMaskIntoConstraints = false
 
-        // ---- 遮罩层 ----
+        // ---- Overlay ----
         overlay.translatesAutoresizingMaskIntoConstraints = false
         overlay.isHidden = true
 
-        // ---- 布局 ----
+        // ---- Layout ----
         content.addSubview(sourceSection)
         content.addSubview(targetSection)
         content.addSubview(overlay)
@@ -211,14 +211,14 @@ public final class TranslationPanelController: NSWindowController {
 
             sourceInputView.heightAnchor.constraint(equalTo: targetOutput.heightAnchor),
 
-            // 遮罩覆盖下面板区域（缩进 1pt 不挡住边框）
+            // The overlay covers the lower panel area (inset 1pt so it doesn't cover the border)
             overlay.topAnchor.constraint(equalTo: targetOutput.topAnchor, constant: 1),
             overlay.leadingAnchor.constraint(equalTo: targetOutput.leadingAnchor),
             overlay.trailingAnchor.constraint(equalTo: targetOutput.trailingAnchor),
             overlay.bottomAnchor.constraint(equalTo: targetOutput.bottomAnchor, constant: -1),
         ])
 
-        // 拖动停止时记忆位置
+        // Remember position when dragging stops
         NotificationCenter.default.addObserver(
             self, selector: #selector(savePosition),
             name: NSWindow.didMoveNotification, object: panel,
@@ -287,12 +287,12 @@ public final class TranslationPanelController: NSWindowController {
 
     // MARK: - Show / Close
 
-    /// 面板是否正在显示
+    /// Whether the panel is currently visible
     var isPanelVisible: Bool {
         window?.isVisible ?? false
     }
 
-    /// 面板已显示时：填入选中文本并触发翻译（不移动面板位置）
+    /// When the panel is already shown: fill in the selected text and trigger translation (does not move the panel)
     func fillAndTranslate(_ text: String) {
         guard !text.isEmpty else { return }
         sourceInputView.string = text
@@ -303,9 +303,9 @@ public final class TranslationPanelController: NSWindowController {
         startTranslation(text: text)
     }
 
-    /// 回调方式触发翻译
+    /// Trigger translation via callback
     func startTranslation(text: String) {
-        // 取消旧任务，序列号防止旧回调干扰
+        // Cancel the old task; the sequence number prevents old callbacks from interfering
         currentTask?.cancel()
         currentTask = nil
         let seq = translationSeq + 1
@@ -342,7 +342,7 @@ public final class TranslationPanelController: NSWindowController {
         )
     }
 
-    /// 重置面板状态
+    /// Reset panel state
     private func resetState() {
         sourceInputView.string = ""
         targetOutput.clear()
@@ -361,20 +361,20 @@ public final class TranslationPanelController: NSWindowController {
             pendingText = ""
         }
 
-        // 定位：记忆位置优先，否则鼠标位置
+        // Positioning: remember position first, otherwise mouse position
         let origin = WindowPositioning.savedOrNearMouse(
             windowSize: window?.frame.size ?? .zero,
             key: UDKey.translationPanelOrigin,
             screen: window?.screen,
         )
         window?.setFrameOrigin(origin)
-        // 记录当前前台 app，粘贴时恢复到它
+        // Record the current frontmost app, restore to it when pasting
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
 
         if !pendingText.isEmpty {
-            // 延迟设焦点 + 滚动到底部
+            // Delay setting focus + scroll to bottom
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
                 guard let self else { return }
                 window?.makeKey()
@@ -391,7 +391,7 @@ public final class TranslationPanelController: NSWindowController {
         EventBus.shared.publish(PanelEvent.requestClose, payload: self)
     }
 
-    /// 取消当前翻译任务
+    /// Cancel the current translation task
     func cancelTranslation() {
         currentTask?.cancel()
         currentTask = nil
@@ -406,11 +406,11 @@ public final class TranslationPanelController: NSWindowController {
         refreshTitles()
     }
 
-    /// 空面板弹出（不激活，保留源 app 前台便于后续获取选中文本）
+    /// Pop up an empty panel (not activated, keeps the source app frontmost so selected text can be fetched later)
     func showEmpty() {
         resetState()
         previousFrontmostApp = NSWorkspace.shared.frontmostApplication
-        // 定位
+        // Positioning
         let origin = WindowPositioning.savedOrNearMouse(
             windowSize: window?.frame.size ?? .zero,
             key: UDKey.translationPanelOrigin,
@@ -420,7 +420,7 @@ public final class TranslationPanelController: NSWindowController {
         window?.orderFront(nil)
     }
 
-    /// 激活面板接收键盘输入
+    /// Activate the panel to receive keyboard input
     func activateForInput() {
         window?.makeKey()
         window?.makeFirstResponder(sourceInputView.textView)

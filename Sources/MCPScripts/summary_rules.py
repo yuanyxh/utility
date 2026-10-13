@@ -1,7 +1,8 @@
-"""summarize 阶段3 规范提炼模块。
+"""summarize phase 3 rules-extraction module.
 
-从 summarize.py 拆分（2026-08-30，重构阶段3）：规则/规范类记忆 →
-MCP/Rules/*.md 的提炼、修剪、渲染。代码原样搬移不改逻辑。
+Split out of summarize.py (2026-08-30, refactor phase 3): extraction, trimming, and
+rendering of rule/convention memories -> MCP/Rules/*.md. Code was moved as-is, logic
+unchanged.
 """
 
 from __future__ import annotations
@@ -20,18 +21,23 @@ from summary_llm import (
 )
 
 # ---------------------------------------------------------------------------
-# 配置（与拆分前 summarize.py 一致）
+# Configuration (same as summarize.py before the split)
 # ---------------------------------------------------------------------------
 
 MCP_DIR = NOTES_DIR / "MCP"
 SKILLS_RULES_DIR = MCP_DIR / "Rules"
-RULES_MIN_CANDIDATES = 3  # 本周期规则/规范类有效记忆少于该值则跳过提炼
-RULES_MAX_PER_FILE = 60  # 每规范文件条目上限，超出由 LLM 淘汰
-RULES_LLM_TEMPERATURE = 0.2  # 提炼允许归纳，与聚合一致
-#: 规则提炼的 LLM 超时。取自同一来源（config `ai.llmTimeout`）——与单次摘要、批量聚合
-#: 共用，区别于「本阶段的提示词更大所以要更长」的旧假设：实测三者撞的是同一条上游超时。
+RULES_MIN_CANDIDATES = 3  # Skip extraction when this cycle's valid rule/convention memories are fewer than this value
+RULES_MAX_PER_FILE = (
+    60  # Max entries per rules file; over the limit they are pruned by the LLM
+)
+RULES_LLM_TEMPERATURE = (
+    0.2  # Extraction allows generalization, consistent with aggregation
+)
+#: LLM timeout for rules extraction. Taken from the same source (config `ai.llmTimeout`) --
+#: shared with single summary and batch aggregation, unlike the old assumption that "this
+#: stage's prompt is bigger so it needs longer": in practice all three hit the same upstream timeout.
 RULES_LLM_TIMEOUT = SUMMARY_LLM_TIMEOUT
-# 多级规范：global 全局通用 + 各项目类型通用；LLM 判定不了的归入 global
+# Multi-level rules: global + per-project-type; anything the LLM can't classify falls into global
 RULES_LEVELS = {
     "global": "全局通用",
     "web_frontend": "Web 前端",
@@ -44,7 +50,7 @@ logger = setup_logging("summarize")
 
 
 def _parse_rules_entries(text: str) -> list[dict]:
-    """从规范文件正文解析条目列表。"""
+    """Parse the entry list from the body of a rules file."""
     entries = []
     cur = None
     for line in text.splitlines():
@@ -80,13 +86,15 @@ def _parse_rules_entries(text: str) -> list[dict]:
 
 
 def _render_rules_file(level: str, entries: list[dict]) -> str:
-    """渲染规范文件完整内容（frontmatter + 条目区）。
+    """Render the full content of a rules file (frontmatter + entry section).
 
-    description 按规范级别定制触发语，供 _scan_skills 注册成 MCP 工具后，
-    大模型据此判断何时调用：
-    - global：行为约束 + 通用原则，涉及多领域 → 宽泛触发「操作前获取本行为规范」
-    - 项目类型：按「开始开发该类型项目时」触发
-    keywords 保留在正文条目作覆盖范围说明，不拼进 description（避免词堆）。
+    description tailors the trigger wording to the rules level so that, once
+    registered as an MCP tool by _scan_skills, the LLM can judge when to call it:
+    - global: behavioral constraints + general principles, spanning multiple
+      domains -> broad trigger "fetch this behavioral spec before acting"
+    - project type: triggered "when starting development on that type of project"
+    keywords are kept in the body entries as a scope note, and are not folded into
+    description (to avoid keyword stuffing).
     """
     label = RULES_LEVELS[level]
     if level == "global":
@@ -126,14 +134,14 @@ def _render_rules_file(level: str, entries: list[dict]) -> str:
 
 
 def _load_rules_entries(level: str) -> tuple[list[dict], Path]:
-    """读取指定级别规范文件的现有条目；文件不存在时返回空列表与目标路径。"""
+    """Read the existing entries of the given-level rules file; returns an empty list and the target path when the file does not exist."""
     path = SKILLS_RULES_DIR / f"norms_{level}.md"
     if not path.exists():
         return [], path
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as e:
-        logger.warning(f"读取规范文件失败 {path}: {e}")
+        logger.warning(f"Failed to read rules file {path}: {e}")
         return [], path
     if text.startswith("---"):
         parts = text.split("---", 2)
@@ -143,7 +151,7 @@ def _load_rules_entries(level: str) -> tuple[list[dict], Path]:
 
 
 def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
-    """容量超限时由 LLM 淘汰低复用价值条目，保留不超过上限。"""
+    """When over capacity, let the LLM prune the least reusable entries, keeping no more than the limit."""
     if len(entries) <= RULES_MAX_PER_FILE:
         return entries
     item_list = "\n".join(
@@ -167,23 +175,26 @@ def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
         disable_thinking=True,
     )
     if not raw:
-        logger.warning(f"规范文件淘汰 LLM 调用失败，保留前 {RULES_MAX_PER_FILE} 条")
+        logger.warning(
+            f"Rules-file pruning LLM call failed, keeping the first {RULES_MAX_PER_FILE} entries"
+        )
         return entries[:RULES_MAX_PER_FILE]
     parsed = _parse_json_any(raw)
     keep = parsed.get("keep_indexes", []) if parsed else []
     keep = [int(i) for i in keep if str(i).strip().isdigit()]
     kept = [entries[i] for i in keep if 0 <= i < len(entries)]
     if not kept:
-        logger.warning("淘汰结果为空，保留前 N 条兜底")
+        logger.warning("Pruning result is empty, falling back to the first N entries")
         return entries[:RULES_MAX_PER_FILE]
     return kept[:RULES_MAX_PER_FILE]
 
 
 def _run_phase3(groups: list[dict], today_str: str) -> dict:
-    """阶段3：从本周期聚合记忆中提炼"规则/规范类"规范，写入 MCP/Rules/*.md。
+    """Phase 3: extract "rule/convention" specs from this cycle's aggregated memories, writing them to MCP/Rules/*.md.
 
-    只提炼可复用、稳定、能指导行动的知识；偶遇 bug、一次性修复、
-    版本绑定 workaround 不提炼。本周期有效候选 < RULES_MIN_CANDIDATES 时跳过。
+    Only extract reusable, stable, actionable knowledge; incidental bugs, one-off
+    fixes, and version-bound workarounds are not extracted. Skipped when this
+    cycle's valid candidates < RULES_MIN_CANDIDATES.
     """
     if not groups:
         return {"skipped": "no_groups"}
@@ -192,7 +203,7 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
         f"- {g.get('topic', '')}：{g.get('facts', '')}" for g in groups
     )
 
-    # 已有标题清单，供 LLM 提炼时避开重复
+    # Existing title lists, so the LLM can avoid duplicates during extraction
     existing_titles = {}
     for level in RULES_LEVELS:
         entries, _ = _load_rules_entries(level)
@@ -217,24 +228,28 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
         disable_thinking=True,
     )
     if not raw:
-        write_error_log("阶段3 规范提炼 LLM 调用失败", code="RULES_LLM")
+        write_error_log("Phase 3 rules extraction LLM call failed", code="RULES_LLM")
         return {"skipped": "llm_failed"}
     parsed = _parse_json_any(raw)
     if not parsed:
         write_error_log(
-            f"阶段3 规范提炼 JSON 解析错误：\n{raw[:1000]}", code="RULES_JSON"
+            f"Phase 3 rules extraction JSON parse error:\n{raw[:1000]}",
+            code="RULES_JSON",
         )
         return {"skipped": "json_failed"}
 
     candidates = parsed.get("candidates", []) or []
     norms = parsed.get("norms", []) or []
-    # 门槛以实际提炼出的 norms 为准（candidates 是 LLM 自评主题列表，
-    # 一个主题可提炼多条规范，数量与 norms 天然不一致，不能作门槛依据）
+    # The gate is based on the norms actually extracted (candidates is the LLM's
+    # self-assessed topic list; one topic can yield several norms, so its count is
+    # naturally different from norms and cannot be the gate basis)
     if not norms:
-        logger.info("阶段3 跳过：无提炼出的规范条目")
+        logger.info("Phase 3 skipped: no extracted rules entries")
         return {"skipped": "no_norms"}
     if len(norms) < RULES_MIN_CANDIDATES:
-        logger.info(f"阶段3 跳过：提炼出的规范 {len(norms)} < {RULES_MIN_CANDIDATES}")
+        logger.info(
+            f"Phase 3 skipped: extracted rules {len(norms)} < {RULES_MIN_CANDIDATES}"
+        )
         return {"skipped": "norms_lt_min", "count": len(norms)}
 
     updated = {}
@@ -248,9 +263,10 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
             level = "global"
         entries, path = _load_rules_entries(level)
         if any(e["title"] == title for e in entries):
-            logger.info(f"阶段3 跳过重复规范：{title}")
+            logger.info(f"Phase 3 skipping duplicate rule: {title}")
             continue
-        # keywords 兼容 LLM 返回字符串（逗号分隔）或数组两种形态
+        # keywords is compatible with both forms: the LLM may return a string
+        # (comma-separated) or an array
         kws = norm.get("keywords") or []
         if isinstance(kws, str):
             kws = re.split(r"[、,，]", kws)
@@ -270,6 +286,7 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
         path.write_text(_render_rules_file(level, entries), encoding="utf-8")
         updated[path.name] = updated.get(path.name, 0) + 1
 
-    logger.info(f"阶段3 完成：{updated}")
-    # 无实际写入时返回空字符串，main() 据此跳过 git_commit，避免空提交
+    logger.info(f"Phase 3 done: {updated}")
+    # Return an empty string when nothing was actually written; main() uses this to
+    # skip git_commit and avoid an empty commit
     return {"updated": ", ".join(f"{k}+{v}" for k, v in updated.items())}

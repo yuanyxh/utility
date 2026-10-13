@@ -1,7 +1,8 @@
-"""token_proxy 的 token 用量记录层。
+"""Token usage recording layer for token_proxy.
 
-从 token_proxy.py 拆分（2026-08-30，重构阶段2）：DB 初始化、usage 字段路径解析
-（UsageFieldResolver）、请求/响应上下文提取、usage 落库。代码原样搬移不改逻辑。
+Split out from token_proxy.py (2026-08-30, refactor stage 2): DB initialization,
+usage field path resolution (UsageFieldResolver), request/response context
+extraction, usage persistence. The code was moved verbatim without logic changes.
 """
 
 from __future__ import annotations
@@ -22,27 +23,30 @@ from proxy_normalize import _result_text as result_text
 from proxy_protocol import strip_injected_rules
 
 # ---------------------------------------------------------------------------
-# 配置（与拆分前 token_proxy.py 一致）
+# Configuration (identical to token_proxy.py before the split)
 # ---------------------------------------------------------------------------
 
 DB_DIR = data_dir()
 DB_PATH = os.path.join(DB_DIR, "token_usage.sqlite")
-# tool_output_log 独立库（与 token_usage.sqlite 同目录、独立管理）
+# Independent DB for tool_output_log (same directory as token_usage.sqlite, managed separately)
 TOOL_OUTPUT_DB_PATH = os.path.join(DB_DIR, "tool_output.sqlite")
-# api_usage 保留天数（约 3 个月），启动时清理超期记录
+# api_usage retention days (about 3 months); expired records are cleaned at startup
 API_USAGE_RETENTION_DAYS = 90
-# tool_output_log 保留天数（短期，用于形态分析）
+# tool_output_log retention days (short-term, for shape analysis)
 TOOL_OUTPUT_RETENTION_DAYS = 5
-# gateway_log 记录范围与保留期：非 2xx + 请求体 >=512KB 预警，保留 90 天
+# gateway_log recording scope and retention: non-2xx + request body >=512KB warnings, retained 90 days
 GATEWAY_LOG_SIZE_THRESHOLD = 512 * 1024
 GATEWAY_LOG_RETENTION_DAYS = 90
-# LLM 配置（usage 字段路径解析用，见 UsageFieldResolver._ask_model）已交由 llm_client
-# 统一读取。此前的 LLM_API_URL/LLM_API_KEY/LLM_MODEL 三个别名等于把同一份配置读了第二遍，
-# 且「未配置即禁用」的守卫条件散落在这里——配置改名时这里不会报错，只会静默停用解析。
+# LLM configuration (for usage field path resolution, see UsageFieldResolver._ask_model) is now
+# uniformly read by llm_client. The former three aliases LLM_API_URL/LLM_API_KEY/LLM_MODEL
+# amounted to reading the same config a second time, and the "disabled when unconfigured" guard
+# was scattered here — when the config is renamed here it would not error, only silently disable
+# resolution.
 
-# 客户端注入文案/标签（续接提示词、摘要前缀、客户端标签）：各客户端取值不同且随版本
-# 变化，故作为**可配置表**（config.yaml modelProxy.clientText → MODEL_PROXY_CLIENT_TEXT），
-# 缺省时用 proxy_client 内置默认（= 引入配置面前的历史行为，零行为变化）。
+# Client-injected text/tags (continuation prompts, summary prefixes, client tags): each client's
+# values differ and change with versions, so they exist as a **configurable table**
+# (config.yaml modelProxy.clientText → MODEL_PROXY_CLIENT_TEXT); when absent the built-in
+# defaults of proxy_client are used (= behavior before the config surface, zero behavior change).
 CLIENT_TEXT = load_client_text(os.environ.get("MODEL_PROXY_CLIENT_TEXT", ""))
 
 logger = setup_logging("token_proxy", json_format=True)
@@ -90,9 +94,11 @@ def init_db():
             updated_at TEXT,
             PRIMARY KEY (provider, model)
         );
-        -- 网关层日志：记录非 2xx 响应与超大请求（middleware 写入）。
-        -- 区分 api_usage：api_usage 记成功请求的 token 用量；gateway_log 记被拒/失败/预警请求，
-        -- 解决 aiohttp 层 413 超限等 handler 不执行、无任何记录的排查盲区。
+        -- Gateway-layer log: records non-2xx responses and oversized requests (written by middleware).
+        -- Distinguished from api_usage: api_usage records token usage of successful requests;
+        -- gateway_log records rejected/failed/warning requests, resolving the troubleshooting
+        -- blind spot where an aiohttp-layer 413 over-limit etc. prevents the handler from running,
+        -- leaving no record at all.
         CREATE TABLE IF NOT EXISTS gateway_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
@@ -109,7 +115,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level);
     """)
 
-    # 迁移：为旧表添加新列（如果不存在）
+    # Migration: add new columns to old tables (if absent)
     cursor = conn.execute("PRAGMA table_info(api_usage)")
     columns = [row[1] for row in cursor.fetchall()]
     if "request_level" not in columns:
@@ -122,7 +128,7 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_api_usage_level ON api_usage(request_level)"
         )
-        # 根据 stop_reason 回填 request_level
+        # Backfill request_level from stop_reason
         conn.execute(
             "UPDATE api_usage SET request_level = 'process' WHERE stop_reason = 'tool_use'"
         )
@@ -131,23 +137,26 @@ def init_db():
         conn.execute("ALTER TABLE api_usage ADD COLUMN error_message TEXT")
         conn.commit()
 
-    # 迁移：分级路由诊断列（route_tier 档位 / route_reason 决策原因 / profile_hash
-    # 会话所属 agent 类型指纹）。是排查「为什么这轮走了这个模型」的唯一手段——
-    # 路由决策日志在 token_proxy.log 中滚动丢弃，这两列是可回溯的历史。
+    # Migration: tiered-routing diagnostic columns (route_tier tier / route_reason decision
+    # reason / profile_hash fingerprint of the conversation's agent type). It is the only means
+    # to troubleshoot "why did this turn take this model" — the routing decision logs roll off
+    # in token_proxy.log, and these two columns are the traceable history.
     if "route_tier" not in columns:
         conn.execute("ALTER TABLE api_usage ADD COLUMN route_tier TEXT")
         conn.execute("ALTER TABLE api_usage ADD COLUMN route_reason TEXT")
         conn.execute("ALTER TABLE api_usage ADD COLUMN profile_hash TEXT")
         conn.commit()
-    # 迁移：路由决策明细列。降档被拦时记 outside 工具列表；升档时记触发信号名。
-    # 路由日志在 token_proxy.log 中滚动丢弃，detail 列是排查「为什么不降档」的
-    # 唯一持久手段——没有它，3 个 hold_not_readonly 返回点无法从数据侧区分。
+    # Migration: routing decision detail column. When a downgrade is blocked, record the
+    # outside tool list; when upgrading, record the triggering signal name. The routing logs
+    # roll off in token_proxy.log, and the detail column is the only persistent means to
+    # troubleshoot "why was it not downgraded" — without it, the 3 hold_not_readonly return
+    # points cannot be distinguished from the data side.
     if "route_detail" not in columns:
         conn.execute("ALTER TABLE api_usage ADD COLUMN route_detail TEXT")
         conn.commit()
 
-    # 迁移：移除已废弃的三字段（session_id/project_path/estimated_cost_usd）
-    # 先 DROP 引用列的索引，再 DROP COLUMN（SQLite 约束）
+    # Migration: remove three deprecated fields (session_id/project_path/estimated_cost_usd)
+    # First DROP the indexes referencing the columns, then DROP COLUMN (SQLite constraint)
     if "session_id" in columns:
         conn.execute("DROP INDEX IF EXISTS idx_api_usage_session")
         conn.execute("ALTER TABLE api_usage DROP COLUMN session_id")
@@ -158,15 +167,17 @@ def init_db():
         conn.execute("ALTER TABLE api_usage DROP COLUMN estimated_cost_usd")
     conn.commit()
 
-    # 修正历史：首日中断（stop_reason 为空串 ''）被默认回填为 core，修正归入 process
-    # 当前写入逻辑对 stop_reason 空归 process，新数据不会产生该组合，幂等无害
+    # Fix history: a first-day interruption (stop_reason empty string '') was backfilled to
+    # core by default; correct it to process. The current write logic maps empty stop_reason
+    # to process, so new data will not produce this combination; idempotent and harmless.
     conn.execute(
         "UPDATE api_usage SET request_level = 'process' "
         "WHERE request_level = 'core' AND (stop_reason IS NULL OR stop_reason = '')"
     )
     conn.commit()
 
-    # 三个月自动清理：cutoff 用与 timestamp 一致的 ISO 格式，避免 datetime('now') 空格格式在边界当天漏删
+    # Three-month auto-cleanup: cutoff uses the same ISO format as timestamp, avoiding the
+    # datetime('now') space format missing deletions on the boundary day
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=API_USAGE_RETENTION_DAYS)
     ).isoformat()
@@ -176,12 +187,13 @@ def init_db():
 
 
 def init_tool_output_db():
-    """初始化 tool_output_log 独立库（5 天保留）。
+    """Initialize the independent tool_output_log DB (5-day retention).
 
-    列说明：
-    - output_text_raw：原始输出（代理过滤前的真实值），用于 delta 分析
-    - output_text：代理实际发送的内容（当前无过滤时等于 raw，过滤上线后分化）
-    - session_key：system+tools+first_user 的哈希，聚合同一会话内总 token 消耗
+    Column notes:
+    - output_text_raw: raw output (the true value before proxy filtering), used for delta analysis
+    - output_text: the content the proxy actually sent (equals raw when there is no filtering;
+      diverges once filtering is live)
+    - session_key: a hash of system+tools+first_user, aggregating total token consumption within one session
     """
     os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(TOOL_OUTPUT_DB_PATH)
@@ -206,7 +218,7 @@ def init_tool_output_db():
         CREATE INDEX IF NOT EXISTS idx_tool_output_tool_name ON tool_output_log(tool_name);
     """)
 
-    # 迁移：为旧库添加新列（幂等）。列名是硬编码字面量，非外部输入。
+    # Migration: add new columns to the old DB (idempotent). Column names are hard-coded literals, not external input.
     existing = {
         row[1] for row in conn.execute("PRAGMA table_info(tool_output_log)").fetchall()
     }
@@ -214,14 +226,15 @@ def init_tool_output_db():
         if col not in existing:
             conn.execute(f"ALTER TABLE tool_output_log ADD COLUMN {col} TEXT")
 
-    # session_key 的索引必须建在迁移**之后**：旧库要先补上该列，否则
-    # 「CREATE INDEX 引用不存在的列」会让初始化直接抛异常、代理起不来。
+    # The session_key index must be created **after** the migration: the old DB must
+    # first gain that column, otherwise "CREATE INDEX referencing a non-existent column"
+    # makes initialization raise directly and the proxy fails to start.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tool_output_session ON tool_output_log(session_key)"
     )
     conn.commit()
 
-    # 五天自动清理
+    # Five-day auto-cleanup
     cutoff = (
         datetime.now(timezone.utc) - timedelta(days=TOOL_OUTPUT_RETENTION_DAYS)
     ).isoformat()
@@ -230,15 +243,17 @@ def init_tool_output_db():
     conn.close()
 
 
-# 网关层日志：middleware 统一记录被拒/失败/超大请求，补 api_usage 的排查盲区。
-# api_usage 只记成功请求的 token 用量；aiohttp 层 413 超限等 handler 不执行时不落库。
+# Gateway-layer log: middleware uniformly records rejected/failed/oversized requests,
+# covering api_usage's troubleshooting blind spot. api_usage only records token usage of
+# successful requests; when an aiohttp-layer 413 over-limit etc. prevents the handler from
+# running, nothing is persisted.
 _gateway_log_write_count = 0
 
 
 def record_gateway_log(
     method, path, content_length, status_code, error_type, error_message, latency_ms
 ):
-    """写入网关日志：非 2xx 响应 + 超大请求体。保留 90 天，每 200 次写入删一次过期数据。"""
+    """Write the gateway log: non-2xx responses + oversized request bodies. Retained 90 days; expired data is deleted every 200 writes."""
     global _gateway_log_write_count
     if status_code < 400 and (content_length or 0) < GATEWAY_LOG_SIZE_THRESHOLD:
         return
@@ -266,19 +281,19 @@ def record_gateway_log(
                 ).isoformat()
                 c.execute("DELETE FROM gateway_log WHERE timestamp < ?", (cutoff,))
     except Exception:
-        # 网关日志失败不影响主流程
+        # A gateway-log failure does not affect the main flow
         pass
 
 
 class UsageFieldResolver:
-    """根据 provider/model 智能定位 usage 字段路径。
+    """Intelligently locate the usage field path by provider/model.
 
-    已知 provider 路径映射（避免 LLM 回调）：
-      - Anthropic/DeepSeek：usage.input_tokens / usage.output_tokens
-      - OpenAI：usage.prompt_tokens / usage.completion_tokens
+    Known provider path mappings (avoiding LLM callbacks):
+      - Anthropic/DeepSeek: usage.input_tokens / usage.output_tokens
+      - OpenAI: usage.prompt_tokens / usage.completion_tokens
     """
 
-    # 已知字段路径（model name 前缀匹配 → paths dict）
+    # Known field paths (model name prefix match → paths dict)
     _KNOWN_PATTERNS: list[tuple[str, dict]] = [
         (
             "anthropic",
@@ -379,7 +394,7 @@ class UsageFieldResolver:
             pass
 
     async def _ask_model(self, sample_response: dict) -> dict | None:
-        """调用主模型识别 usage 字段路径。"""
+        """Call the main model to identify the usage field path."""
         if not llm_client.is_configured():
             return None
 
@@ -404,7 +419,7 @@ class UsageFieldResolver:
         return llm_client.parse_json(raw)
 
     def _get_by_path(self, obj: dict, path: str):
-        """按 dot-separated path 取值。"""
+        """Get a value by dot-separated path."""
         if not path:
             return None
         parts = path.split(".")
@@ -417,14 +432,14 @@ class UsageFieldResolver:
         return cur
 
     async def resolve(self, response_body: dict, provider: str = "default") -> dict:
-        """解析 usage 字段，返回 {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}。"""
+        """Resolve the usage fields, returning {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}."""
         model = response_body.get("model", "unknown")
         key = (provider, model)
 
         paths = self._cache.get(key) or self._load_from_db(provider, model)
 
         if not paths:
-            # 尝试已知 pattern 匹配
+            # Try matching against known patterns
             for prefix, known_paths in self._KNOWN_PATTERNS:
                 if model.lower().startswith(prefix):
                     paths = known_paths
@@ -433,7 +448,7 @@ class UsageFieldResolver:
                     break
 
         if not paths:
-            # 从 response body 的 usage 字段名自动探测
+            # Auto-detect from the response body's usage field names
             usage_data = response_body.get("usage", {})
             if isinstance(usage_data, dict):
                 if "input_tokens" in usage_data:
@@ -455,7 +470,7 @@ class UsageFieldResolver:
                 self._save_to_db(provider, model, paths)
 
         if not paths:
-            # 首次遇到此 model，调用模型识别
+            # First time seeing this model; call the model to identify
             paths = await self._ask_model(response_body)
             if paths:
                 self._cache[key] = paths
@@ -470,10 +485,10 @@ class UsageFieldResolver:
                     )
                 )
             else:
-                # 无法识别，返回零值
+                # Cannot identify; return zero values
                 return self._zero_usage()
 
-        # 用缓存路径取值
+        # Extract values using the cached paths
         usage = {
             "input_tokens": self._safe_int(
                 self._get_by_path(response_body, paths.get("input_path", ""))
@@ -489,7 +504,7 @@ class UsageFieldResolver:
             ),
         }
 
-        # 如果取到的值全为 0，可能是路径失效，刷新一次
+        # If all extracted values are 0, the paths may be stale; refresh once
         if all(v == 0 for v in usage.values()):
             refreshed_paths = await self._ask_model(response_body)
             if refreshed_paths and refreshed_paths != paths:
@@ -551,11 +566,12 @@ class UsageFieldResolver:
 resolver = UsageFieldResolver()
 
 
-#: 需要从用户文本中剔除的**已登记**客户端注入标签。
+#: **Registered** client-injected tags to strip from user text.
 #:
-#: 只按名剔除，不再把任意 `<...>` 当标签：用户输入里出现比较运算符（`if x < y
-#: and y > z`）或 HTML 片段时，通用标签清理会把中间整段吃掉——实测
-#: `'if x < y and y > z: pass'` 被清成 `'if x z: pass'`，日志字段严重失真。
+#: Strip by name only; do not treat any `<...>` as a tag: when the user input contains
+#: comparison operators (`if x < y and y > z`) or HTML fragments, a generic tag cleanup
+#: eats the whole middle section — measured: `'if x < y and y > z: pass'` was cleaned to
+#: `'if x z: pass'`, seriously distorting the log fields.
 CLIENT_INJECTED_TAGS = CLIENT_TEXT.injected_tags
 
 _TAG_RE = re.compile(
@@ -565,9 +581,9 @@ _TAG_RE = re.compile(
 
 
 def _extract_user_text(content) -> str:
-    """从消息内容中提取纯文本，跳过已登记的客户端注入标签。
+    """Extract plain text from message content, skipping registered client-injected tags.
 
-    兼容 Anthropic（content list of blocks）和 OpenAI（content string）格式。
+    Compatible with the Anthropic (content list of blocks) and OpenAI (content string) formats.
     """
     if content is None:
         return ""
@@ -578,26 +594,32 @@ def _extract_user_text(content) -> str:
             if isinstance(b, dict) and b.get("type") == "text"
         ]
         content = " ".join(text_parts) if text_parts else ""
-    # 先剥注入的规则块，**再**清标签：规则块在真实用户输入之前，若先跑标签清理，
-    # 规则正文里的尖括号可能把 `---rule_end` 一并吃掉，导致剥离函数找不到结束标记
-    # 而把块后面的真实用户输入一起丢弃。
+    # Strip the injected rule block first, **then** clean tags: the rule block precedes
+    # the real user input, and running tag cleanup first could let the angle brackets in
+    # the rule body eat `---rule_end` as well, causing the strip function to fail to find
+    # the end marker and discard the real user input after the block.
     content_str = strip_injected_rules(str(content))
-    # 仅剔除已登记标签（含开闭标签），其余文本原样保留
+    # Strip only registered tags (both open and close tags); keep the remaining text as-is
     return _TAG_RE.sub("", content_str).strip()
 
 
-#: 续接提示词前缀（多个客户端各自取值）——其正文是上一轮摘要，不是用户输入，
-#: 会话标识与用户输入提取都要跳过。来源见 CLIENT_TEXT。
+#: Continuation-prompt prefixes (each client has its own value) — their body is the
+#: previous turn's summary, not user input, so both the session identifier and user-input
+#: extraction must skip them. See CLIENT_TEXT for the source.
 CONTINUATION_PREFIXES = CLIENT_TEXT.continuation_prefixes
 
-#: 压缩摘要前缀——上下文被压缩后的续接请求正文以它开头，同样是上一轮摘要而非用户输入，
-#: 与续接提示词一起跳过（input_preview 与 actual_user_input 两处都读这两个常量）。
+#: Compression-summary prefixes — the continuation request body after context compression
+#: begins with it, and it is likewise the previous turn's summary rather than user input,
+#: so it is skipped along with the continuation prompt (both input_preview and
+#: actual_user_input read these two constants).
 SUMMARY_PREFIXES = CLIENT_TEXT.summary_prefixes
 
-#: 未命中已登记文案的「大块用户消息」阈值（字符）。超过该长度、且既不是续接提示词也不是
-#: 摘要前缀的 user 消息，多半来自**尚未登记**的客户端注入物。登记一份样本，便于把新客户端
-#: 文案补进 config.yaml modelProxy.clientText——否则它只会静默污染 actual_user_input
-#: 与会话标识锚点（二者都是下游统计与路由判定的输入）。
+#: The threshold (chars) for a "large user message" that misses the registered text. A user
+#: message exceeding this length that is neither a continuation prompt nor a summary prefix
+#: most likely comes from **unregistered** client-injected content. Register a sample so the
+#: new client's text can be added to config.yaml modelProxy.clientText — otherwise it only
+#: silently pollutes actual_user_input and the session identifier anchor (both are inputs to
+#: downstream statistics and routing decisions).
 UNREGISTERED_BLOB_MIN_CHARS = 2000
 
 
@@ -614,30 +636,36 @@ def _observe_unregistered_blob(content_str: str) -> None:
         )
 
 
-#: 会话标识的 system 前缀截断上限（与 proxy_normalize.SYSTEM_PREFIX_LIMIT 同量级）。
-#: 长 system 每请求重算 SHA256 的成本随会话增长，截断不影响「同类 agent 归一组」的判别力。
+#: Truncation cap for the session identifier's system prefix (same order of magnitude as
+#: proxy_normalize.SYSTEM_PREFIX_LIMIT). The cost of recomputing SHA256 per request for a
+#: long system grows with the session; truncation does not affect the discriminating power
+#: of "grouping the same kind of agent".
 SESSION_SYSTEM_LIMIT = 4096
 
-#: 会话标识的首条用户指令截断上限。首条指令是任务的锚，后续反馈/确认轮不影响。
+#: Truncation cap for the session identifier's first user instruction. The first instruction
+#: is the task anchor; later feedback/confirmation turns do not affect it.
 SESSION_FIRST_USER_LIMIT = 2048
 
 
 def compute_session_key(body: dict) -> str:
-    """请求体 → 会话标识（SHA256 前 12 位 hex）。
+    """Request body → session identifier (first 12 hex chars of SHA256).
 
-    语义：同一 system + tools + 首条用户指令 = 同一会话。用于聚合会话级总 token
-    消耗，衡量「过滤是否真的省钱」——单次省 token 不等于总任务成本降低（截断导致
-    模型重读文件、轮次增加，总成本可能反升）。
+    Semantics: same system + tools + first user instruction = same session. Used to
+    aggregate session-level total token consumption and measure "whether filtering really
+    saves money" — saving tokens once does not equal a lower total task cost (truncation
+    makes the model re-read files and increases turns, so the total cost may rise).
 
-    本函数独立实现，不依赖任何上层策略——聚合会话只关乎记录，与转发层无关。
+    This function is implemented independently and relies on no upper-layer policy —
+    aggregating sessions is purely about recording, unrelated to the forwarding layer.
     """
     parts: list[str] = []
 
-    # system：**两种协议都要读**，不能只看顶层字段。
-    # Anthropic 的 system 是顶层字段（string 或 text block 数组）；OpenAI 没有
-    # 该字段，system 是 messages[0] 里 role="system" 的一条消息。只读顶层会让
-    # OpenAI 请求的 system 恒为空——不同 agent（主/子 agent 的 system 不同）
-    # 的会话键退化成同一个，聚合分析直接失真。
+    # system: **both protocols must be read**, not just the top-level field.
+    # Anthropic's system is a top-level field (string or an array of text blocks);
+    # OpenAI has no such field, its system is a message with role="system" in
+    # messages[0]. Reading only the top level makes the system of an OpenAI request
+    # always empty — session keys of different agents (the main/sub agent's system
+    # differs) degenerate into the same one, and aggregate analysis is directly distorted.
     system = body.get("system", "")
     if not system:
         for msg in body.get("messages", []):
@@ -653,7 +681,7 @@ def compute_session_key(body: dict) -> str:
     if system:
         parts.append(str(system)[:SESSION_SYSTEM_LIMIT])
 
-    # tools：按名排序消除客户端排序差异
+    # tools: sort by name to eliminate client sort differences
     tool_names = []
     for t in body.get("tools") or []:
         if not isinstance(t, dict):
@@ -665,7 +693,7 @@ def compute_session_key(body: dict) -> str:
             tool_names.append(t.get("name", ""))
     parts.append("\x01".join(sorted(n for n in tool_names if n)))
 
-    # first_user：跳过续接提示词（其正文是上一轮摘要，不是用户指令）
+    # first_user: skip the continuation prompt (its body is the previous turn's summary, not a user instruction)
     for msg in body.get("messages", []):
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
@@ -684,7 +712,7 @@ def compute_session_key(body: dict) -> str:
 
 
 def extract_request_context(body: dict) -> dict:
-    """从 Claude Code 请求 body 提取上下文信息。"""
+    """Extract context information from the Claude Code request body."""
     ctx = {
         "request_type": "conversation",
         "context_summary": "",
@@ -700,7 +728,7 @@ def extract_request_context(body: dict) -> dict:
     if body.get("tools"):
         ctx["request_type"] = "tool_use"
 
-    # 检查是否有 tool_result（兼容两种格式）
+    # Check whether there is a tool_result (compatible with both formats)
     for msg in messages:
         if msg.get("role") == "tool":
             ctx["has_tool_result"] = 1
@@ -713,42 +741,42 @@ def extract_request_context(body: dict) -> dict:
                     ctx["request_type"] = "tool_result"
                     break
 
-    # 提取最后一条 user message 作为 context_summary
+    # Extract the last user message as context_summary
     for msg in reversed(messages):
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
             ctx["context_summary"] = content_str[:100]
             break
 
-    # input_preview: 所有 user messages 前 200 字拼接，跳过续接提示词
+    # input_preview: concatenate the first 200 chars of all user messages, skipping continuation prompts
     user_texts = []
     for msg in messages:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
-            # 跳过续接提示词
+            # skip continuation prompts
             if content_str.startswith(CONTINUATION_PREFIXES):
                 continue
-            # 跳过纯摘要内容
+            # skip pure summary content
             if content_str.strip().startswith(SUMMARY_PREFIXES):
                 continue
-            # 未命中已登记文案的长消息 → 登记样本（发现未登记客户端的注入物）
+            # a long message that misses the registered text → register a sample (discover unregistered client injections)
             _observe_unregistered_blob(content_str)
             if content_str.strip():
                 user_texts.append(content_str[:200])
     ctx["input_preview"] = " | ".join(user_texts)
 
-    # actual_user_input: 提取用户实际输入，跳过续接提示词和 system-reminder
+    # actual_user_input: extract the user's actual input, skipping continuation prompts and system-reminder
     actual_parts = []
     for msg in messages:
         if msg.get("role") == "user":
             content_str = _extract_user_text(msg.get("content", ""))
-            # 跳过续接提示词（其正文是上一轮摘要，不是用户输入）
+            # skip the continuation prompt (its body is the previous turn's summary, not user input)
             if content_str.startswith(CONTINUATION_PREFIXES):
                 continue
-            # 跳过纯摘要内容
+            # skip pure summary content
             if content_str.strip().startswith(SUMMARY_PREFIXES):
                 continue
-            # 未命中已登记文案的长消息 → 登记样本（发现未登记客户端的注入物）
+            # a long message that misses the registered text → register a sample (discover unregistered client injections)
             _observe_unregistered_blob(content_str)
             if content_str.strip():
                 actual_parts.append(content_str[:500])
@@ -758,16 +786,16 @@ def extract_request_context(body: dict) -> dict:
 
 
 def extract_response_context(usage_data: dict) -> dict:
-    """从 usage 数据提取响应上下文。"""
+    """Extract response context from the usage data."""
     stop_reason = (
         usage_data.get("stop_reason")
         or (usage_data.get("delta") or {}).get("stop_reason")
         or ""
     )
-    # 只有 error 和空响应算无效，max_tokens/end_turn/stop_sequence 都是正常
+    # Only error and empty responses count as invalid; max_tokens/end_turn/stop_sequence are all normal
     response_valid = 0 if stop_reason == "error" else 1
 
-    # 提取错误信息
+    # Extract error information
     error_message = ""
     if stop_reason == "error":
         error_data = usage_data.get("error", {})
@@ -791,18 +819,21 @@ def extract_response_context(usage_data: dict) -> dict:
 
 
 def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict]:
-    """从请求体提取最新一轮 tool_result 的全部工具输出。
+    """Extract all tool outputs of the latest round of tool_result from the request body.
 
-    只提取最近一轮 tool_result——历史 tool_result 已在前序请求中记录过，
-    每次请求携带完整消息历史但旧 tool_result 不重复记录。
+    Only the most recent round of tool_result is extracted — historical tool_result were
+    already recorded in earlier requests; each request carries the full message history but
+    old tool_result are not recorded again.
 
-    输出文本用 `proxy_normalize._result_text` 提取（工具回传内容的权威实现），
-    **不做任何清洗**——这是形态分析的数据源，注入规则剥离与客户端标签剔除都会
-    让「文件里恰好含 `<system-reminder>`」这类内容失真。规则注入只作用于最后一条
-    真实用户消息，不会落在 tool_result 块上，故此处本就不需要剥离。
+    The output text is extracted with `proxy_normalize._result_text` (the authoritative
+    implementation for tool return content) and is **not cleaned at all** — this is the data
+    source for shape analysis, and stripping injected rules or removing client tags would
+    distort content like "the file happens to contain `<system-reminder>`". Rule injection
+    only affects the last real user message and never lands on tool_result blocks, so no
+    stripping is needed here anyway.
 
-    返回列表，每项包含：tool_name, tool_call_id, output_text, output_size,
-    output_lines, is_error。
+    Returns a list; each item contains: tool_name, tool_call_id, output_text, output_size,
+    output_lines, is_error.
     """
     messages = body.get("messages", [])
     if not messages:
@@ -811,7 +842,7 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
     tool_results = []
 
     if api_format == "openai":
-        # OpenAI: role="tool" 是独立消息，从后往前找连续的 tool 消息
+        # OpenAI: role="tool" is a standalone message; search backwards for consecutive tool messages
         for msg in reversed(messages):
             if msg.get("role") != "tool":
                 break
@@ -821,16 +852,16 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
                     "tool_name": _resolve_openai_tool_name(messages, msg),
                     "tool_call_id": msg.get("tool_call_id", ""),
                     "output_text": text,
-                    "output_text_raw": text,  # 无过滤时与 output_text 一致
+                    "output_text_raw": text,  # equals output_text when there is no filtering
                     "output_size": len(text.encode("utf-8")),
                     "output_lines": text.count("\n") + 1 if text else 0,
-                    "is_error": None,  # OpenAI 无 is_error 字段
+                    "is_error": None,  # OpenAI has no is_error field
                 }
             )
-        tool_results.reverse()  # 恢复时间正序
+        tool_results.reverse()  # restore chronological order
     else:
-        # Anthropic: role=user 消息内含 type=="tool_result" 内容块
-        # 从后往前找最后一个含 tool_result 的 user 消息
+        # Anthropic: a role=user message contains content blocks with type=="tool_result"
+        # search backwards for the last user message containing tool_result
         for msg in reversed(messages):
             if msg.get("role") != "user":
                 continue
@@ -844,7 +875,7 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
             ]
             if not blocks:
                 continue
-            # 向上找配对的 tool_use 获取工具名
+            # look up the paired tool_use to get the tool name
             tool_names = _resolve_tool_names(messages, blocks)
             for b in blocks:
                 text = result_text(b.get("content", ""))
@@ -854,25 +885,25 @@ def extract_tool_outputs(body: dict, api_format: str = "anthropic") -> list[dict
                         "tool_name": tool_names.get(b.get("tool_use_id", ""), ""),
                         "tool_call_id": b.get("tool_use_id", ""),
                         "output_text": text,
-                        "output_text_raw": text,  # 无过滤时与 output_text 一致
+                        "output_text_raw": text,  # equals output_text when there is no filtering
                         "output_size": len(text.encode("utf-8")),
                         "output_lines": text.count("\n") + 1 if text else 0,
-                        # 三态：True=失败 / False=确认成功 / None=协议未提供
+                        # three states: True=failure / False=confirmed success / None=not provided by the protocol
                         "is_error": (
                             1 if is_err is True else (0 if is_err is False else None)
                         ),
                     }
                 )
-            break  # 只处理最后一个含 tool_result 的 user 消息
+            break  # only process the last user message containing tool_result
 
     return tool_results
 
 
 def _resolve_openai_tool_name(messages: list[dict], tool_msg: dict) -> str:
-    """OpenAI tool 消息 → 配对的 tool_call 函数名。
+    """OpenAI tool message → paired tool_call function name.
 
-    OpenAI 的 role="tool" 消息不带工具名，需按 tool_call_id 回查 assistant
-    消息里的 tool_calls。
+    OpenAI role="tool" messages carry no tool name and require looking up the tool_calls
+    in the assistant message by tool_call_id.
     """
     call_id = tool_msg.get("tool_call_id", "")
     if not call_id:
@@ -888,9 +919,9 @@ def _resolve_openai_tool_name(messages: list[dict], tool_msg: dict) -> str:
 def _resolve_tool_names(
     messages: list[dict], tool_result_blocks: list[dict]
 ) -> dict[str, str]:
-    """从消息历史中查找 tool_result 配对的 tool_use 工具名。
+    """Look up the tool_use tool names paired with tool_result from the message history.
 
-    返回 {tool_use_id: tool_name} 映射。
+    Returns a {tool_use_id: tool_name} mapping.
     """
     needed_ids = {
         b.get("tool_use_id", "") for b in tool_result_blocks if b.get("tool_use_id")
@@ -923,10 +954,11 @@ def record_tool_outputs(
     model: str = "",
     session_key: str = "",
 ):
-    """将工具输出写入 tool_output_log 独立库。
+    """Write tool outputs into the independent tool_output_log DB.
 
-    与 api_usage 分属两个库文件，无法共用一个事务，故单独开连接写入。
-    写入失败只记日志不影响主流程——工具输出是分析素材，不该拖垮用量记录。
+    It belongs to a different DB file from api_usage and cannot share a transaction, so a
+    separate connection is opened. A write failure is only logged and does not affect the
+    main flow — tool output is analysis material and should not drag down usage recording.
     """
     if not tool_outputs:
         return
@@ -973,36 +1005,38 @@ async def record_usage(
     api_format: str = "anthropic",
     tool_outputs: list[dict] | None = None,
 ):
-    """记录一次 API 调用的 token 用量。
+    """Record the token usage of one API call.
 
-    可选 `tool_outputs`（由 `extract_tool_outputs` 产出）一并写入 tool_output_log，
-    并带上本行的 `api_usage_id`——两表分属不同库文件，只能在这里拿到自增 id，
-    拆成两个后台任务写会让该列恒为 NULL，工具输出体积与 token 用量的关联分析就断了。
+    The optional `tool_outputs` (produced by `extract_tool_outputs`) is written into
+    tool_output_log as well, carrying this row's `api_usage_id` — the two tables belong to
+    different DB files, and the auto-increment id can only be obtained here; splitting them
+    into two background tasks to write would leave that column always NULL, breaking the
+    correlation analysis between tool-output volume and token usage.
     """
     if status != 200:
         return
 
-    # 解析 usage
+    # Resolve usage
     usage = await resolver.resolve(response_body)
 
-    # 提取上下文
+    # Extract context
     req_ctx = extract_request_context(request_body)
     resp_ctx = extract_response_context(response_body)
 
     model = response_body.get("model", "unknown")
     stop_reason = resp_ctx["stop_reason"]
 
-    # 使用 resp_ctx 中的 error_message（如果未提供）
+    # Use error_message from resp_ctx (if not provided)
     if not error_message:
         error_message = resp_ctx.get("error_message", "")
 
-    # 确定 request_level
+    # Determine request_level
     request_level = "core" if stop_reason == "end_turn" else "process"
 
-    # 提取 tool_name：SSE 流提取优先 > 请求体 assistant 消息兜底
+    # Extract tool_name: SSE stream extraction takes priority > request-body assistant message fallback
     tool_name = tool_name_override
     if not tool_name and stop_reason == "tool_use":
-        # 从请求中提取工具名称（兜底）
+        # Extract the tool name from the request (fallback)
         messages = request_body.get("messages", [])
         for msg in reversed(messages):
             if msg.get("role") == "assistant":
@@ -1090,7 +1124,7 @@ async def record_usage(
             )
         )
 
-        # 工具输出落库：带 api_usage_id 关联，供「输出体积 ↔ token 用量」交叉分析
+        # Persist tool outputs: with api_usage_id association, for cross-analysis of "output volume ↔ token usage"
         if tool_outputs:
             record_tool_outputs(
                 tool_outputs,

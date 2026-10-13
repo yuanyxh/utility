@@ -9,7 +9,7 @@ import Foundation
 /// 4. Spawn agent subprocess with stdin/stdout/stderr passthrough
 /// 5. On agent exit → stop watcher → exit
 enum AgentRunner {
-    /// 当前 Agent 子进程 PID（供信号处理清理用）
+    /// Current Agent child process PID (used by signal handling for cleanup)
     static var childPID: Int32 = 0
 
     /// Entry point called from UtilityCLI.run().
@@ -17,7 +17,7 @@ enum AgentRunner {
         let projectPath = projectDir.map { ($0 as NSString).expandingTildeInPath }
             ?? FileManager.default.currentDirectoryPath
 
-        // 0. 清理 T 状态（stopped）的残留进程
+        // 0. Clean up leftover processes in T state (stopped)
         try cleanupStaleAgents()
         installSignalHandlers()
 
@@ -27,13 +27,13 @@ enum AgentRunner {
 
         // 2. Scan (first init or full re-sync)
         if isFirstInit {
-            print("📦 未发现依赖图，正在扫描项目...")
+            print("📦 No dependency graph found, scanning project...")
             let s = try ProjectScanner.shared.scan(projectPath: projectPath)
             print("   \(s)")
         } else {
-            print("📦 全量扫描项目，同步变更...")
+            print("📦 Full project scan, syncing changes...")
             let s = try ProjectScanner.shared.scan(projectPath: projectPath)
-            print("   发现 \(s)")
+            print("   Found \(s)")
         }
 
         // 3. Start file watcher
@@ -45,8 +45,8 @@ enum AgentRunner {
         print("╔══════════════════════════════════════╗")
         print("║   Utility Agent Mode                ║")
         print("╠══════════════════════════════════════╣")
-        print("║  📁 项目: \(projectPath.padding(toLength: 28, withPad: " ", startingAt: 0))║")
-        print("║  🗄️  依赖图: \(FileManager.default.fileExists(atPath: dbPath) ? "✓" : "✗")                   ║")
+        print("║  📁 Project: \(projectPath.padding(toLength: 28, withPad: " ", startingAt: 0))║")
+        print("║  🗄️  Deps: \(FileManager.default.fileExists(atPath: dbPath) ? "✓" : "✗")                   ║")
         print("║  🤖 Agent: \(agentCommand.prefix(30))║")
         print("╚══════════════════════════════════════╝")
         print()
@@ -56,7 +56,7 @@ enum AgentRunner {
         let exitCode = spawnAgent(command: agentCommand, projectPath: projectPath, dbPath: dbPath)
 
         print()
-        print("✅ Agent 已退出 (exit code: \(exitCode))")
+        print("✅ Agent exited (exit code: \(exitCode))")
         Darwin.exit(exitCode)
     }
 
@@ -73,11 +73,11 @@ enum AgentRunner {
         return dbPath
     }
 
-    // MARK: - 防重与信号处理
+    // MARK: - Duplicate prevention and signal handling
 
-    /// 清理 T 状态（stopped）的残留进程。允许多实例运行。
+    /// Clean up leftover processes in T state (stopped). Multiple instances are allowed to run.
     private static func cleanupStaleAgents() throws {
-        // 动态获取当前进程路径，构造匹配模式
+        // Dynamically get the current process path and build the match pattern
         let currentPath = ProcessInfo.processInfo.arguments.first ?? "utility"
         let matchPattern = "\(currentPath) -a"
 
@@ -100,7 +100,7 @@ enum AgentRunner {
         for pid in pids {
             if processState(pid: pid)?.contains("T") == true {
                 kill(Int32(pid) ?? 0, SIGKILL)
-                print("🧹 清理 AgentRunner 残留 (PID: \(pid))")
+                print("🧹 Cleaned up AgentRunner leftovers (PID: \(pid))")
             }
         }
     }
@@ -123,7 +123,7 @@ enum AgentRunner {
         }
     }
 
-    /// 终端会话关闭（SIGHUP）/ 终止（SIGTERM）时清理子进程并退出，防孤儿残留。
+    /// On terminal session close (SIGHUP) / termination (SIGTERM) clean up the child process and exit, preventing orphan leftovers.
     private static func installSignalHandlers() {
         signal(SIGHUP) { _ in
             AgentRunner.terminateChildAndExit(SIGHUP)
@@ -136,7 +136,7 @@ enum AgentRunner {
     private static func terminateChildAndExit(_ sig: Int32) {
         if childPID > 0 {
             kill(childPID, SIGTERM)
-            usleep(200_000) // 给子进程退出时间，兜底强杀
+            usleep(200_000) // give the child time to exit, force-kill as a backstop
             kill(childPID, SIGKILL)
         }
         Darwin.exit(128 + sig)
@@ -192,7 +192,7 @@ enum AgentRunner {
             // Restore ourselves as the terminal foreground process group
             tcsetpgrp(STDIN_FILENO, getpgrp())
         } catch {
-            print("❌ 启动 Agent 失败: \(error.localizedDescription)")
+            print("❌ Failed to start Agent: \(error.localizedDescription)")
             return 1
         }
 

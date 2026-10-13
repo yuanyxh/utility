@@ -1,7 +1,7 @@
 import Cocoa
 import Vision
 
-/// OCR 区域截图服务
+/// OCR region screenshot service
 public enum OCRService {
     fileprivate static var activeSelector: ScreenSelector?
 
@@ -163,7 +163,7 @@ private final class ScreenSelector: NSObject {
         OCRService.activeSelector = nil
     }
 
-    /// 清理 eventTap + 释放 retained self
+    /// Clean up eventTap + release the retained self
     private func releaseTap() {
         guard let tap = eventTap else { return }
         CFMachPortInvalidate(tap)

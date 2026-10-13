@@ -4,16 +4,19 @@ import Foundation
 final class MCPClient {
     static let shared = MCPClient()
 
-    /// 本地 loopback 查询超时（秒）。本机服务，正常响应在毫秒级。
+    /// Local loopback query timeout (seconds). The service runs on the same
+    /// machine, so normal responses arrive in milliseconds.
     private static let requestTimeout: TimeInterval = 5
 
     private let session = URLSessionManager.shared.directSession
     private let decoder = JSONDecoder()
 
-    /// 服务地址。**每次读取都向 MCPProcessManager 要**，不在 init 时固化：
-    /// 原先此处独立推导端口（`配置值 > 0 ? 配置值 : 9001`），与 MCPProcessManager
-    /// 的自动探测构成两处推导——配置为 0（默认值）且 9001 被占用时，服务实际监听
-    /// 9002，而这里仍请求 9001，所有项目检索请求都会失败。
+    /// Service address. **Read from MCPProcessManager on every access**, never
+    /// frozen at init time: this used to derive the port independently
+    /// (`configured > 0 ? configured : 9001`), forming a second derivation
+    /// alongside MCPProcessManager's auto probe — when the configured value is 0
+    /// (the default) and 9001 is occupied, the service actually listens on 9002
+    /// while this still requested 9001, so every project search request failed.
     private var baseURL: String {
         HTTP.localBaseURL(port: MCPProcessManager.shared.currentPort)
     }

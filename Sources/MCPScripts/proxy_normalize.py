@@ -1,8 +1,9 @@
-"""token_proxy 的协议文本提取工具。
+"""Protocol text extraction utilities for token_proxy.
 
-把 Anthropic / OpenAI 两种协议下的 `system` 字段与消息 `content` 读成纯文本。
-规则注入（proxy_protocol.py）与工具输出提取（proxy_usage.py）都复用本模块，
-避免「怎么读这两处字段」在两个调用点各推导一遍。
+Reads the `system` field and message `content` as plain text under both the
+Anthropic and OpenAI protocols. Rule injection (proxy_protocol.py) and tool
+output extraction (proxy_usage.py) both reuse this module, avoiding deriving
+"how to read these two fields" at each of the two call sites.
 """
 
 from __future__ import annotations
@@ -12,10 +13,11 @@ API_OPENAI = "openai"
 
 
 def system_to_text(system) -> str:
-    """Anthropic system（string 或 text block 数组）→ 纯文本。
+    """Anthropic system (string or array of text blocks) → plain text.
 
-    本函数是「如何读 system 字段」的**单一权威实现**——`proxy_protocol.py`
-    的规则注入必须复用它，避免同一事实两处推导。
+    This function is the **single authoritative implementation** of "how to read
+    the system field" — the rule injection in `proxy_protocol.py` must reuse it,
+    avoiding deriving the same fact twice.
     """
     if isinstance(system, str):
         return system
@@ -29,7 +31,7 @@ def system_to_text(system) -> str:
 
 
 def _result_text(content) -> str:
-    """tool_result / tool 消息的内容 → 纯文本（str 或 block 数组）。"""
+    """tool_result / tool message content → plain text (str or array of blocks)."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

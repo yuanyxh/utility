@@ -1,6 +1,6 @@
 import Foundation
 
-/// RSS/Atom XML 解析器
+/// RSS/Atom XML parser
 public final class RSSParser: NSObject, XMLParserDelegate {
     private var items: [RSSItem] = []
     private var feedName = ""
@@ -39,7 +39,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
             currentGUID = ""
         }
 
-        // Atom: <link href="..." /> 从属性中取
+        // Atom: <link href="..." />, take it from the attributes
         if isItem, elementName == "link", let href = attributeDict["href"],
            !href.isEmpty, currentLink.isEmpty
         {
@@ -52,11 +52,11 @@ public final class RSSParser: NSObject, XMLParserDelegate {
         switch currentElement {
         case "title": currentTitle += string
         case "link":
-            // Atom 可能把 link 放属性里
+            // Atom may put link in an attribute
             currentLink += string
         case "description", "summary", "content": currentDesc += string
         case "pubDate", "published", "updated":
-            // 多个日期元素时只取第一个（Atom 有 published + updated）
+            // Take only the first when there are multiple date elements (Atom has published + updated)
             if currentPubDate.isEmpty { currentPubDate = string }
         case "guid", "id": currentGUID += string
         default: break

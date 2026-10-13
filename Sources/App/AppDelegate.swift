@@ -26,20 +26,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         NotificationManager.shared.requestAuthorization()
 
-        // 强制初始化 PanelManager（注册 EventBus 订阅）
+        // Force-initialize PanelManager (registers EventBus subscriptions)
         _ = PanelManager.shared
         KeyDispatcher.shared.start()
         TaskScheduler.shared.start()
 
-        // 订阅配置重载，重新评估 MCP 服务 + 总结任务
+        // Subscribe to config reload to re-evaluate the MCP service + summary task
         EventBus.shared.subscribe(AppEvent.configDidLoad) { [weak self] _ in
             self?.onConfigReloaded()
         }
 
-        // 启动 MCP 服务
+        // Start the MCP service
         startMCPService()
 
-        // 启动 Token 代理监控
+        // Start the Token proxy monitor
         startTokenProxy()
 
         registerAllHotkeys()
@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         updateMCPSummaryTask()
     }
 
-    /// 启动 Token 代理监控
+    /// Start the Token proxy monitor
     private func startTokenProxy() {
         guard ConfigManager.shared.config.modelProxy?.enabled ?? false else {
             debugLog("[TokenProxy] Disabled by config")
@@ -75,25 +75,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         TokenProxyManager.shared.start()
     }
 
-    /// 配置重载：重新评估 MCP 服务 + 总结任务 + Token 代理
-    /// 无论 enabled/disabled、配置是否变更，都根据当前配置重新建立状态。
+    /// Config reload: re-evaluate the MCP service + summary task + Token proxy
+    /// Regardless of enabled/disabled or whether the config changed, re-establish state from the current config.
     private func onConfigReloaded() {
         let mcpConfig = ConfigManager.shared.config.mcp
 
         if mcpConfig?.enabled == false {
-            // enabled→disabled：停服务 + 清总结任务
+            // enabled→disabled: stop the service + clear the summary task
             debugLog("[MCP] Disabled by config reload, stopping...")
             MCPProcessManager.shared.stop()
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
         } else {
-            // enabled 且配置可能已变：强制重启，所有新配置（port/qdrantPath/apiKey 等）
-            // 在 PythonScriptRunner.baseEnvironment() + serverEnvironment 中实时读取
+            // enabled and the config may have changed: force restart; all new config (port/qdrantPath/apiKey, etc.)
+            // is read in real time in PythonScriptRunner.baseEnvironment() + serverEnvironment
             debugLog("[MCP] Restarting with new config...")
             MCPProcessManager.shared.forceRestart()
             updateMCPSummaryTask()
         }
 
-        // Token 代理：根据配置重启或停止
+        // Token proxy: restart or stop depending on config
         let proxyEnabled = ConfigManager.shared.config.modelProxy?.enabled ?? false
         if proxyEnabled {
             debugLog("[TokenProxy] Restarting with new config...")
@@ -103,10 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
     }
 
-    /// 注册/注销内置记忆总结任务。幂等：disabled 时注销；enabled 时直接注册。
-    /// 注意：enabled 时不要先 unregister——unregister 会清掉 last_fire，register 后
-    /// handleMissed 会把「今天 17:00 已触发过」误判为未触发，导致每天 17:00 后每次
-    /// 重启/reload 配置都重复触发一次总结。
+    /// Register/unregister the built-in memory summary task. Idempotent: unregister when disabled; register directly when enabled.
+    /// Note: when enabled, do not unregister first — unregister clears last_fire, and after register,
+    /// handleMissed would misjudge "already fired at today 17:00" as not fired, causing an extra summary run
+    /// after every restart/reload past 17:00 each day.
     private func updateMCPSummaryTask() {
         guard let mcp = ConfigManager.shared.config.mcp,
               mcp.summaryEnabled,
@@ -124,9 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let excludeTagsStr = mcp.excludeTags.joined(separator: ",")
         let cmd = PythonScriptRunner.shellCommand(
             script: scriptPath,
-            // 取值与 MCP 服务进程**同源**（`PythonScriptRunner.taskEnvironmentOverrides`）。
-            // 这里曾自己写一份白名单，于是新增的 `AI_LLM_TIMEOUT` / `UTILITY_LANG` 只加进了
-            // 服务进程那一侧，定时总结因此恒用 120s 超时、英文界面下仍走中文提示词。
+            // Values come from the **same source** as the MCP service process (`PythonScriptRunner.taskEnvironmentOverrides`).
+            // This used to keep its own whitelist, so newly added `AI_LLM_TIMEOUT` / `UTILITY_LANG` were only added on
+            // the service-process side, making the scheduled summary always use a 120s timeout and still use the Chinese prompt under an English UI.
             environmentOverrides: PythonScriptRunner.taskEnvironmentOverrides(
                 memoryServerURL: serverURL,
                 excludeTags: excludeTagsStr,

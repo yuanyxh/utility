@@ -1,9 +1,9 @@
 import Cocoa
 
-/// 窗口定位工具 — 纯函数，无视图依赖
+/// Window positioning utilities — pure functions, no view dependencies
 enum WindowPositioning {
-    /// 鼠标附近四象限智能定位（Clipboard 用）
-    /// 尝试顺序：右下 → 左下 → 右上 → 左上
+    /// Smart four-quadrant positioning near the mouse (used by Clipboard)
+    /// Attempt order: bottom-right → bottom-left → top-right → top-left
     static func nearMouseQuadrant(
         windowSize: NSSize,
         padding: CGFloat = 12,
@@ -32,7 +32,7 @@ enum WindowPositioning {
         return NSPoint(x: mouse.x + padding, y: mouse.y - windowSize.height - padding)
     }
 
-    /// 屏幕居中偏上（Chat 用）
+    /// Centered slightly above the screen center (used by Chat)
     static func screenCenter(
         windowSize: NSSize,
         offsetFraction: CGFloat = 0.2,
@@ -44,7 +44,7 @@ enum WindowPositioning {
         return NSPoint(x: x, y: y)
     }
 
-    /// 记忆位置 → 鼠标位置回退（Translation 用）
+    /// Remembered position → mouse position fallback (used by Translation)
     static func savedOrNearMouse(
         windowSize: NSSize,
         key: String,
@@ -59,7 +59,7 @@ enum WindowPositioning {
         return nearMouseQuadrant(windowSize: windowSize, padding: 12, screen: screen)
     }
 
-    /// 保存记忆位置
+    /// Save the remembered position
     static func savePosition(_ origin: NSPoint, forKey key: String) {
         UserDefaults.standard.set(NSStringFromPoint(origin), forKey: key)
     }

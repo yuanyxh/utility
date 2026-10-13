@@ -1,19 +1,19 @@
 import Cocoa
 
-/// 通用遮罩视图：半透明背景 + 居中内容（spinner / 错误消息）
+/// Generic overlay view: semi-transparent background + centered content (spinner / error message)
 ///
-/// 三种状态：
-/// - ``showLoading()`` — 转圈动画
-/// - ``showError(_:)`` — 红色错误消息
-/// - ``hide()`` — 隐藏遮罩
+/// Three states:
+/// - ``showLoading()`` — spinner animation
+/// - ``showError(_:)`` — red error message
+/// - ``hide()`` — hide the overlay
 ///
-/// 用法示例：
+/// Usage example:
 /// ```swift
 /// let overlay = OverlayView()
 /// contentView.addSubview(overlay)
-/// // 约束撑满目标区域
+/// // Constrain to fill the target area
 /// overlay.showLoading()
-/// overlay.showError("请求失败")
+/// overlay.showError("Request failed")
 /// overlay.hide()
 /// ```
 public final class OverlayView: NSView {

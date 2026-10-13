@@ -18,7 +18,7 @@ struct JavaExtractor: SymbolExtractor {
         var symbols: [SymbolRecord] = []
         var braceDepth = 0
         var lastAnnotation: String?
-        // 待定 end 的带体符号栈:bodyDepth=nil 表示体在后续行打开
+        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line
         var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
         for (lineIdx, rawLine) in lines.enumerated() {
@@ -266,7 +266,7 @@ struct JavaExtractor: SymbolExtractor {
                     inBlockComment = false
                     i = text.index(after: next)
                 } else {
-                    // 保留换行,保证 cleaned 行数与原始一致(行号对齐)
+                    // Preserve newlines so cleaned keeps the same line count as the original (line-number alignment)
                     if c == "\n" || c == "\r" { result.append(c) }
                     i = next
                 }

@@ -1,7 +1,7 @@
 import Cocoa
 import UniformTypeIdentifiers
 
-/// 剪切板快速粘贴面板
+/// Clipboard quick-paste panel
 /// NSPanel + NSTableView
 public final class ClipboardPanelController: NSWindowController {
     private let tableView = NSTableView()
@@ -46,7 +46,7 @@ public final class ClipboardPanelController: NSWindowController {
     private func setupUI() {
         guard let panel = window else { return }
 
-        // 表格
+        // Table
         let col = NSTableColumn(identifier: .init("content"))
         col.title = ""
         col.minWidth = 100
@@ -71,17 +71,17 @@ public final class ClipboardPanelController: NSWindowController {
         scrollView.autohidesScrollers = true
         scrollView.verticalScroller?.controlSize = .mini
 
-        // 布局：顶部留 44px 给原生按钮
+        // Layout: leave 44px at the top for the native buttons
         let stack = NSStackView(views: [scrollView])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.edgeInsets = NSEdgeInsets(top: 44, left: 8, bottom: 2, right: 8)
         panel.contentView = stack
 
-        // 键盘事件 — 统一由 KeyDispatcher → handleKeyEvent 派发
+        // Keyboard events — dispatched uniformly via KeyDispatcher → handleKeyEvent
     }
 
-    /// 面板是否可见
+    /// Whether the panel is visible
     var isPanelVisible: Bool {
         window?.isVisible ?? false
     }
@@ -146,7 +146,7 @@ public final class ClipboardPanelController: NSWindowController {
         items = (try? clipboardStorage.all()) ?? []
         tableView.reloadData()
 
-        // 智能定位：根据鼠标位置选择最佳角落
+        // Smart positioning: choose the best corner based on the mouse position
         let panelSize = window?.frame.size ?? NSSize(width: 360, height: 380)
         let origin = WindowPositioning.nearMouseQuadrant(
             windowSize: panelSize,
@@ -155,7 +155,7 @@ public final class ClipboardPanelController: NSWindowController {
         )
         window?.setFrameOrigin(origin)
 
-        // 清理过期的粘贴缓存文件（>1天）
+        // Clean up expired paste cache files (>1 day)
         let cacheDir = AppPaths.clipCacheDir
         if let files = try? FileManager.default.contentsOfDirectory(
             at: cacheDir, includingPropertiesForKeys: [.creationDateKey],
@@ -236,12 +236,12 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func updateCell(_ cell: NSTableCellView, item: ClipboardItem, row: Int, isSelected: Bool) {
-        // 圆圈
+        // Circle
         if let circle = cell.subviews.first(where: { $0 is NumberCircleView }) as? NumberCircleView {
             circle.number = row + 1
             circle.isHighlighted = isSelected
         }
-        // 图标
+        // Icon
         if let icon = cell.subviews.first(where: { $0 is NSImageView }) as? NSImageView {
             switch item.type {
             case "file": icon.image = Self.fileIcon(for: item.content)
@@ -250,7 +250,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             default: break
             }
         }
-        // 文本
+        // Text
         cell.textField?.stringValue = displayText(for: item)
     }
 
@@ -296,7 +296,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    /// 缓存颜色，避免每帧创建 NSColor
+    /// Cache colors to avoid creating NSColor every frame
     private static let selBG = NSColor(
         red: 0xCB / 255, green: 0xCC / 255, blue: 0xCC / 255, alpha: 0.36,
     ).cgColor
@@ -328,7 +328,7 @@ private final class ClipboardCell: NSTableCellView {
 // MARK: - Image helpers
 
 private extension ClipboardPanelController {
-    /// 从 JSON 编码的文件路径获取文件图标
+    /// Get the file icon from a JSON-encoded file path
     static func fileIcon(for content: Data) -> NSImage? {
         guard let dict = try? JSONDecoder().decode([String: String].self, from: content),
               let path = dict["path"]

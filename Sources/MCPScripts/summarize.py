@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-记忆总结流水线 — 由 Utility TaskScheduler 触发（非 server.py 调度）
+Memory-summary pipeline — triggered by the Utility TaskScheduler (not scheduled by server.py)
 
-用法：
-  python3 summarize.py                    # 完整流程：AI 总结
+Usage:
+  python3 summarize.py                    # Full flow: AI summary
 
-重构（2026-08-30，阶段3）：LLM/错误日志 → summary_llm.py；阶段3 规范提炼 →
-summary_rules.py；终端报告打印 → summary_stats.py；本入口保留核心流水线
-（记忆获取/聚合/精炼/写入/单实例节流）与 main()。
+Refactor (2026-08-30, phase 3): LLM/error logging -> summary_llm.py; phase 3 rules
+extraction -> summary_rules.py; terminal report printing -> summary_stats.py; this
+entry point keeps the core pipeline (memory fetch / aggregate / refine / write /
+single-instance throttle) and main().
 """
 
 import difflib
@@ -47,7 +48,7 @@ logger = _log_setup("summarize")
 
 NOTES_DIR = Path(notes_dir())
 
-# 空字符串 = 由 Swift 层通过环境变量注入，未注入时禁用相关功能
+# Empty string = injected by the Swift layer via an environment variable; when not injected, related features are disabled
 MEMORY_SERVER_URL = os.environ.get("MEMORY_SERVER_URL", "")
 
 SUMMARY_EXCLUDE_DIRS = {
@@ -75,8 +76,10 @@ AGGREGATE_BATCH_SIZE = 60
 
 AGGREGATE_LLM_TEMPERATURE = 0.2
 
-#: 批量聚合的 LLM 超时。同一来源（config `ai.llmTimeout`）——聚合输出更长（max_tokens
-#: 放宽到 16384），但撞的是同一条上游超时，故与单次摘要共用同一值，不再各写一份。
+#: LLM timeout for batch aggregation. Same source (config `ai.llmTimeout`) -- the
+#: aggregate output is longer (max_tokens relaxed to 16384), but it hits the same
+#: upstream timeout, so it shares the value with single summary instead of each
+#: writing its own.
 AGGREGATE_LLM_TIMEOUT = SUMMARY_LLM_TIMEOUT
 
 AGGREGATE_MAX_ROUNDS = 3
@@ -134,7 +137,7 @@ QUALITY_TRUNC_PLACEHOLDERS = (
     "截断，仅保留已有信息",
     "仅保留已有信息",
     "仅保留此信息",
-    # ── v5 增补：notes 源 5 种未覆盖真实形态 ──
+    # ── v5 additions: 5 real forms from the notes source not previously covered ──
     "（内容截断）保留已有信息",
     "内容截断（保留已有信息）",
     "导致响应内容截断（保留已有信息）",
@@ -198,7 +201,7 @@ COLD_SYNC_DB = UTILITY_DATA_DIR / "cold_sync.sqlite"
 
 
 def _acquire_single_instance() -> bool:
-    """获取单实例文件锁。已有实例在运行时返回 False（由调用方退出）。"""
+    """Acquire the single-instance file lock. Returns False when an instance is already running (the caller exits)."""
     try:
         UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o644)
@@ -213,10 +216,11 @@ def _acquire_single_instance() -> bool:
 
 
 def _throttle_ai_run() -> bool:
-    """距上次完整总结不足 MIN_RUN_INTERVAL 时返回 False（防重复触发）。
+    """Returns False when less than MIN_RUN_INTERVAL has elapsed since the last full summary (prevents duplicate triggering).
 
-    只读判断，不更新 last_run——只有总结成功完成后才由 _mark_run_success()
-    记录时间，避免「运行开始即写」导致失败后 6h 窗口内无法重试。
+    Read-only check; does not update last_run -- only _mark_run_success() records the
+    time after a summary completes successfully, avoiding "write at run start" making a
+    retry impossible within the 6h window after a failure.
     """
     try:
         UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -226,7 +230,7 @@ def _throttle_ai_run() -> bool:
         )
         if now - last < MIN_RUN_INTERVAL:
             logger.info(
-                f"距上次总结不足 {MIN_RUN_INTERVAL // 3600} 小时，跳过（防重复触发）"
+                f"Less than {MIN_RUN_INTERVAL // 3600} hours since the last summary, skipping (duplicate-trigger guard)"
             )
             return False
         return True
@@ -235,7 +239,7 @@ def _throttle_ai_run() -> bool:
 
 
 def _mark_run_success() -> None:
-    """总结成功完成后记录 last_run，开启新一轮防重复冷却。"""
+    """Record last_run after a summary completes successfully, starting a new duplicate-prevention cooldown."""
     try:
         UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
         LAST_RUN_FILE.write_text(str(time.time()))
@@ -244,7 +248,7 @@ def _mark_run_success() -> None:
 
 
 def _cold_already_synced(content: str, source_file: str) -> bool:
-    """按 source_file+content 哈希去重：已同步过的内容跳过，避免冷层重复写入。"""
+    """Dedup by source_file+content hash: skip content already synced, to avoid duplicate writes to the cold layer."""
     h = hashlib.sha256(f"{source_file}|{content}".encode("utf-8")).hexdigest()
     try:
         UTILITY_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -325,7 +329,7 @@ def _normalize_slug(s: str) -> str:
     """Normalize a title/slug for fuzzy dedup matching."""
     # Remove parenthetical content: （...）(...)
     s = re.sub(r"[（(][^）)]*[）)]", "", s)
-    # 剥离 .md 后缀，防止生成 .md.md 双后缀文件名
+    # Strip the .md suffix to avoid producing a .md.md double-suffix filename
     s = re.sub(r"\.md$", "", s, flags=re.IGNORECASE)
     # Normalize spaces, colons, slashes to underscores
     s = re.sub(r"[\s:/]+", "_", s)
@@ -357,8 +361,9 @@ def resolve_target_file(target_dir: Path, title: str) -> tuple[Path, bool]:
             return existing_path, True
 
     # Priority 2: substring match, limited to the same directory.
-    # 跨目录命中会追加到旧文件造成内容错位，故不跨目录匹配；过短的 slug
-    # 模糊匹配命中率低且易误配（如 "devflow" 会匹配一切），仅 >=4 字符时启用。
+    # A cross-directory hit would append to an old file and misplace content, so we do
+    # not match across directories; overly short slugs have a low fuzzy-match hit rate
+    # and misfire easily (e.g. "devflow" would match everything), so only enable for >=4 chars.
     if len(slug) >= 4:
         for existing_path, existing_slug in all_extract_files:
             if existing_path.parent == target_dir and (
@@ -380,7 +385,7 @@ def git_commit(message: str, stage: str = ""):
         )
         if r_add.returncode != 0:
             err = (r_add.stderr or "").strip()
-            write_error_log(f"git add 失败{label}: {err[:300]}", code="GIT_ADD")
+            write_error_log(f"git add failed{label}: {err[:300]}", code="GIT_ADD")
             return False
         r_cmt = subprocess.run(
             ["git", "-C", str(NOTES_DIR), "commit", "-m", message],
@@ -393,18 +398,18 @@ def git_commit(message: str, stage: str = ""):
             logger.info(f"[git]{label} {out[:200]}")
             return True
         elif r_cmt.returncode == 1 and "nothing to commit" in (r_cmt.stdout or ""):
-            logger.info(f"[git]{label} 无变更，跳过提交")
+            logger.info(f"[git]{label} no changes, skipping commit")
             return True
         else:
-            write_error_log(f"git commit 失败{label}: {out[:300]}", code="GIT_COMMIT")
-            logger.warning(f"[git]{label} commit 失败: {out[:200]}")
+            write_error_log(f"git commit failed{label}: {out[:300]}", code="GIT_COMMIT")
+            logger.warning(f"[git]{label} commit failed: {out[:200]}")
             return False
     except subprocess.TimeoutExpired:
-        write_error_log(f"git 操作超时{label}", code="GIT_TIMEOUT")
+        write_error_log(f"git operation timed out{label}", code="GIT_TIMEOUT")
         return False
     except Exception as e:
-        write_error_log(f"git 异常{label}: {e}", code="GIT_ERROR")
-        logger.warning(f"[git]{label} commit 失败: {e}")
+        write_error_log(f"git exception{label}: {e}", code="GIT_ERROR")
+        logger.warning(f"[git]{label} commit failed: {e}")
         return False
 
 
@@ -422,15 +427,15 @@ def fetch_memories(today: date) -> list | None:
         resp.raise_for_status()
         return resp.json().get("results", [])
     except Exception as e:
-        write_error_log(f"获取记忆失败: {e}", code="FETCH_MEMORY")
+        write_error_log(f"Failed to fetch memories: {e}", code="FETCH_MEMORY")
         return None
 
 
 def _filter_processed(memories: list[dict]) -> list[dict]:
-    """跳过已被成功处理的记忆（metadata.processed bit0=1），避免重复处理。"""
+    """Skip memories already processed successfully (metadata.processed bit0=1), to avoid reprocessing."""
     kept = []
     for m in memories:
-        # metadata 可能显式为 null(键在、值为 None),`.get("metadata", {})` 会返回 None 致 AttributeError
+        # metadata may be explicitly null (key present, value None); `.get("metadata", {})` would return None and raise AttributeError
         flags = int((m.get("metadata") or {}).get(PROCESSED_FIELD, 0) or 0)
         if flags & PROCESSED_BIT_SUMMARIZED:
             continue
@@ -439,10 +444,10 @@ def _filter_processed(memories: list[dict]) -> list[dict]:
 
 
 def _filter_by_tags(memories: list[dict]) -> list[dict]:
-    """跳过含排除 tag 的记忆（工作流/格式类，非技术知识）。
+    """Skip memories containing excluded tags (workflow/format entries, not technical knowledge).
 
-    排除 tag 列表从环境变量 SUMMARY_EXCLUDE_TAGS 读取（逗号分隔），
-    或从 config.yaml 的 mcp.excludeTags 配置读取。
+    The excluded-tag list is read from the SUMMARY_EXCLUDE_TAGS environment variable
+    (comma-separated), or from the mcp.excludeTags config in config.yaml.
     """
     exclude = summary_exclude_tags()
     if not exclude:
@@ -454,7 +459,7 @@ def _filter_by_tags(memories: list[dict]) -> list[dict]:
         if tags & exclude:
             skipped += 1
             logger.debug(
-                "tag 过滤跳过: tags=%s | %s",
+                "tag filter skip: tags=%s | %s",
                 tags & exclude,
                 str(m.get("memory", ""))[:50],
             )
@@ -462,13 +467,13 @@ def _filter_by_tags(memories: list[dict]) -> list[dict]:
             kept.append(m)
     if skipped:
         logger.info(
-            f"tag 过滤跳过 {skipped} 条（排除 tag: {exclude}），剩余 {len(kept)} 条"
+            f"tag filter skipped {skipped} entries (excluded tags: {exclude}), {len(kept)} remaining"
         )
     return kept
 
 
 def _quality_strip_quoted(text: str) -> str:
-    """移除成对引号内的内容，返回「引号外」文本。用于豁免元讨论中的占位符引用。"""
+    """Remove content inside paired quotes and return the text "outside quotes". Used to exempt placeholder references in meta-discussion."""
     out = text
     for left, right in _QUALITY_QUOTE_PAIRS:
         out = re.sub(
@@ -484,7 +489,7 @@ def _quality_strip_quoted(text: str) -> str:
 
 
 def _quality_residual_chars(text: str) -> int:
-    """去掉占位串与标点/数字/英文后，剩余的中文实义字符数。"""
+    """Count of remaining meaningful CJK characters after removing placeholder strings and punctuation/digits/English."""
     t = text
     for p in QUALITY_PLACEHOLDER_SUBS:
         t = t.replace(p, "")
@@ -493,7 +498,7 @@ def _quality_residual_chars(text: str) -> int:
 
 
 def _quality_is_cn_short_snapshot(t: str) -> bool:
-    """中文短句 + 状态动词 → 可能状态快照。送 LLM 复核（不硬 drop），零误伤。"""
+    """Short CJK sentence + state verb -> possibly a state snapshot. Sent to the LLM for review (no hard drop), zero false positives."""
     c = "".join(t.split())
     if len(c) >= MEMORY_QUALITY_CN_SHORT_MAX:
         return False
@@ -503,56 +508,75 @@ def _quality_is_cn_short_snapshot(t: str) -> bool:
 
 
 def _quality_rule_judge(text: str) -> tuple[str, str]:
-    """方案 E v5 规则层（确定性零 LLM）：返回 (drop/keep/review, 理由)。
+    """Scheme E v5 rule layer (deterministic, zero LLM): returns (drop/keep/review, reason).
 
-    核心：把「截断占位符」本身当作硬缺陷信号，而非残余信息量弱代理——
-    截断记忆天然保留完整前缀→残余充足→旧方案漏拦；这里出现占位串即 drop。
+    Core idea: treat the "truncation placeholder" itself as a hard-defect signal, rather
+    than using residual information as a weak proxy -- a truncated memory naturally keeps
+    a complete prefix -> residual is sufficient -> the old scheme missed it; here, the
+    presence of a placeholder string means drop.
     """
     t = text.strip()
     compact = "".join(t.split())
     if len(compact) < MEMORY_QUALITY_MIN_LEN:
-        return "drop", f"过短({len(compact)}<{MEMORY_QUALITY_MIN_LEN})"
+        return "drop", f"too short ({len(compact)}<{MEMORY_QUALITY_MIN_LEN})"
     if _QUALITY_EMPTY_TITLE.match(t):
-        return "drop", "空值标题（标题后无内容）"
-    # 半词截断：中英文残词结尾且整体短
+        return "drop", "empty-value title (no content after the title)"
+    # Half-word truncation: ends with a residual EN/CN word fragment and is short overall
     if (_QUALITY_HALF_TRUNC.search(t) or _QUALITY_HALF_CN.search(t)) and len(
         compact
     ) < MEMORY_QUALITY_HALF_MAX:
-        return "drop", "半词截断"
-    # 核心：无引号截断占位串 → drop。先 strip_quoted 再 compact 归一化，
-    # 换行/空格不再断裂占位串（Workflow 实测「内容截断，保留已有\n信息」漏匹配形态）。
+        return "drop", "half-word truncation"
+    # Core: unquoted truncation placeholder string -> drop. strip_quoted first, then
+    # compact-normalize, so newlines/spaces no longer split the placeholder string
+    # (Workflow measured the missed-match form 「内容截断，保留已有\n信息」).
     outside = _quality_strip_quoted(t)
     outside_compact = "".join(outside.split())
     for p in QUALITY_TRUNC_PLACEHOLDERS:
         if "".join(p.split()) in outside_compact:
-            return "drop", f"无引号截断占位串({p})"
+            return "drop", f"unquoted truncation placeholder string ({p})"
     if _QUALITY_TRUNC_RE.search(outside_compact):
-        return "drop", "无引号截断占位串(正则兜底)"
-    # 带引号截断占位 → 边界（同样 compact 匹配，疑似元讨论）
+        return "drop", "unquoted truncation placeholder string (regex fallback)"
+    # Quoted truncation placeholder -> borderline (same compact match, likely meta-discussion)
     compact_all = "".join(t.split())
     if any(
         "".join(p.split()) in compact_all for p in QUALITY_TRUNC_PLACEHOLDERS
     ) or _QUALITY_TRUNC_RE.search(compact_all):
-        return "review", "带引号截断占位串（疑似元讨论，交 LLM 复核）"
-    # 其他占位词 → 残余信息量判定
+        return (
+            "review",
+            "quoted truncation placeholder string (likely meta-discussion, sent to LLM for review)",
+        )
+    # Other placeholder words -> residual-information judgment
     if any(p in t for p in QUALITY_NONTRUNC_PLACEHOLDERS):
         rc = _quality_residual_chars(t)
         if rc < MEMORY_QUALITY_RESIDUAL_MIN:
-            return "drop", f"占位词残余信息不足({rc}<{MEMORY_QUALITY_RESIDUAL_MIN})"
-        return "keep", f"占位词但残余信息充足({rc}字)"
-    # 边界样本：User 开头英文快照 / 中文短状态快照
+            return (
+                "drop",
+                f"placeholder word with insufficient residual information ({rc}<{MEMORY_QUALITY_RESIDUAL_MIN})",
+            )
+        return (
+            "keep",
+            f"placeholder word but sufficient residual information ({rc} chars)",
+        )
+    # Borderline samples: English snapshot starting with User / short CJK state snapshot
     if t and len(t) < 200 and _QUALITY_USER_SNAPSHOT.match(t):
-        return "review", "User 开头英文快照（可能状态快照，交 LLM 复核）"
+        return (
+            "review",
+            "English snapshot starting with User (possibly a state snapshot, sent to LLM for review)",
+        )
     if _quality_is_cn_short_snapshot(t):
-        return "review", "中文短句含状态动词（可能状态快照，交 LLM 复核）"
-    return "keep", "常规通过"
+        return (
+            "review",
+            "short CJK sentence containing a state verb (possibly a state snapshot, sent to LLM for review)",
+        )
+    return "keep", "passed as normal"
 
 
 def _quality_llm_judge_once(text: str) -> str:
-    """单次 LLM 质量判定，返回 keep/drop/ERR（解析失败或异常，fail-open）。"""
+    """Single LLM quality judgment, returns keep/drop/ERR (parse failure or exception, fail-open)."""
     raw = _llm_chat(
-        # user 前缀同样是提示词：原先硬编码为 `f"记忆内容：\n{text}"`，英文环境下会
-        # 中文前缀配英文 system。system 与 user 各占一份模板文件（见 prompt_loader）。
+        # The user prefix is a prompt too: it was hardcoded as `f"记忆内容：\n{text}"`,
+        # which under English would pair a Chinese prefix with an English system. The
+        # system and user each have their own template file (see prompt_loader).
         prompt_loader.prompt("quality_judge_user", text=text),
         temperature=0,
         max_tokens=200,
@@ -566,10 +590,12 @@ def _quality_llm_judge_once(text: str) -> str:
 
 
 def _quality_llm_review(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
-    """LLM 3 票复核边界样本：3 次全 drop 才 drop，其余 keep（fail-open）。
+    """LLM 3-vote review of borderline samples: drop only when all 3 votes are drop, otherwise keep (fail-open).
 
-    教训：fail-closed drop 在并发限流时会永久误伤高价值记忆（实测 3 次全 ERR）；
-    LLM 对边界记忆判定是概率性的，最保守策略防误伤，聚合层 retain=false 兜底。
+    Lesson: fail-closed drop permanently harms high-value memories under concurrent
+    rate limiting (measured 3/3 ERR); LLM judgment on borderline memories is
+    probabilistic, so the most conservative policy avoids false positives, with the
+    aggregate layer's retain=false as a backstop.
     """
 
     def vote(m: dict) -> tuple[dict, bool]:
@@ -588,9 +614,9 @@ def _quality_llm_review(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def _filter_memory_quality(memories: list[dict]) -> list[dict]:
-    """记忆输入质量门（方案 E v5）：规则层确定性 drop + LLM 3 票复核边界。
+    """Memory input quality gate (Scheme E v5): deterministic drop at the rule layer + LLM 3-vote review of borderline cases.
 
-    被丢弃记忆不标记已处理——保留下次重新评估机会。
+    Dropped memories are not marked processed -- they keep a chance to be re-evaluated next time.
     """
     kept: list[dict] = []
     reviews: list[dict] = []
@@ -600,7 +626,7 @@ def _filter_memory_quality(memories: list[dict]) -> list[dict]:
         j, why = _quality_rule_judge(text)
         if j == "drop":
             rule_dropped += 1
-            logger.debug(f"质量门规则 drop: {why} | {text[:50]!r}")
+            logger.debug(f"quality-gate rule drop: {why} | {text[:50]!r}")
         elif j == "review":
             reviews.append(m)
         else:
@@ -608,16 +634,16 @@ def _filter_memory_quality(memories: list[dict]) -> list[dict]:
     if reviews:
         r_kept, r_dropped = _quality_llm_review(reviews)
         logger.info(
-            f"质量门 LLM 复核 {len(reviews)} 条边界：drop {len(r_dropped)}，keep {len(r_kept)}"
+            f"quality-gate LLM review of {len(reviews)} borderline items: drop {len(r_dropped)}, keep {len(r_kept)}"
         )
         kept += r_kept
     if rule_dropped:
-        logger.info(f"质量门规则层 drop {rule_dropped} 条")
+        logger.info(f"quality-gate rule layer dropped {rule_dropped} entries")
     return kept
 
 
 def _mark_processed(memory_ids: list[str], bit: int = 0) -> int:
-    """把记忆已处理位批量置 1（成功落盘后调用）。失败不阻断总结，返回成功数。"""
+    """Batch-set the processed bit to 1 for memories (called after a successful write). A failure does not block the summary; returns the success count."""
     if not memory_ids:
         return 0
     try:
@@ -627,24 +653,26 @@ def _mark_processed(memory_ids: list[str], bit: int = 0) -> int:
         )
         resp.raise_for_status()
         updated = resp.json().get("updated", 0)
-        logger.info(f"已标记 {updated}/{len(memory_ids)} 条记忆为已处理")
+        logger.info(f"Marked {updated}/{len(memory_ids)} memories as processed")
         return updated
     except Exception as e:
-        logger.warning(f"标记已处理失败: {e}")
+        logger.warning(f"Failed to mark as processed: {e}")
         return 0
 
 
 def _memory_date(m: dict) -> str:
-    """从记忆条目提取 MM-DD 日期；优先 created_at（服务端 recent 端点已用其过滤排序），
-    缺键/异常返回空串。"""
+    """Extract the MM-DD date from a memory entry; prefers created_at (the server's recent
+    endpoint already filters and sorts by it), returns an empty string on missing key/exception."""
     raw = m.get("created_at") or m.get("updated_at") or ""
     return raw[5:10] if len(raw) >= 10 else ""
 
 
 def _build_facts_text_v2(memories: list[dict]) -> str:
-    # 记忆项正文在 `memory` 键（REST API 返回），`content` 键不存在 → 读错会拿到空
-    # 英文双引号归一化为中文引号（成对交替左右）：LLM 复制原文时会把裸引号带进
-    # JSON 字符串值且不转义，导致下游 _parse_json_any 解析失败（2026-08-05 实测）
+    # A memory item's body is under the `memory` key (returned by the REST API); the
+    # `content` key does not exist -> reading the wrong one yields empty
+    # Straight double quotes are normalized to CJK quotes (alternating open/close as a
+    # pair): when the LLM copies source text it carries bare quotes into JSON string
+    # values without escaping, causing downstream _parse_json_any to fail (measured 2026-08-05)
     def _clean(text: str) -> str:
         out = []
         open_q = True
@@ -667,10 +695,11 @@ def _build_facts_text_v2(memories: list[dict]) -> str:
 def _aggregate_round(
     facts_text: str, label: str
 ) -> tuple[list[dict] | None, str | None]:
-    """单轮聚合：把记忆事实按主题分类/组内合并去重/retain 评估，返回 (groups, raw)。
+    """Single aggregate round: classify memory facts by topic / merge and dedupe within groups / assess retain, returns (groups, raw).
 
-    label 用于日志区分「分批」与「递归合并轮」。LLM 输出无效（重试 1 次后仍失败）
-    时返回 (None, raw)，由调用方决定中断（首轮）或保留当前结果继续（递归轮）。
+    label is used in logs to distinguish "batching" from "recursive merge round". When the
+    LLM output is invalid (still failing after 1 retry), returns (None, raw); the caller
+    decides whether to abort (first round) or keep the current result and continue (recursive round).
     """
     prompt = prompt_loader.prompt(
         "aggregate",
@@ -679,7 +708,9 @@ def _aggregate_round(
     )
     parsed = None
     raw = None
-    for attempt in range(2):  # 失败重试 1 次（LLM 偶发输出不完整/非 JSON）
+    for attempt in range(
+        2
+    ):  # retry once on failure (the LLM occasionally outputs incomplete/non-JSON)
         raw = _llm_chat(
             prompt,
             temperature=AGGREGATE_LLM_TEMPERATURE,
@@ -691,8 +722,8 @@ def _aggregate_round(
         if parsed:
             break
         logger.warning(
-            f"聚合{label} 第 {attempt + 1} 次尝试无效"
-            + ("，重试" if attempt == 0 else "，放弃")
+            f"aggregate{label} attempt {attempt + 1} invalid"
+            + (", retrying" if attempt == 0 else ", giving up")
         )
     if not parsed:
         return None, raw
@@ -700,7 +731,7 @@ def _aggregate_round(
 
 
 def _groups_to_facts(groups: list[dict]) -> str:
-    """把已聚合 groups 转回事实文本，供递归合并轮再次聚合。"""
+    """Convert aggregated groups back to fact text for the recursive merge round to aggregate again."""
     return "\n".join(
         f"- [{','.join(g.get('tags', []) or [])}] "
         f"{g.get('topic', '')}：{g.get('facts', '')}"
@@ -709,11 +740,13 @@ def _groups_to_facts(groups: list[dict]) -> str:
 
 
 def _filter_retain(groups: list[dict]) -> list[dict]:
-    """只保留有长期沉淀价值的组（retain=true）；缺失时按 false 处理（宁缺毋滥）。"""
+    """Keep only groups with long-term sedimentation value (retain=true); treat missing as false (better none than a bad one)."""
     retained = []
     for g in groups:
         if g.get("retain") not in (True, "true", "True"):
-            logger.info(f"聚合丢弃无沉淀价值组：{g.get('topic', '')!r}")
+            logger.info(
+                f"aggregate discarded group with no sedimentation value: {g.get('topic', '')!r}"
+            )
             continue
         if not str(g.get("facts", "")).strip():
             continue
@@ -722,12 +755,14 @@ def _filter_retain(groups: list[dict]) -> list[dict]:
 
 
 def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
-    """阶段1 v2：分批聚合 → 跨批合并 → retain 过滤 → 递归合并直至收敛。
+    """Phase 1 v2: batch aggregate -> cross-batch merge -> retain filter -> recursive merge until convergence.
 
-    返回 (groups, rounds)：groups 为 None 仅表示首轮致命失败（中断）；
-    rounds 为实际执行的递归轮数（不含首轮分批）。递归只合并不拆散、
-    组数单调不增，故 ≤ AGGREGATE_MAX_ROUNDS 必然收敛；递归轮失败保留
-    当前结果继续（非致命）。
+    Returns (groups, rounds): groups being None only means a fatal failure in the first
+    round (abort); rounds is the number of recursive rounds actually executed (not
+    counting the first batching). Recursion only merges and never splits, so the group
+    count is monotonically non-increasing and it must converge within
+    AGGREGATE_MAX_ROUNDS; a failed recursive round keeps the current result and
+    continues (non-fatal).
     """
     batches: list[list[dict]] = []
     if len(memories) > AGGREGATE_BATCH_THRESHOLD:
@@ -743,21 +778,21 @@ def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
         batch_groups, raw = _aggregate_round(facts_text, batch_label)
         if batch_groups is None:
             write_error_log(
-                f"聚合批 {bi + 1}/{len(batches)} LLM 输出无效（重试后仍失败）：\n{(raw or '')[:1000]}",
+                f"aggregate batch {bi + 1}/{len(batches)} LLM output invalid (still failing after retry):\n{(raw or '')[:1000]}",
                 code="AGGREGATE_JSON",
             )
             return None, 0
         groups.extend(batch_groups)
 
     if not groups:
-        print("聚合无有效主题，跳过总结")
+        print("aggregate produced no valid topics, skipping summary")
         return [], 0
 
-    # 分批聚合时跨批二次合并：topic 相同/相近的组收敛为一组
+    # When batch-aggregating, do a second cross-batch merge: groups with the same/similar topic converge into one
     if len(batches) > 1:
         groups = _merge_cross_batch_groups(groups)
 
-    # 递归合并：组数不再减少即收敛；最多 AGGREGATE_MAX_ROUNDS 轮
+    # Recursive merge: converges when the group count stops decreasing; at most AGGREGATE_MAX_ROUNDS rounds
     rounds = 0
     for rnd in range(1, AGGREGATE_MAX_ROUNDS + 1):
         prev_len = len(groups)
@@ -765,11 +800,15 @@ def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
             _groups_to_facts(groups), f"（第 {rnd} 轮递归合并）"
         )
         if round_groups is None:
-            logger.warning(f"递归合并第 {rnd} 轮失败，保留当前分组继续")
+            logger.warning(
+                f"recursive merge round {rnd} failed, keeping current grouping and continuing"
+            )
             break
         groups = round_groups
         rounds = rnd
-        logger.info(f"聚合收敛：第 {rnd} 轮 {prev_len} → {len(groups)} 组")
+        logger.info(
+            f"aggregate converged: round {rnd} {prev_len} -> {len(groups)} groups"
+        )
         if len(groups) >= prev_len:
             break
 
@@ -777,7 +816,7 @@ def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
 
 
 def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
-    """跨批二次合并：把 topic 相同/相近的组收敛为一组（分批聚合时调用）。"""
+    """Second cross-batch merge: converge groups with the same/similar topic into one (called when batch-aggregating)."""
     entries = "\n".join(
         f"- [{i}] {g.get('topic', '')}：{g.get('facts', '')[:150]}"
         for i, g in enumerate(groups)
@@ -794,11 +833,15 @@ def _merge_cross_batch_groups(groups: list[dict]) -> list[dict]:
         disable_thinking=True,
     )
     if not raw:
-        logger.warning("跨批二次合并 LLM 调用失败，保留原分组")
+        logger.warning(
+            "cross-batch second merge LLM call failed, keeping original grouping"
+        )
         return groups
     parsed = _parse_json_any(raw)
     if not parsed or not parsed.get("groups"):
-        logger.warning("跨批二次合并解析失败，保留原分组")
+        logger.warning(
+            "cross-batch second merge parse failed, keeping original grouping"
+        )
         return groups
     return parsed["groups"]
 
@@ -812,15 +855,18 @@ def _llm_json(
     disable_thinking: bool = False,
     feature: str | None = None,
 ) -> dict | None:
-    """think enable 输出 JSON；解析失败自动降级 disable_thinking 重试一次。
+    """think enabled, output JSON; on parse failure automatically downgrades to disable_thinking and retries once.
 
-    返回解析成功的 dict；两次都失败返回 None（fail-open，由调用方各自兜底）。
-    传了 `feature` 则补两处**外部信号**——原先这里的失败是彻底静默的（只返回 None，
-    调用方按「无结果」继续），坏 prompt 或模型不守格式都无从发现：
-      - 两次都解析失败 → `write_error_log(PROMPT_JSON_PARSE)`
-      - 解析成功但缺模板声明的 `json_keys` → `write_error_log(PROMPT_JSON_MISS)`，
-        **不改返回值**：缺键是「模型没按契约输出」，与解析失败是两回事，是否当失败
-        由调用方决定（这里只让它可见）。
+    Returns the successfully parsed dict; returns None if both attempts fail (fail-open,
+    each caller handles its own fallback). When `feature` is passed, it adds two
+    **external signals** -- previously a failure here was completely silent (only
+    returning None, with the caller continuing as "no result"), so a bad prompt or a
+    model that ignores the format was impossible to detect:
+      - both attempts fail to parse -> `write_error_log(PROMPT_JSON_PARSE)`
+      - parses but is missing the template-declared `json_keys` -> `write_error_log(PROMPT_JSON_MISS)`,
+        **without changing the return value**: a missing key is "the model did not output
+        to contract", which is different from a parse failure, and whether to treat it as
+        a failure is up to the caller (this only makes it visible).
     """
     for attempt in range(2):
         raw = _llm_chat(
@@ -837,22 +883,24 @@ def _llm_json(
                     missing = prompt_loader.missing_json_keys(feature, parsed)
                     if missing:
                         write_error_log(
-                            f"{feature}: 模型输出缺少模板声明的键 {list(missing)}",
+                            f"{feature}: model output is missing template-declared keys {list(missing)}",
                             code="PROMPT_JSON_MISS",
                         )
                 return parsed
         if attempt == 0:
-            logger.warning("JSON 输出解析失败，降级 disable_thinking 重试一次")
+            logger.warning(
+                "JSON output parse failed, downgrading to disable_thinking and retrying once"
+            )
     if feature:
         write_error_log(
-            f"{feature}: LLM 输出两次都未能解析为 JSON（prompt 或模型输出异常）",
+            f"{feature}: LLM output failed to parse as JSON on both attempts (abnormal prompt or model output)",
             code="PROMPT_JSON_PARSE",
         )
     return None
 
 
 def _extract_keywords(group: dict) -> list[str]:
-    """提炼组主题的检索关键词（3-8 个名词性词）。失败返回 []。"""
+    """Extract retrieval keywords for a group's topic (3-8 noun-like words). Returns [] on failure."""
     facts = str(group.get("facts", ""))[:SUMMARY_MERGE_CONTEXT_CHARS]
     prompt = prompt_loader.prompt(
         "extract_keywords",
@@ -878,7 +926,7 @@ def _extract_keywords(group: dict) -> list[str]:
 
 
 def _make_snippet(text: str, keyword: str) -> str:
-    """取关键词首次命中处前后 ~60 字符作检索摘要。"""
+    """Take ~60 characters around the first keyword hit as the retrieval snippet."""
     idx = text.lower().find(keyword.lower())
     if idx == -1:
         return text[:120]
@@ -892,12 +940,13 @@ def _make_snippet(text: str, keyword: str) -> str:
 def search_extracts(
     keywords: list[str], limit: int = SUMMARY_SEARCH_LIMIT
 ) -> list[dict]:
-    """在 EXTRACTS_DIR 内按关键词子串匹配检索（纯本地，零外部依赖）。
+    """Search within EXTRACTS_DIR by keyword substring match (purely local, zero external dependencies).
 
-    冷层向量库 ≠ Extracts 全文（冷层只含每次 summarize 同步的聚合条目），
-    且 Qdrant local 有排他锁，summarize 独立进程不能直连——故检索用纯
-    Python 大小写不敏感子串匹配。返回按命中关键词数降序的前 limit 条
-    [{"rel_path", "snippet", "matched", "score"}]。
+    The cold-layer vector store != the Extracts full text (the cold layer contains only the
+    aggregate entries synced each summarize run), and Qdrant local holds an exclusive lock
+    so the standalone summarize process cannot connect directly -- hence retrieval uses
+    pure-Python case-insensitive substring matching. Returns the top `limit` entries by
+    descending hit-keyword count as [{"rel_path", "snippet", "matched", "score"}].
     """
     if not keywords or not EXTRACTS_DIR.exists():
         return []
@@ -914,8 +963,9 @@ def search_extracts(
         matched = [k for k in kws if k.lower() in low]
         if not matched:
             continue
-        # P1 命中加权：相对路径（含文件名/目录名）+ 首段命中的关键词单独计数
-        # 为主题性命中。正文偶然命中（同词但主题无关）不计 title_matched，排序沉底。
+        # P1 hit weighting: keywords hitting the relative path (filename/dir name) + the
+        # first section are counted separately as topical hits. Incidental hits in the body
+        # (same word but off-topic) are not counted as title_matched and sink in the sort.
         title_feature = (
             str(f.relative_to(EXTRACTS_DIR)) + " " + re.split(r"(?m)^#", text)[0][:200]
         ).lower()
@@ -929,29 +979,30 @@ def search_extracts(
                 "score": len(matched),
             }
         )
-    # 排序：主题性命中优先，其次总命中词数
+    # Sort: topical hits first, then total number of hit words
     hits.sort(key=lambda h: (len(h["title_matched"]), h["score"]), reverse=True)
     return hits[:limit]
 
 
 def _existing_extract_tops() -> set[str]:
-    """Extracts 现有顶层目录名集合（供目录白名单/LLM 提示复用）。"""
+    """Set of existing top-level directory names in Extracts (reused for the directory whitelist / LLM prompt)."""
     if not EXTRACTS_DIR.exists():
         return set()
     return {d.name for d in EXTRACTS_DIR.iterdir() if d.is_dir()}
 
 
 def _dir_excluded(dir_name: str) -> bool:
-    """目录路径任一层命中排除目录（notes 根的手写区）。"""
+    """True when any level of the directory path matches an excluded directory (the hand-written area at the notes root)."""
     return any(p in SUMMARY_EXCLUDE_DIRS for p in Path(dir_name).parts)
 
 
 def _file_topic_feature(rel_path: str) -> str:
-    """文件主题特征 = 文件名 + 所有 H1 标题 + 头部内容（首个 # 前）。
+    """File topic feature = filename + all H1 headings + head content (before the first #).
 
-    主题归属过滤的匹配基准：只认「文件自我声明的主题」（文件名/标题/开头），
-    正文命中不算——正文偶然出现关键词正是错位归并的来源
-    （如 SCHEME_PANEL_DEBRIEF 关键词命中 waza 文件正文的 PanelManager 字样）。
+    The matching basis for topical-attribution filtering: only the "topic a file declares
+    about itself" (filename/headings/opening) counts; body hits do not -- incidental
+    keyword appearances in the body are exactly the source of misplaced merges
+    (e.g. a SCHEME_PANEL_DEBRIEF keyword hitting the PanelManager text in a waza file's body).
     """
     fp = EXTRACTS_DIR / rel_path
     try:
@@ -959,15 +1010,18 @@ def _file_topic_feature(rel_path: str) -> str:
     except OSError:
         return rel_path
     h1s = re.findall(r"(?m)^#\s+(.+)$", text)
-    head = re.split(r"(?m)^#", text)[0]  # 首个 # 之前（文件头说明/前言）
+    head = re.split(r"(?m)^#", text)[
+        0
+    ]  # before the first # (file header note / preface)
     return " ".join([rel_path, *h1s, head[:500]])
 
 
 def _hit_topic_relevant(group: dict, hit: dict, keywords: list[str]) -> bool:
-    """组关键词 ≥1 个命中文件主题特征 → 允许作为归并候选 target。
+    """Group keywords: >=1 hit on the file topic feature -> allowed as a merge-candidate target.
 
-    与 _topical_related 同思路（共享主题词即同族），但判定对象是「文件主题
-    特征」而非另一组关键词。关键词提炼失败（[]）时视为全部相关，不误拦。
+    Same idea as _topical_related (shared topic words means same family), but the object
+    being judged is the "file topic feature" rather than another group's keywords. When
+    keyword extraction fails ([]), treat everything as related and do not block.
     """
     kws = [k for k in keywords if k]
     if not kws:
@@ -977,10 +1031,10 @@ def _hit_topic_relevant(group: dict, hit: dict, keywords: list[str]) -> bool:
 
 
 def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
-    """判断该组应归并到已有笔记还是新建。
+    """Decide whether the group should be merged into an existing note or created new.
 
-    无命中返回 None（直接新建）；有命中返回 {"action", "target"(相对Extracts), "reason"}。
-    判断 JSON 失败（降级后仍 None）→ 兜底 merge 到 hits[0] 并写 REFINE_JUDGE_JSON 日志。
+    No hits returns None (create new directly); with hits returns {"action", "target" (relative to Extracts), "reason"}.
+    Judgment JSON failure (still None after downgrade) -> fall back to merge into hits[0] and write a REFINE_JUDGE_JSON log.
     """
     if not hits:
         return None
@@ -1002,7 +1056,7 @@ def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
         action = str(parsed.get("action", "")).strip().lower()
         if action == "merge":
             target = str(parsed.get("target", "")).strip()
-            # 校验用 resolve 后路径（/tmp→/private/tmp 等 symlink 环境不致 relative_to 抛错）
+            # Validate using resolved paths (so symlink environments like /tmp->/private/tmp don't make relative_to raise)
             r_extracts = EXTRACTS_DIR.resolve()
             t = (EXTRACTS_DIR / target).resolve()
             if (
@@ -1016,22 +1070,26 @@ def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
                     "target": target,
                     "reason": str(parsed.get("reason", "")),
                 }
-            logger.warning(f"归并目标 {target!r} 非法/不存在，回退为新建")
+            logger.warning(
+                f"merge target {target!r} invalid/does not exist, falling back to new"
+            )
             return {"action": "new", "target": "", "reason": "judge target 非法"}
         return {"action": "new", "target": "", "reason": str(parsed.get("reason", ""))}
 
-    # 判断失败（降级后仍 None）→ 兜底 merge 到首个非排除命中，比乱建好
-    # （缺陷2修复：hits[0] 可能在排除目录，跳过取首个合法命中；无则回退新建）
+    # Judgment failure (still None after downgrade) -> fall back to merge into the first
+    # non-excluded hit, better than creating blindly
+    # (defect 2 fix: hits[0] may be in an excluded directory, so skip to the first valid
+    # hit; if none, fall back to new)
     fallback = next((h for h in hits if not _dir_excluded(h["rel_path"])), None)
     if fallback is None:
         write_error_log(
-            f"归并判断 JSON 失败且无合法兜底命中（topic={group.get('topic', '')!r}），回退为新建",
+            f"merge judgment JSON failed and no valid fallback hit (topic={group.get('topic', '')!r}), falling back to new",
             code="REFINE_JUDGE_JSON",
         )
         return {"action": "new", "target": "", "reason": "judge 失败且无合法兜底"}
     write_error_log(
-        f"归并判断 JSON 失败，兜底归并到 {fallback['rel_path']}"
-        f"（topic={group.get('topic', '')!r}）",
+        f"merge judgment JSON failed, falling back to merge into {fallback['rel_path']}"
+        f" (topic={group.get('topic', '')!r})",
         code="REFINE_JUDGE_JSON",
     )
     return {
@@ -1042,7 +1100,7 @@ def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
 
 
 def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None:
-    """think enable 生成新建文章：{"dir", "title", "content"}。失败返回 None。"""
+    """think enabled, generate a new article: {"dir", "title", "content"}. Returns None on failure."""
     facts = str(group.get("facts", ""))
     tops_block = "、".join(sorted(existing_tops)) if existing_tops else "（空）"
     prompt = prompt_loader.prompt(
@@ -1067,14 +1125,16 @@ def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None
 
 
 def _gen_merge(group: dict, target_file: Path, existing_text: str) -> dict | None:
-    """think enable 生成归并内容：只写未被已有内容覆盖的新增信息。失败返回 None。
+    """think enabled, generate merge content: writes only new information not already covered by existing content. Returns None on failure.
 
-    no_increment 语义判定：LLM 对比「相关事实」与「目标笔记相关段落」，全部要点
-    已被覆盖时返回 {"action":"no_increment",...}，由 refine 识别跳过（2026-08-07 新增）。
-    仅 no_increment 带 action 字段；正常 merge 不带，避免 results.append 时 **item 的
-    action 覆盖 refine 局部 action（fallback_merge 被污染成 merge）。
-    上下文取 _relevant_segments 而非前 N 字符——文件大时前 2K 看不到文件尾既有段，
-    LLM 无从判断重复（2026-08-07 根因修复）。
+    no_increment semantic judgment: the LLM compares "relevant facts" with the "target note's
+    relevant sections"; when every point is already covered it returns
+    {"action":"no_increment",...}, which refine recognizes and skips (added 2026-08-07).
+    Only no_increment carries an action field; normal merge does not, avoiding **item's action
+    overwriting refine's local action on results.append (fallback_merge polluted into merge).
+    Context is taken from _relevant_segments rather than the first N characters -- for a large
+    file the first 2K cannot see the existing sections at the end of the file, leaving the LLM
+    unable to judge duplication (2026-08-07 root-cause fix).
     """
     facts = str(group.get("facts", ""))
     context = _relevant_segments(existing_text, facts, SUMMARY_MERGE_LOOKBACK_CHARS)
@@ -1107,19 +1167,23 @@ def _gen_merge(group: dict, target_file: Path, existing_text: str) -> dict | Non
 
 
 def _topical_related(g1: dict, g2: dict, kw1: list[str], kw2: list[str]) -> bool:
-    """预聚合合并判定：共享主题关键词 + Jaccard ≥ SUMMARY_TOPIC_JACCARD（纯确定性，0 LLM）。
+    """Pre-aggregation merge decision: shared topic keywords + Jaccard >= SUMMARY_TOPIC_JACCARD (purely deterministic, 0 LLM).
 
-    实测校准（2026-08-06 真实 20 条未处理记忆 → 12 组 → 4 个命中目标）：
-    - 同族组（如 summarize.py 质量门方案/摆锤/5bd2e21/占位词表，同命中 Hermes RSS 笔记）：
-      关键词集共享 ≥1 个主题词，Jaccard 0.07-0.15；
-    - 不相关同 target 组（如 RSS 日报已读标记约定 vs summarize 族）：共享 0 词，Jaccard=0；
-    - 整文本 SequenceMatcher 比值 / char-bigram Jaccard 在族内（0.06-0.17）与跨族（0.06-0.16）
-      区间重叠，**无静态阈值可分**——原 `_max_segment_similarity > 0.6` 门把所有组判不相关
-      （实测 topic_merged=0、topic_blocked=22，5bd2e21 碎片根因未能收敛）。
-    故以「关键词共享 + Jaccard ≥ 0.05（≥1 个共享主题词）」为相关性判定，共享项目/主题词即
-    同族信号。ffe8857 过度合并防护不因本门放宽而退化：预聚合组仍走 LLM 终审；且 count 门
-    （单 target 单轮限 1 次归并）+ 预聚合后同 target 每组互不相关 → 单 target 单轮最多 1 次
-    归并写，结构上杜绝「一次 6 段」堆积。
+    Measured calibration (2026-08-06, real 20 unprocessed memories -> 12 groups -> 4 hit targets):
+    - same-family groups (e.g. the summarize.py quality-gate scheme / pendulum / 5bd2e21 /
+      placeholder list, all hitting the Hermes RSS note): keyword sets share >=1 topic word, Jaccard 0.07-0.15;
+    - unrelated groups with the same target (e.g. the RSS daily read-marker convention vs the
+      summarize family): 0 shared words, Jaccard=0;
+    - whole-text SequenceMatcher ratio / char-bigram Jaccard overlap between within-family
+      (0.06-0.17) and cross-family (0.06-0.16) ranges, **no static threshold can separate
+      them** -- the old `_max_segment_similarity > 0.6` gate judged every group unrelated
+      (measured topic_merged=0, topic_blocked=22, the 5bd2e21 fragment root cause never converged).
+    So relevance is decided by "keyword sharing + Jaccard >= 0.05 (>=1 shared topic word)";
+    sharing a project/topic word is the same-family signal. The ffe8857 over-merge guard does
+    not degrade from loosening this gate: pre-aggregated groups still go through LLM final
+    review; and the count gate (a single target allows 1 merge per round) + after pre-aggregation
+    groups with the same target are mutually unrelated -> at most 1 merge write per target per
+    round, structurally preventing "6 sections at once" pileups.
     """
     set1 = {k.lower() for k in kw1 if k}
     set2 = {k.lower() for k in kw2 if k}
@@ -1133,11 +1197,12 @@ def _topical_related(g1: dict, g2: dict, kw1: list[str], kw2: list[str]) -> bool
 
 
 def _resolve_group_targets(groups: list[dict]) -> dict:
-    """预解析每组「关键词 + 检索命中 + top1 合法 target」，返回 {index: {...}}。
+    """Pre-resolve each group's "keywords + search hits + top1 valid target", returns {index: {...}}.
 
-    target 取 top1 通过合法校验（.md / is_file / EXTRACTS 内 / _dir_excluded）的命中，
-    供预聚合与 refine 复用，消除循环内重复关键词提炼/检索（0 新增 LLM）。
-    失败/无命中 → {"keywords": [], "hits": [], "target": None}。
+    target is the top1 hit passing validity checks (.md / is_file / inside EXTRACTS /
+    !_dir_excluded), reused by pre-aggregation and refine, eliminating repeated keyword
+    extraction/search inside the loop (0 new LLM).
+    Failure/no hits -> {"keywords": [], "hits": [], "target": None}.
     """
     resolved: dict[int, dict] = {}
     for gi, group in enumerate(groups):
@@ -1168,16 +1233,19 @@ def _resolve_group_targets(groups: list[dict]) -> dict:
 def _pre_aggregate_same_target(
     groups: list[dict], resolved: dict
 ) -> tuple[list[dict], dict, dict]:
-    """预聚合：命中同一 target 且主题相关的组合并为一组，根治同家族碎片。
+    """Pre-aggregation: merge groups that hit the same target and are topically related into one group, curing same-family fragmentation.
 
-    背景：5bd2e21 过度拆分根因是「同主题家族第 2+ 组撞同 target 被 merge_counts
-    强制 new」。此处把命中同 target 且 _topical_related 的组在 count 判定**之前**
-    合并为单组 → 单次归并写 → count 永不触发；预聚合后桶内组互不相关，count 语义
-    自动退化为「限 1 次不相关 merge」，ffe8857 防护原样保留。
+    Background: the root cause of 5bd2e21 over-splitting was "the 2nd+ group of a same-topic
+    family hits the same target and gets forced to new by merge_counts". Here, groups that hit
+    the same target and are _topical_related are merged into a single group **before** the count
+    decision -> a single merge write -> count never triggers; after pre-aggregation the groups in
+    a bucket are mutually unrelated, so count's semantics automatically degrade to "limit 1
+    unrelated merge", keeping the ffe8857 guard as-is.
 
-    合并：facts 换行拼接、tags 并集（去重保序）、target 保留被并入组的缓存。
-    返回 (new_groups, new_resolved, stats)；new_resolved 下标与新组对齐。
-    stats: {"topic_merged": 实际合并次数, "topic_blocked": 同 target 判定不相关的次数}
+    Merge: facts joined by newline, tags unioned (deduplicated, order preserved), target keeps
+    the cache of the group merged in.
+    Returns (new_groups, new_resolved, stats); new_resolved index aligns with the new groups.
+    stats: {"topic_merged": actual merge count, "topic_blocked": count of same-target unrelated judgments}
     """
     by_target: dict[str, list[int]] = {}
     for gi, info in resolved.items():
@@ -1197,7 +1265,7 @@ def _pre_aggregate_same_target(
                 new_resolved[new_idx] = resolved[gi]
                 new_idx += 1
             continue
-        # 桶内贪心：每组尝试并入已选代表（相关则并），否则独立成组
+        # Greedy within a bucket: try to fold each group into an already-selected representative (merge if related), otherwise make it its own group
         reps: list[dict] = []
         for gi in idxs:
             placed = False
@@ -1211,7 +1279,7 @@ def _pre_aggregate_same_target(
                     rep["members"].append(gi)
                     placed = True
                     break
-                blocked += 1  # 判定不相关：记一次 topic_blocked
+                blocked += 1  # judged unrelated: record one topic_blocked
             if not placed:
                 reps.append(
                     {"members": [gi], "group": groups[gi], "resolved": resolved[gi]}
@@ -1241,10 +1309,11 @@ def _pre_aggregate_same_target(
 
 
 def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
-    """阶段2：逐组「提炼关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成」。
+    """Phase 2: per group "extract keywords -> search Extracts -> decide merge/new -> think enable generate".
 
-    单组任一环节失败不中断整体：write_error_log + stats 计数 + 跳过该组。
-    返回 (results, stats)；results 为写入单元（含 action: new/merge）。
+    A failure in any step of a single group does not interrupt the whole: write_error_log +
+    stats count + skip that group.
+    Returns (results, stats); results are the write units (with action: new/merge).
     """
     stats = {
         "ok": 0,
@@ -1255,52 +1324,57 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
         "dup_skip": 0,
         "new": 0,
         "merge": 0,
-        "topic_merged": 0,  # 预聚合合并组数（同 target 同家族）
-        "topic_blocked": 0,  # 同 target 判定不相关的次数（保 ffe8857 防护）
-        "fallback_merge": 0,  # 微碎片回退归并次数
-        "fallback_dropped": 0,  # 微碎片回退失败/无目标次数
+        "topic_merged": 0,  # pre-aggregation merged group count (same target, same family)
+        "topic_blocked": 0,  # count of same-target unrelated judgments (keeps the ffe8857 guard)
+        "fallback_merge": 0,  # micro-fragment fallback merge count
+        "fallback_dropped": 0,  # micro-fragment fallback failure / no-target count
         "hit_files": set(),
     }
-    merge_counts: dict[str, int] = {}  # 单次运行各目标文件的归并次数（限 1 主题）
+    merge_counts: dict[
+        str, int
+    ] = {}  # merge count per target file within a single run (limited to 1 topic)
     results: list[dict] = []
     existing_tops = _existing_extract_tops()
-    # 预解析所有组关键词/检索/target + 同 target 同家族预聚合（方案 A+C 融合）
+    # Pre-resolve all groups' keywords/search/target + same-target same-family pre-aggregation (scheme A+C fusion)
     resolved_all = _resolve_group_targets(groups)
     groups, resolved_all, pre_stats = _pre_aggregate_same_target(groups, resolved_all)
     stats["topic_merged"] = pre_stats["topic_merged"]
     stats["topic_blocked"] = pre_stats["topic_blocked"]
     if pre_stats["topic_merged"]:
         logger.info(
-            f"预聚合：同目标同家族合并 {pre_stats['topic_merged']} 组，"
-            f"同目标不相关 {pre_stats['topic_blocked']} 次"
+            f"pre-aggregation: merged {pre_stats['topic_merged']} same-target same-family groups, "
+            f"{pre_stats['topic_blocked']} same-target unrelated times"
         )
     for gi, group in enumerate(groups):
-        topic = str(group.get("topic", "")) or f"组{gi}"
+        topic = str(group.get("topic", "")) or f"group{gi}"
         logger.info(f"Refine [{gi}] {topic} ...")
         try:
             keywords = (resolved_all.get(gi) or {}).get("keywords", [])
             if not keywords:
                 stats["kw_fail"] += 1
                 write_error_log(
-                    f"主题 {topic!r} 关键词提炼失败，跳过", code="REFINE_KEYWORD"
+                    f"topic {topic!r} keyword extraction failed, skipping",
+                    code="REFINE_KEYWORD",
                 )
                 continue
             hits = (resolved_all.get(gi) or {}).get("hits", []) or []
             if hits:
                 stats["hit_files"].add(hits[0]["rel_path"])
 
-            # P0 主题归属过滤：仅「关键词命中文件主题特征（文件名/H1/首段）」的
-            # hit 可作归并候选。search_extracts 是正文子串匹配，正文偶然命中会带
-            # 主题无关文件进候选造成错位归并（SCHEME_PANEL_DEBRIEF 命中 waza 文件
-            # 正文 PanelManager 字样即此类）——本层确定性拦截，无相关候选 →
-            # _decide_merge 返回 None → 走新建。
+            # P0 topical-attribution filter: only hits whose "keywords hit the file topic
+            # feature (filename/H1/first section)" can be merge candidates. search_extracts is
+            # a body substring match, and an incidental body hit drags topic-irrelevant files
+            # into the candidates, causing misplaced merges (a SCHEME_PANEL_DEBRIEF hit on the
+            # PanelManager text in a waza file's body is one such case) -- this layer intercepts
+            # deterministically; with no relevant candidate ->
+            # _decide_merge returns None -> go to new.
             if keywords and hits:
                 cands = [h for h in hits if _hit_topic_relevant(group, h, keywords)]
                 dropped = [h["rel_path"] for h in hits if h not in cands]
                 if dropped:
                     logger.info(
-                        f"主题 {topic!r} 主题归属过滤剔除 {len(dropped)} 个候选"
-                        f"（仅正文命中，非文件名/标题/首段）：{dropped}"
+                        f"topic {topic!r} topical-attribution filter removed {len(dropped)} candidates"
+                        f" (body-only hits, not filename/heading/first section): {dropped}"
                     )
                 hits = cands
 
@@ -1309,18 +1383,19 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
             except Exception as e:
                 stats["gen_fail"] += 1
                 write_error_log(
-                    f"主题 {topic!r} 归并判断异常: {e}", code="REFINE_JUDGE"
+                    f"topic {topic!r} merge judgment exception: {e}",
+                    code="REFINE_JUDGE",
                 )
                 continue
 
-            # 单次运行同一目标文件最多归并 1 次：独立主题拆散为各自文件（防「一次 6 段」反例）
+            # At most 1 merge into the same target file per run: separate topics are split into their own files (prevents the "6 sections at once" counterexample)
             if (
                 decision is not None
                 and decision["action"] == "merge"
                 and merge_counts.get(decision["target"], 0) >= 1
             ):
                 logger.warning(
-                    f"主题 {topic!r} 目标 {decision['target']} 已归并过，本次改为新建"
+                    f"topic {topic!r} target {decision['target']} already merged, switching to new this time"
                 )
                 decision = {
                     "action": "new",
@@ -1340,38 +1415,44 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                     action = "merge"
                     target_label = decision["target"]
                     if item:
-                        # _gen_merge 返回 {action, title, content, ...}，补 target 供写入层定位
+                        # _gen_merge returns {action, title, content, ...}; add target so the write layer can locate it
                         item["target"] = decision["target"]
-                        # LLM 无增量判定（改写式重复：措辞不同但信息已被既有段覆盖，
-                        # 机械相似度阈值拦不住——2026-08-07 根因修复）
+                        # LLM no-increment judgment (rewrite-style duplication: different
+                        # wording but the information is already covered by an existing
+                        # section; mechanical similarity thresholds can't catch it -- 2026-08-07 root-cause fix)
                         if item.get("action") == "no_increment":
                             stats["dup_skip"] += 1
                             logger.warning(
-                                f"主题 {topic!r} 判定无增量（LLM）："
+                                f"topic {topic!r} judged no increment (LLM): "
                                 f"{item.get('reason', '')}"
                             )
                             continue
-                        # 写前增量判定：生成段相对既有某段匹配覆盖率过高视为无新增，跳过不写
+                        # Pre-write increment judgment: if the generated section's match coverage against some existing section is too high, treat it as no addition and skip writing
                         sim = _max_segment_similarity(
                             item.get("content", ""), existing_text
                         )
                         if sim > SUMMARY_DUP_SIM_THRESHOLD:
                             stats["dup_skip"] += 1
                             logger.warning(
-                                f"主题 {topic!r} 与 {decision['target']} 既有内容"
-                                f"覆盖率 {sim:.2f} 过高，判定无增量跳过"
+                                f"topic {topic!r} existing-content coverage against {decision['target']}"
+                                f" is {sim:.2f}, too high, judged no increment and skipped"
                             )
                             continue
-                        # 注：merge_counts 原在 dup_skip 后即自增——QC 占位/过短拒绝在
-                        # 其后，导致「归并内容被 QC 拒写」仍占用该文件归并名额，
-                        # 后续合法归并被误拦（实测组[0]/[1] 占位拒绝后组[3] 被误 block）。
-                        # 移入成功写入后统计（见 results.append 前），仅计真实落盘归并。
+                        # Note: merge_counts used to increment right after dup_skip -- the QC
+                        # placeholder/too-short rejections come after it, so "merge content
+                        # rejected by QC" still occupied that file's merge slot, falsely
+                        # blocking later legitimate merges (measured: after groups [0]/[1] were
+                        # placeholder-rejected, group [3] was wrongly blocked). Moved to count
+                        # after a successful write (see before results.append), counting only
+                        # real persisted merges.
                 else:
                     item = _gen_new(group, dir_tree, existing_tops)
                     action = "new"
                     target_label = item["dir"] if item else ""
-                    # 微碎片兜底（C）：新建产物 <10 行 → 回退归并到 hits 首个非排除命中。
-                    # 归并产物过相似度门则正常归并；无可用目标/归并失败维持新建落盘（防信息丢失）。
+                    # Micro-fragment fallback (C): a new product <10 lines -> fall back to
+                    # merging into the first non-excluded hit. If the merge product passes the
+                    # similarity gate, merge normally; with no usable target / merge failure,
+                    # keep the new write (prevents information loss).
                     if (
                         item
                         and len(str(item.get("content", "")).splitlines())
@@ -1380,7 +1461,7 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                         fb = next(
                             (
                                 h
-                                for h in hits  # 局部 hits 已过 P0 主题归属过滤
+                                for h in hits  # local hits have passed the P0 topical-attribution filter
                                 if not _dir_excluded(h["rel_path"])
                             ),
                             None,
@@ -1399,8 +1480,8 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                                     if fb_item.get("action") == "no_increment":
                                         stats["dup_skip"] += 1
                                         logger.warning(
-                                            f"主题 {topic!r} 碎片回退归并判定无增量"
-                                            f"（LLM）：{fb_item.get('reason', '')}"
+                                            f"topic {topic!r} fragment fallback merge judged no increment"
+                                            f" (LLM): {fb_item.get('reason', '')}"
                                         )
                                         continue
                                     fb_sim = _max_segment_similarity(
@@ -1409,66 +1490,73 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                                     if fb_sim > SUMMARY_DUP_SIM_THRESHOLD:
                                         stats["dup_skip"] += 1
                                         logger.warning(
-                                            f"主题 {topic!r} 碎片回退归并 "
-                                            f"{fb['rel_path']} 覆盖率 {fb_sim:.2f} "
-                                            f"无增量，跳过"
+                                            f"topic {topic!r} fragment fallback merge into "
+                                            f"{fb['rel_path']} coverage {fb_sim:.2f} "
+                                            f"no increment, skipping"
                                         )
                                         continue
                                     item = fb_item
                                     action = "fallback_merge"
                                     target_label = fb["rel_path"]
-                                    # 计数由末尾 stats[action] 统一累加，这里不重复加
+                                    # Counting is accumulated uniformly by stats[action] at the end; do not add again here
                                 else:
                                     stats["fallback_dropped"] += 1
                                     logger.warning(
-                                        f"主题 {topic!r} 碎片回退归并生成失败，维持新建"
+                                        f"topic {topic!r} fragment fallback merge generation failed, keeping new"
                                     )
                             except Exception as e:
                                 stats["fallback_dropped"] += 1
                                 write_error_log(
-                                    f"主题 {topic!r} 碎片回退归并异常: {e}",
+                                    f"topic {topic!r} fragment fallback merge exception: {e}",
                                     code="REFINE_FALLBACK",
                                 )
                         else:
                             stats["fallback_dropped"] += 1
                             logger.warning(
-                                f"主题 {topic!r} 碎片无可用回退目标，维持新建落盘"
+                                f"topic {topic!r} fragment has no usable fallback target, keeping the new write"
                             )
             except Exception as e:
                 stats["gen_fail"] += 1
-                write_error_log(f"主题 {topic!r} 生成异常: {e}", code="REFINE_GEN")
+                write_error_log(
+                    f"topic {topic!r} generation exception: {e}", code="REFINE_GEN"
+                )
                 continue
 
             if not item:
                 stats["gen_fail"] += 1
-                write_error_log(f"主题 {topic!r} 生成失败，跳过", code="REFINE_GEN")
+                write_error_log(
+                    f"topic {topic!r} generation failed, skipping", code="REFINE_GEN"
+                )
                 continue
             content_text = str(item.get("content", ""))
             if len(content_text) < SUMMARY_MIN_CONTENT_LEN:
                 stats["too_short"] += 1
-                logger.warning(f"主题 {topic!r} 内容过短，跳过")
+                logger.warning(f"topic {topic!r} content too short, skipping")
                 continue
-            # QC 占位符检测：含「未详述/待补全」等占位表述视为低质，不落盘
+            # QC placeholder detection: content containing placeholder wording like 「未详述/待补全」 is treated as low quality and not written
             ph = next(
                 (p for p in SUMMARY_PLACEHOLDER_PATTERNS if p in content_text), None
             )
             if ph:
                 stats["too_low_quality"] += 1
-                logger.warning(f"主题 {topic!r} 含占位表述「{ph}」，判定低质跳过")
+                logger.warning(
+                    f"topic {topic!r} contains placeholder wording 「{ph}」, judged low quality and skipped"
+                )
                 continue
 
             if action == "merge":
-                # 成功落盘的直接归并才占名额（QC 拒写不占用），fallback_merge 为碎片
-                # 兜底不受 count 限（<10 行微碎片，不可能构成 ffe8857 大量不相关段堆积）
+                # Only a directly merged, successfully persisted article takes the slot (QC
+                # rejections do not); fallback_merge is a fragment fallback and is not subject
+                # to the count limit (<10-line micro-fragments cannot form the ffe8857 pileup of many unrelated sections)
                 merge_counts[item["target"]] = merge_counts.get(item["target"], 0) + 1
 
             results.append({"topic": topic, "action": action, **item})
             stats["ok"] += 1
             stats[action] += 1
-            logger.info(f"  → {action} {target_label} ({topic})")
+            logger.info(f"  -> {action} {target_label} ({topic})")
         except Exception as e:
             stats["gen_fail"] += 1
-            write_error_log(f"主题 {topic!r} 精炼异常: {e}", code="REFINE_GEN")
+            write_error_log(f"topic {topic!r} refine exception: {e}", code="REFINE_GEN")
             continue
     stats["hit_files"] = sorted(stats["hit_files"])
     return results, stats
@@ -1481,14 +1569,18 @@ def _collect_tags(memories: list[dict]) -> list[str]:
 
 
 def _max_segment_similarity(new_content: str, existing_text: str) -> float:
-    """归并内容相对目标文件既有段的最大「匹配覆盖率」（difflib，零外部依赖）。
+    """Max "match coverage" of the merge content against existing sections of the target file (difflib, zero external dependencies).
 
-    语义：new_content 中「被既有段逐字匹配」的字符占比，直接衡量新增信息量——
-    覆盖率趋近 1 → 生成段基本是既有段的复述 → 判定无新增跳过。
-    ratio 受长度差干扰（长段稀释、短段虚高），覆盖率对「改写式重复」区分度更好
-    （实测 ScanTextUtil 重复覆盖率 0.767 vs 典型增量 0.595）。
-    切段用多级标题（#{1,6}）而非仅 H1：多级标题组织（##/###）的文件按 H1 切会
-    退化成整文件一段，相似度被不相关内容稀释（2026-08-07 根因修复）。
+    Semantics: the fraction of characters in new_content that are matched
+    character-for-character by an existing section, directly measuring the amount of new
+    information -- coverage approaching 1 -> the generated section is basically a
+    restatement of existing sections -> judged no addition and skipped.
+    ratio is disturbed by length differences (long sections dilute, short sections
+    inflate), while coverage distinguishes "rewrite-style duplication" better (measured:
+    ScanTextUtil duplicate coverage 0.767 vs typical increment 0.595).
+    Sections are split on multi-level headings (#{1,6}) rather than H1 only: for a file
+    organized with multi-level headings (##/###), splitting by H1 degrades into one
+    whole-file section, diluting similarity with unrelated content (2026-08-07 root-cause fix).
     """
     if not new_content or not existing_text:
         return 0.0
@@ -1506,12 +1598,15 @@ def _max_segment_similarity(new_content: str, existing_text: str) -> float:
 
 
 def _relevant_segments(existing_text: str, facts: str, max_chars: int) -> str:
-    """从目标笔记切出与 facts 最相关的既有段，供 merge 生成时给 LLM 做增量判断。
+    """Slice the existing sections most relevant to facts out of the target note, for the LLM's increment judgment during merge generation.
 
-    原实现取 existing_text 前 N 字符：文件大时目标段在文件尾部（如既有段追加在
-    末尾），LLM 看不到既有内容、无从判断重复，直接复述相关事实 → 重复段（2026-08-07
-    根因修复）。改为按多级标题切段后以 facts 相似度排序，取 top 相关段，总长限 max_chars。
-    无相关段（facts 空/无段）时兜底返回文件头。
+    The original implementation took the first N characters of existing_text: for a large
+    file the target section is at the file's end (e.g. existing sections appended at the
+    tail), so the LLM could not see the existing content and had no way to judge
+    duplication, directly restating relevant facts -> duplicate sections (2026-08-07
+    root-cause fix). Now it splits on multi-level headings, sorts sections by similarity to
+    facts, and takes the top relevant sections, capped at max_chars. With no relevant
+    section (empty facts / no sections), it falls back to the file head.
     """
     if not existing_text or not facts:
         return existing_text[:max_chars]
@@ -1538,7 +1633,7 @@ def _relevant_segments(existing_text: str, facts: str, max_chars: int) -> str:
 
 
 def _strip_leading_h1(content: str) -> str:
-    """剥离正文开头自带的 # 标题，避免与脚本写入的文件标题重复。"""
+    """Strip a leading # heading from the body, so it does not duplicate the file title written by the script."""
     lines = content.splitlines()
     while lines and re.match(r"^#\s+\S", lines[0]):
         lines.pop(0)
@@ -1553,8 +1648,9 @@ def _merge_into_file(
     is_append: bool,
     supersedes: bool = False,
 ) -> bool:
-    """写入文件。新建时创建；追加时按 H1 段合并：同名 H1 段替换（去重），
-    否则在末尾新增一节（保留历史）。返回是否写入成功。"""
+    """Write the file. Creates it when new; on append, merges by H1 section: a same-named
+    H1 section is replaced (deduplicated), otherwise a new section is added at the end
+    (history preserved). Returns whether the write succeeded."""
     content = _strip_leading_h1(content)
     block = f"# {title}\n\n> 补充于 {today_str}\n\n{content}\n"
     if not is_append:
@@ -1573,11 +1669,12 @@ def _merge_into_file(
         head = seg.splitlines()[0] if seg.strip() else ""
         seg_slug = _normalize_slug(re.sub(r"^#\s+", "", head))
         if seg_slug and seg_slug == target_slug:
-            # 同名 H1 段：保留旧内容，新内容追加为段内子节（防止覆盖历史）。
-            # content 已被 _strip_leading_h1 剥掉首 H1，补充段需补 # {title} 防无标题块。
+            # Same-named H1 section: keep the old content, append the new content as a
+            # sub-section (prevents overwriting history). content has had its leading H1
+            # stripped by _strip_leading_h1, so the added section needs # {title} to avoid a title-less block.
             old = seg.rstrip()
             if supersedes:
-                # 修正类：旧段末尾标注废弃，避免新旧结论并存互否
+                # Correction type: mark the old section as deprecated at its end, to avoid old and new conclusions coexisting and contradicting each other
                 old += "\n\n> 已废弃（被以下补充取代）"
             out.append(
                 old
@@ -1598,21 +1695,27 @@ def _merge_into_file(
 
 
 def _sanitize_new_dir(dir_name: str) -> str:
-    """清洗 LLM 给定的新建目录：剔除排除目录；多级嵌套仅当顶层是已有顶层时
-    保留，否则回退单层（防御 LLM 造深层路径）；新建顶层与现有顶层同主题域时
-    回退归入现有目录（防跨目录散落 + 随意新建重复目录）。"""
+    """Sanitize the new directory given by the LLM: remove excluded directories; keep
+    multi-level nesting only when its top level is an existing top level, otherwise fall
+    back to a single level (defends against the LLM creating deep paths); when a new top
+    level is in the same topic domain as an existing top level, fall back to folding into
+    the existing directory (prevents cross-directory scattering + casually creating duplicate directories)."""
     raw = str(dir_name or "").strip().strip("/")
     parts = [p for p in Path(raw).parts if p and p not in SUMMARY_EXCLUDE_DIRS]
     if not parts:
         return ""
     existing_tops = _existing_extract_tops()
     if len(parts) > 1 and parts[0] not in existing_tops:
-        logger.warning(f"新建多级目录 {raw}，回退为单层目录 {parts[0]}")
+        logger.warning(
+            f"new multi-level directory {raw}, falling back to single-level directory {parts[0]}"
+        )
         return parts[0]
-    # 共享主题词回退：新建顶层目录名与某现有顶层目录互相包含（「面板系统」
-    # vs「面板」、「工具集」vs「Utility工具集」）→ 同主题域，回退归入现有目录。
-    # 3 字符下限滤掉「技术/笔记」等通用短词；按长度降序优先匹配更长（更具体）的
-    # 现有目录（「Utility工具集」先于「工具集」被匹配，选主题最贴近的）。
+    # Shared-topic-word fallback: a new top-level directory name and some existing
+    # top-level directory contain each other ("面板系统" vs "面板", "工具集" vs
+    # "Utility工具集") -> same topic domain, fall back to folding into the existing
+    # directory. The 3-character floor filters out generic short words like "技术/笔记";
+    # matching in descending length order prefers the longer (more specific) existing
+    # directory ("Utility工具集" matched before "工具集", picking the closest topic).
     if len(parts) == 1:
         new_top = parts[0]
         for top in sorted(existing_tops, key=len, reverse=True):
@@ -1624,7 +1727,7 @@ def _sanitize_new_dir(dir_name: str) -> str:
                 and (new_top in top or top in new_top)
             ):
                 logger.warning(
-                    f"新建目录 {new_top} 与现有目录 {top} 同主题域，回退归入 {top}"
+                    f"new directory {new_top} shares a topic domain with existing directory {top}, folding into {top}"
                 )
                 return top
     return "/".join(parts)
@@ -1633,10 +1736,13 @@ def _sanitize_new_dir(dir_name: str) -> str:
 def _write_articles_v2(
     results: list[dict], today_str: str, all_tags: list[str]
 ) -> dict[str, str]:
-    """阶段2 写入：merge/fallback_merge 直写判断目标；new 走 resolve_target_file 兜底防撞。
-    写入异常逐条 try/except 记录 WRITE 错误日志，不中断其余写入。
-    批写盲区修复：_run_refine 的 dup_skip 读「批写前」文件，同 run 前序待写段
-    （同 target 先 merge 后 fallback_merge）看不到；写入层落盘前按磁盘当前内容复查。"""
+    """Phase 2 write: merge/fallback_merge write directly to the judged target; new goes
+    through resolve_target_file's fallback to prevent collisions.
+    Write exceptions are caught per item with try/except and logged as WRITE errors,
+    without interrupting the remaining writes.
+    Batch-write blind-spot fix: _run_refine's dup_skip reads the file "before batch
+    write", so it cannot see earlier pending writes in the same run (same target, merge
+    then fallback_merge); the write layer re-checks against the on-disk content before persisting."""
     updated = {}
     for item in results:
         try:
@@ -1644,15 +1750,17 @@ def _write_articles_v2(
                 filepath = EXTRACTS_DIR / item["target"]
                 filepath.parent.mkdir(parents=True, exist_ok=True)
                 is_append = True
-                # 批写盲区修复(a)：同 run 前序已写该文件时，重读磁盘当前内容做相似度复查，
-                # 拦下 fallback_merge 对前序段高度相似的重复追加（实测 sim 0.919）。
+                # Batch-write blind-spot fix (a): when the same run already wrote this file
+                # earlier, re-read the current on-disk content for a similarity re-check,
+                # catching fallback_merge re-appending something highly similar to an earlier
+                # section (measured sim 0.919).
                 if str(filepath) in updated:
                     cur_text = filepath.read_text(encoding="utf-8")
                     sim = _max_segment_similarity(item.get("content", ""), cur_text)
                     if sim > SUMMARY_DUP_SIM_THRESHOLD:
                         logger.warning(
-                            f"批写复查：{item['target']} 与同 run 前序写入段"
-                            f"相似度 {sim:.2f} 过高，跳过"
+                            f"batch-write re-check: {item['target']} similarity {sim:.2f} to an"
+                            f" earlier write in the same run too high, skipping"
                         )
                         continue
             else:
@@ -1670,11 +1778,11 @@ def _write_articles_v2(
             )
             if not ok:
                 continue
-            # 轻量 QC：文件体积异常时告警（不阻断）
+            # Lightweight QC: warn on abnormal file size (does not block)
             try:
                 size = filepath.stat().st_size
                 if size > 500_000:
-                    logger.warning(f"QC: {filepath} 体积异常 ({size // 1024}KB)")
+                    logger.warning(f"QC: {filepath} abnormal size ({size // 1024}KB)")
             except OSError:
                 pass
             updated[str(filepath)] = "追加" if is_append else "新建"
@@ -1686,19 +1794,21 @@ def _write_articles_v2(
                 confidence=1.0,
             )
         except Exception as e:
-            write_error_log(f"写入失败 {item.get('topic', '')!r}: {e}", code="WRITE")
+            write_error_log(
+                f"write failed {item.get('topic', '')!r}: {e}", code="WRITE"
+            )
             continue
     return updated
 
 
 def main():
     if not _acquire_single_instance():
-        print("⚠️ 已有 summarize 实例在运行，跳过本次")
+        print("⚠️ A summarize instance is already running, skipping this run")
         return
 
     if not AI_API_KEY:
         write_error_log("AI_API_KEY not set", code="CONFIG")
-        print("❌ AI_API_KEY 未设置")
+        print("❌ AI_API_KEY not set")
         return
 
     if not _throttle_ai_run():
@@ -1711,13 +1821,13 @@ def main():
     logger.info("Fetching memories from past 3 days via REST API...")
     recent_memories = fetch_memories(today)
     if recent_memories is None:
-        print("❌ 获取记忆失败")
+        print("❌ Failed to fetch memories")
         return
     if not recent_memories:
-        print("过去 3 天无新记忆，跳过总结")
+        print("No new memories in the past 3 days, skipping summary")
         return
 
-    # 输入过滤：跳过已处理 + 排除 tag + 质量门（宁缺毋滥），仅收集通过记忆的 id
+    # Input filtering: skip processed + excluded tags + quality gate (better none than a bad one); collect only the ids of passing memories
     skipped_processed = len(recent_memories)
     recent_memories = _filter_processed(recent_memories)
     skipped_processed -= len(recent_memories)
@@ -1729,27 +1839,29 @@ def main():
     skipped_quality -= len(recent_memories)
     if skipped_processed or skipped_tags or skipped_quality:
         logger.info(
-            f"输入过滤：已处理跳过 {skipped_processed}，tag 过滤跳过 {skipped_tags}，低质丢弃 {skipped_quality}，"
-            f"剩余 {len(recent_memories)} 条"
+            f"input filtering: processed skipped {skipped_processed}, tag filter skipped {skipped_tags}, low-quality dropped {skipped_quality}, "
+            f"{len(recent_memories)} remaining"
         )
     consumed_ids = [m["id"] for m in recent_memories if m.get("id")]
     if not recent_memories:
-        print("无可处理的新记忆（均已处理或质量不合格），跳过总结")
+        print(
+            "No processable new memories (all processed or failing quality), skipping summary"
+        )
         return
 
     logger.info("Scanning notes directory structure...")
     dir_tree = scan_notes_structure(NOTES_DIR)
 
-    # 阶段1：记忆聚合（分类/合并/去重/时间线，递归收敛）
+    # Phase 1: memory aggregation (classify / merge / dedupe / timeline, recursive convergence)
     logger.info(f"Aggregating {len(recent_memories)} memories into groups...")
     groups, agg_rounds = _run_aggregate_v2(recent_memories)
     if groups is None:
-        print("⚠️ 记忆聚合失败，跳过本次总结")
+        print("⚠️ Memory aggregation failed, skipping this summary")
         return
     if not groups:
         return
 
-    # 阶段2：逐组「关键词 → 检索 Extracts → 判断归并/新建 → think enable 生成」
+    # Phase 2: per group "keywords -> search Extracts -> decide merge/new -> think enable generate"
     logger.info(
         f"Phase 2: Refining {len(groups)} groups (keyword → search → merge/new)..."
     )
@@ -1762,18 +1874,21 @@ def main():
     except Exception:
         pass
     if not writes:
-        print("所有文章生成失败或内容过短，跳过总结")
+        print(
+            "All article generation failed or content was too short, skipping summary"
+        )
         return
 
     all_tags = _collect_tags(recent_memories)
     updated_files = _write_articles_v2(writes, today_str, all_tags)
 
-    # 有落盘才标记已处理：成功消费的记忆置 bit0，避免下轮重复处理。
-    # 无落盘（本轮全被 LLM 判无沉淀价值）不标记，下轮重新评估。
+    # Mark as processed only when something was written: set bit0 on successfully consumed
+    # memories to avoid reprocessing next round. Without any write (this round everything was
+    # judged by the LLM to have no sedimentation value), do not mark; re-evaluate next round.
     if updated_files and consumed_ids:
         _mark_processed(consumed_ids)
 
-    # 阶段3：规范提炼（规则/规范类记忆 → MCP/Rules/*.md）
+    # Phase 3: rules extraction (rule/convention memories -> MCP/Rules/*.md)
     phase3 = _run_phase3(groups, today_str)
     rules_updates = phase3.get("updated", "")
     if rules_updates:
@@ -1781,7 +1896,7 @@ def main():
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     overview = f"{now_str} - 记忆总结（{len(recent_memories)} 条事实，{len(updated_files)} 个文件）"
-    git_commit(overview, stage="写入后")
+    git_commit(overview, stage="after write")
 
     _mark_run_success()
 

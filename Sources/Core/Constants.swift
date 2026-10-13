@@ -48,11 +48,11 @@ enum UDKey {
     static let translationPanelOrigin = "translation_panel_origin"
 }
 
-// MARK: - Python 脚本名
+// MARK: - Python Script Names
 
-/// 内嵌 Python 脚本的文件名。跨 App/ MCP/ Scanner/ 三个目录引用，
-/// 且是 Swift ↔ 脚本目录的约定（`PythonScriptRunner.findScript(named:)` 的唯一入参），
-/// 故集中此处，避免同一文件名在多处字面量重复后漂移。
+/// File names of the embedded Python scripts. Referenced across three directories — App/ MCP/ Scanner/ —
+/// and constituting the Swift ↔ script-directory contract (the sole argument of `PythonScriptRunner.findScript(named:)`),
+/// hence centralized here, to avoid the same file name drifting after literal duplication in many places.
 enum PythonScripts {
     static let server = "server.py"
     static let tokenProxy = "token_proxy.py"
@@ -60,32 +60,32 @@ enum PythonScripts {
     static let astExtractor = "ast_extractor.py"
 }
 
-// MARK: - Python 子进程环境变量名
+// MARK: - Python Subprocess Environment Variable Names
 
-/// Swift 注入给 Python 脚本的环境变量名（跨语言契约）。
+/// Environment variable names Swift injects into Python scripts (cross-language contract).
 ///
-/// 同一个名字存在**两个注入点**：`PythonScriptRunner.baseEnvironment()`（所有脚本的公共层）
-/// 与 `AppDelegate` 的内部任务内联 cmd（`TaskExecConfig.toProcess()` 不设环境，
-/// 子进程只继承 App 环境，故任务需自己拼全）。分散写字面量时改名必然漏掉一处，
-/// 而漏掉的表现是 Python 侧读到空值、功能静默降级（如 `config.ai_api_key()` 返回 ""，
-/// 总结与嵌入无声停摆）。故跨语言 env 一律登记于此；仅单一脚本内部使用的 env 不入此列。
+/// The same name has **two injection points**: `PythonScriptRunner.baseEnvironment()` (the common layer for all scripts)
+/// and the inline cmd of `AppDelegate`'s internal tasks (`TaskExecConfig.toProcess()` sets no environment,
+/// so the subprocess only inherits the App environment, and tasks must assemble it fully themselves). When literals are scattered, a rename is bound to miss one place,
+/// and the symptom of a miss is the Python side reading an empty value and the feature silently degrading (e.g. `config.ai_api_key()` returns "",
+/// and summary and embedding grind to a silent halt). Hence all cross-language env vars are registered here; env vars used only inside a single script are not included.
 enum EnvKeys {
-    /// 通用 AI API key。AI 文本生成与向量嵌入共用同一个 key，与具体 provider 解绑，
-    /// 故不叫 `DEEPSEEK_API_KEY`——换 provider 不需要改环境变量名。
+    /// Generic AI API key. AI text generation and vector embedding share the same key, decoupled from any specific provider,
+    /// hence it is not named `DEEPSEEK_API_KEY` — switching providers requires no env var rename.
     static let aiAPIKey = "AI_API_KEY"
 
-    /// LLM 单次推理超时（秒，来自 `ai.llmTimeout`）。
-    /// 只作用于 Python 侧的 LLM 调用；agent 子进程超时走 `general.aiTimeout` → `AGENT_TIMEOUT`。
+    /// Single LLM inference timeout (seconds, from `ai.llmTimeout`).
+    /// Applies only to Python-side LLM calls; the agent subprocess timeout goes through `general.aiTimeout` → `AGENT_TIMEOUT`.
     static let aiLLMTimeout = "AI_LLM_TIMEOUT"
 
-    /// 界面/提示词语言（`zh-Hans` / `en`），来自 `general.language`（空则系统首选）。
-    /// Python 侧据此选择 `prompts/<lang>/` 下的提示词——判据与 `L10n.resolvedLanguage` 同源。
+    /// UI/prompt language (`zh-Hans` / `en`), from `general.language` (empty = system preference).
+    /// The Python side uses this to pick prompts under `prompts/<lang>/` — same source of truth as `L10n.resolvedLanguage`.
     static let utilityLang = "UTILITY_LANG"
 }
 
 // MARK: - Shared Pasteboard Types
 
-/// 图片类型统一集合（剪切板 + 暂存拖入共用）
+/// Unified image type set (shared by clipboard + stage drag-in)
 enum PasteboardImageTypes {
     static let all: [NSPasteboard.PasteboardType] = [
         .tiff, .png,

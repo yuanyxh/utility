@@ -1,39 +1,41 @@
 import Foundation
 
-/// 提示词管理器。
+/// Prompt manager.
 ///
-/// 模板有四个来源，优先级从高到低：
+/// Templates have four sources, in priority from high to low:
 ///
-/// 1. `translation.prompt` —— 翻译专用内联模板（`Translator` 直接读，不经本类）
-/// 2. `prompts.templates[feature]` —— 配置里的内联模板
-/// 3. 文件：`~/.config/utility/prompts/<feature>.md`（用户覆盖，**与语言无关**）
-///    → `MCPScripts/prompts/<lang>/<feature>.md`（随包内置，按当前语言 → `zh-Hans` 基线回退）
-/// 4. `L10n` 内置文案（`Sources/Resources/<lang>.json`）
+/// 1. `translation.prompt` — translation-specific inline template (`Translator` reads it directly, not through this class)
+/// 2. `prompts.templates[feature]` — inline template in config
+/// 3. File: `~/.config/utility/prompts/<feature>.md` (user override, **language-independent**)
+///    → `MCPScripts/prompts/<lang>/<feature>.md` (bundled, falls back by current language → `zh-Hans` baseline)
+/// 4. `L10n` built-in text (`Sources/Resources/<lang>.json`)
 ///
-/// 第 3 层与 Python 侧 `prompt_loader.py` **共用同一目录、同一契约**：front-matter 里
-/// 声明 `name` / `placeholders` / `json_keys`，两个消费方按同一规则挑文件、做同样的
-/// 自校验。这样「换个语言」「改一句提示词」在两侧是同一件事，不必各改一份。
+/// Layer 3 **shares the same directory and the same contract** with the Python-side `prompt_loader.py`:
+/// the front-matter declares `name` / `placeholders` / `json_keys`, and both consumers pick files by the
+/// same rules and run the same self-checks. So "switching a language" and "editing one prompt" are the same
+/// thing on both sides, no need to change two copies.
 ///
-/// 第 4 层不是「第二份文案」，而是**安装损坏时的兜底**：`MCPScripts/prompts/` 随包分发，
-/// 缺失属安装不完整。此时若无兜底，发给模型的将是一段空 system prompt——比直接失败更难
-/// 排查（表现为「模型答非所问」而非「翻译报错」）。两层内容由
-/// `scripts/check-router-config-contract.py` 断言逐字一致，不会漂移。
+/// Layer 4 is not a "second copy of the text" but a **fallback for a broken install**: `MCPScripts/prompts/`
+/// is bundled, and a missing file means an incomplete install. Without the fallback, what gets sent to the
+/// model would be an empty system prompt—harder to diagnose than a hard failure (it shows as "the model
+/// gives irrelevant answers" rather than "translation error"). The two layers' contents are asserted
+/// byte-for-byte by `scripts/check-router-config-contract.py`, so they won't drift.
 public final class PromptManager {
     public static let shared = PromptManager()
 
     private init() {}
 
-    /// 基线语言：当前语言没有该模板时回退它。
-    /// 与 `prompt_loader.FALLBACK_LANG` 同值——两侧对「有没有这个语言」的判断必须一致。
+    /// Baseline language: fall back to it when the current language has no such template.
+    /// Same value as `prompt_loader.FALLBACK_LANG`—the two sides' judgment of "is this language present" must agree.
     static let fallbackLanguage = "zh-Hans"
 
-    /// 提示词目录名（`MCPScripts/` 下）。
+    /// Prompt directory name (under `MCPScripts/`).
     private static let promptsDir = "prompts"
 
-    /// 获取指定功能的提示词，含变量替换。
+    /// Get the prompt for the specified feature, with variable substitution.
     /// - Parameters:
-    ///   - feature: 功能名（如 "translate", "translate_auto"）
-    ///   - variables: 替换变量字典，例如 `["source": "en", "target": "zh"]`
+    ///   - feature: feature name (e.g. "translate", "translate_auto")
+    ///   - variables: substitution variable dictionary, e.g. `["source": "en", "target": "zh"]`
     public func prompt(for feature: String, variables: [String: String] = [:]) -> String {
         if let custom = ConfigManager.shared.config.prompts.templates[feature],
            !custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -45,57 +47,59 @@ public final class PromptManager {
         return Self.applyVariables(template.text, variables: variables)
     }
 
-    // MARK: - 模板
+    // MARK: - Template
 
-    /// 一份可渲染的模板及其声明。
+    /// A renderable template and its declaration.
     struct Template {
         let text: String
-        /// 文件声明的占位符；`nil` = 无声明（配置内联模板与 L10n 兜底），不做覆盖校验
+        /// Placeholders declared by the file; `nil` = no declaration (config inline template and L10n fallback), no override check
         let placeholders: [String]?
-        /// 来源路径，仅用于日志定位
+        /// Origin path, used only for log locating
         let origin: String
     }
 
-    /// 按优先级取模板：用户覆盖目录 → 内置目录（各自按 当前语言 → 基线语言）。
-    /// 候选全不可用则回退 `L10n`——不静默、也不把空提示词发给模型。
+    /// Pick the template by priority: user override dir → built-in dir (each by current language → baseline language).
+    /// If all candidates are unusable, fall back to `L10n`—not silently, and not sending an empty prompt to the model.
     static func loadTemplate(feature: String) -> Template {
         let language = currentLanguage()
         guard isValidFeature(feature) else {
-            debugLog("[PromptManager] feature 名非法（只允许小写字母/数字/下划线）: \(feature)")
+            debugLog("[PromptManager] invalid feature name (only lowercase letters/digits/underscores allowed): \(feature)")
             return l10nTemplate(feature: feature)
         }
 
         for candidate in candidatePaths(feature: feature, language: language) {
             guard let raw = try? String(contentsOfFile: candidate.path, encoding: .utf8) else {
-                debugLog("[PromptManager] 模板读取失败: \(candidate.path)")
+                debugLog("[PromptManager] failed to read template: \(candidate.path)")
                 continue
             }
-            // 解析失败（契约违反）时继续找下一个候选：用户覆盖写坏了应回退到内置，
-            // 而不是让翻译功能停摆。真正的问题已在 parseTemplate 里记了日志。
+            // On parse failure (contract violation) continue to the next candidate: a broken user override
+            // should fall back to the built-in, not stop translation. The real problem was already logged in parseTemplate.
             guard let parsed = parseTemplate(raw, feature: feature, path: candidate.path) else {
                 continue
             }
-            // 只有内置模板才有「语言回退」一说；用户覆盖与语言无关，不该被报成回退
+            // Only built-in templates have a "language fallback"; the user override is language-independent and must not be reported as a fallback
             if let lang = candidate.lang, lang != language {
                 debugLog(
-                    "[PromptManager] \(feature): 语言 \(language) 无该模板，回退 \(lang)（\(candidate.path)）",
+                    "[PromptManager] \(feature): no template for language \(language), falling back to \(lang) (\(candidate.path))",
                 )
             }
             return Template(text: parsed.text, placeholders: parsed.placeholders, origin: candidate.path)
         }
 
-        debugLog("[PromptManager] \(feature): 语言 \(language) 下无可用模板文件，回退 L10n 内置文案")
+        debugLog("[PromptManager] \(feature): no usable template file for language \(language), falling back to L10n built-in text")
         return l10nTemplate(feature: feature)
     }
 
-    /// 候选文件：(路径, 语言)。`lang` 为 `nil` 表示**与语言无关**——用户覆盖走这条。
+    /// Candidate files: (path, language). `lang` being `nil` means **language-independent**—the user override takes this path.
     ///
-    /// 两处的语言维度**有意不同**：内置模板面向「使用者可能是不同母语的人」，故按语言
-    /// 分目录、缺该语言时回退基线；用户覆盖是用户自己控制的一份文件——写 prompt 的人只有
-    /// 一种母语，让它「放哪个目录」取决于界面语言既无意义、又会因切换语言而失效。
+    /// The language dimension of the two is **intentionally different**: built-in templates target "users who may be
+    /// native speakers of different languages", so they are split by language directory and fall back to the baseline
+    /// when that language is missing; the user override is a single file the user controls—whoever writes the prompt
+    /// has only one native language, so making "which directory it goes in" depend on the UI language is both
+    /// meaningless and broken when the language is switched.
     ///
-    /// 顺序必须与 `prompt_loader._candidate_paths` 一致：两侧对同一目录的解释一旦不同，
-    /// 就会出现「Python 用了用户覆盖、Swift 用了内置」这种没法解释的组合。
+    /// The order must match `prompt_loader._candidate_paths`: once the two sides interpret the same directory
+    /// differently, you get an inexplicable combination like "Python used the user override, Swift used the built-in".
     static func candidatePaths(feature: String, language: String) -> [(path: String, lang: String?)] {
         var candidates: [(path: String, lang: String?)] = []
         let override = AppPaths.configDir
@@ -116,12 +120,12 @@ public final class PromptManager {
         return candidates
     }
 
-    /// 当前语言：与注入给 Python 的 `UTILITY_LANG` 同源（`L10n` 是唯一判据）。
+    /// Current language: same source as the `UTILITY_LANG` injected to Python (`L10n` is the sole criterion).
     private static func currentLanguage() -> String {
         L10n.resolvedLanguage(configured: ConfigManager.shared.config.general.language)
     }
 
-    /// L10n 内置文案兜底；未知 feature 返回空串（与 `defaultPrompt` 旧行为一致）。
+    /// L10n built-in text fallback; unknown feature returns an empty string (consistent with the old `defaultPrompt` behavior).
     private static func l10nTemplate(feature: String) -> Template {
         let text: String = switch feature {
         case "translate": L10n.Prompt.translate
@@ -129,19 +133,19 @@ public final class PromptManager {
         default: ""
         }
         if text.isEmpty {
-            debugLog("[PromptManager] 未知 feature 且无内置文案: \(feature)")
+            debugLog("[PromptManager] unknown feature and no built-in text: \(feature)")
         }
         return Template(text: text, placeholders: nil, origin: "L10n")
     }
 
-    // MARK: - 契约解析（与 prompt_loader 同规则）
+    // MARK: - Contract parsing (same rules as prompt_loader)
 
-    /// 解析模板文件（front-matter + 正文）并按契约自校验，违反则记日志并返回 nil。
+    /// Parse a template file (front-matter + body) and self-check against the contract; on violation log and return nil.
     ///
-    /// 契约（逐条对齐 `prompt_loader._parse_file`）：
-    /// - 首部是 `---\n<键: 值>\n---\n`，键为扁平的 `name` / `placeholders` / `json_keys`
-    /// - `name` 必须等于 feature——文件放错位置会立即暴露，而不是静默用错提示词
-    /// - `placeholders` 声明与实际出现的 `{占位符}` 必须一致（文件自校验）
+    /// Contract (aligned line by line with `prompt_loader._parse_file`):
+    /// - The head is `---\n<key: value>\n---\n`, keys are the flat `name` / `placeholders` / `json_keys`
+    /// - `name` must equal feature—a misplaced file is exposed immediately rather than silently using the wrong prompt
+    /// - `placeholders` declared must match the `{placeholder}` actually present (file self-check)
     static func parseTemplate(
         _ raw: String,
         feature: String,
@@ -150,7 +154,7 @@ public final class PromptManager {
         guard let frontMatter = frontMatterRegex,
               let match = frontMatter.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw))
         else {
-            debugLog("[PromptManager] \(path): 缺少 front-matter（--- name/placeholders ---）")
+            debugLog("[PromptManager] \(path): missing front-matter (--- name/placeholders ---)")
             return nil
         }
 
@@ -163,7 +167,7 @@ public final class PromptManager {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
             guard let entry = parseKeyValue(trimmed) else {
-                debugLog("[PromptManager] \(path): front-matter 行无法解析 \(trimmed)")
+                debugLog("[PromptManager] \(path): cannot parse front-matter line \(trimmed)")
                 return nil
             }
             meta[entry.key] = entry.value
@@ -171,7 +175,7 @@ public final class PromptManager {
 
         let name = (meta["name"] ?? "").trimmingCharacters(in: .whitespaces)
         guard name == feature else {
-            debugLog("[PromptManager] \(path): name=\(name) 与请求的 feature=\(feature) 不一致")
+            debugLog("[PromptManager] \(path): name=\(name) does not match requested feature=\(feature)")
             return nil
         }
 
@@ -179,8 +183,8 @@ public final class PromptManager {
         let found = placeholders(in: text)
         guard Set(declared) == Set(found) else {
             debugLog(
-                "[PromptManager] \(path): placeholders 声明与实际不符"
-                    + "（声明 \(declared.sorted()) / 实际 \(found.sorted())）",
+                "[PromptManager] \(path): placeholders declaration does not match actual"
+                    + " (declared \(declared.sorted()) / actual \(found.sorted()))",
             )
             return nil
         }
@@ -197,7 +201,7 @@ public final class PromptManager {
         return (ns.substring(with: match.range(at: 1)), ns.substring(with: match.range(at: 2)))
     }
 
-    /// `[a, b]` → ["a", "b"]（扁平写法，不引入 YAML 依赖）。
+    /// `[a, b]` → ["a", "b"] (flat form, no YAML dependency introduced).
     private static func parseList(_ raw: String) -> [String] {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard let regex = listRegex,
@@ -214,7 +218,7 @@ public final class PromptManager {
             .filter { !$0.isEmpty }
     }
 
-    /// 正文里实际出现的占位符（去重保序）。
+    /// Placeholders actually present in the body (deduplicated, order preserved).
     private static func placeholders(in text: String) -> [String] {
         guard let regex = placeholderRegex else { return [] }
         let ns = text as NSString
@@ -231,12 +235,13 @@ public final class PromptManager {
         return regex.firstMatch(in: feature, range: NSRange(feature.startIndex..., in: feature)) != nil
     }
 
-    // MARK: - 变量替换
+    // MARK: - Variable substitution
 
-    /// 按名字一次性替换 `{占位符}`；未登记的 `{…}` 原样保留。
+    /// Replace `{placeholder}` by name in a single pass; unregistered `{…}` are kept as-is.
     ///
-    /// 不用逐个键 `replacingOccurrences`：那样替换进来的值若含 `{target}`，会被后续轮次
-    /// 再次替换（用户自定义文案里出现别的占位符就中招）。与 `prompt_loader.render` 同语义。
+    /// Not using per-key `replacingOccurrences`: a substituted value containing `{target}` would be
+    /// replaced again in a later round (any other placeholder in user-defined text would trigger this).
+    /// Same semantics as `prompt_loader.render`.
     static func applyVariables(_ template: String, variables: [String: String]) -> String {
         guard !variables.isEmpty, let regex = placeholderRegex else { return template }
         let ns = template as NSString
@@ -255,8 +260,9 @@ public final class PromptManager {
         return result
     }
 
-    /// 模板声明了占位符、调用却没给实参时记日志——缺参会把 `{占位符}` 原样发给模型，
-    /// 表现为「模型看到了奇怪的模板变量」，只有在这里能定位到。
+    /// Log when a template declares placeholders but the call passes no arguments—a missing argument sends the
+    /// `{placeholder}` to the model as-is, showing as "the model saw a strange template variable", which can only
+    /// be located here.
     private static func warnUncoveredArguments(
         _ template: Template,
         feature: String,
@@ -266,26 +272,26 @@ public final class PromptManager {
         let missing = declared.filter { variables[$0] == nil }
         guard !missing.isEmpty else { return }
         debugLog(
-            "[PromptManager] \(feature): 调用缺少实参 \(missing)"
-                + "（模板声明 \(declared)，\(template.origin)）",
+            "[PromptManager] \(feature): call missing arguments \(missing)"
+                + " (template declares \(declared), \(template.origin))",
         )
     }
 
-    // MARK: - 正则（契约表达，与 prompt_loader 同名同义）
+    // MARK: - Regexes (contract expression, same name and meaning as prompt_loader)
 
-    /// : front-matter：文件必须以 `---` 开头、`---` 结束
+    /// : front-matter: the file must start with `---` and end with `---`
     private static let frontMatterRegex = makeRegex(
         #"\A---\r?\n(.*?)\r?\n---\r?\n"#,
         options: [.dotMatchesLineSeparators],
     )
     private static let keyValueRegex = makeRegex(#"^([a-zA-Z_]+)\s*:\s*(.*)$"#)
     private static let listRegex = makeRegex(#"^\[(.*)\]$"#)
-    /// 正文里的占位符：只认「字母数字下划线」形态，故 JSON 的 `{"action": …}` 不会被误判
+    /// Placeholder in the body: only the `[A-Za-z0-9_]` form is recognized, so JSON's `{"action": …}` is not misidentified
     private static let placeholderRegex = makeRegex(#"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"#)
-    /// feature 名（文件名拼接用，防目录穿越）
+    /// feature name (used for filename concatenation, prevents directory traversal)
     private static let featureRegex = makeRegex(#"^[a-z][a-z0-9_]*$"#)
 
-    /// 正则编译失败不该静默——它会让提示词整体回退到 L10n，看起来「只是没生效」。
+    /// A regex compile failure must not be silent—it makes the whole prompt fall back to L10n, which looks like "it just didn't take effect".
     private static func makeRegex(
         _ pattern: String,
         options: NSRegularExpression.Options = [],
@@ -293,7 +299,7 @@ public final class PromptManager {
         do {
             return try NSRegularExpression(pattern: pattern, options: options)
         } catch {
-            debugLog("[PromptManager] 正则编译失败 \(pattern): \(error)")
+            debugLog("[PromptManager] regex compile failed \(pattern): \(error)")
             return nil
         }
     }

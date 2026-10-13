@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""校验向量检索缓存的两条不变量（2026-09-11 性能修复的回归门）。
+"""Check two invariants of the vector-search cache (the regression gate for the 2026-09-11 performance fix).
 
-背景：`project_search` 与 `project_notes` 各有一层 embedding 缓存，两条不变量都
-是「看起来对、破坏后只是变慢或变旧」的隐性契约，重构时极易被无意打破：
+Background: `project_search` and `project_notes` each have a layer of embedding cache, and both
+invariants are implicit contracts that "look right and, when broken, only become slower or staler",
+which are very easy to break unintentionally during a refactor:
 
-  A. 符号缓存键必须覆盖 embedding 的全部输入字段
-     - `symbols.id` 会因全量重扫（clearAll → DELETE + 重插）而整体换号，
-       以 id 为键会让缓存每次重扫后全部失效（曾导致单次向量检索重算 349s）
-     - 键若漏掉某个输入字段，字段变化时不会重算 → 返回陈旧向量
+  A. The symbol cache key must cover all input fields of the embedding
+     - `symbols.id` is renumbered entirely by a full rescan (clearAll → DELETE + reinsert), so
+       using id as the key invalidates the whole cache after every rescan (once caused a single
+       vector search to recompute for 349s)
+     - if the key misses an input field, a change to that field does not trigger a recompute →
+       a stale vector is returned
 
-  B. 笔记缓存必须能感知深层文件的改动
-     - 曾用「项目根目录 mtime」判断失效，而它只在直接子项增删时变化 →
-       改深层已有文件被判为「未变」，返回陈旧搜索结果
+  B. The note cache must be able to detect changes to deep files
+     - it once used the "project root directory mtime" to decide invalidation, but that only changes
+       when a direct child is added or removed → changing an existing deep file was judged
+       "unchanged", returning stale search results
 
-用法（在项目根目录执行）：
+Usage (run from the project root):
     PYTHONPATH=Sources/MCPScripts \\
     FASTEMBED_CACHE_PATH=~/.cache/utility/fastembed \\
     ~/.config/utility/mcp-venv/bin/python3 scripts/check-search-cache-invariants.py
 
-退出码 0 = 全部通过；1 = 有不变量被破坏。仅使用临时目录，不触碰真实数据。
+Exit code 0 = all passed; 1 = an invariant was broken. It only uses a temp directory and does not
+touch real data.
 """
 
 from __future__ import annotations
@@ -66,12 +71,14 @@ def _insert(conn: sqlite3.Connection, sig: str, start_line: int | None = None) -
 
 
 def check_symbol_cache_key(tmp: str) -> None:
-    """A. 符号缓存键不变量。
+    """A. Symbol cache key invariant.
 
-    判定用「本轮实际嵌入了几条」（包一层计数 embedder）而不是「向量是否相同」——
-    单条符号重算得到的向量本来就与缓存值逐位相同，比向量测不出「白重算」这个缺陷。
+    The decision uses "how many rows were actually embedded this round" (by wrapping a counting
+    embedder) rather than "whether the vectors are the same"——a single symbol recompute yields a
+    vector bit-for-bit identical to the cached value, so comparing vectors cannot detect the
+    "pointless recompute" defect.
     """
-    print("\nA. 符号缓存键（symbol_embeddings）")
+    print("\nA. Symbol cache key (symbol_embeddings)")
 
     import server_search as S
 
@@ -103,79 +110,89 @@ def check_symbol_cache_key(tmp: str) -> None:
         return conn.execute("SELECT COUNT(*) FROM symbol_embeddings").fetchone()[0]
 
     run()
-    check("首次为符号计算 embedding", len(embedded) == 1, f"实际 {len(embedded)} 条")
+    check(
+        "first time computing an embedding for the symbol",
+        len(embedded) == 1,
+        f"actually {len(embedded)} rows",
+    )
 
-    # A1: 仅 id 变化（模拟 clearAll 后的 DELETE + 重插）→ 不得重算、不得留孤儿
+    # A1: only id changes (simulating DELETE + reinsert after clearAll) → must not recompute, must not leave orphans
     conn.execute("DELETE FROM symbols")
     _insert(conn, "func alpha()")
     run()
     check(
-        "重扫换 id 后不重算",
+        "no recompute after a rescan renumbers ids",
         len(embedded) == 0,
-        f"重算了 {len(embedded)} 条 —— 失败 = 键又绑回了易漂移的 symbols.id",
+        f"recomputed {len(embedded)} rows —— failure = the key is bound back to the drift-prone symbols.id",
     )
     check(
-        "重扫后边表无孤儿累积",
+        "no orphan accumulation in the edge table after a rescan",
         edge_rows() == 1,
-        f"边表 {edge_rows()} 行（存活符号 1 个）",
+        f"edge table has {edge_rows()} rows (1 live symbol)",
     )
 
-    # A2: 参与 embedding 文本的字段变化 → 必须重算
+    # A2: a field participating in the embedding text changes → must recompute
     conn.execute("UPDATE symbols SET signature='func alpha(x: Int, y: Int) -> R'")
     conn.commit()
     run()
     check(
-        "签名变化后必须重算",
+        "must recompute after the signature changes",
         len(embedded) == 1,
-        f"实际 {len(embedded)} 条 —— 失败 = 键漏掉了 signature，会返回陈旧向量",
+        f"actually {len(embedded)} rows —— failure = the key omits signature and will return a stale vector",
     )
 
-    # A3: 不参与 embedding 文本的字段变化 → 不应重算
+    # A3: a field not participating in the embedding text changes → should not recompute
     conn.execute("UPDATE symbols SET start_line=999")
     conn.commit()
     run()
     check(
-        "仅行号漂移不触发重算",
+        "a line-number drift alone does not trigger a recompute",
         len(embedded) == 0,
-        f"重算了 {len(embedded)} 条 —— 失败 = 键里混进了位置字段",
+        f"recomputed {len(embedded)} rows —— failure = the key mixes in a positional field",
     )
 
-    # A4: 符号被删除后，其 embedding 必须被清理（否则边表无界增长）
+    # A4: after a symbol is deleted, its embedding must be cleaned up (otherwise the edge table grows without bound)
     conn.execute("DELETE FROM symbols")
     conn.commit()
     run()
-    check("符号删除后边表无孤儿", edge_rows() == 0, f"残留 {edge_rows()} 行")
+    check(
+        "no orphans in the edge table after a symbol is deleted",
+        edge_rows() == 0,
+        f"{edge_rows()} rows left over",
+    )
 
-    # A5: DB 内容变化但进程未重启 → 内存缓存必须失效
-    # 缺陷形态：缓存只按 db_path 查，DB 被重扫后仍返回旧符号元数据（旧路径、已删符号），
-    # 新符号也搜不到，直到进程重启。关键是**不清内存缓存**去调用，才测得出这个缺陷。
+    # A5: DB content changes but the process has not restarted → the in-memory cache must be invalidated
+    # Defect form: the cache is looked up only by db_path, so after the DB is rescanned it still
+    # returns old symbol metadata (old paths, deleted symbols), and new symbols can't be found either,
+    # until the process restarts. The key is to call **without clearing the in-memory cache**, which
+    # is the only way to expose this defect.
     conn.execute("DELETE FROM symbol_embeddings")
     conn.execute("DELETE FROM symbols")
     conn.commit()
     _insert(conn, "func alpha()")
-    # 先经 _search_vectors 预热内存缓存（_ensure_symbol_embeddings 本身不填该缓存）
+    # First warm up the in-memory cache via _search_vectors (_ensure_symbol_embeddings itself does not fill that cache)
     S._symbol_embeddings.clear()
     S._search_vectors(db, "warmup")
     rows_before = edge_rows()
 
-    # 新增一个符号并提交：DB 内容与文件 mtime 同时变化，而进程缓存仍停在旧状态
+    # Add a symbol and commit: the DB content and the file mtime change at the same time, while the process cache is still at the old state
     conn.execute(
         "INSERT INTO symbols (file_path,name,kind,signature) "
         "VALUES ('/p/b.swift','beta','var','var beta')"
     )
     conn.commit()
-    S._search_vectors(db, "beta")  # 不清 _symbol_embeddings
+    S._search_vectors(db, "beta")  # do not clear _symbol_embeddings
     rows_after = edge_rows()
     check(
-        "DB 变化后缓存失效并为新符号建 embedding",
+        "cache invalidated after a DB change and an embedding built for the new symbol",
         rows_after == rows_before + 1,
-        f"边表 {rows_before} → {rows_after} —— 未增长说明仍在用陈旧的内存缓存",
+        f"edge table {rows_before} → {rows_after} —— no growth means it is still using the stale in-memory cache",
     )
     conn.close()
 
 
 def check_note_cache_freshness(tmp: str) -> None:
-    """B. 笔记缓存失效判定不变量。"""
+    """B. Note cache invalidation decision invariant."""
     import server_search as S
 
     root = os.path.join(tmp, "notes_project")
@@ -190,12 +207,13 @@ def check_note_cache_freshness(tmp: str) -> None:
     write("deep/nested/doc.md", "深层标记甲")
     S._ensure_note_cache(root)
 
-    # B1: 无改动 → 命中缓存
+    # B1: no change → cache hit
     conn, _, _ = S._ensure_note_cache(root)
     conn.close()
 
-    # B2: 改深层已有文件 → 必须被感知。
-    #     关键前置：此操作不改变项目根目录 mtime，正是旧实现漏判的场景。
+    # B2: change an existing deep file → must be detected.
+    #     Key precondition: this operation does not change the project root mtime, exactly the
+    #     scenario the old implementation missed.
     root_mtime_before = os.stat(root).st_mtime
     write("deep/nested/doc.md", "深层标记乙")
     root_mtime_unchanged = os.stat(root).st_mtime == root_mtime_before
@@ -207,20 +225,24 @@ def check_note_cache_freshness(tmp: str) -> None:
     ).fetchone()[0]
     conn.close()
     check(
-        "深层文件改动能被感知",
+        "changes to a deep file are detected",
         hit > 0,
-        "失败 = 又用回了目录 mtime 做快速跳过"
-        + ("（本次改动确实未改变根目录 mtime）" if root_mtime_unchanged else ""),
+        "failure = reverted to using the directory mtime as a fast skip"
+        + (
+            " (this change indeed did not modify the root directory mtime)"
+            if root_mtime_unchanged
+            else ""
+        ),
     )
 
-    # B3: 文件缩短时旧的尾部 chunk 必须消失
+    # B3: when the file shrinks, the old trailing chunk must disappear
     write("deep/nested/doc.md", "只剩一段" + "填充内容" * 10)
     conn, _, _ = S._ensure_note_cache(root)
     n = conn.execute(
         "SELECT COUNT(*) FROM chunks WHERE file_path LIKE '%doc.md'"
     ).fetchone()[0]
     conn.close()
-    check("文件缩短后旧 chunk 被清除", n == 1, f"残留 {n} 个 chunk")
+    check("old chunks cleared after the file shrinks", n == 1, f"{n} chunks left over")
 
     shutil.rmtree(root, ignore_errors=True)
 
@@ -235,11 +257,11 @@ def main() -> int:
 
     print()
     if _failures:
-        print(f"❌ 不变量被破坏 {len(_failures)} 项：")
+        print(f"❌ {len(_failures)} invariant(s) broken:")
         for f in _failures:
             print(f"   - {f}")
         return 1
-    print("✅ 全部不变量通过")
+    print("✅ all invariants passed")
     return 0
 
 

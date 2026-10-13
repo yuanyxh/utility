@@ -1,20 +1,20 @@
 import Foundation
 
-/// `MCPScripts/` 资源定位（唯一来源）。
+/// `MCPScripts/` resource location (single source of truth).
 ///
-/// Python 脚本与提示词模板都随包分发在 `MCPScripts/` 下（`Package.swift` 的
-/// `.copy("MCPScripts")` 保留目录结构），执行期可能落在两个位置：
+/// Python scripts and prompt templates are both distributed under `MCPScripts/` (`Package.swift`'s
+/// `.copy("MCPScripts")` preserves the directory structure); at runtime they may land in two locations:
 ///
-/// 1. **打包内**：`Bundle.module.resourceURL/MCPScripts/…`（`swift build` 产物与 app 内）
-/// 2. **开发目录**：SPM 把资源 bundle 放在 `.build/<triple>/<pkg>_<pkg>.bundle/Contents/Resources/`，
-///    自其上溯两级即仓库根，故 `MCPScripts/…` 直接命中源码目录
+/// 1. **Inside the bundle**: `Bundle.module.resourceURL/MCPScripts/…` (in `swift build` output and inside the app)
+/// 2. **Dev directory**: SPM places the resource bundle at `.build/<triple>/<pkg>_<pkg>.bundle/Contents/Resources/`,
+///    going up two levels from there is the repo root, so `MCPScripts/…` hits the source directory directly
 ///
-/// 这段推导原先只存在于 `PythonScriptRunner.findScript(named:)`。提示词读取再抄一份的话，
-/// 两者迟早漂移——改了 bundle 布局只改一处，另一处**静默读不到文件**（脚本表现为功能不可用，
-/// 提示词表现为悄悄回退成内置文案），故收束至此。
+/// This derivation originally existed only in `PythonScriptRunner.findScript(named:)`. If prompt reading copied it again,
+/// the two would eventually drift — changing the bundle layout in only one place leaves the other **silently failing to find the file** (scripts manifest as an unavailable feature,
+/// prompts manifest as quietly falling back to built-in text), hence consolidated here.
 enum MCPScriptsResources {
-    /// 候选根目录（按优先级）。惰性解析一次并缓存：资源布局在进程生命周期内不变，
-    /// 而本 API 会被提示词读取按 feature × 语言调用多次。
+    /// Candidate root directories (by priority). Resolved lazily once and cached: the resource layout does not change within the process lifetime,
+    /// while this API gets called many times by prompt reading per feature × language.
     private static let roots: [String] = {
         guard let resourceURL = Bundle.module.resourceURL else {
             debugLog("[Resources] No bundle resource URL")
@@ -28,7 +28,7 @@ enum MCPScriptsResources {
         return [bundled, dev]
     }()
 
-    /// 相对 `MCPScripts/` 的路径 → 绝对路径；两处都不存在返回 nil。
+    /// Path relative to `MCPScripts/` → absolute path; returns nil if neither location exists.
     static func path(relative relativePath: String) -> String? {
         let fm = FileManager.default
         for root in roots {

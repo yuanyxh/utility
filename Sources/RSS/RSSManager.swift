@@ -1,8 +1,8 @@
 import Foundation
 import GRDB
 
-/// RSS 管理器（GRDB）
-/// Headless 设计，供 CLI 和 Hermes Agent 调用
+/// RSS manager (GRDB)
+/// Headless design, for CLI and Hermes Agent invocation
 public final class RSSManager {
     public static let shared = RSSManager()
     private var db: DatabaseQueue {
@@ -19,7 +19,7 @@ public final class RSSManager {
 
     // MARK: - Stale cleanup
 
-    /// 删除配置中已不存在的 feed 的历史条目
+    /// Delete historical items of feeds no longer present in the config
     private func cleanupStaleFeeds() {
         let configuredNames = Set(ConfigManager.shared.config.rss.feeds.map(\.name))
         let dbFeedNames: Set<String>
@@ -44,7 +44,7 @@ public final class RSSManager {
         }
     }
 
-    /// 抓取所有订阅源，合并新条目到数据库
+    /// Fetch all subscription feeds, merge new items into the database
     @discardableResult
     public func fetchAll() async throws -> [RSSItem] {
         let feeds = ConfigManager.shared.config.rss.feeds
@@ -70,7 +70,7 @@ public final class RSSManager {
         return allNew
     }
 
-    /// 去重插入新条目
+    /// Deduplicated insert of new items
     private func addIfNew(_ items: [RSSItem]) throws -> [RSSItem] {
         var inserted: [RSSItem] = []
         try db.write { db in

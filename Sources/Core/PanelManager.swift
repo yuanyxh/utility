@@ -1,7 +1,7 @@
 import Cocoa
 
-/// 全局面板管理器 — 中枢，唯一调用面板 showPanel/closePanel 的地方
-/// 通过 pub/sub 接收 requestShow/requestClose/requestPaste 事件
+/// Global panel manager — the hub, the only place that calls a panel's showPanel/closePanel
+/// Receives requestShow/requestClose/requestPaste events via pub/sub
 public final class PanelManager {
     public static let shared = PanelManager()
 

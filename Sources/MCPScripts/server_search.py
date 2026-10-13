@@ -1,16 +1,17 @@
-"""server 的项目依赖图查询 + 笔记语义检索模块。
+"""Server's project dependency-graph query + note semantic search module.
 
-从 server.py 拆分（2026-08-30，重构阶段4）：项目符号/文件/Package 搜索
-（tool_project_* 底层函数 + FTS/LIKE/向量多层检索）、project_notes 语义检索。
-代码原样搬移不改逻辑。
+Split out of server.py (2026-08-30, refactor phase 4): project symbol/file/Package
+search (tool_project_* low-level functions + multi-layer FTS/LIKE/vector search) and
+project_notes semantic search. Code moved as-is, no logic changes.
 
-注意：
-- 本模块不 import mem0/qdrant——server.py 的模块级副作用顺序
-  （POSTHOG_DISABLED/MEM0_TELEMETRY + _patch_mem0_fastembed 先于 import mem0）
-  不受影响。
-- 共享 embedder 在 server_embed.py（_get_shared_embedder/EMBEDDER_DIMS）；
-  tool_project_* 是底层函数（返回 dict），MCP handler 包装器（_handle_project_*，
-  @_register 装饰）留在 server.py，import 本模块的底层函数后经 arguments 解析调用。
+Note:
+- This module does not import mem0/qdrant — server.py's module-level side-effect
+  ordering (POSTHOG_DISABLED/MEM0_TELEMETRY + _patch_mem0_fastembed before import
+  mem0) is unaffected.
+- The shared embedder lives in server_embed.py (_get_shared_embedder/EMBEDDER_DIMS);
+  the tool_project_* functions are low-level (returning a dict), and the MCP handler
+  wrappers (_handle_project_*, decorated with @_register) stay in server.py, which
+  imports this module's low-level functions and calls them after parsing arguments.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from synonyms import load_synonyms
 from tool_defaults import arg_default
 
 # ---------------------------------------------------------------------------
-# 配置（与拆分前 server.py 一致；NOTE_*/PROJECT_MARKER_* 为 server 专属）
+# Configuration (same as pre-split server.py; NOTE_*/PROJECT_MARKER_* are server-specific)
 # ---------------------------------------------------------------------------
 
 NOTE_DB_FILENAME = "note_vectors.sqlite"
@@ -58,8 +59,10 @@ NOTE_SIMILARITY_THRESHOLD = 0.35
 NOTE_MAX_CHUNKS_PER_PROJECT = 50000
 NOTE_MAX_RESULTS = 20
 NOTE_PREVIEW_LEN = 300
-#: 项目工具默认返回条数（权威在 `tool_defaults.arg_default`，配置面见 config.yaml
-#: `mcp.toolDefaults`）。函数签名引用它，避免与 handler 各写一份字面量而漂移。
+#: Default result limit for the project tools (authoritative source is
+#: `tool_defaults.arg_default`, config surface is config.yaml `mcp.toolDefaults`).
+#: Function signatures reference it so the handler doesn't keep a second copy of the
+#: literal and drift.
 DEFAULT_PROJECT_SEARCH_LIMIT = arg_default("project_search", "limit")
 DEFAULT_PROJECT_STRUCTURE_LIMIT = arg_default("project_structure", "limit")
 PROJECT_MARKER_FILES = frozenset(
@@ -88,7 +91,7 @@ PROJECT_MARKER_FILES = frozenset(
         "pyproject.toml",
         "setup.py",
         "Pipfile",
-        # 其他
+        # Others
         "composer.json",
         "Gemfile",
         "mix.exs",
@@ -99,7 +102,7 @@ PROJECT_MARKER_FILE_SUFFIXES = (".csproj", ".sln")
 PROJECT_MARKER_DIR_SUFFIXES = (".xcodeproj", ".xcworkspace")
 _MAX_VECTOR_CACHE = 3
 _MAX_VECTOR_ROWS = 50000
-# 单次喂给 embedder 的文本条数（ONNX 推理分批，避免一次性构造过大的 batch）
+# Number of texts fed to the embedder per call (ONNX inference is batched to avoid building an oversized batch at once)
 _EMBED_BATCH_SIZE = 32
 _symbol_embeddings: dict[str, tuple[list[dict], np.ndarray | None]] = {}
 _note_cache_lock = threading.Lock()
@@ -116,7 +119,7 @@ except ImportError:
 
 
 def expand_query(query: str) -> str:
-    # 内置默认 + 用户增量（config.yaml `mcp.synonyms`）；合并与缓存都在 synonyms 层
+    # Built-in defaults + user additions (config.yaml `mcp.synonyms`); merging and caching both live in the synonyms layer
     synonyms = load_synonyms()
     terms = query.lower().split()
     expanded = set(terms)
@@ -246,26 +249,30 @@ def _search_packages(db_path: str, query: str) -> list[dict]:
 def _symbol_cache_key(
     file_path: str, name: str, kind: str, signature: str, doc: str
 ) -> str:
-    """符号的稳定缓存键 —— 由「定义 embedding 输入的那些字段」派生。
+    """Stable cache key for a symbol — derived from "the fields that define the
+    embedding input".
 
-    刻意不用 `symbols.id`：该列是 GRDB 的 AUTOINCREMENT，而两条写入路径都会让
-    同一个符号拿到新 id —— ProjectScanner 全量扫描经 `clearAll()` 先
-    `DELETE FROM symbols` 再重插；batchWriteFiles 先按 file_path 删再重插。
-    以 id 为键时每次重扫所有 embedding 立即失效（实测边表 67438 行、有效 0 行、
-    占 132MB），下一次向量检索被迫重算全部符号（实测 349s）。
+    Deliberately not `symbols.id`: that column is GRDB's AUTOINCREMENT, and both write
+    paths give the same symbol a new id — ProjectScanner's full scan goes through
+    `clearAll()` (which first `DELETE FROM symbols` then re-inserts); batchWriteFiles
+    deletes by file_path then re-inserts. Keyed by id, every rescan immediately
+    invalidates all embeddings (measured: side-table 67438 rows, 0 valid, 132MB), and
+    the next vector search is forced to recompute every symbol (measured 349s).
 
-    改用业务字段后，符号本身没变则重扫不触发重算；任一参与 embedding 文本的
-    字段变了，键随之改变、自然重算 —— 键即输入，不存在脏读。
+    With business fields, an unchanged symbol does not trigger recomputation on rescan;
+    if any field participating in the embedding text changes, the key changes and it is
+    recomputed naturally — the key is the input, so there is no stale read.
     """
     raw = "\x1f".join((file_path, name, kind, signature, doc))
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 def _ensure_symbol_embeddings_schema(conn: sqlite3.Connection) -> None:
-    """建边表；旧版按 symbol_id 建的边表直接丢弃重建。
+    """Create the side-table; a legacy symbol_id-keyed side-table is dropped and rebuilt.
 
-    旧行以 id 为键，无法映射到新的业务键；embedding 是纯派生数据（随时可重算），
-    丢弃的代价只是一次重算，留着则是永不复用的空间泄漏。
+    Old rows are keyed by id and cannot be mapped to the new business keys; embeddings
+    are purely derived data (recomputable at any time), so dropping them costs only one
+    recomputation, while keeping them is a space leak that is never reused.
     """
     cols = {row[1] for row in conn.execute("PRAGMA table_info(symbol_embeddings)")}
     if cols and "sym_key" not in cols:
@@ -283,7 +290,7 @@ def _ensure_symbol_embeddings_schema(conn: sqlite3.Connection) -> None:
 
 
 def _load_symbol_embeddings(conn: sqlite3.Connection) -> dict[str, bytes]:
-    """读出全部 embedding（稳定键 → BLOB）。"""
+    """Read all embeddings (stable key → BLOB)."""
     return {
         row["sym_key"]: row["embedding"]
         for row in conn.execute("SELECT sym_key, embedding FROM symbol_embeddings")
@@ -296,9 +303,9 @@ def _prune_symbol_embeddings(
     live_keys: set[str],
     truncated: bool,
 ) -> None:
-    """删除不再被任何符号引用的 embedding，避免边表随重扫无界增长。"""
+    """Delete embeddings no longer referenced by any symbol, so the side-table does not grow unbounded across rescans."""
     if truncated:
-        # 符号查询被 LIMIT 截断时 live_keys 不完整，清理会误删仍有效的行
+        # When the symbol query is truncated by LIMIT, live_keys is incomplete and pruning would wrongly delete still-valid rows
         return
     stale = cached.keys() - live_keys
     if not stale:
@@ -331,7 +338,7 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
             conn.execute("PRAGMA synchronous=NORMAL")
             _ensure_symbol_embeddings_schema(conn)
 
-            # 多取一行判断是否被 LIMIT 截断（截断时不可做孤儿清理）
+            # Fetch one extra row to detect truncation by LIMIT (no orphan pruning when truncated)
             rows = conn.execute(
                 """
                 SELECT file_path, name, kind, signature, doc_comment
@@ -344,9 +351,11 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
             rows = rows[:_MAX_VECTOR_ROWS]
 
             if not rows:
-                # 符号表为空 → 边表里全是孤儿，清干净再返回。
-                # 这里必须显式清理：下面的正常路径才走到 _prune_symbol_embeddings，
-                # 直接 return 会让「项目变空」这一情形永久留下无效 embedding。
+                # Symbol table is empty → the side-table is all orphans; clean it up
+                # before returning. This explicit cleanup is required: only the normal
+                # path below reaches _prune_symbol_embeddings, and returning directly
+                # would leave invalid embeddings behind forever for the "project became
+                # empty" case.
                 _prune_symbol_embeddings(
                     conn, _load_symbol_embeddings(conn), set(), False
                 )
@@ -366,7 +375,7 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
 
             cached = _load_symbol_embeddings(conn)
 
-            # 只补齐缺失的：键与 embedding 输入一一对应，命中即无需重算
+            # Only fill in the missing ones: the key maps one-to-one to the embedding input, so a cache hit needs no recomputation
             missing = [e for e in entries if e[0] not in cached]
             if missing:
                 batches = [
@@ -419,12 +428,15 @@ def _ensure_symbol_embeddings(db_path: str) -> tuple[list[dict], np.ndarray | No
 
 
 def _symbols_signature(db_path: str) -> tuple[int, int] | None:
-    """符号表的廉价变更指纹 `(行数, MAX(id))`，用于判定内存向量缓存是否失效。
+    """Cheap change fingerprint of the symbols table `(row count, MAX(id))`, used to
+    decide whether the in-memory vector cache is stale.
 
-    刻意**不**用 DB 文件的 mtime/size：库跑在 WAL 模式下，提交只写 `-wal` 文件，
-    主库文件的 mtime/size 纹丝不动（实测确认），以它为判据会永远认为「没变」。
-    两列都取是因为：全量重扫会清空重插、换新 id（MAX 增大），纯删除则只有行数变。
-    表不存在等异常返回 None，调用方回退到「无缓存」路径。
+    Deliberately **not** the DB file's mtime/size: the DB runs in WAL mode, so commits
+    only write the `-wal` file and the main DB file's mtime/size does not budge at all
+    (confirmed empirically); using it as the signal would always think "unchanged".
+    Both columns are taken because: a full rescan clears and re-inserts with new ids
+    (MAX grows), while a pure delete changes only the row count. Exceptions such as a
+    missing table return None, and the caller falls back to the "no cache" path.
     """
     try:
         with dbconn(db_path, timeout=5) as conn:
@@ -447,12 +459,12 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
     would leave the cache serving removed/renamed symbols' stale paths).
     """
     try:
-        # Lazy-load from SQLite + cache in memory；用符号表指纹判定失效
+        # Lazy-load from SQLite + cache in memory; use the symbols-table fingerprint to detect staleness
         sig = _symbols_signature(db_path)
         cached = _symbol_embeddings.get(db_path)
         if cached is None or cached[2] != sig:
             symbols, emb_matrix = _ensure_symbol_embeddings(db_path)
-            # 淘汰最旧缓存
+            # Evict the oldest cache entry
             while len(_symbol_embeddings) >= _MAX_VECTOR_CACHE:
                 oldest = next(iter(_symbol_embeddings))
                 logger.info(f"[vector] evicting cached embeddings for: {oldest}")
@@ -463,7 +475,7 @@ def _search_vectors(db_path: str, query: str) -> list[dict]:
         if emb_matrix is None or len(symbols) == 0:
             return []
 
-        # Encode query + normalize（走共享查询缓存）
+        # Encode query + normalize (via the shared query cache)
         query_emb = embed_query(query)
         if query_emb is None:
             return []
@@ -662,7 +674,7 @@ def _get_note_db(db_path: str) -> sqlite3.Connection:
 
 
 def _embed_in_batches(emb, texts: list[str]) -> list:
-    """分批推理，输出顺序与输入严格一一对应。"""
+    """Batched inference; output order strictly matches input one-to-one."""
     out: list = []
     for i in range(0, len(texts), _EMBED_BATCH_SIZE):
         out.extend(emb.embed(texts[i : i + _EMBED_BATCH_SIZE]))
@@ -680,14 +692,17 @@ def _ensure_note_cache(
 
     conn = _get_note_db(db_path)
 
-    # 这里曾用「项目根目录 mtime <= 缓存中 .md 的最大 mtime」做快速跳过，但两者
-    # 语义不同：前者是项目【根目录】的 mtime（只在直接子项增删时变化），后者是缓存
-    # 里各 .md 文件的 mtime（最后一次写入时间）。失真双向发生——改深层已有文件
-    # 不触发重扫（返回陈旧结果），根目录有增删则触发全量重扫。
-    # 改为始终扫描 + 逐文件 diff：实测 453 个 .md 的扫描仅 7ms，而失效判定一旦
-    # 出错就是全量重新 embedding（平均 6.3s、最坏 150s）。扫描成本可以忽略。
+    # This used to quick-skip via "project root dir mtime <= the max mtime of .md files
+    # in the cache", but the two have different semantics: the former is the project
+    # *root directory*'s mtime (changes only when direct children are added/removed),
+    # the latter is the mtime of each cached .md file (last write time). Distortion goes
+    # both ways — editing a deep existing file does not trigger a rescan (returning stale
+    # results), while adding/removing at the root triggers a full rescan.
+    # Changed to always scan + per-file diff: measured, scanning 453 .md files takes only
+    # 7ms, whereas a wrong staleness decision means re-embedding everything (6.3s
+    # average, 150s worst case). The scan cost is negligible.
 
-    # 序列化重建：同时多个请求到来时只跑一次 embedding（ONNX 推理阻塞且内存密集）
+    # Serialized rebuild: when multiple requests arrive at once, embedding runs only once (ONNX inference is blocking and memory-intensive)
     _note_cache_lock.acquire()
     try:
         md_files = _scan_md_files(project_path)
@@ -724,8 +739,9 @@ def _ensure_note_cache(
                     "[project_notes] embedder unavailable, skipping embedding"
                 )
 
-            # 阶段1：读文件、切块（纯只读，不碰库 —— 读失败的文件直接跳过，
-            # 库里旧行原样保留，不留「删了旧行却没写新行」的空窗）
+            # Phase 1: read files and chunk (read-only, no DB touched — files that fail
+            # to read are skipped outright and their old rows are kept as-is, so there is
+            # no window of "old rows deleted but new rows not yet written")
             prepared: list[tuple[dict, list[dict]]] = []
             for mf in changed:
                 try:
@@ -740,8 +756,9 @@ def _ensure_note_cache(
                 if chunks:
                     prepared.append((mf, chunks))
 
-            # 阶段2：按全局配额裁剪（保持 NOTE_MAX_CHUNKS_PER_PROJECT 上限语义）。
-            # 基线要把待重写文件的旧 chunk 扣掉 —— 它们在阶段4会被整文件替换。
+            # Phase 2: trim to the global quota (preserving the
+            # NOTE_MAX_CHUNKS_PER_PROJECT cap semantics). The baseline must subtract the
+            # old chunks of files being rewritten — they are replaced wholesale in phase 4.
             total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             for mf, _chunks in prepared:
                 total -= conn.execute(
@@ -760,15 +777,17 @@ def _ensure_note_cache(
                 accepted.append((mf, chunks))
                 total += len(chunks)
 
-            # 阶段3：对全部待嵌入文本统一分批推理。逐文件调用会把 Python↔ONNX 的
-            # 往返次数放大到文件数量级，合批后只与总条数有关。
+            # Phase 3: run batched inference over all texts to embed at once. Calling
+            # per file multiplies the Python↔ONNX round trips to the order of the file
+            # count; batched, it depends only on the total item count.
             vectors: list = []
             if emb is not None:
                 texts = [c["chunk_text"] for _mf, chunks in accepted for c in chunks]
                 vectors = _embed_in_batches(emb, texts)
 
-            # 阶段4：写回（vectors 与 accepted 展平后的顺序一一对应）。
-            # 单文件的「删旧行 + 插新行」在同一事务内提交，保持原子性。
+            # Phase 4: write back (vectors map one-to-one to the flattened order of
+            # accepted). A single file's "delete old rows + insert new rows" is committed
+            # in one transaction to stay atomic.
             cursor = 0
             for mf, chunks in accepted:
                 try:
@@ -780,8 +799,7 @@ def _ensure_note_cache(
                         cursor += 1
                         if vec is not None:
                             conn.execute(
-                                "INSERT OR REPLACE INTO chunks "
-                                "VALUES (?,?,?,?,?,?,?)",
+                                "INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?,?,?)",
                                 (
                                     mf["path"],
                                     c["chunk_index"],
@@ -820,11 +838,13 @@ def _ensure_note_cache(
 
 
 def _is_dev_project(project_path: str) -> bool:
-    """浅层扫描目标路径是否含常见工程特征文件 —— 判定是否为「开发项目」。
+    """Shallow-scan the target path for common project marker files — decides whether it
+    is a "dev project".
 
-    纯文档仓库(如 notes:只有 .md + .git)不含这些特征 → 返回 False,
-    从而让 project_notes 对非开发项目走纯内存 keyword 搜索,不再创建 .utility 缓存。
-    注意:刻意不含 .git/.gitignore(notes 等文档仓库也有),避免误判。
+    A pure document repo (e.g. notes: only .md + .git) has none of these markers → returns
+    False, so project_notes uses an in-memory-only keyword search for non-dev projects and
+    no longer creates the .utility cache. Note: .git/.gitignore are deliberately excluded
+    (document repos such as notes have them too) to avoid a false positive.
     """
     project_path = os.path.normpath(project_path)
 
@@ -854,10 +874,12 @@ def _is_dev_project(project_path: str) -> bool:
 
 
 def _keyword_search_uncached(project_path: str, query: str, limit: int) -> dict:
-    """非开发项目降级路径:纯内存 keyword 搜索,不创建 .utility 缓存。
+    """Degraded path for non-dev projects: in-memory-only keyword search, no .utility
+    cache created.
 
-    与 _query_project_notes 的 keyword fallback 逻辑一致,但直接扫文件
-    切块匹配,不落盘 SQLite。notes 这类目录反复查询不会产生磁盘残留。
+    Same logic as _query_project_notes's keyword fallback, but scans files and matches
+    chunks directly without persisting to SQLite. Repeated queries against directories
+    like notes leave no disk residue.
     """
     tokens = [t for t in query.split() if t]
     results: list[dict] = []
@@ -899,7 +921,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     """Semantic search over project .md files using cached vectors."""
     limit = max(1, min(limit, NOTE_MAX_RESULTS))
 
-    # 非开发项目(无工程特征文件):不落 .utility 缓存,纯内存 keyword 搜索
+    # Non-dev project (no marker files): no .utility cache persisted, in-memory-only keyword search
     if not _is_dev_project(project_path):
         logger.info(
             f"[project_notes] non-dev project, uncached keyword search: {project_path}"
@@ -926,7 +948,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     if not rows:
         return {"results": [], "count": 0, "total_chunks": total_chunks}
 
-    # Try vector search first（走共享查询缓存）
+    # Try vector search first (via the shared query cache)
     query_vec = embed_query(query)
     vector_results: list[dict] = []
 
@@ -983,7 +1005,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
         except Exception as e:
             logger.warning(f"[project_notes] vector search failed: {e}")
 
-    # Keyword search (grep-lite) — 始终执行，精确匹配结果插到 vector 结果前面
+    # Keyword search (grep-lite) — always runs; exact matches are inserted ahead of vector results
     tokens = [t for t in query.split() if t]
     keyword_results: list[dict] = []
     seen_files: set[tuple[str, int]] = set()
@@ -1009,7 +1031,7 @@ def _query_project_notes(project_path: str, query: str, limit: int) -> dict:
     keyword_results.sort(key=lambda x: -x["score"])
 
     if vector_results:
-        # 精确匹配插到 vector 结果前面（vector search 对中文/跨语言查询可能排不准）
+        # Exact matches inserted ahead of vector results (vector search can rank poorly for CJK/cross-language queries)
         seen_keys = {(r["file"], r["line"]) for r in vector_results}
         exact_hits = [
             r for r in keyword_results if (r["file"], r["line"]) not in seen_keys

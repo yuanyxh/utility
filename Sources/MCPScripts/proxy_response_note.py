@@ -1,19 +1,26 @@
-"""在响应末尾追加一行「本轮代理改写了什么」。
+"""Append a line at the end of the response: "what the proxy rewrote this turn".
 
-模型名取自流里 message_start.message.model；改写清单由请求侧的
-output_filter / skill_dedup 统计生成。
+The model name comes from message_start.message.model in the stream; the list of
+rewrites is generated from the output_filter / skill_dedup stats on the request
+side.
 
-**只追加在最终回复**（最后一个 content block 是 text）——工具调用轮最后是
-tool_use 块，那行的读者是用户，插在工具调用里既没意义、又可能干扰客户端
-对工具块的解析。判据取 block 类型而非 stop_reason：后者要到 message_delta
-才出现，那时 content block 已经 stop，来不及再补 delta。
+**Only appended to the final reply** (the last content block is text) — a tool
+call turn ends with a tool_use block, and the reader of that line is the user;
+inserting it into a tool call is both meaningless and may interfere with the
+client's parsing of the tool block. The criterion is the block type, not
+stop_reason: the latter only appears at message_delta, by which time the content
+block has already stopped and there is no time to add another delta.
 
-SSE 注入点是**延迟 content_block_stop**：收到 stop 先缓存，等下一个事件
-才知道它是不是最后一个——是则在它前面补一个 content_block_delta（复用该
-block 的 index），不是就原样放行。不新建 block、不必管理 index 递增。
+The SSE injection point is a **deferred content_block_stop**: on receiving stop
+it is buffered first, and only when the next event arrives is it known whether
+it is the last — if so, a content_block_delta is inserted before it (reusing that
+block's index), otherwise it is passed through as-is. No new block is created and
+index increments need not be managed.
 
-feed/finish 都收发 bytes，内部用**增量 UTF-8 解码**：SSE 分片可能把多字节
-字符切成两半，逐片 `decode()` 会解出替换字符、损坏 JSON。
+feed/finish both take and return bytes and internally use **incremental UTF-8
+decoding**: SSE fragmentation can split a multi-byte character in half, and
+per-fragment `decode()` would produce replacement characters and corrupt the
+JSON.
 """
 
 from __future__ import annotations
@@ -23,29 +30,32 @@ import json
 
 from proxy_skill_dedup import FALLBACK_LANG
 
-#: 追加行模板。{parts} 是「Bash 过滤/Skill 短提示」这样的清单。
+#: The appended-line template. {parts} is a list like "Bash filter/Skill note".
 NOTE_TEMPLATE: dict[str, str] = {
     "zh-Hans": "{model} | 已执行: {parts}",
     "en": "{model} | applied: {parts}",
 }
 
-#: 各改写机制的显示名，键与请求侧的统计一一对应。
+#: Display names of each rewrite mechanism; the keys correspond one-to-one with the request-side stats.
 PART_LABELS: dict[str, dict[str, str]] = {
     "outputFilter": {"zh-Hans": "Bash 过滤", "en": "bash filter"},
     "skillDedup": {"zh-Hans": "Skill 短提示", "en": "skill dedup"},
 }
 
-#: 本轮无改写时的替代文案——模型名是这行的主信息，不该因为没改写就整行消失
+#: Alternate text when nothing was rewritten this turn — the model name is the main
+#: information of this line and should not make the whole line disappear just because
+#: nothing was rewritten
 NOTE_EMPTY: dict[str, str] = {
     "zh-Hans": "{model} | 无改写",
     "en": "{model} | no rewrite",
 }
 
-#: 追加行与正文之间的间隔
+#: The gap between the appended line and the body
 NOTE_SEPARATOR = "\n\n"
 
-#: 开关 env 名（Swift `TokenProxyManager.responseNoteEnvKey` 注入）。该 env 不经
-#: `config.py`，契约第 3 组覆盖不到，故两侧同值由契约脚本单独断言。
+#: The switch env name (injected by Swift `TokenProxyManager.responseNoteEnvKey`). This
+#: env does not go through `config.py`, so contract group 3 cannot cover it; the two
+#: sides' identical value is therefore asserted separately by the contract script.
 RESPONSE_NOTE_ENV_KEY = "MODEL_PROXY_RESPONSE_NOTE"
 
 
@@ -55,8 +65,10 @@ def _label(key: str, lang: str) -> str:
 
 
 def build_note(model: str, parts: list[str], lang: str) -> str | None:
-    """生成追加行；**只有拿不到模型名才返回 None**——模型名是这行的主信息，
-    无改写时也要显示（新会话开头几轮就是这种情况）。"""
+    """Build the appended line; **returns None only when the model name is
+    unavailable** — the model name is the main information of this line and must be
+    shown even when nothing was rewritten (this is the case in the first few turns
+    of a new session)."""
     if not model:
         return None
     if not parts:
@@ -68,7 +80,7 @@ def build_note(model: str, parts: list[str], lang: str) -> str | None:
 
 
 def _data_of(event: str) -> dict:
-    """取 SSE 事件的 data JSON；缺失或解析失败返回 {}。"""
+    """Get the data JSON of an SSE event; returns {} when missing or unparseable."""
     for line in event.split("\n"):
         if line.startswith("data: "):
             try:
@@ -80,7 +92,7 @@ def _data_of(event: str) -> dict:
 
 
 def append_note_to_body(resp: dict, model: str, parts: list[str], lang: str) -> bool:
-    """非流式：把追加行并进最后一个 text block。返回是否改动。"""
+    """Non-streaming: merge the appended line into the last text block. Returns whether it changed anything."""
     note = build_note(model, parts, lang)
     if note is None:
         return False
@@ -95,7 +107,7 @@ def append_note_to_body(resp: dict, model: str, parts: list[str], lang: str) -> 
 
 
 class SSENoteInjector:
-    """逐段喂入 anthropic SSE 字节，在最终 text block 收尾前插入追加行。"""
+    """Feed anthropic SSE bytes segment by segment, inserting the appended line before the final text block closes."""
 
     def __init__(self, parts: list[str], lang: str):
         self._parts = parts
@@ -107,7 +119,7 @@ class SSENoteInjector:
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def feed(self, chunk: bytes) -> bytes:
-        """返回应当写给客户端的字节——可能比输入短（stop 被暂存了）。"""
+        """Return the bytes that should be written to the client — may be shorter than the input (stop was buffered)."""
         self._buf += self._decoder.decode(chunk)
         out: list[str] = []
         while True:
@@ -119,7 +131,7 @@ class SSENoteInjector:
         return "".join(out).encode()
 
     def finish(self) -> bytes:
-        """流结束：残留的 stop 必是最后一个 block，可安全追加。"""
+        """End of stream: any residual stop must be the last block, so appending is safe."""
         if not self._buf and self._pending_stop is None:
             return b""
         out = self._release_pending(is_last=True) + self._buf
@@ -155,7 +167,7 @@ class SSENoteInjector:
         return self._note_delta(index) + raw
 
     def _note_delta(self, index) -> str:
-        """只在 text block 收尾时追加；tool_use 块保持原样。"""
+        """Only append when a text block closes; tool_use blocks are left as-is."""
         if self._block_type.get(index) != "text":
             return ""
         payload = {
@@ -168,7 +180,7 @@ class SSENoteInjector:
 
 
 class NoteBodyBuffer:
-    """非流式响应：先缓冲完整体，再解析并追加。"""
+    """Non-streaming response: buffer the full body first, then parse and append."""
 
     def __init__(self, parts: list[str], lang: str):
         self._parts = parts

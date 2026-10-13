@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// RSS 条目模型（GRDB Record）
+/// RSS item model (GRDB Record)
 public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable {
     public var id: String // guid
     public var title: String

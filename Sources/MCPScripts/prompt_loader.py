@@ -1,26 +1,32 @@
-"""Python 侧提示词统一入口：内置默认 + 用户覆盖 + 声明式契约。
+"""Unified entry point for Python-side prompts: built-in defaults + user overrides + declarative contract.
 
-提示词原先散落在 10 个函数/常量里写死（f-string 或长常量），后果有三个：想改一句
-提示词得翻源码；用的人不一定用中文；改错了既不报错也没有回退。本模块把「取提示词」
-收敛成一件事。
+Prompts used to be hard-coded across 10 functions/constants (f-strings or long constants),
+which had three consequences: changing a single prompt sentence required digging through the
+source; the user is not necessarily a Chinese speaker; and a mistake neither raised an error nor
+fell back. This module collapses "get a prompt" into one thing.
 
-目录与优先级（同名 feature 只取最优先的那份）：
+Directories and priority (for the same feature, only the highest-priority file is used):
 
-    <配置域>/prompts/<feature>.md                用户覆盖，优先级最高，**与语言无关**
-    <MCPScripts>/prompts/<lang>/<feature>.md    内置默认，随包分发（.copy 保留目录结构）
+    <config-dir>/prompts/<feature>.md              user override, highest priority, **language-independent**
+    <MCPScripts>/prompts/<lang>/<feature>.md       built-in default, shipped with the package (.copy preserves the dir tree)
 
-两处的语言维度是**有意不同**的：内置模板面向「使用者可能是不同母语的人」，故按语言
-分目录、缺该语言时回退基线；用户覆盖是**用户自己控制**的一份文件——写 prompt 的人只有
-一种母语，让他「放哪个目录」取决于界面语言既无意义、又会因切换语言而失效。
+The language dimension of the two locations is **intentionally different**: built-in templates
+target "users who may speak different native languages", so they are split into language dirs and
+fall back to the baseline when a language is missing; a user override is a single file that **the
+user controls**——the person writing the prompt has only one native language, so making "which
+directory it goes in" depend on the UI language is both meaningless and would break when the
+language is switched.
 
-配置域复用**既有** env 契约：Swift 注入的 `UTILITY_DATA_DIR` 就是 `~/.config/utility`
-（`AppPaths.configDir`），故不新增 env 项。
+The config dir reuses the **existing** env contract: the `UTILITY_DATA_DIR` injected by Swift is
+`~/.config/utility` (`AppPaths.configDir`), so no new env item is added.
 
-语言取 `UTILITY_LANG`（Swift 按 `general.language`，空则系统首选注入），缺省 `zh-Hans`；
-该语言没有该文件时**回退 `zh-Hans` 基线**并记 warning——某个 feature 还没翻译不该让
-功能停摆，但也不能静默（否则「翻译没生效」将无从发现）。
+The language comes from `UTILITY_LANG` (Swift sets it from `general.language`, empty falls back to
+the system primary); the default is `zh-Hans`; when the language has no such file it **falls back
+to the `zh-Hans` baseline** and logs a warning——a not-yet-translated feature should not stall the
+feature, but it must not be silent either (otherwise "the translation didn't take effect" would be
+impossible to discover).
 
-声明式契约（front-matter，扁平键，不引入 YAML 依赖）：
+Declarative contract (front-matter, flat keys, no YAML dependency):
 
     ---
     name: aggregate
@@ -28,20 +34,24 @@
     json_keys: []
     ---
 
-- `name` 必须与 feature 名一致：文件放错位置（如把 a.md 的内容写进 b.md）会立即暴露，
-  而不是静默用错提示词。
-- `placeholders` 与正文实际出现的占位符必须一致（文件自校验）；调用时实参必须覆盖声明
-  （缺 → 抛 `PromptLoadError`，否则会把 `{topic}` 原样发给模型）；多余实参只记 warning。
-- `json_keys` 是**期望模型输出的键**，供调用后校验（`missing_json_keys`）；空 = 未声明。
+- `name` must match the feature name: a misplaced file (e.g. writing a.md's content into b.md)
+  is exposed immediately, instead of silently using the wrong prompt.
+- `placeholders` must match the placeholders actually appearing in the body (file self-check);
+  at call time the arguments must cover the declaration (missing → raise `PromptLoadError`,
+  otherwise `{topic}` would be sent to the model verbatim); extra arguments only log a warning.
+- `json_keys` are the **keys expected in the model output**, for post-call validation
+  (`missing_json_keys`); empty = not declared.
 
-渲染**不用 `str.format`**：提示词里大量出现 JSON 花括号（`{"action": "merge"}`），
-format 会把它们当占位符。改为「按名字一次性替换」——未登记的 `{...}` 原样保留，
-替换进来的值也不会被二次替换（否则值里含 `{x}` 时会被后续替换误伤）。
-这与 Swift `PromptManager.applyVariables` 是同一模式。
+Rendering does **not use `str.format`**: prompts contain many JSON braces (`{"action": "merge"}`),
+and format would treat them as placeholders. Instead it uses "one-shot replacement by name"——
+unregistered `{...}` are kept verbatim, and substituted values are not replaced a second time
+(otherwise a value containing `{x}` would be clobbered by a later replacement).
+This is the same pattern as Swift `PromptManager.applyVariables`.
 
-加载失败的处理链：用户覆盖文件不合法 → error 日志 + **继续找内置默认**（用户改坏了
-不该让功能停摆）；内置默认也读不到 → 抛 `PromptLoadError`（安装损坏属开发期错误，
-静默给一个空提示词去调模型比直接失败更糟）。
+Failure-handling chain during load: an invalid user override file → error log + **keep looking for
+the built-in default** (a user's mistake should not stall the feature); the built-in default is also
+unreadable → raise `PromptLoadError` (a corrupt install is a development-time error; silently
+passing an empty prompt to the model is worse than failing outright).
 """
 
 from __future__ import annotations
@@ -55,26 +65,29 @@ from log_utils import setup_logging
 
 logger = setup_logging("prompt_loader")
 
-#: 基线语言。任何语言缺失该 feature 时回退到它；内置默认必须保证该语言齐全。
+#: Baseline language. Any language missing this feature falls back to it; the built-in defaults
+#: must guarantee this language is complete.
 FALLBACK_LANG = "zh-Hans"
 
-# 语言经 `config.ui_language()` 读（`UTILITY_LANG`，Swift 按 `general.language` 注入）——
-# env 名的权威在 Swift `EnvKeys.utilityLang`，Python 侧配置读取的唯一入口在 config.py。
+# The language is read via `config.ui_language()` (`UTILITY_LANG`, injected by Swift from
+# `general.language`)——the authoritative env name lives in Swift `EnvKeys.utilityLang`, and the
+# sole entry point for Python-side config reading is config.py.
 
-#: feature 名允许的字符（用于文件名拼接，防目录穿越）
+#: Characters allowed in a feature name (used for filename concatenation, guards against directory traversal)
 _FEATURE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-#: front-matter：文件必须以 `---` 开头、`---` 结束
+#: front-matter: the file must start with `---` and end with `---`
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 _KEY_RE = re.compile(r"^([a-zA-Z_]+)\s*:\s*(.*)$")
 _LIST_RE = re.compile(r"^\[(.*)\]$")
 
-#: 正文里的占位符：只认「字母数字下划线」形态，故 JSON 的 `{"action": ...}` 不会被误判
+#: Placeholders in the body: only the "alphanumeric+underscore" form is recognized, so JSON
+#: `{"action": ...}` is not misdetected
 _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 
 class PromptLoadError(RuntimeError):
-    """提示词不可用（内置默认缺失、调用实参与声明不符等）。"""
+    """Prompt unavailable (built-in default missing, call arguments mismatched with the declaration, etc.)."""
 
 
 @dataclass(frozen=True)
@@ -91,7 +104,7 @@ _cache: dict[str, PromptTemplate] = {}
 
 
 # ---------------------------------------------------------------------------
-# 路径
+# Paths
 # ---------------------------------------------------------------------------
 
 
@@ -100,7 +113,7 @@ def _builtin_root() -> Path:
 
 
 def _override_root() -> Path | None:
-    """用户覆盖根目录（配置域）。`UTILITY_DATA_DIR` 未注入时为 None。"""
+    """User override root directory (config dir). None when `UTILITY_DATA_DIR` is not injected."""
     base = data_dir()
     return Path(base) / "prompts" if base else None
 
@@ -110,7 +123,7 @@ def current_lang() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 解析与校验
+# Parsing and validation
 # ---------------------------------------------------------------------------
 
 
@@ -123,17 +136,18 @@ def _parse_list(raw: str) -> tuple[str, ...]:
 
 
 def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
-    """解析并自校验一段模板文本；任何契约违反抛 `PromptLoadError`。
+    """Parse and self-check a template text; any contract violation raises `PromptLoadError`.
 
-    与「读文件」解耦：`_parse_file` 是它的文件形态，而契约校验脚本需要直接喂文本——
-    它要断言的是「假设的坏文件会不会被拒绝」，不该为此真往磁盘写临时文件。
-    两侧共用同一个解析函数，校验器断言的才是运行期真正会跑的那条路。
+    Decoupled from "read a file": `_parse_file` is its file form, while the contract-check script
+    needs to feed text directly——what it asserts is "would a hypothetical bad file be rejected",
+    and it should not have to write a real temp file to disk for that. Both sides share the same
+    parsing function, so the checker asserts exactly the path that really runs at runtime.
     """
     path = Path(path)
     m = _FRONTMATTER_RE.match(raw)
     if not m:
         raise PromptLoadError(
-            f"{path}: 缺少 front-matter（--- name/placeholders/json_keys ---）"
+            f"{path}: missing front-matter (--- name/placeholders/json_keys ---)"
         )
     meta: dict[str, str] = {}
     for line in m.group(1).splitlines():
@@ -141,13 +155,13 @@ def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
             continue
         km = _KEY_RE.match(line.strip())
         if not km:
-            raise PromptLoadError(f"{path}: front-matter 行无法解析 {line!r}")
+            raise PromptLoadError(f"{path}: cannot parse front-matter line {line!r}")
         meta[km.group(1)] = km.group(2)
 
     name = meta.get("name", "").strip()
     if name != feature:
         raise PromptLoadError(
-            f"{path}: name={name!r} 与请求的 feature={feature!r} 不一致"
+            f"{path}: name={name!r} does not match the requested feature={feature!r}"
         )
 
     text = raw[m.end() :]
@@ -155,7 +169,7 @@ def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
     found = tuple(dict.fromkeys(_PLACEHOLDER_RE.findall(text)))
     if set(declared) != set(found):
         raise PromptLoadError(
-            f"{path}: placeholders 声明与实际不符（声明 {sorted(declared)} / 实际 {sorted(found)}）"
+            f"{path}: placeholders declaration does not match actual (declared {sorted(declared)} / actual {sorted(found)})"
         )
     return PromptTemplate(
         feature=feature,
@@ -168,16 +182,18 @@ def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
 
 
 def _parse_file(path: Path, feature: str) -> PromptTemplate:
-    """解析并自校验一个模板文件；任何契约违反抛 `PromptLoadError`。"""
+    """Parse and self-check a template file; any contract violation raises `PromptLoadError`."""
     return parse_template(path.read_text(encoding="utf-8"), feature, path)
 
 
 def _candidate_paths(feature: str) -> list[tuple[Path, str | None]]:
-    """按优先级给出候选文件：(路径, 语言)；语言为 `None` 表示**与语言无关**。
+    """Return candidate files by priority: (path, lang); a lang of `None` means **language-independent**.
 
-    用户覆盖（`_override_root()`）不按语言分目录：写 prompt 的人只有一种母语，那份文件
-    就是给自己用的，让它「放哪个目录」取决于界面语言既无意义、又会因切换语言而失效。
-    内置模板相反——使用者可能是不同母语的人，故按语言分目录并回退基线。
+    User overrides (`_override_root()`) are not split by language: the person writing the prompt has
+    only one native language, and that file is for themselves, so making "which directory it goes in"
+    depend on the UI language is both meaningless and would break when the language is switched.
+    Built-in templates are the opposite——users may have different native languages, so they are split
+    by language and fall back to the baseline.
     """
     langs = [current_lang()]
     if langs[0] != FALLBACK_LANG:
@@ -192,11 +208,11 @@ def _candidate_paths(feature: str) -> list[tuple[Path, str | None]]:
 
 
 def template(feature: str) -> PromptTemplate:
-    """按优先级取模板（进程内缓存）。"""
+    """Get a template by priority (cached in-process)."""
     if feature in _cache:
         return _cache[feature]
     if not _FEATURE_RE.match(feature):
-        raise PromptLoadError(f"feature 名非法: {feature!r}")
+        raise PromptLoadError(f"invalid feature name: {feature!r}")
 
     errors: list[str] = []
     for path, lang in _candidate_paths(feature):
@@ -205,47 +221,51 @@ def template(feature: str) -> PromptTemplate:
         try:
             tpl = _parse_file(path, feature)
         except (PromptLoadError, OSError, UnicodeDecodeError) as e:
-            # 用户覆盖文件坏了要能继续跑（回退内置），但绝不能静默——否则「我改的提示词
-            # 没生效」将无从发现。内置文件坏了则记下来，最终一并抛出。
+            # A broken user override file must not stop execution (fall back to built-in), but it
+            # must never be silent——otherwise "the prompt I changed didn't take effect" would be
+            # impossible to discover. A broken built-in file is recorded and raised together at the end.
             #
-            # 捕获范围必须**同时覆盖读取失败**：只捕 PromptLoadError 时，`read_text` 的
-            # OSError（被外部删掉 / 权限不足）与 UnicodeDecodeError（非 UTF-8 存回）会直接
-            # 穿透，上面那句「用户改坏了不该让功能停摆」就变成空话——summarize 的首阶段
-            # 链路上没有 try，一个 GBK 存回的覆盖文件足以中断整条流水线。Swift 侧
-            # `PromptManager.loadTemplate` 用 `try?` 换下一个候选，两侧行为必须一致。
+            # The caught range must **also cover read failures**: catching only PromptLoadError
+            # lets `read_text`'s OSError (deleted externally / insufficient permission) and
+            # UnicodeDecodeError (saved back as non-UTF-8) pass straight through, making the line
+            # above about "a user's mistake should not stall the feature" vacuous——the first stage
+            # of the summarize chain has no try, so a single override file saved as GBK is enough to
+            # break the whole pipeline. Swift's `PromptManager.loadTemplate` uses `try?` to move to
+            # the next candidate, and both sides must behave identically.
             errors.append(str(e))
             logger.error(str(e))
             continue
-        # 只有内置模板才有「语言回退」一说；用户覆盖与语言无关，不该被报成回退
+        # Only built-in templates have "language fallback"; user overrides are language-independent
+        # and must not be reported as a fallback
         if lang is not None and lang != current_lang():
             logger.warning(
-                f"{feature}: 语言 {current_lang()!r} 无该模板，回退 {FALLBACK_LANG!r}（{path}）"
+                f"{feature}: language {current_lang()!r} has no such template, falling back to {FALLBACK_LANG!r} ({path})"
             )
         _cache[feature] = tpl
         return tpl
 
     raise PromptLoadError(
-        f"提示词不可用 feature={feature!r}: {'; '.join(errors) or '未找到任何候选文件'}"
+        f"prompt unavailable feature={feature!r}: {'; '.join(errors) or 'no candidate file found'}"
     )
 
 
 # ---------------------------------------------------------------------------
-# 渲染
+# Rendering
 # ---------------------------------------------------------------------------
 
 
 def render(tpl: PromptTemplate, variables: dict) -> str:
-    """按名字一次性替换占位符；未登记的 `{...}` 原样保留。"""
+    """One-shot replacement of placeholders by name; unregistered `{...}` are kept verbatim."""
     missing = [p for p in tpl.placeholders if p not in variables]
     if missing:
         raise PromptLoadError(
-            f"{tpl.feature}: 调用缺少实参 {missing}（声明 {list(tpl.placeholders)}）——"
-            "缺参会把 {占位符} 原样发给模型"
+            f"{tpl.feature}: call missing argument {missing} (declared {list(tpl.placeholders)})——"
+            "a missing argument sends the {placeholder} to the model verbatim"
         )
     extra = [k for k in variables if k not in tpl.placeholders]
     if extra:
         logger.warning(
-            f"{tpl.feature}: 调用多传实参 {extra}（模板未使用，通常是调用点改名后遗留）"
+            f"{tpl.feature}: call passes extra argument {extra} (unused by the template, usually left over after renaming a call site)"
         )
 
     def _sub(match: re.Match[str]) -> str:
@@ -256,12 +276,12 @@ def render(tpl: PromptTemplate, variables: dict) -> str:
 
 
 def prompt(feature: str, **variables) -> str:
-    """取并渲染提示词（Python 侧提示词的唯一入口）。"""
+    """Get and render a prompt (the sole entry point for Python-side prompts)."""
     return render(template(feature), variables)
 
 
 def missing_json_keys(feature: str, parsed: dict | None) -> tuple[str, ...]:
-    """按模板声明的 `json_keys` 校验模型输出缺了哪些键（未声明/非 dict → 空）。"""
+    """Check which keys the model output is missing per the template's `json_keys` (not declared / not a dict → empty)."""
     if not isinstance(parsed, dict):
         return ()
     return tuple(k for k in template(feature).json_keys if k not in parsed)

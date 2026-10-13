@@ -35,13 +35,17 @@ final class ScannerConfig {
                                                ".git/**", ".utility/**", "Pods/**", ".venv/**"]
     }
 
-    /// 构建/缓存目录名单 —— 目录跳过与文件排除的**单一事实源**。
+    /// Build/cache directory names — the **single source of truth** for both
+    /// directory skipping and file exclusion.
     ///
-    /// 两处曾各持一份：目录遍历用本名单（15 项），文件过滤只看 `resolvedExcludes`
-    /// （7 项、不含 `Utility.app`）。于是打包产物 `Utility.app/**` 里的 `.py`/`.swift`
-    /// 全部按后缀命中 includes 而入库（实测 120 文件 / 5996 符号，占全库 75%），
-    /// 检索结果里同一个符号恒出现两份。往 `resolvedExcludes` 补一条只能治当下，
-    /// 两份名单迟早再次漂移，故收敛到此处。
+    /// These were once kept in two places: directory traversal used this list
+    /// (15 entries), while file filtering only consulted `resolvedExcludes`
+    /// (7 entries, missing `Utility.app`). As a result every `.py`/`.swift`
+    /// inside the packaging output `Utility.app/**` matched includes by
+    /// extension and got indexed (measured: 120 files / 5996 symbols, 75% of
+    /// the whole DB), so the same symbol appeared twice in search results.
+    /// Adding one entry to `resolvedExcludes` only fixes the moment; the two
+    /// lists would drift again, so they are consolidated here.
     static let skippedDirNames: Set<String> = [
         ".build", "node_modules", "dist", ".git", ".utility", "Pods", ".venv",
         "__pycache__", ".svn", ".hg", ".gradle", "build", "DerivedData", "Utility.app",
@@ -59,10 +63,11 @@ final class ScannerConfig {
         return false
     }
 
-    /// 路径中任一级目录命中跳过名单即为真。
+    /// True when any path segment hits the skip list.
     ///
-    /// 文件事件只带自身路径（`isDir` 为假），若不查祖先目录，`Utility.app/x.py`
-    /// 就绕过了目录级的跳过判定。
+    /// File events carry only their own path (`isDir` false); without checking
+    /// ancestor directories, `Utility.app/x.py` would bypass the directory-level
+    /// skip check.
     private func containsSkippedDir(_ path: String) -> Bool {
         path.split(separator: "/").contains { Self.skippedDirNames.contains(String($0)) }
     }

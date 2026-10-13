@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// 剪切板存储（GRDB）
+/// Clipboard storage (GRDB)
 public final class ClipboardStorage {
     private var db: DatabaseQueue {
         if let q = AppDatabase.shared.dbQueue { return q }
@@ -15,7 +15,7 @@ public final class ClipboardStorage {
 
     public func add(_ item: ClipboardItem) throws {
         try db.write { db in
-            // 查找重复项：text 按 plainText，其他按 content 逐字节对比
+            // Find duplicates: text by plainText, others by byte-by-byte comparison of content
             let dupeId: String? = {
                 if item.type == "text", let text = item.plainText {
                     return try? String.fetchOne(
@@ -27,7 +27,7 @@ public final class ClipboardStorage {
                         """, arguments: [text],
                     )
                 }
-                // file / file_batch / html — 按 content 匹配
+                // file / file_batch / html — match by content
                 let existing =
                     (try? ClipboardItem
                         .filter(Column("type") == item.type)
@@ -36,7 +36,7 @@ public final class ClipboardStorage {
             }()
 
             if let existingId = dupeId {
-                // 重复 → 更新时间戳移到顶部
+                // Duplicate → update timestamp to move it to the top
                 try db.execute(
                     literal: """
                         UPDATE clipboard_item SET timestamp = \(Date()) WHERE id = \(existingId)

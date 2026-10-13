@@ -1,7 +1,7 @@
 import Carbon
 import Cocoa
 
-/// 全局热键管理器（基于 Carbon，正确消耗事件）
+/// Global hotkey manager (Carbon-based, correctly consumes events)
 public final class HotkeyManager {
     public static let shared = HotkeyManager()
     private var handlers: [UInt32: () -> Void] = [:]

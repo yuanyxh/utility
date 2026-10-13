@@ -2,7 +2,7 @@ import Cocoa
 
 // MARK: - ScrollPosition
 
-/// 滚动目标位置
+/// Scroll target position
 public enum ScrollPosition {
     case top
     case bottom
@@ -10,37 +10,37 @@ public enum ScrollPosition {
 
 // MARK: - CursorPosition
 
-/// 光标目标位置
+/// Cursor target position
 public enum CursorPosition {
     case start
     case end
-    /// 数字位置（0-based），创建时自动校验有效性
+    /// Numeric position (0-based), validity auto-checked on creation
     case index(Int)
 }
 
 // MARK: - InputViewStyle
 
-/// 输入框样式配置 — 收束所有可配置属性，一个 apply 方法全量应用
+/// Input view style config — gathers all configurable properties, one apply method applies them all
 public struct InputViewStyle {
-    /// 背景色，nil 表示透明（drawsBackground = false）
+    /// Background color, nil means transparent (drawsBackground = false)
     public var backgroundColor: NSColor?
 
-    /// 字体
+    /// Font
     public var font: NSFont
 
-    /// 文字颜色
+    /// Text color
     public var textColor: NSColor
 
-    /// 文字内边距
+    /// Text inset
     public var textContainerInset: NSSize
 
-    /// 是否可编辑
+    /// Whether editable
     public var isEditable: Bool
 
-    /// 是否显示垂直滚动条
+    /// Whether to show the vertical scroller
     public var showsVerticalScroller: Bool
 
-    /// 边框样式，nil 表示无边框
+    /// Border style, nil means no border
     public var border: BorderStyle?
 
     public init(
@@ -61,7 +61,7 @@ public struct InputViewStyle {
         self.border = border
     }
 
-    /// 将样式应用到 NSTextView
+    /// Apply the style to an NSTextView
     func apply(to textView: NSTextView) {
         textView.font = font
         textView.textColor = textColor

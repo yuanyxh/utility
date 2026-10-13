@@ -18,7 +18,7 @@ struct PythonExtractor: SymbolExtractor {
         var lastDecorator: String?
         var inTripleString = false
         var tripleChar = "\"\"\""
-        // 缩进栈定 def/class 体结束:end = 缩进回落到声明缩进那行的上一行
+        // Indent stack marks the end of def/class bodies: end = the line before the one whose indent falls back to the declaration's indent
         var openDefs: [(symIdx: Int, indent: Int)] = []
         var lastContentLine = 0
 
@@ -116,7 +116,7 @@ struct PythonExtractor: SymbolExtractor {
             lastDecorator = nil
         }
 
-        // ── EOF:任何未闭合的 def/class 体结束于文件末行 ──
+        // ── EOF: any unclosed def/class body ends at the last line of the file ──
         while let top = openDefs.last {
             symbols[top.symIdx].endLine = lines.count
             openDefs.removeLast()

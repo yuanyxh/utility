@@ -1,8 +1,9 @@
-"""统一 SQLite 连接工具。
+"""Unified SQLite connection utility.
 
-收敛 token_proxy / proxy_usage / server_search / server 散落的
-`sqlite3.connect(...)` 样板为 `with conn(db_path) as c:`，
-自动提交 + 异常回滚 + 自动关闭，避免连接泄漏与重复样板。
+Consolidates the scattered `sqlite3.connect(...)` boilerplate of
+token_proxy / proxy_usage / server_search / server into
+`with conn(db_path) as c:` — auto-commit + rollback on exception +
+always close, avoiding connection leaks and duplicated boilerplate.
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ from contextlib import contextmanager
 def conn(
     db_path: str, *, timeout: float = 5.0
 ) -> Generator[sqlite3.Connection, None, None]:
-    """SQLite 连接上下文管理器。
+    """SQLite connection context manager.
 
-    正常退出自动 commit，异常自动 rollback，无论如何关闭连接。
+    Commits on normal exit, rolls back on exception, and always closes
+    the connection.
 
-    用法::
+    Usage::
 
         with conn(DB_PATH) as c:
             c.execute("INSERT INTO t (a) VALUES (?)", (1,))
