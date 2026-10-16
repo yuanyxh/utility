@@ -27,13 +27,17 @@ from __future__ import annotations
 
 import codecs
 import json
+import os
 
 from proxy_skill_dedup import FALLBACK_LANG
 
-#: The appended-line template. {parts} is a list like "Bash filter/Skill note".
-NOTE_TEMPLATE: dict[str, str] = {
-    "zh-Hans": "{model} | 已执行: {parts}",
-    "en": "{model} | applied: {parts}",
+#: The line is built by joining these segments.
+SEG_JOIN = " | "
+
+#: The rewrite-list segment. {parts} is a list like "Bash filter/Skill note".
+NOTE_APPLIED: dict[str, str] = {
+    "zh-Hans": "已执行: {parts}",
+    "en": "applied: {parts}",
 }
 
 #: Display names of each rewrite mechanism; the keys correspond one-to-one with the request-side stats.
@@ -46,9 +50,43 @@ PART_LABELS: dict[str, dict[str, str]] = {
 #: information of this line and should not make the whole line disappear just because
 #: nothing was rewritten
 NOTE_EMPTY: dict[str, str] = {
-    "zh-Hans": "{model} | 无改写",
-    "en": "{model} | no rewrite",
+    "zh-Hans": "无改写",
+    "en": "no rewrite",
 }
+
+#: Context-size segment. The number comes from the upstream's own usage (message_start),
+#: not from a local text estimate: an estimate drifts from the provider's tokenizer and
+#: would misinform the very decision this segment exists to support.
+NOTE_CONTEXT: dict[str, str] = {
+    "zh-Hans": "上下文 {ctx}",
+    "en": "{ctx} context",
+}
+
+#: Appended past the threshold — the whole reason the number is shown.
+CONTEXT_HINT: dict[str, str] = {
+    "zh-Hans": " · 建议新开会话",
+    "en": " · consider a new session",
+}
+
+#: Above this many context tokens the line suggests starting a new session; 0 disables the hint.
+#: Config surface `modelProxy.contextWarnTokens` -> this env (injected by Swift
+#: `TokenProxyManager.contextWarnEnvKey`); like the response-note switch it does not go through
+#: `config.py`, so the contract script asserts the two sides' names separately. Read once at
+#: import: the env is fixed when the process starts, and re-reading per response would only add a
+#: syscall per turn.
+CONTEXT_WARN_ENV_KEY = "MODEL_PROXY_CONTEXT_WARN"
+DEFAULT_CONTEXT_WARN_TOKENS = 300_000
+
+
+def _load_warn_tokens() -> int:
+    raw = os.environ.get(CONTEXT_WARN_ENV_KEY, "")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_CONTEXT_WARN_TOKENS
+
+
+CONTEXT_WARN_TOKENS = _load_warn_tokens()
 
 #: The gap between the appended line and the body
 NOTE_SEPARATOR = "\n\n"
@@ -64,19 +102,59 @@ def _label(key: str, lang: str) -> str:
     return table.get(lang) or table.get(FALLBACK_LANG) or key
 
 
-def build_note(model: str, parts: list[str], lang: str) -> str | None:
+def _format_context(n: int, lang: str) -> str:
+    if lang == "en":
+        return f"{n / 1000:.0f}K" if n >= 1000 else str(n)
+    return f"{n / 10000:.1f} 万" if n >= 10000 else str(n)
+
+
+def context_tokens_of(usage: dict) -> int | None:
+    """Total context this request carried, from the upstream's own usage numbers.
+
+    `input_tokens` is only the uncached remainder — a long session reports a small input
+    and a large cache_read, so summing all three is what actually approximates the context
+    the model saw. Returns None when nothing is usable (no guess is better than a wrong one).
+    """
+    if not isinstance(usage, dict):
+        return None
+    total = (
+        (usage.get("input_tokens") or 0)
+        + (usage.get("cache_read_input_tokens") or 0)
+        + (usage.get("cache_creation_input_tokens") or 0)
+    )
+    return total or None
+
+
+def _context_segment(context_tokens: int | None, lang: str) -> str | None:
+    if not context_tokens or context_tokens <= 0:
+        return None
+    tpl = NOTE_CONTEXT.get(lang) or NOTE_CONTEXT[FALLBACK_LANG]
+    seg = tpl.format(ctx=_format_context(context_tokens, lang))
+    if CONTEXT_WARN_TOKENS > 0 and context_tokens >= CONTEXT_WARN_TOKENS:
+        seg += CONTEXT_HINT.get(lang) or CONTEXT_HINT[FALLBACK_LANG]
+    return seg
+
+
+def build_note(
+    model: str, parts: list[str], lang: str, context_tokens: int | None = None
+) -> str | None:
     """Build the appended line; **returns None only when the model name is
     unavailable** — the model name is the main information of this line and must be
     shown even when nothing was rewritten (this is the case in the first few turns
     of a new session)."""
     if not model:
         return None
+    segs = [model]
+    ctx = _context_segment(context_tokens, lang)
+    if ctx:
+        segs.append(ctx)
     if not parts:
-        tpl = NOTE_EMPTY.get(lang) or NOTE_EMPTY[FALLBACK_LANG]
-        return tpl.format(model=model)
-    labels = [_label(p, lang) for p in parts]
-    tpl = NOTE_TEMPLATE.get(lang) or NOTE_TEMPLATE[FALLBACK_LANG]
-    return tpl.format(model=model, parts="/".join(labels))
+        segs.append(NOTE_EMPTY.get(lang) or NOTE_EMPTY[FALLBACK_LANG])
+    else:
+        labels = "/".join(_label(p, lang) for p in parts)
+        tpl = NOTE_APPLIED.get(lang) or NOTE_APPLIED[FALLBACK_LANG]
+        segs.append(tpl.format(parts=labels))
+    return SEG_JOIN.join(segs)
 
 
 def _data_of(event: str) -> dict:
@@ -91,9 +169,15 @@ def _data_of(event: str) -> dict:
     return {}
 
 
-def append_note_to_body(resp: dict, model: str, parts: list[str], lang: str) -> bool:
+def append_note_to_body(
+    resp: dict,
+    model: str,
+    parts: list[str],
+    lang: str,
+    context_tokens: int | None = None,
+) -> bool:
     """Non-streaming: merge the appended line into the last text block. Returns whether it changed anything."""
-    note = build_note(model, parts, lang)
+    note = build_note(model, parts, lang, context_tokens)
     if note is None:
         return False
     content = resp.get("content")
@@ -116,6 +200,16 @@ class SSENoteInjector:
         self._buf = ""
         self._block_type: dict = {}
         self._pending_stop: tuple | None = None
+        # Hard stop at one note per response. The line answers "what did the proxy rewrite
+        # this turn", so a second copy carries no information — and when the stream happens
+        # to carry extra stop/delta cycles, an unbounded injector stacks the same line dozens
+        # of times into the reply (observed: 86 identical lines in one message).
+        self._injected = False
+        #: How many `message_start` events this stream carried. A well-formed response has
+        #: exactly one; more means another round's data leaked into the same stream (observed:
+        #: two notes with different context sizes in one reply). Counted only to make that
+        #: leak observable — the injection cap above already keeps it from showing twice.
+        self.message_starts = 0
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def feed(self, chunk: bytes) -> bytes:
@@ -150,9 +244,15 @@ class SSENoteInjector:
             self._pending_stop = (index, event)
             return ""
         if etype == "message_start":
-            message = data.get("message")
-            model = (message or {}).get("model") or ""
-            self._note = build_note(model, self._parts, self._lang)
+            self.message_starts += 1
+            message = data.get("message") or {}
+            model = message.get("model") or ""
+            self._note = build_note(
+                model,
+                self._parts,
+                self._lang,
+                context_tokens_of(message.get("usage") or {}),
+            )
         elif etype in ("message_delta", "message_stop"):
             return self._release_pending(is_last=True) + event
         return event
@@ -168,8 +268,11 @@ class SSENoteInjector:
 
     def _note_delta(self, index) -> str:
         """Only append when a text block closes; tool_use blocks are left as-is."""
+        if self._injected:
+            return ""
         if self._block_type.get(index) != "text":
             return ""
+        self._injected = True
         payload = {
             "type": "content_block_delta",
             "index": index,
@@ -200,6 +303,7 @@ class NoteBodyBuffer:
         if not isinstance(resp, dict):
             return raw
         model = resp.get("model") or ""
-        if not append_note_to_body(resp, model, self._parts, self._lang):
+        ctx = context_tokens_of(resp.get("usage") or {})
+        if not append_note_to_body(resp, model, self._parts, self._lang, ctx):
             return raw
         return json.dumps(resp, ensure_ascii=False).encode()

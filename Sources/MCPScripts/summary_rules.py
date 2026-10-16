@@ -238,11 +238,9 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
         )
         return {"skipped": "json_failed"}
 
-    candidates = parsed.get("candidates", []) or []
     norms = parsed.get("norms", []) or []
-    # The gate is based on the norms actually extracted (candidates is the LLM's
-    # self-assessed topic list; one topic can yield several norms, so its count is
-    # naturally different from norms and cannot be the gate basis)
+    # The gate is based on the norms actually extracted — one topic can yield several
+    # norms, so the LLM's self-assessed topic count would not be a usable basis.
     if not norms:
         logger.info("Phase 3 skipped: no extracted rules entries")
         return {"skipped": "no_norms"}

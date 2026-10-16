@@ -218,7 +218,7 @@ public final class KnowledgePanelController: NSWindowController {
 
     /// 主题的「踩」跳主题：排除当前主题后重取,避免在同一个主题里原地打转。
     private func advance(excludingCurrentTopic: Bool = false) {
-        var card: KnowledgeCard? = if excludingCurrentTopic, let cur = currentCards[currentKind], let topicID = cur.topicID {
+        let card: KnowledgeCard? = if excludingCurrentTopic, let cur = currentCards[currentKind], let topicID = cur.topicID {
             KnowledgeStore.shared.nextCard(kind: currentKind, excludingTopic: topicID)
         } else {
             KnowledgeStore.shared.nextCard(kind: currentKind)

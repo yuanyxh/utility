@@ -225,6 +225,8 @@ public struct ModelProxyConfig: Codable {
     var skillDedupEnabled: Bool = true
     /// Append "what the proxy rewrote this round" at the end of the response (on by default)
     var responseAnnotationEnabled: Bool = true
+    /// Context-size threshold in tokens: above it the appended line suggests starting a new session (0 = never suggest)
+    var contextWarnTokens: Int = 300_000
     /// Shell tool output slimming: trim head/tail of overly long output + lossless JSON minify (on by default)
     var outputFilter: OutputFilterConfig = OutputFilterConfig()
 
@@ -241,6 +243,9 @@ public struct ModelProxyConfig: Codable {
         responseAnnotationEnabled = try c.decodeIfPresent(
             Bool.self, forKey: .responseAnnotationEnabled,
         ) ?? true
+        contextWarnTokens = try c.decodeIfPresent(
+            Int.self, forKey: .contextWarnTokens,
+        ) ?? 300_000
         outputFilter = decodeAny(
             decoder, OutputFilterConfig.self, keys: ["outputFilter", "output_filter"],
         ) ?? OutputFilterConfig()

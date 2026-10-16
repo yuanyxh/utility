@@ -143,6 +143,7 @@ final class TokenProxyManager {
     static let outputFilterEnvKey = "MODEL_PROXY_OUTPUT_FILTER"
     /// Env name for the response annotation switch (same value as Python `proxy_response_note.RESPONSE_NOTE_ENV_KEY`)
     static let responseNoteEnvKey = "MODEL_PROXY_RESPONSE_NOTE"
+    static let contextWarnEnvKey = "MODEL_PROXY_CONTEXT_WARN"
 
     /// Shell tool output slimming config. **Always injected** (except when proxyConfig is nil), so the Python
     /// side does not depend on its own default -- same reasoning as the skill dedup switch.
@@ -214,6 +215,10 @@ final class TokenProxyManager {
         // response annotation switch: always injected ("1"/"0"), so the Python side does not depend on its own default
         overrides[Self.responseNoteEnvKey] =
             (proxyConfig?.responseAnnotationEnabled ?? true) ? "1" : "0"
+        // context-size warning threshold: always injected, so changing it takes effect on reload
+        // without the Python side keeping its own copy of the default
+        overrides[Self.contextWarnEnvKey] =
+            String(proxyConfig?.contextWarnTokens ?? 300_000)
         return PythonScriptRunner.environment(overrides: overrides)
     }
 

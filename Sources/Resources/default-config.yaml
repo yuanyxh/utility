@@ -58,9 +58,13 @@ modelProxy:
   # The notice language follows general.language (built-in zh-Hans / en).
   skillDedupEnabled: true
   # Append one line at the end of the response showing what the proxy rewrote this round,
-  # e.g. `mimo-v2.5 | 已执行: Bash 过滤/Skill 短提示`. Added only to final text replies,
-  # not to tool-call turns.
+  # e.g. `mimo-v2.5 | 上下文 12.0 万 | 已执行: Bash 过滤/Skill 短提示`. Added only to final
+  # text replies, not to tool-call turns.
   responseAnnotationEnabled: true
+  # That line also reports the context size and, past this many tokens, suggests starting a
+  # new session (0 = never suggest). 300000 is where the measured reply latency on this
+  # machine starts to climb: below it 1.5-1.8s, 35万+ 2.1s, 40万+ 3.3s.
+  contextWarnTokens: 300000
   # Shell tool output slimming: trim head/tail of overlong output (with a self-evident
   # marker) + lossless JSON minify. Only applies to shell-like tools — Read/Edit etc.
   # return file content the model explicitly asked for, truncating it is corruption.

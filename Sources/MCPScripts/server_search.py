@@ -1104,7 +1104,6 @@ def tool_project_search(
     # ── Status determination ──
     # Prioritize symbol-level results for backward-compatible status
     symbol_found = [r for r in all_found if r["kind"] not in ("file", "package")]
-    file_pkg_found = [r for r in all_found if r["kind"] in ("file", "package")]
 
     if total == 0:
         return {

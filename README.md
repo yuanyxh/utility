@@ -386,6 +386,7 @@ flowchart TD
 | `modelProxy.outputFilter.enabled` | `true` | trim oversized shell output |
 | `modelProxy.outputFilter.maxBytes` | `12000` | only outputs above this size are trimmed |
 | `modelProxy.responseAnnotationEnabled` | `true` | append `model \| rewrote: …` to final replies |
+| `modelProxy.contextWarnTokens` | `300000` | context size above which the appended line suggests a new session (`0` = never) |
 | `modelProxy.clientAccel` | `{enabled: true, clients: []}` | clients that get classifier acceleration |
 | `modelProxy.clientText` | — | client-injected continuation/summary text and tags |
 | `modelProxy.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |

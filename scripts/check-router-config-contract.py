@@ -198,6 +198,8 @@ _SWIFT_OUTPUT_FILTER_ENV_RE = re.compile(r'outputFilterEnvKey\s*=\s*"([^"]+)"')
 #: How the response-note toggle env name is written on both sides (same as above; the script-specific env does not go through config.py)
 _PY_RESPONSE_NOTE_ENV_RE = re.compile(r'RESPONSE_NOTE_ENV_KEY\s*=\s*"([^"]+)"')
 _SWIFT_RESPONSE_NOTE_ENV_RE = re.compile(r'responseNoteEnvKey\s*=\s*"([^"]+)"')
+_PY_CONTEXT_WARN_ENV_RE = re.compile(r'CONTEXT_WARN_ENV_KEY\s*=\s*"([^"]+)"')
+_SWIFT_CONTEXT_WARN_ENV_RE = re.compile(r'contextWarnEnvKey\s*=\s*"([^"]+)"')
 
 
 def _read(path: str) -> str | None:
@@ -608,6 +610,24 @@ def find_response_note_env_violations(
         label="response-note env name",
         py_hint="RESPONSE_NOTE_ENV_KEY of proxy_response_note.py",
         swift_hint="responseNoteEnvKey of TokenProxyManager.swift",
+    )
+
+
+def find_context_warn_env_violations(
+    py_name: str | None, swift_name: str | None
+) -> list[str]:
+    """Pure function: the context-warn threshold env name must match on both sides.
+
+    Same shape as the response-note toggle above. When the two sides differ, Python reads its own
+    default and the configured threshold silently stops applying — the symptom is "I set 300000
+    but the hint behaviour did not change".
+    """
+    return find_cross_language_const_violations(
+        py_name,
+        swift_name,
+        label="context-warn env name",
+        py_hint="CONTEXT_WARN_ENV_KEY of proxy_response_note.py",
+        swift_hint="contextWarnEnvKey of TokenProxyManager.swift",
     )
 
 
@@ -1115,6 +1135,8 @@ class ContractInputs:
     swift_output_filter_env: str | None
     py_response_note_env: str | None
     swift_response_note_env: str | None
+    py_context_warn_env: str | None
+    swift_context_warn_env: str | None
     param_ref_keys: set[str]
     param_problems: list[str]
     param_table: dict[str, dict[str, str]]
@@ -1200,6 +1222,12 @@ def collect_inputs(
         swift_response_note_env=_first_match(
             _SWIFT_RESPONSE_NOTE_ENV_RE, _read(SWIFT) or ""
         ),
+        py_context_warn_env=_first_match(
+            _PY_CONTEXT_WARN_ENV_RE, _read(RESPONSE_NOTE_PY) or ""
+        ),
+        swift_context_warn_env=_first_match(
+            _SWIFT_CONTEXT_WARN_ENV_RE, _read(SWIFT) or ""
+        ),
         param_ref_keys=param_ref_keys,
         param_problems=param_problems,
         param_table=param_table,
@@ -1238,6 +1266,9 @@ def check_all(
         )
         + find_response_note_env_violations(
             inp.py_response_note_env, inp.swift_response_note_env
+        )
+        + find_context_warn_env_violations(
+            inp.py_context_warn_env, inp.swift_context_warn_env
         )
         + find_upstream_accept_encoding_violations(
             inp.upstream_header_guards,
@@ -1337,6 +1368,9 @@ def selftest(
         ),
         "response-note env name: mismatched on the two sides": replace(
             base, swift_response_note_env="MODEL_PROXY_NOTE_RENAMED"
+        ),
+        "context-warn env name: mismatched on the two sides": replace(
+            base, swift_context_warn_env="MODEL_PROXY_CONTEXT_WARN_RENAMED"
         ),
         # upstream response encoding (added in stage 8)
         "accept-encoding: the pass-through loop no longer excludes it": replace(

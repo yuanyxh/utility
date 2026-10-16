@@ -14,40 +14,39 @@ import sys
 import time
 
 import aiohttp
-from aiohttp import web
-
 import llm_client
+from aiohttp import web
+from config import ui_language
+from db import conn as dbconn
 from log_utils import setup_logging
+from proxy_client import load_client_accel, matches_accel_client
+from proxy_output_filter import OUTPUT_FILTER_ENV_KEY, filter_tool_outputs
 from proxy_protocol import (
-    ProtocolConverter,
     OpenAIToAnthropicStream,
+    ProtocolConverter,
     _detect_api_format,
-    _extract_usage_from_sse,
     _extract_output_from_sse,
     _extract_tool_name_from_sse,
-    _is_classifier_candidate,
+    _extract_usage_from_sse,
     _inject_classifier_disabled,
     _inject_system_prompt,
+    _is_classifier_candidate,
 )
-from proxy_client import load_client_accel, matches_accel_client
 from proxy_provider import api_format_of, api_key_of, missing_keys
-from proxy_usage import (
-    DB_PATH,
-    TOOL_OUTPUT_DB_PATH,
-    init_db,
-    init_tool_output_db,
-    record_gateway_log,
-    record_usage,
-    extract_tool_outputs,
-)
-from db import conn as dbconn
-from config import ui_language
-from proxy_skill_dedup import dedup_tool_results
-from proxy_output_filter import OUTPUT_FILTER_ENV_KEY, filter_tool_outputs
 from proxy_response_note import (
     RESPONSE_NOTE_ENV_KEY,
     NoteBodyBuffer,
     SSENoteInjector,
+)
+from proxy_skill_dedup import dedup_tool_results
+from proxy_usage import (
+    DB_PATH,
+    TOOL_OUTPUT_DB_PATH,
+    extract_tool_outputs,
+    init_db,
+    init_tool_output_db,
+    record_gateway_log,
+    record_usage,
 )
 
 # ---------------------------------------------------------------------------
@@ -388,7 +387,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     }
                 )
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 json.dumps({"msg": "first_body_log_failed", "error": str(e)})
             )
@@ -509,7 +508,9 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         # statement of the loop body, so the outer proxy_error can always read it.
         diag_stage = "connect"
         try:
-            async with _SharedSession() as session:
+            # Not merged: combining would reindent the 365-line response block below.
+            # The two forms are equivalent: _SharedSession closes nothing on exit.
+            async with _SharedSession() as session:  # noqa: SIM117
                 async with session.request(
                     method=request.method,
                     url=upstream,
@@ -619,18 +620,16 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                     # the extraction yardstick for usage / output preview
                                     # is not affected by injected content
                                     collected_body.extend(raw)
-                                    await response.write(
-                                        tagger.feed(raw) if tagger else raw
-                                    )
+                                    # The response-side note is not wired into this branch yet (no
+                                    # rewrite stats are collected for the converted format).
+                                    await response.write(raw)
                             # Wrap up: content_block_stop / message_delta / message_stop
                             if not stream_error:
                                 tail = converter.finish()
                                 if tail:
                                     raw = "".join(tail).encode()
                                     collected_body.extend(raw)
-                                    await response.write(
-                                        tagger.feed(raw) if tagger else raw
-                                    )
+                                    await response.write(raw)
                         elif convert_resp and not is_sse:
                             # Non-streaming conversion: collect the full JSON body first, then convert as a whole
                             raw_body = bytearray()
@@ -645,7 +644,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                     )
                                 )
                                 payload = json.dumps(converted).encode()
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001
                                 stream_error = f"convert_error: {e}"
                                 payload = bytes(raw_body)
                             await response.write(payload)
@@ -682,6 +681,17 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                 tail = note_sink.finish()
                                 if tail:
                                     await response.write(tail)
+                                if getattr(note_sink, "message_starts", 0) > 1:
+                                    logger.warning(
+                                        json.dumps(
+                                            {
+                                                "msg": "stream_multiple_message_start",
+                                                "count": note_sink.message_starts,
+                                                "model": request_body.get("model", ""),
+                                                "path": request.path,
+                                            }
+                                        )
+                                    )
 
                     except (
                         ConnectionResetError,
@@ -729,7 +739,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                     # record_usage runs.
                     try:
                         await response.write_eof()
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         logger.warning(
                             json.dumps(
                                 {
@@ -866,7 +876,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
                     return response
 
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             latency_ms = int((time.monotonic() - start_time) * 1000)
             # Connect-stage failures never reached the upstream and wrote nothing to the
             # client, so replaying is safe; from "prepare" on a retry would double the response.
@@ -1036,7 +1046,7 @@ async def handle_usage_summary(request: web.Request) -> web.Response:
                 "invalid_requests": row[4] or 0,
             }
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -1138,7 +1148,7 @@ async def handle_usage_layers(request: web.Request) -> web.Response:
                     )
 
         return web.json_response(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return web.json_response({"error": str(e)}, status=500)
 
 

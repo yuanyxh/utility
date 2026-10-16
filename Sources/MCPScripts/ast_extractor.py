@@ -214,7 +214,6 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
 
             # Walk class body for methods
             for child in getattr(node, "body", []):
-                fn = _py_docstring(child)  # actually this re-extracts...
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     method_name = _py_name(child)
                     method_kind = "method"
