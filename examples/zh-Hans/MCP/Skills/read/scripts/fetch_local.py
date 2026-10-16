@@ -85,8 +85,21 @@ class _StdlibStripper(HTMLParser):
 
     DROP_TAGS = {"script", "style", "nav", "footer", "aside", "noscript", "form"}
     BLOCK_TAGS = {
-        "p", "div", "section", "article", "li", "ul", "ol",
-        "h1", "h2", "h3", "h4", "h5", "h6", "br", "tr",
+        "p",
+        "div",
+        "section",
+        "article",
+        "li",
+        "ul",
+        "ol",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "br",
+        "tr",
     }
 
     def __init__(self) -> None:
@@ -163,9 +176,14 @@ def main() -> int:
 
     try:
         html = fetch_html(args.url)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        TimeoutError,
+        OSError,
+    ) as exc:
         print(
-            f"[fetch] tier=local status=fail reason=\"抓取失败：{exc}\"",
+            f'[fetch] tier=local status=fail reason="抓取失败：{exc}"',
             file=sys.stderr,
         )
         return 1
@@ -180,8 +198,8 @@ def main() -> int:
         elif args.prefer == "readability":
             print(
                 "[fetch] tier=local status=fail "
-                "reason=\"指定了 --prefer readability，但未安装 readability-lxml 或 html2text；"
-                "请用以下命令安装：pip install --user readability-lxml html2text\"",
+                'reason="指定了 --prefer readability，但未安装 readability-lxml 或 html2text；'
+                '请用以下命令安装：pip install --user readability-lxml html2text"',
                 file=sys.stderr,
             )
             return 1
@@ -195,7 +213,7 @@ def main() -> int:
     body_lines = [l for l in body.splitlines() if l.strip()]
     if len(body_lines) < 4:
         print(
-            f"[fetch] tier=local status=fail reason=\"extractor={used} 产生的非空行少于 4 行\"",
+            f'[fetch] tier=local status=fail reason="extractor={used} 产生的非空行少于 4 行"',
             file=sys.stderr,
         )
         return 1
@@ -203,7 +221,7 @@ def main() -> int:
     if used == "stdlib":
         print(
             "[fetch] tier=local status=ok extractor=stdlib "
-            "hint=\"安装 readability-lxml + html2text 可得到更干净的输出\"",
+            'hint="安装 readability-lxml + html2text 可得到更干净的输出"',
             file=sys.stderr,
         )
     else:

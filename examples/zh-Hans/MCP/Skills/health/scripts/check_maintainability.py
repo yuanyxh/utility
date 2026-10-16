@@ -22,17 +22,64 @@ from pathlib import Path
 # tests/python/test_auditor_alignment.py 与 skills/check/scripts/audit_signals.py
 # 保持完全一致；阈值按各自产品保留。
 EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "dist", "build", ".next",
-    "__pycache__", ".turbo", "target", ".venv", "venv", "vendor",
-    "coverage", ".cache", ".parcel-cache", ".pytest_cache", ".mypy_cache",
-    ".ruff_cache", "Pods", "Carthage", ".swiftpm", ".gradle",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    "__pycache__",
+    ".turbo",
+    "target",
+    ".venv",
+    "venv",
+    "vendor",
+    "coverage",
+    ".cache",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "Pods",
+    "Carthage",
+    ".swiftpm",
+    ".gradle",
 }
 
 SOURCE_EXTS = {
-    ".bash", ".c", ".cc", ".cpp", ".cs", ".css", ".go", ".h", ".hpp",
-    ".html", ".java", ".js", ".jsx", ".kt", ".lua", ".m", ".mjs", ".mm",
-    ".md", ".php", ".py", ".rb", ".rs", ".scss", ".sh", ".swift", ".ts",
-    ".tsx", ".vue", ".yaml", ".yml", ".zsh",
+    ".bash",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".html",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".lua",
+    ".m",
+    ".mjs",
+    ".mm",
+    ".md",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scss",
+    ".sh",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".yaml",
+    ".yml",
+    ".zsh",
 }
 
 MARKER_RE = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b", re.IGNORECASE)
@@ -134,7 +181,9 @@ def line_count(path: Path) -> int:
         return 0
 
 
-def print_list(items: list[str], empty: str = "(none)", limit: int | None = None) -> None:
+def print_list(
+    items: list[str], empty: str = "(none)", limit: int | None = None
+) -> None:
     shown = items if limit is None else items[:limit]
     if not shown:
         print(f"  {empty}")
@@ -158,7 +207,9 @@ def instruction_paths(root: Path) -> list[Path]:
     rules_dir = root / ".claude" / "rules"
     if rules_dir.is_dir():
         candidates.extend(sorted(rules_dir.glob("*.md")))
-    return [path for path in candidates if path.is_file() and not is_excluded(path, root)]
+    return [
+        path for path in candidates if path.is_file() and not is_excluded(path, root)
+    ]
 
 
 def find_text_signal(paths: list[Path], patterns: list[str]) -> bool:
@@ -184,7 +235,9 @@ def parse_makefile(root: Path) -> tuple[set[str], list[str]]:
         if target.startswith("."):
             continue
         targets.add(target)
-        if re.search(r"(test|check|lint|type|build|package|verify|smoke)", target, re.IGNORECASE):
+        if re.search(
+            r"(test|check|lint|type|build|package|verify|smoke)", target, re.IGNORECASE
+        ):
             commands.append(f"make {target}")
     return targets, commands
 
@@ -281,10 +334,14 @@ def verification_surface(
         for snippet in snippets:
             for target in MAKE_CMD_RE.findall(snippet):
                 if target not in make_targets:
-                    missing.append(f"{rel(path, root)} references missing make target: {target}")
+                    missing.append(
+                        f"{rel(path, root)} references missing make target: {target}"
+                    )
             for script in NPM_CMD_RE.findall(snippet):
                 if script not in package_scripts:
-                    missing.append(f"{rel(path, root)} references missing package script: {script}")
+                    missing.append(
+                        f"{rel(path, root)} references missing package script: {script}"
+                    )
 
     unique_commands = list(dict.fromkeys(commands))
     unique_missing = list(dict.fromkeys(missing))
@@ -315,7 +372,10 @@ def hotspot_ownership_surface(
         relative = rel(path, root)
         relative_path = Path(relative)
         lower_parts = tuple(part.lower() for part in relative_path.parts)
-        if any(part in {"test", "tests", "spec", "specs", "fixtures"} for part in lower_parts):
+        if any(
+            part in {"test", "tests", "spec", "specs", "fixtures"}
+            for part in lower_parts
+        ):
             continue
         lower_name = relative_path.name.lower()
         if re.search(r"(?:^|[._-])(?:test|tests|spec|specs)(?:[._-]|$)", lower_name):
@@ -341,16 +401,18 @@ def hotspot_ownership_surface(
                 start = index + len(candidate)
 
         if not indices:
-            missing.append(f"{relative} lines={lines} reason=not mentioned in agent instructions")
+            missing.append(
+                f"{relative} lines={lines} reason=not mentioned in agent instructions"
+            )
             continue
 
         saw_hotspot_context = False
         saw_verification_context = False
         has_documented_entry = False
         for index in indices:
-            window = lower_text[max(0, index - 700): index + len(relative_lower) + 700]
+            window = lower_text[max(0, index - 700) : index + len(relative_lower) + 700]
             line_no = lower_text[:index].count("\n")
-            local_lines = instruction_lines[max(0, line_no - 1): line_no + 4]
+            local_lines = instruction_lines[max(0, line_no - 1) : line_no + 4]
             local_context = "\n".join(local_lines)
             section_heading = ""
             for prior_line in reversed(instruction_lines[: line_no + 1]):
@@ -363,7 +425,9 @@ def hotspot_ownership_surface(
             )
             has_verification_context = bool(VERIFICATION_WORD_RE.search(local_context))
             saw_hotspot_context = saw_hotspot_context or has_hotspot_context
-            saw_verification_context = saw_verification_context or has_verification_context
+            saw_verification_context = (
+                saw_verification_context or has_verification_context
+            )
             if has_hotspot_context and has_verification_context:
                 has_documented_entry = True
                 break
@@ -377,7 +441,9 @@ def hotspot_ownership_surface(
             if not saw_verification_context:
                 reasons.append("missing verification context")
             if saw_hotspot_context and saw_verification_context:
-                reasons.append("ownership and verification are not in the same hotspot entry")
+                reasons.append(
+                    "ownership and verification are not in the same hotspot entry"
+                )
             missing.append(f"{relative} lines={lines} reason={'; '.join(reasons)}")
 
     findings: list[str] = []
@@ -390,7 +456,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", default=".", help="仓库根（默认：cwd）")
     parser.add_argument(
-        "mode", nargs="?", default="summary", choices=("summary", "deep"),
+        "mode",
+        nargs="?",
+        default="summary",
+        choices=("summary", "deep"),
         help="输出详细程度",
     )
     args = parser.parse_args()
@@ -407,15 +476,24 @@ def main() -> int:
     detected_manifests = [
         name
         for name in [
-            "Makefile", "package.json", "Cargo.toml", "go.mod", "pyproject.toml",
-            "pytest.ini", "pom.xml", "deno.json", "deno.jsonc",
+            "Makefile",
+            "package.json",
+            "Cargo.toml",
+            "go.mod",
+            "pyproject.toml",
+            "pytest.ini",
+            "pom.xml",
+            "deno.json",
+            "deno.jsonc",
         ]
         if (root / name).is_file()
     ]
     workflows_dir = root / ".github" / "workflows"
     workflow_count = 0
     if workflows_dir.is_dir():
-        workflow_count = len(list(workflows_dir.glob("*.yml"))) + len(list(workflows_dir.glob("*.yaml")))
+        workflow_count = len(list(workflows_dir.glob("*.yml"))) + len(
+            list(workflows_dir.glob("*.yaml"))
+        )
     if workflow_count:
         detected_manifests.append(f".github/workflows ({workflow_count})")
 
@@ -438,17 +516,47 @@ def main() -> int:
     instruction_files = instruction_paths(root)
     project_map = find_text_signal(
         instruction_files,
-        [r"repository map", r"project map", r"repo map", r"\bproject\b", r"目录", r"仓库", r"结构"],
+        [
+            r"repository map",
+            r"project map",
+            r"repo map",
+            r"\bproject\b",
+            r"目录",
+            r"仓库",
+            r"结构",
+        ],
     )
     instruction_verification = find_text_signal(
         instruction_files,
-        [r"verification", r"test plan", r"make test", r"npm test", r"pytest", r"cargo test", r"验证", r"测试"],
+        [
+            r"verification",
+            r"test plan",
+            r"make test",
+            r"npm test",
+            r"pytest",
+            r"cargo test",
+            r"验证",
+            r"测试",
+        ],
     )
     boundaries = find_text_signal(
         instruction_files,
-        [r"not for", r"do not", r"non-?goals?", r"scope", r"boundar", r"never", r"avoid", r"边界", r"非目标", r"不要"],
+        [
+            r"not for",
+            r"do not",
+            r"non-?goals?",
+            r"scope",
+            r"boundar",
+            r"never",
+            r"avoid",
+            r"边界",
+            r"非目标",
+            r"不要",
+        ],
     )
-    commands, missing_references, make_targets, _package_scripts = verification_surface(root, instruction_files)
+    commands, missing_references, make_targets, _package_scripts = verification_surface(
+        root, instruction_files
+    )
     stable_make_targets = sorted(make_targets & {"check", "test", "verify"})
     wrapper_warnings: list[str] = []
     if len(commands) >= 2 and (root / "Makefile").is_file() and not stable_make_targets:
@@ -460,8 +568,12 @@ def main() -> int:
         "docs_dir": (root / "docs").is_dir(),
         "specs_dir": (root / "specs").is_dir(),
         "specify_dir": (root / ".specify").is_dir(),
-        "handoff_md": any(path.name.upper() == "HANDOFF.MD" for path in root.glob("*.md")),
-        "changelog": any(path.name.upper().startswith("CHANGELOG") for path in root.glob("*")),
+        "handoff_md": any(
+            path.name.upper() == "HANDOFF.MD" for path in root.glob("*.md")
+        ),
+        "changelog": any(
+            path.name.upper().startswith("CHANGELOG") for path in root.glob("*")
+        ),
         "issue_templates": (root / ".github" / "ISSUE_TEMPLATE").exists(),
         "pr_template": any(
             path.is_file()
@@ -485,11 +597,17 @@ def main() -> int:
 
     large_line_limit = 1200 if mode == "summary" else 800
     large_file_records = [
-        (lines, size, path) for lines, size, path in source_stats if lines >= large_line_limit
+        (lines, size, path)
+        for lines, size, path in source_stats
+        if lines >= large_line_limit
     ]
-    large_files = [f"{rel(path, root)} lines={lines} bytes={size}" for lines, size, path in large_file_records]
+    large_files = [
+        f"{rel(path, root)} lines={lines} bytes={size}"
+        for lines, size, path in large_file_records
+    ]
     todo_hotspots = [
-        f"{path} markers={count}" for path, count in todo_counts.most_common(8 if mode == "deep" else 5)
+        f"{path} markers={count}"
+        for path, count in todo_counts.most_common(8 if mode == "deep" else 5)
     ]
 
     doc_ref_status = "unavailable"
@@ -547,17 +665,34 @@ def main() -> int:
         if markdown_missing:
             drift_warnings.append("broken Markdown links")
 
-    context_status = "FAIL" if not has_instruction_surface else ("WARN" if context_warnings else "PASS")
-    verification_status = "FAIL" if not has_command_surface else ("WARN" if verification_warnings else "PASS")
+    context_status = (
+        "FAIL"
+        if not has_instruction_surface
+        else ("WARN" if context_warnings else "PASS")
+    )
+    verification_status = (
+        "FAIL"
+        if not has_command_surface
+        else ("WARN" if verification_warnings else "PASS")
+    )
     decision_status = "PASS"
     wrapper_status = "WARN" if wrapper_warnings else "PASS"
     drift_status = "WARN" if drift_warnings else "PASS"
 
-    if context_status == "FAIL" or verification_status == "FAIL" or doc_ref_status == "fail":
+    if (
+        context_status == "FAIL"
+        or verification_status == "FAIL"
+        or doc_ref_status == "fail"
+    ):
         overall = "FAIL"
     elif "WARN" in {
-        context_status, verification_status, decision_status, wrapper_status,
-        drift_status, markdown_link_status, hotspot_status,
+        context_status,
+        verification_status,
+        decision_status,
+        wrapper_status,
+        drift_status,
+        markdown_link_status,
+        hotspot_status,
     }:
         overall = "WARN"
     else:
@@ -568,7 +703,9 @@ def main() -> int:
         f"{rel(path, root)} lines={lines} bytes={size}"
         for lines, size, path in source_stats[: (10 if mode == "deep" else 5)]
     ]
-    largest_dirs = [f"{directory} files={count}" for directory, count in dir_counts.most_common(8)]
+    largest_dirs = [
+        f"{directory} files={count}" for directory, count in dir_counts.most_common(8)
+    ]
 
     print("=== PROJECT SHAPE ===")
     print(f"maintainability_status: {overall}")
@@ -585,10 +722,13 @@ def main() -> int:
     print(f"context_status: {context_status}")
     print(f"AGENTS.md: {'yes' if (root / 'AGENTS.md').is_file() else 'no'}")
     print(f"CLAUDE.md: {'yes' if (root / 'CLAUDE.md').is_file() else 'no'}")
-    print(f".github/copilot-instructions.md: {'yes' if (root / '.github' / 'copilot-instructions.md').is_file() else 'no'}")
+    print(
+        f".github/copilot-instructions.md: {'yes' if (root / '.github' / 'copilot-instructions.md').is_file() else 'no'}"
+    )
     github_instruction_count = (
         len(list((root / ".github" / "instructions").glob("*.md")))
-        if (root / ".github" / "instructions").is_dir() else 0
+        if (root / ".github" / "instructions").is_dir()
+        else 0
     )
     print(f".github/instructions/*.md: {github_instruction_count}")
     print(f"GEMINI.md: {'yes' if (root / 'GEMINI.md').is_file() else 'no'}")
@@ -639,7 +779,9 @@ def main() -> int:
 
     print("=== HOTSPOT OWNERSHIP SURFACE ===")
     print(f"hotspot_ownership_status: {hotspot_status}")
-    print(f"large_hotspot_threshold_lines: {large_line_limit if mode == 'deep' else '(deep mode only)'}")
+    print(
+        f"large_hotspot_threshold_lines: {large_line_limit if mode == 'deep' else '(deep mode only)'}"
+    )
     print("documented_hotspots:")
     if mode == "deep":
         print_list(documented_hotspots)

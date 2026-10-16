@@ -596,16 +596,20 @@ _sys_prompt_mtime: float = 0
 
 
 def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
-    """Read System_Prompts.md and inject it before the last real user input.
+    """Read System_Prompts.md and inject it into **every** real user input.
 
-    Search backwards for the real user input with role==user and content being a
-    string / an array containing a text block (a pure tool_result message contains no
-    text and is skipped), and insert the rule block before it; if that message itself
-    also contains a tool_result (the form where the user interjects while a tool is
-    executing), insert after the last tool_result instead — that block must always
-    remain first in this message. Returns (body_bytes, matched index); the matched
-    index is the messages subscript of the injection target, and is -1 when the file
-    is missing / read fails / no match. Skips disk reads when mtime is unchanged.
+    The injection point must not follow "the last real user input": it shifts each time
+    the user speaks, the rule block vanishes from its old message, and the upstream
+    prompt cache breaks from there on (measured on a real session: 2 breaks per 247
+    requests with the moving target, 0 with this one). Injecting everywhere is
+    deterministic per message, so the prefix stays byte-identical across turns, and the
+    newest turn — the one that drives model adherence — is still covered. A real user
+    input has content as a string or an array containing a text block; a pure
+    tool_result message contains no text and is skipped — when such a message also
+    carries text (the user interjected while a tool was executing), the rule goes after
+    the last tool_result, which must always remain first. Returns (body_bytes, injected
+    count), the count being 0 when the file is missing / read fails / no match. Skips
+    disk reads when mtime is unchanged.
     """
     global _sys_prompt_content, _sys_prompt_mtime
 
@@ -631,13 +635,14 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
     if _sys_prompt_content is None:
         return None, -1
 
-    # User message injection: only inject into the real user input (skip tool_result messages)
+    # Every real user input gets its own copy: a moving injection point drops the rule block
+    # from its old message each turn, breaking the upstream prompt cache from there on.
     messages = body.get("messages", [])
-    target_index = -1
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") != "user":
+    rule_block = f"{RULE_START_MARK}\n" + _sys_prompt_content + f"\n{RULE_END_MARK}\n\n"
+    injected = 0
+    for msg in messages:
+        if msg.get("role") != "user":
             continue
-        msg = messages[i]
         content = msg.get("content", "")
         # Determine whether it is the real user input: a string type, or an array containing a text-type block
         is_real_user_input = False
@@ -649,11 +654,6 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
             )
         if not is_real_user_input:
             continue
-        target_index = i
-        # Inject the rule
-        rule_block = (
-            f"{RULE_START_MARK}\n" + _sys_prompt_content + f"\n{RULE_END_MARK}\n\n"
-        )
         if isinstance(content, str):
             msg["content"] = rule_block + content
         elif isinstance(content, list):
@@ -669,10 +669,10 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     last_tool_result = idx
             content.insert(last_tool_result + 1, {"type": "text", "text": rule_block})
-        break
+        injected += 1
 
     # File exists but no real user input found (e.g. all user messages are tool_result) → log a warning to guard against silent failure
-    if target_index == -1:
+    if injected == 0:
         logger.warning(
             json.dumps(
                 {
@@ -684,7 +684,7 @@ def _inject_system_prompt(body: dict) -> tuple[bytes | None, int]:
             )
         )
 
-    return json.dumps(body).encode(), target_index
+    return json.dumps(body).encode(), injected
 
 
 def _extract_usage_from_sse(

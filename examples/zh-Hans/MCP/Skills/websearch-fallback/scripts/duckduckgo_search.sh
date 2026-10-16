@@ -20,6 +20,5 @@ encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.arg
 
 curl -s -L --max-time 20 \
   -A "$UA" \
-  -H "Accept-Language: zh-CN,zh;q=0.9" \
   -H "Accept: text/html" \
   "https://html.duckduckgo.com/html/?q=${encoded}"

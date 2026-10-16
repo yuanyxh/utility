@@ -23,19 +23,66 @@ from pathlib import Path
 
 
 EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "dist", "build", ".next",
-    "__pycache__", ".turbo", "target", ".venv", "venv", "vendor",
-    "coverage", ".cache", ".parcel-cache", ".pytest_cache", ".mypy_cache",
-    ".ruff_cache", "Pods", "Carthage", ".swiftpm", ".gradle",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    "__pycache__",
+    ".turbo",
+    "target",
+    ".venv",
+    "venv",
+    "vendor",
+    "coverage",
+    ".cache",
+    ".parcel-cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "Pods",
+    "Carthage",
+    ".swiftpm",
+    ".gradle",
 }
 
 # 通过 tests/python/test_auditor_alignment.py 与
 # skills/health/scripts/check_maintainability.py 保持完全一致（阈值按各自产品保留）。
 SOURCE_EXTS = {
-    ".bash", ".c", ".cc", ".cpp", ".cs", ".css", ".go", ".h", ".hpp",
-    ".html", ".java", ".js", ".jsx", ".kt", ".lua", ".m", ".mjs", ".mm",
-    ".md", ".php", ".py", ".rb", ".rs", ".scss", ".sh", ".swift", ".ts",
-    ".tsx", ".vue", ".yaml", ".yml", ".zsh",
+    ".bash",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".html",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".lua",
+    ".m",
+    ".mjs",
+    ".mm",
+    ".md",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scss",
+    ".sh",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".yaml",
+    ".yml",
+    ".zsh",
 }
 
 HOTSPOT_LINES = 500
@@ -49,9 +96,7 @@ MARKER_RE = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b", re.IGNORECASE)
 HEREDOC_OPEN_RE = re.compile(
     r"(python3?|node|ruby|perl|php)\b[^|\n]*?<<-?\s*['\"]?(\w+)['\"]?"
 )
-INSTALL_URL_RE = re.compile(
-    r"raw\.githubusercontent\.com/[^/\s]+/[^/\s]+/([^/\s]+)/"
-)
+INSTALL_URL_RE = re.compile(r"raw\.githubusercontent\.com/[^/\s]+/[^/\s]+/([^/\s]+)/")
 # --exclude 需要 = 或尾随值，以避免匹配到 git 的 --exclude-standard
 DENYLIST_HINT_RE = re.compile(
     r"(^\s*(skip|exclude)\s*=|\s--exclude=|!\*\.\w+|grep\s+-v\b|--ignore=)",
@@ -61,10 +106,33 @@ MINIFIED_RE = re.compile(r"\.min\.[a-z]+$", re.IGNORECASE)
 CLI_CONTRACT_BUCKETS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("help_or_usage", re.compile(r"(--help|\busage\b|\bhelp output\b)", re.IGNORECASE)),
     ("version", re.compile(r"(--version|\bversion output\b)", re.IGNORECASE)),
-    ("exit_code", re.compile(r"\b(exit code|exit status|return code|exit_code|\$\?)\b", re.IGNORECASE)),
-    ("stdout", re.compile(r"\b(stdout|standard output)\b|>\s*\"\$?[A-Za-z0-9_./-]*stdout", re.IGNORECASE)),
-    ("stderr", re.compile(r"\b(stderr|standard error)\b|2>\s*\"\$?[A-Za-z0-9_./-]*stderr", re.IGNORECASE)),
-    ("non_interactive_or_tty", re.compile(r"\b(non-interactive|noninteractive|tty|isatty|/dev/null|CI=1)\b", re.IGNORECASE)),
+    (
+        "exit_code",
+        re.compile(
+            r"\b(exit code|exit status|return code|exit_code|\$\?)\b", re.IGNORECASE
+        ),
+    ),
+    (
+        "stdout",
+        re.compile(
+            r"\b(stdout|standard output)\b|>\s*\"\$?[A-Za-z0-9_./-]*stdout",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "stderr",
+        re.compile(
+            r"\b(stderr|standard error)\b|2>\s*\"\$?[A-Za-z0-9_./-]*stderr",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "non_interactive_or_tty",
+        re.compile(
+            r"\b(non-interactive|noninteractive|tty|isatty|/dev/null|CI=1)\b",
+            re.IGNORECASE,
+        ),
+    ),
     (
         "install_run",
         re.compile(
@@ -106,10 +174,19 @@ def is_excluded(path: Path, root: Path) -> bool:
 def iter_files(root: Path) -> list[Path]:
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), "ls-files",
-             "--cached", "--others", "--exclude-standard", "-z"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, check=False,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
         if proc.returncode == 0 and proc.stdout:
             out = []
@@ -219,7 +296,8 @@ def block_heredoc(files: list[Path], root: Path) -> None:
 def block_test_ci(files: list[Path], root: Path) -> None:
     header("TEST AND CI SURFACE")
     test_files = [
-        p for p in files
+        p
+        for p in files
         if p.suffix.lower() in SOURCE_EXTS
         and (("test" in p.name.lower()) or ("spec" in p.name.lower()))
     ]
@@ -235,8 +313,9 @@ def block_test_ci(files: list[Path], root: Path) -> None:
             job_names.append(f"{wf.name}: {m.group(1)[:60]}")
             break
     ratio = len(test_files) / max(len(src_files), 1)
-    print(f"tests_count={len(test_files)} source_count={len(src_files)} "
-          f"ratio={ratio:.1%}")
+    print(
+        f"tests_count={len(test_files)} source_count={len(src_files)} ratio={ratio:.1%}"
+    )
     print(f"ci_workflow_files={len(workflows)}")
     for j in job_names[:10]:
         print(f"  workflow: {j}")
@@ -349,7 +428,9 @@ def _is_cli_contract_candidate(path: Path, root: Path) -> bool:
     return False
 
 
-def cli_contract_evidence(files: list[Path], root: Path) -> dict[str, list[tuple[str, str]]]:
+def cli_contract_evidence(
+    files: list[Path], root: Path
+) -> dict[str, list[tuple[str, str]]]:
     hits: dict[str, list[tuple[str, str]]] = {}
     for path in files:
         if not _is_cli_contract_candidate(path, root):
@@ -456,8 +537,9 @@ def block_version_sources(root: Path) -> None:
 def block_packaging_posture(root: Path) -> None:
     header("PACKAGING FILTER POSTURE")
     allowlist_files = list(root.glob("*.allowlist")) + list(root.glob("MANIFEST.in"))
-    pkg_scripts = (list(root.glob("scripts/package*.sh"))
-                   + list(root.glob("scripts/release*.sh")))
+    pkg_scripts = list(root.glob("scripts/package*.sh")) + list(
+        root.glob("scripts/release*.sh")
+    )
     denylist_hits = 0
     for sp in pkg_scripts:
         for line in read_text(sp).splitlines():
@@ -536,10 +618,16 @@ def block_agent_doc_dedup(root: Path) -> None:
         status("WARN")
         return
     cross = ("AGENTS.md" in a) or ("CLAUDE.md" in b)
-    a_set = {ln.strip() for ln in a.splitlines()
-             if ln.strip() and not ln.strip().startswith("#")}
-    b_set = {ln.strip() for ln in b.splitlines()
-             if ln.strip() and not ln.strip().startswith("#")}
+    a_set = {
+        ln.strip()
+        for ln in a.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    }
+    b_set = {
+        ln.strip()
+        for ln in b.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    }
     union = a_set | b_set
     jaccard = len(a_set & b_set) / len(union) if union else 0.0
     print(f"jaccard={jaccard:.2f} cross_refs={cross}")
@@ -583,20 +671,24 @@ def block_drift_markers(files: list[Path], root: Path) -> None:
 
 def block_duplicate_setup(root: Path) -> None:
     header("DUPLICATE SETUP SCRIPTS")
-    scripts = (list(root.glob("scripts/setup-*.sh"))
-               + list(root.glob("scripts/install-*.sh")))
+    scripts = list(root.glob("scripts/setup-*.sh")) + list(
+        root.glob("scripts/install-*.sh")
+    )
     if len(scripts) < 2:
         print("（可比较的 setup-* 脚本少于 2 个）")
         status("N/A")
         return
     sets: dict[Path, set[str]] = {}
     for sp in scripts:
-        sets[sp] = {ln.strip() for ln in read_text(sp).splitlines()
-                    if ln.strip() and not ln.strip().startswith("#")}
+        sets[sp] = {
+            ln.strip()
+            for ln in read_text(sp).splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        }
     pairs: list[tuple[str, str, float]] = []
     names = list(sets.keys())
     for i, a in enumerate(names):
-        for b in names[i + 1:]:
+        for b in names[i + 1 :]:
             union = sets[a] | sets[b]
             if not union:
                 continue
@@ -614,9 +706,11 @@ def block_duplicate_setup(root: Path) -> None:
 
 def block_denylist_in_build(root: Path) -> None:
     header("DENYLIST IN BUILD")
-    targets = (list(root.glob("scripts/package*.sh"))
-               + list(root.glob("scripts/release*.sh"))
-               + [root / "Makefile", root / "Justfile"])
+    targets = (
+        list(root.glob("scripts/package*.sh"))
+        + list(root.glob("scripts/release*.sh"))
+        + [root / "Makefile", root / "Justfile"]
+    )
     real_targets = [p for p in targets if p.is_file()]
     if not real_targets:
         print("（不存在构建脚本）")
@@ -640,7 +734,9 @@ def block_denylist_in_build(root: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--root", type=Path, default=Path.cwd(),
+        "--root",
+        type=Path,
+        default=Path.cwd(),
         help="要审计的项目根（默认：当前工作目录）",
     )
     args = parser.parse_args()
@@ -652,16 +748,26 @@ def main() -> int:
     print(f"project_root: {root}")
     print(f"files_scanned: {len(files)}")
     print()
-    block_hotspots(files, root); print()
-    block_heredoc(files, root); print()
-    block_test_ci(files, root); print()
-    block_cli_contract_surface(files, root); print()
-    block_version_sources(root); print()
-    block_packaging_posture(root); print()
-    block_install_url(root); print()
-    block_agent_doc_dedup(root); print()
-    block_drift_markers(files, root); print()
-    block_duplicate_setup(root); print()
+    block_hotspots(files, root)
+    print()
+    block_heredoc(files, root)
+    print()
+    block_test_ci(files, root)
+    print()
+    block_cli_contract_surface(files, root)
+    print()
+    block_version_sources(root)
+    print()
+    block_packaging_posture(root)
+    print()
+    block_install_url(root)
+    print()
+    block_agent_doc_dedup(root)
+    print()
+    block_drift_markers(files, root)
+    print()
+    block_duplicate_setup(root)
+    print()
     block_denylist_in_build(root)
     return 0
 

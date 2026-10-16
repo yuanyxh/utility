@@ -70,7 +70,8 @@ public final class HotkeyManager {
 
     private func parse(hotkey: String) -> (keyCode: UInt16, flags: UInt32)? {
         let parts = hotkey.lowercased().split(separator: "+").map(String.init)
-        var keyCode: UInt16 = 0
+        // keyCode 用 Optional:`a` 的 ANSI 键码就是 0,拿 0 当「还没匹配到」会让 `cmd+a` 解析失败
+        var keyCode: UInt16?
         var flags: UInt32 = 0
 
         for part in parts {
@@ -84,16 +85,22 @@ public final class HotkeyManager {
                 keyCode = code
             }
         }
-        guard keyCode != 0 else { return nil }
+        guard let keyCode else { return nil }
         return (keyCode, flags)
     }
 }
 
+/// ANSI 键码（`kVK_ANSI_*`）。**必须完整** —— 缺一个键时 `parse` 返回 nil，
+/// 症状是「配置看似正常却弹热键解析失败」，且失败的是用户自己配的那个键。
 private let keyCodeMap: [String: UInt16] = [
-    "c": 8, "d": 2, "f": 3, "v": 9, "s": 1, "a": 0,
-    "x": 7, "z": 6, "w": 13, "q": 12, "e": 14, "r": 15,
-    "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23,
-    "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
+    "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16,
+    "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40,
+    "n": 45, "m": 46,
+    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22,
+    "7": 26, "8": 28, "9": 25, "0": 29,
+    "-": 27, "=": 24, "[": 33, "]": 30, ";": 41, "'": 39, "\\": 42,
+    ",": 43, ".": 47, "/": 44, "`": 50,
     "space": 49, "escape": 53, "return": 36, "tab": 48,
     "up": 126, "down": 125, "left": 123, "right": 124,
     "delete": 51, "home": 115, "end": 119, "pageup": 116, "pagedown": 121,

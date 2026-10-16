@@ -112,6 +112,41 @@ logger = setup_logging("token_proxy", json_format=True)
 #: explicitly require saving the reference). A completion callback releases it in time.
 _BACKGROUND_TASKS: set = set()
 
+#: Process-wide upstream connection pool: a per-request ClientSession discards the TCP/TLS
+#: connection, paying a full handshake before the first token on every request.
+_SESSION: aiohttp.ClientSession | None = None
+
+
+def _get_session() -> aiohttp.ClientSession:
+    global _SESSION
+    if _SESSION is None or _SESSION.closed:
+        _SESSION = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=64, ttl_dns_cache=300)
+        )
+    return _SESSION
+
+
+class _SharedSession:
+    """Async context manager yielding the shared session, **closing nothing** on exit.
+
+    It exists only so the forwarding body keeps its indentation — that line used to be
+    `async with aiohttp.ClientSession() as session:`, building and tearing down a pool per
+    request. Reading the global needs no lock: `_get_session` never awaits.
+    """
+
+    async def __aenter__(self) -> aiohttp.ClientSession:
+        return _get_session()
+
+    async def __aexit__(self, *_exc) -> bool:
+        return False
+
+
+async def _close_session(_app: web.Application) -> None:
+    global _SESSION
+    session, _SESSION = _SESSION, None
+    if session is not None and not session.closed:
+        await session.close()
+
 
 def _load_providers() -> list[dict]:
     if not PROVIDERS_JSON:
@@ -323,8 +358,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             )
         )
 
-    # System prompt injection: read the rules from System_Prompts.md and inject them before the last real user input
-    injected, rule_target = _inject_system_prompt(request_body)
+    # System prompt injection: read the rules from System_Prompts.md and inject them into every real user input
+    injected, rule_injected = _inject_system_prompt(request_body)
     if injected is not None:
         body_bytes = injected
 
@@ -334,10 +369,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         _logged_first_body = True
         try:
             parsed = json.loads(body_bytes)
-            # Output only the system field, the rule injection hit, and model, to avoid flooding
+            # Output only the system field, the injected rule count, and model, to avoid flooding
             log_body = {
                 "model": parsed.get("model", ""),
-                "rule_target": rule_target,
+                "rule_injected": rule_injected,
                 "system": (
                     parsed.get("system")
                     if api_format == "anthropic"
@@ -474,7 +509,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         # statement of the loop body, so the outer proxy_error can always read it.
         diag_stage = "connect"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with _SharedSession() as session:
                 async with session.request(
                     method=request.method,
                     url=upstream,
@@ -833,6 +868,27 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             latency_ms = int((time.monotonic() - start_time) * 1000)
+            # Connect-stage failures never reached the upstream and wrote nothing to the
+            # client, so replaying is safe; from "prepare" on a retry would double the response.
+            if (
+                attempt < retry_max
+                and diag_stage == "connect"
+                and isinstance(e, (aiohttp.ClientConnectionError, asyncio.TimeoutError))
+            ):
+                logger.warning(
+                    json.dumps(
+                        {
+                            "msg": "proxy_retry",
+                            "reason": "connection",
+                            "path": request.path,
+                            "attempt": attempt + 1,
+                            "error_type": type(e).__name__,
+                            "latency_ms": latency_ms,
+                        }
+                    )
+                )
+                await asyncio.sleep(retry_delay)
+                continue
             logger.error(
                 json.dumps(
                     {
@@ -1139,6 +1195,8 @@ def create_app() -> web.Application:
     # longer the bottleneck.
     app = web.Application(client_max_size=64 * 1024 * 1024)
     app.middlewares.append(gateway_log_middleware)
+    # The upstream pool is process-wide, so it is closed once here, not per request.
+    app.on_cleanup.append(_close_session)
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)

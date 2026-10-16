@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private let hotkeyManager = HotkeyManager.shared
     let clipboardPanel = ClipboardPanelController()
     lazy var translationPanel = TranslationPanelController()
+    let knowledgePanel = KnowledgePanelController()
     private let stageWindow = StageWindowController()
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -41,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         // Start the Token proxy monitor
         startTokenProxy()
+
+        KnowledgeService.shared.panel = knowledgePanel
+        KnowledgeService.shared.start()
+        // 菜单入口走这个引用;漏赋值时 showKnowledgePanel 的 guard 会静默 return(点了没反应、无日志)
+        menuBar.knowledgePanel = knowledgePanel
 
         registerAllHotkeys()
         installEventHandler()
@@ -101,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         } else {
             TokenProxyManager.shared.stop()
         }
+
+        // Knowledge panel: rebuild the two timers per the new intervals / enabled flag
+        KnowledgeService.shared.rearm()
     }
 
     /// Register/unregister the built-in memory summary task. Idempotent: unregister when disabled; register directly when enabled.
@@ -155,6 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         hotkeyManager.register(hotkey: config.translation.hotkey, id: "tran") { [weak self] in
             guard let self else { return }
             EventBus.shared.publish(PanelEvent.requestShow, payload: translationPanel)
+        }
+
+        hotkeyManager.register(hotkey: config.knowledge.hotkey, id: "know") { [weak self] in
+            guard let self else { return }
+            EventBus.shared.publish(PanelEvent.requestShow, payload: knowledgePanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in

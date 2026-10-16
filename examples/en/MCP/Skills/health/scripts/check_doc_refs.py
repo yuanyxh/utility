@@ -64,7 +64,9 @@ def collect_scan_files(root: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", nargs="?", default=".", help="Project root (default: cwd)")
+    parser.add_argument(
+        "root", nargs="?", default=".", help="Project root (default: cwd)"
+    )
     args = parser.parse_args()
     root = Path(args.root).resolve()
     home = Path(os.environ.get("HOME", "")).expanduser()

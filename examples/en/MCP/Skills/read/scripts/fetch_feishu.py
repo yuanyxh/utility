@@ -52,14 +52,18 @@ def get_token():
     app_secret = os.environ.get("FEISHU_APP_SECRET")
     missing = []
     if requests is None:
-        missing.append("Python package requests not installed; run: pip install requests")
+        missing.append(
+            "Python package requests not installed; run: pip install requests"
+        )
     if not app_id or not app_secret:
         missing.append("FEISHU_APP_ID or FEISHU_APP_SECRET not set")
     if missing:
         return None, "; ".join(missing) + f". {LARK_CLI_HINT}"
-    resp = requests.post(f"{API}/auth/v3/tenant_access_token/internal",
-                         json={"app_id": app_id, "app_secret": app_secret},
-                         timeout=TIMEOUT)
+    resp = requests.post(
+        f"{API}/auth/v3/tenant_access_token/internal",
+        json={"app_id": app_id, "app_secret": app_secret},
+        timeout=TIMEOUT,
+    )
     d = resp.json()
     if d.get("code") != 0:
         return None, f"Auth failed: {d.get('msg', resp.text)}"
@@ -83,10 +87,12 @@ def parse_url(url):
 
 
 def resolve_wiki(token, wiki_token):
-    resp = requests.get(f"{API}/wiki/v2/spaces/get_node",
-                        headers={"Authorization": f"Bearer {token}"},
-                        params={"token": wiki_token},
-                        timeout=TIMEOUT)
+    resp = requests.get(
+        f"{API}/wiki/v2/spaces/get_node",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"token": wiki_token},
+        timeout=TIMEOUT,
+    )
     d = resp.json()
     if d.get("code") == 0:
         node = d["data"]["node"]
@@ -100,10 +106,12 @@ def get_blocks(token, doc_id):
         params = {"page_size": 500}
         if page_token:
             params["page_token"] = page_token
-        resp = requests.get(f"{API}/docx/v1/documents/{doc_id}/blocks",
-                            headers={"Authorization": f"Bearer {token}"},
-                            params=params,
-                            timeout=TIMEOUT)
+        resp = requests.get(
+            f"{API}/docx/v1/documents/{doc_id}/blocks",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+            timeout=TIMEOUT,
+        )
         d = resp.json()
         if d.get("code") != 0:
             return None, f"Blocks fetch failed: {d.get('msg', resp.text)}"
@@ -123,9 +131,12 @@ def extract_text(elements):
             tr = el["text_run"]
             text = tr.get("content", "")
             s = tr.get("text_element_style", {})
-            if s.get("bold"):        text = f"**{text}**"
-            if s.get("italic"):      text = f"*{text}*"
-            if s.get("inline_code"): text = f"`{text}`"
+            if s.get("bold"):
+                text = f"**{text}**"
+            if s.get("italic"):
+                text = f"*{text}*"
+            if s.get("inline_code"):
+                text = f"`{text}`"
             if s.get("link", {}).get("url"):
                 text = f"[{text}]({urllib.parse.unquote(s['link']['url'])})"
             parts.append(text)
@@ -137,10 +148,28 @@ def extract_text(elements):
 
 
 LANG_MAP = {
-    7: "bash", 8: "c", 9: "csharp", 10: "cpp", 14: "css", 19: "dockerfile",
-    25: "go", 29: "html", 31: "java", 32: "javascript", 33: "json",
-    35: "kotlin", 40: "markdown", 46: "php", 50: "python", 52: "ruby",
-    53: "rust", 58: "sql", 59: "swift", 62: "typescript", 68: "xml", 69: "yaml",
+    7: "bash",
+    8: "c",
+    9: "csharp",
+    10: "cpp",
+    14: "css",
+    19: "dockerfile",
+    25: "go",
+    29: "html",
+    31: "java",
+    32: "javascript",
+    33: "json",
+    35: "kotlin",
+    40: "markdown",
+    46: "php",
+    50: "python",
+    52: "ruby",
+    53: "rust",
+    58: "sql",
+    59: "swift",
+    62: "typescript",
+    68: "xml",
+    69: "yaml",
 }
 
 
@@ -220,9 +249,11 @@ def fetch_feishu(url):
             return {"error": f"Cannot resolve wiki node: {doc_id}"}
         doc_id, doc_type = real_id, real_type or "docx"
 
-    info_resp = requests.get(f"{API}/docx/v1/documents/{doc_id}",
-                             headers={"Authorization": f"Bearer {token}"},
-                             timeout=TIMEOUT)
+    info_resp = requests.get(
+        f"{API}/docx/v1/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIMEOUT,
+    )
     doc_info = (info_resp.json().get("data") or {}).get("document") or {}
     title = doc_info.get("title", "")
 
@@ -230,7 +261,12 @@ def fetch_feishu(url):
     if err:
         return {"error": err}
 
-    return {"title": title, "document_id": doc_id, "url": url, "content": blocks_to_md(blocks)}
+    return {
+        "title": title,
+        "document_id": doc_id,
+        "url": url,
+        "content": blocks_to_md(blocks),
+    }
 
 
 def to_markdown(r):
@@ -253,7 +289,10 @@ def to_markdown(r):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: fetch_feishu.py <feishu_url> [--json]", file=sys.stderr)
-        print("  Default requires: pip install requests plus FEISHU_APP_ID and FEISHU_APP_SECRET", file=sys.stderr)
+        print(
+            "  Default requires: pip install requests plus FEISHU_APP_ID and FEISHU_APP_SECRET",
+            file=sys.stderr,
+        )
         print(f"  Alternative: {LARK_CLI_HINT}", file=sys.stderr)
         sys.exit(1)
 

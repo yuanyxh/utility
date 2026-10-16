@@ -19,8 +19,9 @@ description: 当用户说：web search, 联网搜索, 查资料, 网上搜一下
 2. **核心路径：多搜索引擎级联**：
    
    - 使用统一入口脚本 `scripts/search.sh` 抓取多个搜索引擎
-   - 支持的引擎：Bing、Google、DuckDuckGo、Brave
-   - 默认级联模式：Bing → Google → DuckDuckGo → Brave，直到获得足够结果（≥5条）
+   - 支持的引擎：Bing、搜狗、360、DuckDuckGo、Brave
+   - 默认级联模式：Bing → 搜狗 → 360 → DuckDuckGo → Brave，直到获得足够结果（≥5条）
+   - **中文查询优先 `--engine=sogou` 或 `--engine=so360`**（对中文最稳；Bing 对中文长查询会退化成字词词典页，例如搜「端到端原则」返回「端」字词典）
    
    ```bash
    # 经 tool_resource 获取脚本内容（parentName: websearch-fallback）
@@ -29,7 +30,7 @@ description: 当用户说：web search, 联网搜索, 查资料, 网上搜一下
    
    - 也可指定单一引擎：
      ```bash
-     bash <本skill目录>/scripts/search.sh --engine=google "关键词"
+     bash <本skill目录>/scripts/search.sh --engine=sogou "关键词"
      ```
    
    - 或使用所有引擎合并结果：
@@ -57,10 +58,20 @@ description: 当用户说：web search, 联网搜索, 查资料, 网上搜一下
 
 | 引擎 | 特点 | 适用场景 |
 |------|------|----------|
-| Bing | 中文支持好，结果丰富 | 中文内容、国内网站 |
-| Google | 全球覆盖，结果质量高 | 英文内容、国际网站 |
-| DuckDuckGo | 注重隐私，无追踪 | 隐私敏感场景 |
-| Brave | 新兴引擎，结果新颖 | 技术内容、新闻 |
+| Bing | 短词与英文查询尚可；**中文长查询会退化成字词词典页** | 英文内容、短中文词 |
+| 搜狗 | 中文支持最稳，结果集与其余几家不重叠 | 中文内容、国内网站 |
+| 360 | 同搜狗，中文稳定 | 中文内容、国内网站 |
+| DuckDuckGo | 注重隐私，无追踪；**常返 HTTP 202 挑战页** | 隐私敏感场景 |
+| Brave | 结果新颖；**可用性时通时断** | 技术内容、新闻 |
+
+**Google 已移除**：它对未登录请求做 JS 挑战，首个响应一律是
+`/httpservice/retry/enablejs` 中间页（约 92KB，响应体里没有任何结果数据），
+只有执行过 JS 的客户端（浏览器）才拿得到结果页 —— curl 抓到的 HTML 里没有结果。
+
+**多引擎是必需的，不要只押一家**：实测 Bing 与 Brave 会在同一分钟内轮流限流
+（先 Brave 10 条 / Bing 0 条，几分钟后互换）。级联 + `filter_results.py` 后置过滤
+才是主要保障 —— 后者按查询词丢弃无关条目，是「Bing 用单字词典页回答多词查询」
+时不让垃圾被当成结果的关键。
 
 ## 隐私说明
 

@@ -13,4 +13,4 @@ if [ $# -ne 1 ]; then
   exit 1
 fi
 
-curl -s -L --max-time 25 -A "$UA" -H "Accept-Language: zh-CN,zh;q=0.9" "$1"
+curl -s -L --max-time 25 -A "$UA" "$1"

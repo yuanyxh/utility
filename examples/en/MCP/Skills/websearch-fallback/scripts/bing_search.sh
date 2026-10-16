@@ -4,7 +4,7 @@
 # Output: HTML to stdout (contains <li class="b_algo"> result blocks, parsed by parse_bing.py)
 #
 # Key points (measured 2026-09):
-#   - Must send a browser UA + Accept-Language + Accept, or Bing downgrades the request to a generic navigation page
+#   - Must send a browser UA + Accept, or Bing downgrades the request to a generic navigation page
 #   - www.bing.com 302-redirects to cn.bing.com; -L follows
 #   - Chinese keywords are URL-encoded by python3 (urllib.parse.quote)
 set -euo pipefail
@@ -21,6 +21,5 @@ encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.arg
 
 curl -s -L --max-time 20 \
   -A "$UA" \
-  -H "Accept-Language: zh-CN,zh;q=0.9" \
   -H "Accept: text/html" \
-  "https://cn.bing.com/search?q=${encoded}&setlang=zh-hans&count=10"
+  "https://www.bing.com/search?q=${encoded}&count=10"

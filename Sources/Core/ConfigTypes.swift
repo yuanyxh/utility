@@ -34,6 +34,7 @@ public struct AppConfig: Codable {
     var tasks: [TaskConfig] = []
     var prompts: PromptConfig = .init()
     var notifications: NotificationConfig = .init()
+    var knowledge: KnowledgeConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
 
@@ -50,6 +51,7 @@ public struct AppConfig: Codable {
         tasks = (try? c.decode([TaskConfig].self, forKey: .tasks)) ?? []
         prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
+        knowledge = (try? c.decode(KnowledgeConfig.self, forKey: .knowledge)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
     }
@@ -482,6 +484,51 @@ public struct TranslationConfig: Codable {
         firstLang = try c.decodeIfPresent(String.self, forKey: .firstLang) ?? "zh"
         secondLang = try c.decodeIfPresent(String.self, forKey: .secondLang) ?? "en"
         prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+    }
+}
+
+// MARK: - Knowledge
+
+/// 主题种子。`kind` 取 `principle` / `trend`，与 `fragments.kind` 同域。
+public struct KnowledgeTopicSeed: Codable {
+    var name: String = ""
+    var kind: String = "principle"
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "principle"
+    }
+}
+
+public struct KnowledgeConfig: Codable {
+    var enabled: Bool = true
+    var refillIntervalMinutes: Int = 30
+    var autoShowEnabled: Bool = true
+    var autoShowIntervalMinutes: Int = 120
+    var autoCloseSeconds: Int = 25
+    var poolTargetTopic: Int = 3
+    var poolTargetFragment: Int = 5
+    var maxFailStreak: Int = 3
+    var hotkey: String = "option+k"
+    var domains: [String] = []
+    var topics: [KnowledgeTopicSeed] = []
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        refillIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .refillIntervalMinutes) ?? 30
+        autoShowEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoShowEnabled) ?? true
+        autoShowIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .autoShowIntervalMinutes) ?? 120
+        autoCloseSeconds = try c.decodeIfPresent(Int.self, forKey: .autoCloseSeconds) ?? 25
+        poolTargetTopic = try c.decodeIfPresent(Int.self, forKey: .poolTargetTopic) ?? 3
+        poolTargetFragment = try c.decodeIfPresent(Int.self, forKey: .poolTargetFragment) ?? 5
+        maxFailStreak = try c.decodeIfPresent(Int.self, forKey: .maxFailStreak) ?? 3
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+k"
+        domains = try c.decodeIfPresent([String].self, forKey: .domains) ?? []
+        topics = try c.decodeIfPresent([KnowledgeTopicSeed].self, forKey: .topics) ?? []
     }
 }
 

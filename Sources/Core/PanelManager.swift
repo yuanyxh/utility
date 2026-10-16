@@ -63,6 +63,15 @@ public final class PanelManager {
         hideIfEmpty()
     }
 
+    // MARK: - State
+
+    /// 是否有面板正在显示 —— 定时自动弹前用它避开「用户正在用的面板」。
+    var hasVisiblePanel: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stack.contains { $0.isPanelVisible }
+    }
+
     // MARK: - Internal
 
     private func remove(_ panelID: String) {

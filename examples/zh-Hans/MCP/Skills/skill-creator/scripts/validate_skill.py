@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """校验 skill 结构。用法: validate_skill.py <skill.md 或 skill 目录>"""
+
 import os
 import re
 import sys
@@ -43,7 +44,11 @@ def validate(path):
     if os.path.isdir(path):
         for entry in os.listdir(path):
             full = os.path.join(path, entry)
-            if os.path.isdir(full) and entry not in AFFIL_DIRS and not entry.startswith("."):
+            if (
+                os.path.isdir(full)
+                and entry not in AFFIL_DIRS
+                and not entry.startswith(".")
+            ):
                 errs.append(f"附属目录应放 {AFFIL_DIRS} 之一，发现: {entry}")
     return errs
 

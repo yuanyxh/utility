@@ -12,6 +12,7 @@ Output:
 
 Relies on Bing's standard result block <li class="b_algo">; use together with bing_search.sh.
 """
+
 import html as htmlmod
 import re
 import sys
@@ -21,7 +22,9 @@ def parse_b_algo(raw: str) -> list[dict]:
     """Parse <li class="b_algo"> result blocks, returning a list of {title,url,date,snippet}."""
     results = []
     for block in re.findall(r'<li class="b_algo".*?</li>', raw, re.S):
-        m = re.search(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        # Title lives inside the h2; the block also contains a <cite>-wrapped citation
+        # line (domain + path), so taking the first <a> grabs that instead
+        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
         if not m:
             continue
         url = m.group(1)

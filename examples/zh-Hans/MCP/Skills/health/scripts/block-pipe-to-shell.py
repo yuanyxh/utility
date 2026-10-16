@@ -17,25 +17,65 @@ GROUP_OPERATORS = {"&", "&&", ";", "||"}
 COMPOUND_OPENERS = {"(", "{"}
 COMPOUND_CLOSERS = {")", "}"}
 COMMAND_SEPARATORS = GROUP_OPERATORS | COMPOUND_OPENERS | COMPOUND_CLOSERS
-CONTROL_OPENERS = {"case": "esac", "for": "done", "if": "fi", "select": "done", "until": "done", "while": "done"}
+CONTROL_OPENERS = {
+    "case": "esac",
+    "for": "done",
+    "if": "fi",
+    "select": "done",
+    "until": "done",
+    "while": "done",
+}
 CONTROL_CLOSERS = set(CONTROL_OPENERS.values())
 COMMAND_BOUNDARIES = COMMAND_SEPARATORS | {"do", "elif", "else", "then"}
 CONTROL_WORDS = set(CONTROL_OPENERS) | CONTROL_CLOSERS
 ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 LAUNCH_WRAPPERS = {"builtin", "exec", "nohup", "setsid"}
 SUDO_OPTIONS_WITH_VALUES = {
-    "-C", "--chdir", "--close-from", "-D", "-g", "--group", "-h", "--host",
-    "-p", "--prompt", "-r", "--role", "-t", "--type", "-u", "--user",
+    "-C",
+    "--chdir",
+    "--close-from",
+    "-D",
+    "-g",
+    "--group",
+    "-h",
+    "--host",
+    "-p",
+    "--prompt",
+    "-r",
+    "--role",
+    "-t",
+    "--type",
+    "-u",
+    "--user",
 }
 TIMEOUT_OPTIONS_WITH_VALUES = {"-k", "--kill-after", "-s", "--signal"}
 TIME_OPTIONS_WITH_VALUES = {"-f", "--format", "-o", "--output"}
 XARGS_OPTIONS_WITH_VALUES = {
-    "-a", "--arg-file", "-d", "--delimiter", "-E", "--eof", "-I", "--replace",
-    "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs",
-    "--process-slot-var", "-s", "--max-chars",
+    "-a",
+    "--arg-file",
+    "-d",
+    "--delimiter",
+    "-E",
+    "--eof",
+    "-I",
+    "--replace",
+    "-L",
+    "--max-lines",
+    "-n",
+    "--max-args",
+    "-P",
+    "--max-procs",
+    "--process-slot-var",
+    "-s",
+    "--max-chars",
 }
 STDBUF_OPTIONS_WITH_VALUES = {
-    "-e", "--error", "-i", "--input", "-o", "--output",
+    "-e",
+    "--error",
+    "-i",
+    "--input",
+    "-o",
+    "--output",
 }
 
 
@@ -109,7 +149,9 @@ def effective_command_names(tokens: list[str]) -> set[str]:
 
         if name in {"stdbuf", "xargs"}:
             options_with_values = (
-                STDBUF_OPTIONS_WITH_VALUES if name == "stdbuf" else XARGS_OPTIONS_WITH_VALUES
+                STDBUF_OPTIONS_WITH_VALUES
+                if name == "stdbuf"
+                else XARGS_OPTIONS_WITH_VALUES
             )
             while pending and pending[0].startswith("-"):
                 token = pending.pop(0)
@@ -153,7 +195,9 @@ def effective_command_names(tokens: list[str]) -> set[str]:
                 if token.startswith("--split-string="):
                     pending.pop(0)
                     try:
-                        pending = shlex.split(token.split("=", 1)[1], posix=True) + pending
+                        pending = (
+                            shlex.split(token.split("=", 1)[1], posix=True) + pending
+                        )
                     except ValueError:
                         return set()
                     break
@@ -171,7 +215,10 @@ def effective_command_names(tokens: list[str]) -> set[str]:
         if name == "timeout":
             while pending and pending[0].startswith("-"):
                 token = pending.pop(0)
-                if option_name(token) in TIMEOUT_OPTIONS_WITH_VALUES and "=" not in token:
+                if (
+                    option_name(token) in TIMEOUT_OPTIONS_WITH_VALUES
+                    and "=" not in token
+                ):
                     if pending:
                         pending.pop(0)
             if pending:
@@ -283,8 +330,7 @@ def main() -> int:
     if not isinstance(command, str) or not pipes_download_to_shell(command):
         return 0
     print(
-        "已阻断：把远程下载直接管道给 shell。"
-        "请先下载到文件，审查后再显式运行。",
+        "已阻断：把远程下载直接管道给 shell。请先下载到文件，审查后再显式运行。",
         file=sys.stderr,
     )
     return 2

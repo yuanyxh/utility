@@ -232,6 +232,37 @@ tasks:
     mode: cron
 ```
 
+### Knowledge panel
+
+Cards are generated in the background from web sources and shown on a timer. The point is to widen what you run into, not to quiz you on what you already know. Two tabs share one pool: **Topics** (a main line of concepts pushed in order) and **Snippets** (short, unordered cards from a rotating list of domains).
+
+Every card is fetched, written and then self-checked against its sources before it enters the pool, so opening the panel is instant.
+
+**Actions**
+
+| Action | Effect |
+|---|---|
+| `option+k` | open the panel |
+| Known / Dislike | drop the card and move to the next one |
+| Like | mark the card and move on |
+| Make topic | add the card's concept as a new topic line |
+| Copy | copy the card as Markdown, sources included |
+
+**Settings**
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `knowledge.enabled` | `true` | master switch |
+| `knowledge.refillIntervalMinutes` | `30` | wake-up beat for refilling; one run takes minutes, so keep it larger |
+| `knowledge.autoShowEnabled` | `true` | auto-pop the panel on a timer |
+| `knowledge.autoShowIntervalMinutes` | `120` | how often it pops |
+| `knowledge.autoCloseSeconds` | `25` | auto-close after this many seconds; `0` = never |
+| `knowledge.poolTargetTopic` / `poolTargetFragment` | `3` / `5` | refill only when the pool drops below this |
+| `knowledge.maxFailStreak` | `3` | a topic with N dry runs in a row is marked done |
+| `knowledge.hotkey` | `option+k` | opens the panel |
+| `knowledge.domains` | built-in list | snippet sources, rotated through |
+| `knowledge.topics` | built-in list | topic lines (`kind`: `principle` or `trend`) |
+
 ### Network monitor
 
 **Actions**

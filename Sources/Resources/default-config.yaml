@@ -217,6 +217,33 @@ translation:
   # template file is used). Supports the {source} / {target} placeholders.
   prompt: ''
 
+# ---------- Knowledge panel ----------
+knowledge:
+  enabled: true
+  refillIntervalMinutes: 30     # refill wake-up beat; keep it larger than one run
+  autoShowEnabled: true
+  autoShowIntervalMinutes: 120  # auto-pop the panel every N minutes
+  autoCloseSeconds: 25          # auto-close after N seconds; 0 = never
+  poolTargetTopic: 3            # refill only when the pool drops below this
+  poolTargetFragment: 5
+  maxFailStreak: 3              # N dry runs in a row marks a topic done
+  hotkey: option+k
+  # Fragment sources: one card per domain, rotating through this list.
+  domains:
+    - 计算机组成原理
+    - 操作系统
+    - 计算机网络
+    - 编译原理
+    - 设计模式
+    - 分布式系统
+    - 数据库系统
+  # Topic lines: concepts are pushed in order. kind: principle | trend
+  topics:
+    - name: TCP/IP 协议栈
+      kind: principle
+    - name: 编译原理
+      kind: principle
+
 stage:
   moveOnDragOut: true
 

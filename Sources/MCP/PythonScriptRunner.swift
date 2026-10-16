@@ -122,6 +122,9 @@ enum PythonScriptRunner {
         for (key, value) in aiEnvironment() {
             env[key] = value
         }
+        for (key, value) in knowledgeEnvironment() {
+            env[key] = value
+        }
 
         // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
         if let notesDir = resolvedNotesDir() {
@@ -159,6 +162,32 @@ enum PythonScriptRunner {
         return env
     }
 
+    /// Knowledge panel seeds and pool budgets, serialized for the Python refill script.
+    /// Extracted for the same reason as `aiEnvironment()`: there are **two injection points**
+    /// (`baseEnvironment()` and `taskEnvironmentOverrides()`), and a value written twice silently diverges.
+    static func knowledgeEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        let knowledge = ConfigManager.shared.config.knowledge
+        if let json = encodeJSON(knowledge.domains) {
+            env[EnvKeys.knowledgeDomains] = json
+        }
+        if !knowledge.topics.isEmpty {
+            let seeds = knowledge.topics.map { ["name": $0.name, "kind": $0.kind] }
+            if let json = encodeJSON(seeds) {
+                env[EnvKeys.knowledgeTopics] = json
+            }
+        }
+        env[EnvKeys.knowledgeTopicTarget] = String(knowledge.poolTargetTopic)
+        env[EnvKeys.knowledgeFragmentTarget] = String(knowledge.poolTargetFragment)
+        env[EnvKeys.knowledgeMaxFailStreak] = String(knowledge.maxFailStreak)
+        return env
+    }
+
+    private static func encodeJSON(_ value: Any) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
     static func resolvedNotesDir() -> String? {
         guard let mcp = ConfigManager.shared.config.mcp else { return nil }
@@ -181,6 +210,9 @@ enum PythonScriptRunner {
         excludeTags: String,
     ) -> [String: String] {
         var overrides = aiEnvironment()
+        for (key, value) in knowledgeEnvironment() {
+            overrides[key] = value
+        }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
         if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
@@ -235,6 +267,8 @@ enum PythonScriptRunner {
         arguments: [String],
         stdin: Data? = nil,
         timeout: TimeInterval,
+        environment: [String: String]? = nil,
+        shouldCancel: (() -> Bool)? = nil,
     ) throws -> Data {
         guard let pythonPath = resolvePython() else {
             throw PythonProcessError.pythonUnavailable
@@ -243,6 +277,11 @@ enum PythonScriptRunner {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: pythonPath)
         proc.arguments = [scriptPath] + arguments
+        // Without this the child inherits the GUI process's launchd environment, which has no
+        // AI_API_KEY / UTILITY_DATA_DIR — the script then runs "successfully" and produces nothing.
+        if let environment {
+            proc.environment = environment
+        }
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -277,6 +316,12 @@ enum PythonScriptRunner {
             // Wait with timeout
             let deadline = DispatchTime.now() + timeout
             while proc.isRunning, .now() < deadline {
+                // Poll-based cancellation (used by the knowledge refill to abort on system sleep):
+                // a few seconds of latency is irrelevant next to the LLM calls it avoids.
+                if shouldCancel?() == true {
+                    kill(proc.processIdentifier, SIGKILL)
+                    throw PythonProcessError.cancelled(script: scriptPath)
+                }
                 Thread.sleep(forTimeInterval: 0.05)
             }
             // Stop the async read and synchronously drain the rest (the handler may not have read the tail data at the moment of exit)
@@ -303,6 +348,7 @@ enum PythonScriptRunner {
 enum PythonProcessError: Error, LocalizedError {
     case pythonUnavailable
     case timeout(script: String)
+    case cancelled(script: String)
     case launchFailed(String)
 
     var errorDescription: String? {
@@ -311,6 +357,8 @@ enum PythonProcessError: Error, LocalizedError {
             "No usable Python (both mcp-venv and system python3 are unavailable)"
         case let .timeout(script):
             "Script \(script) execution timed out"
+        case let .cancelled(script):
+            "Script \(script) execution cancelled"
         case let .launchFailed(msg):
             "Python process failed to launch: \(msg)"
         }

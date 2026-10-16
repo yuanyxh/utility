@@ -12,6 +12,7 @@
 
 依赖 Bing 标准结果块 <li class="b_algo">，与 bing_search.sh 配合使用。
 """
+
 import html as htmlmod
 import re
 import sys
@@ -21,7 +22,8 @@ def parse_b_algo(raw: str) -> list[dict]:
     """解析 <li class="b_algo"> 结果块，返回 {title,url,date,snippet} 列表。"""
     results = []
     for block in re.findall(r'<li class="b_algo".*?</li>', raw, re.S):
-        m = re.search(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        # 标题在 h2 内;块里另有 <cite> 包着的引用行(域名+路径),直接取首个 <a> 会抓成它
+        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
         if not m:
             continue
         url = m.group(1)

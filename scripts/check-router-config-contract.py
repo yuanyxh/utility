@@ -118,6 +118,9 @@ PROMPT_FEATURES = {
     "gen_merge": ("topic", "facts", "target", "context"),
     "extract_rules": ("facts_text", "level_labels", "titles_block"),
     "contradiction": ("items_text", "content"),
+    # Python side (knowledge panel refill pipeline)
+    "knowledge_expand": ("theme", "done"),
+    "knowledge_card": ("theme", "concept", "evidence"),
 }
 #: Baseline language: every feature must have it (it is the fallback target of any language, and missing it is universal breakage)
 PROMPT_BASELINE_LANG = "zh-Hans"

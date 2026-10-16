@@ -19,8 +19,9 @@ description: Triggered when the user says: web search, online search, look somet
 2. **Core path: cascade multiple search engines**:
    
    - Use the unified entry script `scripts/search.sh` to scrape several search engines
-   - Supported engines: Bing, Google, DuckDuckGo, Brave
-   - Default cascade mode: Bing → Google → DuckDuckGo → Brave, until enough results are obtained (≥5)
+   - Supported engines: Bing, Sogou, 360, DuckDuckGo, Brave
+   - Default cascade mode: Bing → Sogou → 360 → DuckDuckGo → Brave, until enough results are obtained (≥5)
+   - **For Chinese queries prefer `--engine=sogou` or `--engine=so360`** (steadiest for Chinese; Bing degrades Chinese long queries into single-character dictionary pages — searching "端到端原则" returns the dictionary entry for the character "端")
    
    ```bash
    # fetch the script content via tool_resource (parentName: websearch-fallback)
@@ -29,7 +30,7 @@ description: Triggered when the user says: web search, online search, look somet
    
    - You can also specify a single engine:
      ```bash
-     bash <this-skill-dir>/scripts/search.sh --engine=google "keyword"
+     bash <this-skill-dir>/scripts/search.sh --engine=sogou "keyword"
      ```
    
    - Or merge the results of all engines:
@@ -57,10 +58,22 @@ description: Triggered when the user says: web search, online search, look somet
 
 | Engine | Characteristics | Best for |
 |------|------|----------|
-| Bing | Good Chinese support, rich results | Chinese content, Chinese sites |
-| Google | Global coverage, high result quality | English content, international sites |
-| DuckDuckGo | Privacy-focused, no tracking | Privacy-sensitive scenarios |
-| Brave | Newer engine, novel results | Technical content, news |
+| Bing | Short and English queries are okay; **Chinese long queries degrade into single-character dictionary pages** | English content, short Chinese terms |
+| Sogou | Steadiest for Chinese; its result set barely overlaps with the others | Chinese content, Chinese sites |
+| 360 | Same as Sogou, stable for Chinese | Chinese content, Chinese sites |
+| DuckDuckGo | Privacy-focused, no tracking; **often returns an HTTP 202 challenge page** | Privacy-sensitive scenarios |
+| Brave | Novel results; **availability flaps** | Technical content, news |
+
+**Google has been removed**: it runs a JS challenge for unauthenticated requests — the first
+response is always a `/httpservice/retry/enablejs` interstitial (about 92KB, with no result
+data in the body), and only a JS-capable client (a browser) reaches the result page. The
+HTML curl scrapes contains no results.
+
+**Multiple engines are mandatory — never bet on one**: in practice Bing and Brave
+rate-limit in turns within the same minute (Brave 10 results / Bing 0, then they swap a few
+minutes later). The cascade plus the `filter_results.py` post-filter is the real safeguard:
+the latter drops results unrelated to the query, which is what keeps Bing's single-word
+dictionary pages (its answer to a multi-word query) from being passed off as results.
 
 ## Privacy Notes
 

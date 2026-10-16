@@ -65,9 +65,7 @@ ABS_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp|var|etc|opt|Volumes)/[^\s`\"'<>]+"
 )
 TILDE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])~/(?:[^\s`\"'<>]+)")
-WINDOWS_ABS_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s`\"'<>]+"
-)
+WINDOWS_ABS_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s`\"'<>]+")
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 
@@ -194,10 +192,7 @@ def stable_read(path: Path, identity: tuple[int, int]) -> ReadResult:
             chunks.append(chunk)
             remaining -= len(chunk)
         after = os.fstat(descriptor)
-        if (
-            before.st_size != after.st_size
-            or before.st_mtime_ns != after.st_mtime_ns
-        ):
+        if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
             return ReadResult(None, "changed_during_read")
         raw = b"".join(chunks)
         if len(raw) > MAX_FILE_BYTES:
@@ -298,7 +293,9 @@ def discover_surfaces(
                     continue
                 reason = sensitive_reason(resolved, home)
                 if reason:
-                    record_issue(f"sensitive_file_rejected:{safe_label(relative)}:{reason}")
+                    record_issue(
+                        f"sensitive_file_rejected:{safe_label(relative)}:{reason}"
+                    )
                     continue
                 if not contained(resolved, root):
                     record_issue(f"outside_skill_root:{safe_label(relative)}")
@@ -440,7 +437,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             root_stat = entrypoint.parent.stat()
         except OSError as error:
             if receipts < MAX_SKILL_RECEIPTS:
-                print_unreadable(label, f"entrypoint_unreadable:{error.__class__.__name__}")
+                print_unreadable(
+                    label, f"entrypoint_unreadable:{error.__class__.__name__}"
+                )
             else:
                 suppressed += 1
             statuses["unreadable"] += 1
@@ -456,7 +455,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             receipts += 1
             continue
         if project_root is not None:
-            absolute_candidate = candidate if candidate.is_absolute() else Path.cwd() / candidate
+            absolute_candidate = (
+                candidate if candidate.is_absolute() else Path.cwd() / candidate
+            )
             project_skill_roots = (
                 project_root / ".claude" / "skills",
                 project_root / ".agents" / "skills",

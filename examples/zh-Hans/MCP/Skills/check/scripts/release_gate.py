@@ -170,9 +170,7 @@ def remote_sync(root: Path) -> None:
         lines.append("存在未推送的提交: 远端还没有这个状态")
         status = "WARN"
     else:
-        lines.append(
-            "本地跟踪引用与 HEAD 一致；仍需要 fetch 或 ls-remote 的证据"
-        )
+        lines.append("本地跟踪引用与 HEAD 一致；仍需要 fetch 或 ls-remote 的证据")
         status = "WARN"
     block("REMOTE SYNC", lines, status)
 
@@ -282,14 +280,15 @@ def version_sync(root: Path, tag: str | None) -> str | None:
             "N/A",
         )
         return None
-    lines = [f"{name}: {evidence_value(value)}" for name, value in sorted(found.items())]
+    lines = [
+        f"{name}: {evidence_value(value)}" for name, value in sorted(found.items())
+    ]
     status = "FAIL" if errors else "PASS"
     lines.extend(f"不安全的仓库输入: {error}" for error in errors)
     invalid_evidence = [
         name
         for name, value in found.items()
-        if len(value) > 128
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        if len(value) > 128 or any(ord(char) < 32 or ord(char) == 127 for char in value)
     ]
     if invalid_evidence:
         lines.append(
@@ -309,7 +308,9 @@ def version_sync(root: Path, tag: str | None) -> str | None:
         lines.append("版本字段不一致: 发布前先对齐它们")
         status = "FAIL"
     manifest = next(iter(normalized)) if len(normalized) == 1 else None
-    raw_manifest = next(iter(found.values())) if len(normalized) == 1 and found else None
+    raw_manifest = (
+        next(iter(found.values())) if len(normalized) == 1 and found else None
+    )
     parsed_manifest = parse_semver(raw_manifest) if raw_manifest else None
     if manifest and parsed_manifest is None:
         lines.append("清单版本不是精确的 SemVer")
@@ -327,14 +328,14 @@ def version_sync(root: Path, tag: str | None) -> str | None:
             if parsed_manifest == parsed_tag:
                 lines.append("清单与可达的 stable tag 完全一致")
             elif manifest_core < tag_core or (
-                manifest_core == tag_core and manifest_pre is not None and tag_pre is None
+                manifest_core == tag_core
+                and manifest_pre is not None
+                and tag_pre is None
             ):
                 lines.append("清单落后于可达的 stable tag: 版本回退了")
                 status = "FAIL"
             elif manifest_core > tag_core:
-                lines.append(
-                    "清单领先于可达的 stable tag（有未发布的版本在进行中）"
-                )
+                lines.append("清单领先于可达的 stable tag（有未发布的版本在进行中）")
             else:
                 lines.append("清单与可达的 stable tag 并不完全一致")
                 if status == "PASS":

@@ -69,5 +69,22 @@
     "menu.proxy_state_crashed": "✕ 崩溃",
     "menu.proxy_today": "今日: %.1fK in / %.1fK out",
     "menu.proxy_requests": "请求: %ld | 无效: %ld (%.0f%%)",
-    "menu.proxy_disabled": "○ Proxy（未启用）"
+    "menu.proxy_disabled": "○ Proxy（未启用）",
+    "menu.knowledge_show": "显示知识面板",
+    "menu.knowledge_refill": "立即补货",
+    "knowledge.title": "知识面板",
+    "knowledge.tab_topic": "主题卡片",
+    "knowledge.tab_fragment": "碎片",
+    "knowledge.empty": "还没有内容，后台正在生成",
+    "knowledge.known": "已知",
+    "knowledge.dislike": "踩",
+    "knowledge.like": "赞",
+    "knowledge.promote": "设为主题",
+    "knowledge.copy": "复制",
+    "knowledge.copied": "已复制",
+    "knowledge.close": "关闭",
+    "knowledge.sources": "来源",
+    "knowledge.kind_principle": "原理",
+    "knowledge.kind_trend": "动向",
+    "knowledge.task_refill": "知识补货"
 }

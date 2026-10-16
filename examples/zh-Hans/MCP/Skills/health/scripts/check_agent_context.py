@@ -22,7 +22,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
-SENSITIVE_RE = re.compile(r"(api[_-]?key|token|secret|password|credential)", re.IGNORECASE)
+SENSITIVE_RE = re.compile(
+    r"(api[_-]?key|token|secret|password|credential)", re.IGNORECASE
+)
 PROJECT_RE = re.compile(r'^\[projects\."(.+)"\]\s*$')
 TABLE_RE = re.compile(r'^\[([A-Za-z0-9_.@"\-/]+)\]\s*$')
 OPERATIONAL_RULE_RE = re.compile(
@@ -93,7 +95,10 @@ def redact_sensitive_entries(value: object, prefix: str = "") -> list[str]:
 
 def string_list(value: object) -> list[str]:
     if isinstance(value, list):
-        return [str(item) if not SENSITIVE_RE.search(str(item)) else "[REDACTED]" for item in value]
+        return [
+            str(item) if not SENSITIVE_RE.search(str(item)) else "[REDACTED]"
+            for item in value
+        ]
     if isinstance(value, dict):
         return sorted(str(key) for key in value)
     if isinstance(value, str):
@@ -186,7 +191,7 @@ def rule_paths(text: str) -> list[str]:
             in_paths = True
             continue
         if in_paths and stripped.startswith("-"):
-            value = stripped[1:].strip().strip('"\'')
+            value = stripped[1:].strip().strip("\"'")
             if value:
                 paths.append(value)
             continue
@@ -349,7 +354,7 @@ def parse_codex_config(
         table_match = TABLE_RE.match(line)
         if table_match:
             section = table_match.group(1)
-            marketplace_match = re.match(r'marketplaces\.([A-Za-z0-9_.@-]+)$', section)
+            marketplace_match = re.match(r"marketplaces\.([A-Za-z0-9_.@-]+)$", section)
             plugin_match = re.match(r'plugins\."?([^"]+)"?$', section)
             if marketplace_match:
                 marketplaces.append(marketplace_match.group(1))
@@ -365,10 +370,13 @@ def parse_codex_config(
         if "=" not in line:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
-        if section == "features" and value.split("#", 1)[0].strip().strip('"').lower() == "true":
+        if (
+            section == "features"
+            and value.split("#", 1)[0].strip().strip('"').lower() == "true"
+        ):
             features.append(key)
         elif section.startswith('projects."') and key == "trust_level":
-            project = section[len('projects."'): -1]
+            project = section[len('projects."') : -1]
             projects[project] = value.strip('"')
 
     return (
@@ -417,7 +425,7 @@ def expand_permission_target(target: str, home: Path) -> str:
         if lowered == prefix:
             return home_text
         if lowered.startswith(prefix + "/"):
-            return home_text + normalized[len(prefix):].lower()
+            return home_text + normalized[len(prefix) :].lower()
     return lowered
 
 
@@ -487,7 +495,9 @@ def resolve_hook_handler(command: str, home: Path, project_root: Path) -> Path |
             if index != len(tokens) - 1:
                 return None
             resolved = resolve_command_path(token, home, project_root)
-            return resolved if resolved is not None and resolved.suffix == ".py" else None
+            return (
+                resolved if resolved is not None and resolved.suffix == ".py" else None
+            )
         return None
     return None
 
@@ -626,9 +636,7 @@ def summarize_claude_permissions(
     combined_allow = [
         rule for label, _path in sources for rule in rules[label]["allow"]
     ]
-    combined_deny = [
-        rule for label, _path in sources for rule in rules[label]["deny"]
-    ]
+    combined_deny = [rule for label, _path in sources for rule in rules[label]["deny"]]
     home = global_path.parent.parent
     hook_present = any(
         has_pretool_bash_hook(
@@ -641,8 +649,7 @@ def summarize_claude_permissions(
     categories = deny_category_status(combined_deny, hook_present, home)
     missing = [name for name, present in categories.items() if not present]
     broad_read_allow = any(
-        "**" in target
-        for target in normalized_rule_targets(combined_allow, "Read")
+        "**" in target for target in normalized_rule_targets(combined_allow, "Read")
     )
     credential_floor = all(categories.values())
     settings_surface_present = any(path.is_file() for _label, path in sources)
@@ -663,16 +670,18 @@ def summarize_claude_permissions(
             f"{label}_{key}_count: {len(rules[label][key])}"
             for key in ("allow", "deny", "ask")
         )
-    lines.extend([
-        f"broad_read_allow_present: {'yes' if broad_read_allow else 'no'}",
-        f"pretool_pipe_to_shell_hook: {'yes' if hook_present else 'no'}",
-        "configured_sensitive_deny_floor_complete: "
-        + (
-            "not_applicable"
-            if not settings_surface_present
-            else ("yes" if credential_floor else "no")
-        ),
-    ])
+    lines.extend(
+        [
+            f"broad_read_allow_present: {'yes' if broad_read_allow else 'no'}",
+            f"pretool_pipe_to_shell_hook: {'yes' if hook_present else 'no'}",
+            "configured_sensitive_deny_floor_complete: "
+            + (
+                "not_applicable"
+                if not settings_surface_present
+                else ("yes" if credential_floor else "no")
+            ),
+        ]
+    )
     lines.extend(
         f"deny_{name}: {'yes' if present else 'no'}"
         for name, present in categories.items()
@@ -700,7 +709,11 @@ def project_trust(projects: dict[str, str], root: Path) -> str:
         except ValueError:
             continue
         candidates.append(
-            (len(project_path.as_posix()), level or "configured", project_path.as_posix())
+            (
+                len(project_path.as_posix()),
+                level or "configured",
+                project_path.as_posix(),
+            )
         )
     if candidates:
         _, level, project = sorted(candidates, reverse=True)[0]
@@ -798,7 +811,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", default=".", help="仓库根（默认：cwd）")
     parser.add_argument(
-        "mode", nargs="?", default="summary", choices=("summary", "deep"),
+        "mode",
+        nargs="?",
+        default="summary",
+        choices=("summary", "deep"),
         help="输出详细程度",
     )
     args = parser.parse_args()
@@ -819,7 +835,9 @@ def main() -> int:
     claude_delegates = claude_aliases_agents or claude_delegates_to_agents(claude)
     github_instructions_dir = root / ".github" / "instructions"
     github_instruction_count = (
-        len(list(github_instructions_dir.glob("*.md"))) if github_instructions_dir.is_dir() else 0
+        len(list(github_instructions_dir.glob("*.md")))
+        if github_instructions_dir.is_dir()
+        else 0
     )
 
     instruction_findings: list[str] = []
@@ -835,7 +853,9 @@ def main() -> int:
 
     global_codex_agents = home / ".codex" / "AGENTS.md"
     codex_config = home / ".codex" / "config.toml"
-    projects, features, plugins, marketplaces, redacted = parse_codex_config(codex_config)
+    projects, features, plugins, marketplaces, redacted = parse_codex_config(
+        codex_config
+    )
     trust = project_trust(projects, root) if codex_config.is_file() else "unavailable"
     codex_findings: list[str] = []
     if not global_codex_agents.is_file() and not codex_config.is_file():
@@ -853,7 +873,9 @@ def main() -> int:
     claude_findings: list[str] = []
     if claude.is_file() and claude_delegates:
         if claude_aliases_agents:
-            claude_findings.append("CLAUDE.md resolves to the same physical file as AGENTS.md")
+            claude_findings.append(
+                "CLAUDE.md resolves to the same physical file as AGENTS.md"
+            )
         else:
             claude_findings.append("CLAUDE.md delegates to AGENTS.md")
     if not global_claude.is_file() and not claude.is_file():
@@ -877,18 +899,26 @@ def main() -> int:
             "Codex runs danger-full-access with approval_policy=never; Codex has no command-level deny mechanism, so the only levers are sandbox_mode and approval_policy -- surface once as a user tradeoff, not a per-project fix"
         )
 
-    permission_status, permission_lines, permission_findings = summarize_claude_permissions(
-        global_claude_settings,
-        shared_project_settings,
-        local_project_settings,
+    permission_status, permission_lines, permission_findings = (
+        summarize_claude_permissions(
+            global_claude_settings,
+            shared_project_settings,
+            local_project_settings,
+        )
     )
     duplicate_status, duplicate_lines = summarize_skill_duplicates(root, home)
 
     conflict_findings: list[str] = []
     if agents.is_file() and claude.is_file() and not claude_delegates:
-        conflict_findings.append("AGENTS.md and CLAUDE.md both exist; verify they do not diverge")
+        conflict_findings.append(
+            "AGENTS.md and CLAUDE.md both exist; verify they do not diverge"
+        )
 
-    instruction_status = "FAIL" if not instruction_files else ("WARN" if instruction_findings else "PASS")
+    instruction_status = (
+        "FAIL"
+        if not instruction_files
+        else ("WARN" if instruction_findings else "PASS")
+    )
     codex_status = "WARN" if codex_findings else "PASS"
     claude_status = (
         "WARN"
@@ -907,7 +937,9 @@ def main() -> int:
     print(f"CLAUDE.md: {yes(claude)}")
     print(f"claude_aliases_agents: {'yes' if claude_aliases_agents else 'no'}")
     print(f"claude_delegates_to_agents: {'yes' if claude_delegates else 'no'}")
-    print(f".github/copilot-instructions.md: {yes(root / '.github' / 'copilot-instructions.md')}")
+    print(
+        f".github/copilot-instructions.md: {yes(root / '.github' / 'copilot-instructions.md')}"
+    )
     print(f".github/instructions/*.md: {github_instruction_count}")
     print(f"GEMINI.md: {yes(root / 'GEMINI.md')}")
     print_list("instruction_files", [rel(path, root) for path in instruction_files])
@@ -931,9 +963,13 @@ def main() -> int:
     print(f"project_claude_md: {yes(claude)}")
     print(f"shared_settings_json: {yes(shared_project_settings)}")
     print(f"settings_local_json: {yes(local_project_settings)}")
-    rule_count = len(list(project_rules.glob('*.md'))) if project_rules.is_dir() else 0
-    local_skill_count = len(list(project_skills.glob('*/SKILL.md'))) if project_skills.is_dir() else 0
-    global_skill_count = len(list(global_skills.glob('*/SKILL.md'))) if global_skills.is_dir() else 0
+    rule_count = len(list(project_rules.glob("*.md"))) if project_rules.is_dir() else 0
+    local_skill_count = (
+        len(list(project_skills.glob("*/SKILL.md"))) if project_skills.is_dir() else 0
+    )
+    global_skill_count = (
+        len(list(global_skills.glob("*/SKILL.md"))) if global_skills.is_dir() else 0
+    )
     print(f"project_rules: {rule_count}")
     print(f"project_skills: {local_skill_count}")
     print(f"global_skills: {global_skill_count}")

@@ -54,6 +54,12 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 仅检查 pasteboard 内容（hasContent）会因残留数据误判
 - 图片类型统一定义在 `PasteboardImageTypes.all`
 
+### 全局热键（HotkeyManager）
+- `keyCodeMap` 必须**完整覆盖 26 个字母 + 常用符号**：表里缺哪个键，配了它的热键就 `parse` 失败，弹「热键解析失败」通知 —— 且**只影响用户自己配的那个键**，看起来像配置写错了
+  - 实测踩坑（2026-10-16）：知识面板默认热键 `option+k` 部署后立刻报解析失败，根因是表里只列了 c/d/f/v/s/a/x/z/w/q/e/r/y/t **14 个字母**，没有 `k`。现补齐 60 条并与 `kVK_ANSI_*` 逐项核对
+- `parse` 的 keyCode 用 `Optional`，**不能用 0 表示「未匹配」**：`a` 的 ANSI 键码就是 0，旧的 `guard keyCode != 0` 让 `cmd+a`/`option+a` 一律解析失败
+- 热键只在 `AppDelegate.registerAllHotkeys()`（启动时调一次）注册，**配置重载不重注册** —— 改热键要重启 app
+
 ### 符号提取（Scanner）
 - `ProjectScanner` 全量扫描 + `FileWatcher` 增量扫描，结果写入 `.utility/deps.sqlite`
 - 多语言提取器通过 `SymbolExtractor` 协议注册，以扩展名为 key
@@ -130,7 +136,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - **OpenAI SSE 解析**：`_extract_usage_from_sse()` 归一化 `prompt_tokens→input_tokens`，`finish_reason→stop_reason`；`_extract_output_from_sse()` 读 `choices[0].delta.content`；`_extract_tool_name_from_sse()` 读 `choices[0].delta.tool_calls[0].function.name`
 - **`finish_reason → stop_reason` 映射是单一常量 `FINISH_REASON_MAP`**（`proxy_protocol.py`），流式转换 / 非流式转换 / SSE usage 提取三处共用。曾三处各写一份且其中一份多一个 `content_filter`，于是「内容被过滤」在两个转换层被 fallback 成 `end_turn`——客户端与路由层都当成正常结束，异常信号整个丢失，而数据库里却如实写着 `content_filter`。未知值在**转换层**兜底为合法枚举（`FALLBACK_STOP_REASON`），在**记录层**保留原样（入库要如实）
 - **协议参数双向转换的字段名陷阱**：Anthropic `stop_sequences` ↔ OpenAI `stop`（曾读 `stop` 导致该参数恒不转换、静默失效）；`tool_choice` 两种格式映射（auto/any/tool ↔ auto/required/function）；`_detect_api_format` 判 Anthropic tools 的字段是 `input_schema`（曾误写 MCP 的 `inputSchema`，分支永不命中）
-- **规则注入（用户消息）**：`_inject_system_prompt` 从 `System_Prompts.md` 读取规则，从后往前找最后一条真实用户输入（role==user 且 content 为字符串 / 数组含 text 块；**纯 tool_result 消息不含 text 故被跳过，回退到历史是设计意图**——规则附着在用户最近一次真实发言上，保证工具轮次也带规则），在该消息内插入 `---rule_start/---rule_end` 块。注入发生在代理转发时，Claude Code 上下文不含注入后 body，每轮只注入一份不累积；注入位置在末位真实用户输入前，天然在缓存前缀外，无需 `cache_control`/`prompt_cache_breakpoint`。返回 `(body_bytes, 命中索引)`，文件缺失 / 读取失败 / 未命中为 -1，未命中时记 `rule_inject_no_target` warning 防静默失效
+- **规则注入（用户消息）**：`_inject_system_prompt` 从 `System_Prompts.md` 读取规则，注入到**每一条**真实用户输入（role==user 且 content 为字符串 / 数组含 text 块；纯 tool_result 消息不含 text 故被跳过），在该消息内插入 `---rule_start/---rule_end` 块。**必须全量注入，不能只注入最后一条**：注入点一旦跟随「最近一次真实发言」移动，用户每次发言时规则块就从旧消息消失，上游 prompt cache 自该处起整段失效——实测真实会话（逐条模拟 247 个请求）：移动注入点断 2 次、首次断掉整个前缀（公共前缀仅 43/102,603 字节），全量注入断 0 次、平均命中率 1.000。且**注入到 system 或 messages[0] 均不可取**：部分模型对 system 遵守率不稳定，messages[0] 会随上下文变大被污染，故只能靠「所有用户消息都注入」兼顾遵守度与前缀稳定——每条消息的注入是确定性的，前缀跨 turn 字节一致，最新一轮仍被覆盖。注入发生在代理转发时，Claude Code 上下文不含注入后 body（实测该会话 7 条真实用户发言的 content 全不含规则块，jsonl 里 `rule_start` 只出现在 assistant 消息与 attachment 中），故不累积。返回 `(body_bytes, 注入条数)`，文件缺失 / 读取失败 / 未命中为 0，未命中时记 `rule_inject_no_target` warning 防静默失效。**旧注已证伪**：曾称「注入位置在末位真实用户输入前，天然在缓存前缀外，无需 `cache_control`」——该缓存假设与实测不符，它恰恰每次跨 turn 改写前缀
 - **skill 全文去重（`proxy_skill_dedup.py`，2026-10-10）**：本项目的 `think`/`hunt`/`health`/`ui` 等是 **mino-brain 的 MCP 工具**，不是 Claude Code 原生 skill，吃不到官方那套「渲染后内容相同则只加短提示」——同一会话反复调用同一 skill 时，每次都把整份 SKILL.md 再插一遍（实测 6 份逐字节相同 15184 B）。代理转发前扫入站 `messages`，**逐字节相同**的 tool_result / tool 文本第二份起换成 i18n 短提示，**保留第一次**（模型仍能在上文读到全文）。判据是内容而非工具名——代理拿不到 skill 名单（那份名单在 MCP server 内），且内容相同即语义相同；副作用是重复的非 skill 输出（两次相同 `ls`）也被折叠，无害且同样省 token。开关 `modelProxy.skillDedupEnabled` → `MODEL_PROXY_SKILL_DEDUP`（默认开，总是注入 `"1"`/`"0"`）
   - **必须在代理层而非 MCP server 层**：server 无会话历史视野，只能靠进程内状态记「已返回过」，多客户端/多会话共用一个 server 时会把 A 会话的加载状态泄漏给 B——B 收到「已加载」而上文没有 → 静默失效，最难排查的一类
   - **插入点在 `record_request_body` 之后、`ProtocolConverter` 之前**：记录层必须留原样，否则 `tool_output_log` 记的是替换后内容、度量标尺被自己毁掉；转换前只需处理一种格式
@@ -191,6 +197,26 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - **混语言比统一未翻译更糟**：schema 是一次性整体呈现的，故断言「各键语言集合一致」而非「每键有基线即可」——后者允许一部分参数中文、一部分英文
 - **`param.memory_content` 与 `TOOL_DEFAULTS["remember"]` 必须同为三要素口径**（场景/决策/演进）：两处描述的是同一段模型行为，分叉时模型收到两套要求（曾一处三要素、一处五要素，2026-09-18 用户裁定「三要素为主」后改齐）。用户自定义的 `DESCRIPTIONS.md` 是另一份自有文案（notes 目录、不随包分发），不受此约束
 - 迁移**逐字一致**的判据取自 `git show HEAD:Sources/MCPScripts/server.py`（迁移前那一版）而非手抄：手抄的比对只能证明「我抄对了自己」（脚本在 /tmp，未入库）
+
+### 知识面板（knowledge_*.py + Knowledge*.swift）
+- 从互联网取用户没想到过的新内容：两个标签页（**主题卡片** = 沿主线逐个概念推进 / **碎片** = 领域池轮转），共用一套引擎 `knowledge_engine.advance()`
+- **补货与显示分离**：`knowledge_refill.py` 后台按间隔补货入池，面板弹出直接从池读（秒开）。生成一张卡要 1~2 分钟（3 次 LLM 调用 + 检索），不能放在弹窗路径上
+- ⚠️ **补货不能走 TaskScheduler**：`handleMissed()` 以「今天 00:00 后第一个 cron 点」为基准，`lastFire >= todayPoint` 即跳过 → 任何 sub-daily 的 cron 都静默退化成每天一次（`*/30 * * * *` 实测一天只跑一次，无任何报错）。改用 `KnowledgeService` 自建 Timer：「间隔」只是唤醒节拍，真正的开关是池容量
+- ⚠️ **`runCaptureOutput` 默认不传 environment**：子进程继承 Utility.app（launchd 启动的 GUI 进程）环境，没有 `AI_API_KEY` / `UTILITY_DATA_DIR` → Python 侧 `default_target().ready == false`，静默返回 None、一张卡都出不来。已加可选参数 `environment:`，`KnowledgeService` 显式传 `PythonScriptRunner.environment(overrides: [:])`
+- ⚠️ **Markdown 渲染**：`AttributedString(markdown:)` 只给语义属性（`presentationIntent` / `inlinePresentationIntent`），**不带任何字体** —— 直接塞进 NSTextView 是「标题与正文一样大、加粗不变粗、列表没有项目符号」，静默且只在弹面板时看得见。`KnowledgeMarkdownView` 逐 run 把 intent 翻成字体/段落样式；命中表格（GFM 表格它不解析）或解析失败则整体降级纯文本
+  - 新 SDK 的 `intent.components` 元素是 `IntentType` 包装，真正的枚举在 `.kind` 上（当成 `Kind` 直接用会编译失败）
+- **数据层**：`knowledge_pool.py` 是 schema 唯一所有者（`init_db()` 幂等迁移 + WAL）；Swift `KnowledgeStore` 只做裸 SQL、绝不建表、每个方法容忍缺表。跨进程同时打开同一文件 → **两侧都要 WAL + busy timeout**（只设一侧会回落 delete 模式互相阻塞），`nextCard` 的「读 + UPDATE shown_count」放同一写事务
+- **卡片失败源几乎全是上游 LLM 超时/断连**，不是内容判据：`knowledge_card` 原带 thinking 生成 8k（单次 60~180s，`ReadTimeout` / `RemoteProtocolError: incomplete chunked read`）→ 现三处全部 `disable_thinking=True`，card 收窄到 4096
+- `_llm_json` **区分「调用未返回内容」与「返回了但解析不出」**并分别记日志：混成一条会让上游超时看起来像提示词问题，真实成因只留在 `llm_client.log` 里
+- `concept` 必须是**领域公认的标准名称**（提示词硬约束）：生造措辞一条资料都搜不到，卡片只能靠编（实测「分层协议栈模型」1 条无效 vs「TCP/IP 四层模型」10 条）；`gather_evidence` 在 concept 检索不足 `MIN_SEARCH_HITS` 时**退化为主题级检索**
+- `gather_evidence` 的检索**只查 concept、不拼 theme**：`web_search._matches` 的多词判据是 AND 语义，拼上主题会让「分阶段架构 编译原理」直接返回 0 条
+- `cards` 无 `shown` 状态：只有 `shown_count`。自动关闭（用户没操作）的卡回到轮转尾部而非被静默烧掉 —— autoClose 会频繁发生
+- `concepts` 只增不减（「展开过就算推过」）：严格单调前进、不可能死循环、崩溃自愈；代价是卡片生成失败会吃掉一个概念
+- `fail_streak` 计入**卡片失败与自检未过**（需求字面只要求「展开失败或依据不足」，此处刻意取超集）：只算两项时，一个「每次都能展开但每次都幻觉」的主题会永不 done，无限烧 LLM 调用
+- 配置面 `knowledge.*`（`KnowledgeConfig`，YAML key 必须与属性名逐字相同）；env `KNOWLEDGE_DOMAINS/TOPICS/TOPIC_TARGET/FRAGMENT_TARGET/MAX_FAIL_STREAK` 经 `knowledgeEnvironment()` 注入，**两个注入点都要合并**（`baseEnvironment()` + `taskEnvironmentOverrides()`）
+- ⚠️ **自检的证据必须给全文,不能截断**（2026-10-16 实测）：把 10469 字截到 6000 字后,模型把后半段的真实内容逐条判成「卡片自行添加」（violations 里列的正是被截掉的那些），同一张卡从 `ok` 翻成 `not ok`。缩短输入不是省钱,是批量制造假阳性
+- **系统休眠不执行**：`willSleep` 置 `suspended` + 停两个 timer；已在跑的补货子进程由 `runCaptureOutput` 新增的 `shouldCancel` 闭包中止 —— 否则它被冻结后一直挂着（不耗 CPU 但占着端口与句柄），唤醒时又立刻撞上 wall-clock 超时被杀。`didWake` 清标志 + `rearm()` + 立刻补一轮
+- 菜单栏「任务」子菜单里有一条知识补货（`知识补货 · 池 2/3 · 12:30 · made=2`，运行中打勾），但它**不注册进 TaskScheduler**：`mode: .manual` 虽不进调度,可点击会走 `TaskExecutor` 直接起进程,绕过 `KnowledgeService` 的防重闸门。现为手工追加一条 menu item,点击走 `KnowledgeService.launchRefill()`
 
 ### 共享 Python 日志模块（log_utils.py）
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`

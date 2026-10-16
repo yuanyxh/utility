@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate a skill's structure. Usage: validate_skill.py <skill.md or skill directory>"""
+
 import os
 import re
 import sys
@@ -36,15 +37,25 @@ def validate(path):
     errs = []
     name = fm.get("name", "")
     if not NAME_RE.match(name):
-        errs.append(f"name must be snake_case (starting with a lowercase letter): {name!r}")
+        errs.append(
+            f"name must be snake_case (starting with a lowercase letter): {name!r}"
+        )
     if len(fm.get("description", "")) < 20:
-        errs.append("description is too short; it must clearly state the trigger scenario")
+        errs.append(
+            "description is too short; it must clearly state the trigger scenario"
+        )
 
     if os.path.isdir(path):
         for entry in os.listdir(path):
             full = os.path.join(path, entry)
-            if os.path.isdir(full) and entry not in AFFIL_DIRS and not entry.startswith("."):
-                errs.append(f"Affiliated directories must be one of {AFFIL_DIRS}, found: {entry}")
+            if (
+                os.path.isdir(full)
+                and entry not in AFFIL_DIRS
+                and not entry.startswith(".")
+            ):
+                errs.append(
+                    f"Affiliated directories must be one of {AFFIL_DIRS}, found: {entry}"
+                )
     return errs
 
 

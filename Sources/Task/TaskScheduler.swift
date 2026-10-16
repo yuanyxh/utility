@@ -140,11 +140,13 @@ public final class TaskScheduler {
             let result = TaskExecutor.execute(task.exec)
 
             if !result.success {
-                let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
+                let reason = result.error.isEmpty ? "exit code != 0" : result.error
+                debugLog("[Task] \(task.name) failed:\(String(reason.prefix(2000)))")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.taskFailed(task.name), body: errMsg,
+                    title: L10n.Menu.taskFailed(task.name), body: String(reason.prefix(200)),
                 ))
             } else {
+                debugLog("[Task] \(task.name) completed.")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                     title: L10n.Menu.taskCompleted(task.name), body: "",
                 ))

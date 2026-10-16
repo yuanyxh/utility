@@ -139,9 +139,7 @@ ABS_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp|var|etc|opt|Volumes)/[^\s`\"'<>]+"
 )
 TILDE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])~/(?:[^\s`\"'<>]+)")
-WINDOWS_ABS_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s`\"'<>]+"
-)
+WINDOWS_ABS_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s`\"'<>]+")
 
 
 @dataclass
@@ -242,7 +240,9 @@ def message_from_record(record: dict[str, object], ordinal: int) -> Optional[Mes
         payload_type = payload.get("type")
         if payload_type == "turn_aborted":
             reason = payload.get("reason")
-            detail = reason[:MAX_MESSAGE_CHARS] if isinstance(reason, str) else "unknown"
+            detail = (
+                reason[:MAX_MESSAGE_CHARS] if isinstance(reason, str) else "unknown"
+            )
             return Message("platform", f"Codex turn_aborted: {detail}", ordinal)
         if payload_type == "error":
             detail = flatten_text(payload.get("message", "")) or "structured error"
@@ -284,7 +284,11 @@ def update_tool_receipts(record: dict[str, object], stats: ScanStats) -> None:
         payload = record.get("payload")
         if isinstance(payload, dict):
             payload_type = payload.get("type")
-            if payload_type in {"custom_tool_call", "function_call", "local_shell_call"}:
+            if payload_type in {
+                "custom_tool_call",
+                "function_call",
+                "local_shell_call",
+            }:
                 name = payload.get("name") or payload_type
                 stats.tool_calls[str(name)[:MAX_TOOL_NAME_CHARS]] += 1
             elif payload_type in {
@@ -338,11 +342,7 @@ def classify(message: Message, japanese_allowed: bool = False) -> Optional[str]:
         return "PLATFORM INTERRUPTION"
     if CONTEXT_RE.search(text):
         return "CONTEXT SIGNAL"
-    if (
-        message.role == "assistant"
-        and not japanese_allowed
-        and japanese_dominant(text)
-    ):
+    if message.role == "assistant" and not japanese_allowed and japanese_dominant(text):
         return "LANGUAGE SIGNAL assistant=ja"
     if message.role != "user":
         return None
@@ -637,10 +637,7 @@ def audit(
         runtime_roots_available["codex_project_logs"] = bool(
             codex_root is not None and codex_root.is_dir()
         )
-    if (
-        codex_root is not None
-        and (project_root is not None or all_projects)
-    ):
+    if codex_root is not None and (project_root is not None or all_projects):
         if "codex_project_logs" not in requested_runtimes:
             requested_runtimes.append("codex_project_logs")
         runtime_roots_available["codex_project_logs"] = codex_root.is_dir()
@@ -669,9 +666,7 @@ def audit(
         if not items:
             continue
         recent = {
-            item.path
-            for item in items
-            if 0 <= now - item.mtime <= LIVE_WINDOW_SECONDS
+            item.path for item in items if 0 <= now - item.mtime <= LIVE_WINDOW_SECONDS
         }
         live_paths.update(recent)
     previous = [item for item in files if item.path not in live_paths]
@@ -695,7 +690,9 @@ def audit(
 
     print("=== CONVERSATION COVERAGE ===")
     print(f"conversation_runtime: {','.join(requested_runtimes)}")
-    print(f"conversation_scope: {'all_projects' if all_projects else 'current_project'}")
+    print(
+        f"conversation_scope: {'all_projects' if all_projects else 'current_project'}"
+    )
     print(f"coverage_mode: {mode}")
     print(f"files_discovered: {len(files)}")
     print(f"discovery_candidates_examined: {discovery_candidates}")
@@ -704,9 +701,7 @@ def audit(
         print(f"discovery_candidate_limit: {SUMMARY_CANDIDATE_LIMIT}")
     print(f"previous_files_available: {len(previous)}")
     print(f"live_files_skipped: {len(live_paths)}")
-    print(
-        f"live_skip_basis: mtime_within_{LIVE_WINDOW_SECONDS}s_per_runtime"
-    )
+    print(f"live_skip_basis: mtime_within_{LIVE_WINDOW_SECONDS}s_per_runtime")
     print(f"signal_scope: {'all_previous' if mode == 'deep' else 'recent_previous'}")
     print(f"signal_files_scanned: {stats.files_read}")
     print(f"extract_files_selected: {len(extract_selection)}")
@@ -752,17 +747,16 @@ def audit(
         and len(requested_runtimes) > 1
         and all(runtime in runtime_groups for runtime in requested_runtimes)
     )
-    print(
-        f"cross_runtime_full_history: "
-        f"{'yes' if cross_runtime_complete else 'no'}"
-    )
+    print(f"cross_runtime_full_history: {'yes' if cross_runtime_complete else 'no'}")
     print(
         f"cross_project_full_history: "
         f"{'yes' if all_projects and cross_runtime_complete else 'no'}"
     )
     for runtime in requested_runtimes:
         runtime_files = runtime_groups.get(runtime, [])
-        runtime_previous = [item for item in runtime_files if item.path not in live_paths]
+        runtime_previous = [
+            item for item in runtime_files if item.path not in live_paths
+        ]
         print(
             f"runtime_coverage: runtime={runtime} files={len(runtime_files)} "
             f"previous={len(runtime_previous)} bytes={sum(item.size for item in runtime_files)} "
@@ -802,7 +796,9 @@ def audit(
 
     print("=== CONVERSATION EXTRACT ===")
     if mode != "deep":
-        print("(skipped: summary mode; deep mode samples the first 30 and last 120 messages from three previous sessions)")
+        print(
+            "(skipped: summary mode; deep mode samples the first 30 and last 120 messages from three previous sessions)"
+        )
     elif not extract_selection:
         print("(no previous conversation files)")
     else:
@@ -813,7 +809,9 @@ def audit(
                 f"extract_truncated={'yes' if truncated else 'no'} ---"
             )
             for message in messages:
-                print(f"{message.role.upper()}: {sanitize(message.text, MAX_EXTRACT_CHARS)}")
+                print(
+                    f"{message.role.upper()}: {sanitize(message.text, MAX_EXTRACT_CHARS)}"
+                )
 
     print_receipts(stats)
     return 0
@@ -837,7 +835,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         parser.error("--all-projects cannot be combined with --project-root")
     if args.all_projects and args.codex_root is None:
         parser.error("--all-projects requires --codex-root")
-    if not args.all_projects and (args.codex_root is None) != (args.project_root is None):
+    if not args.all_projects and (args.codex_root is None) != (
+        args.project_root is None
+    ):
         parser.error("--codex-root and --project-root must be provided together")
     return audit(
         args.directory,

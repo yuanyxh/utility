@@ -4,7 +4,7 @@
 # 输出: HTML 到 stdout（含 <li class="b_algo"> 结果块，供 parse_bing.py 解析）
 #
 # 关键点（2026-09 实测）:
-#   - 必须带浏览器 UA + Accept-Language + Accept，否则 Bing 把请求降级成泛化导航页
+#   - 必须带浏览器 UA + Accept，否则 Bing 把请求降级成泛化导航页
 #   - www.bing.com 会 302 到 cn.bing.com，-L 跟随
 #   - 中文关键词由 python3 做 URL 编码（urllib.parse.quote）
 set -euo pipefail
@@ -21,6 +21,5 @@ encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.arg
 
 curl -s -L --max-time 20 \
   -A "$UA" \
-  -H "Accept-Language: zh-CN,zh;q=0.9" \
   -H "Accept: text/html" \
-  "https://cn.bing.com/search?q=${encoded}&setlang=zh-hans&count=10"
+  "https://www.bing.com/search?q=${encoded}&count=10"

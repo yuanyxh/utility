@@ -12,6 +12,7 @@ Output:
 
 Relies on DuckDuckGo's standard result blocks; use together with duckduckgo_search.sh.
 """
+
 import html as htmlmod
 import re
 import sys
@@ -24,7 +25,9 @@ def parse_duckduckgo_results(raw: str) -> list[dict]:
     # Result blocks of the DuckDuckGo HTML version
     for block in re.findall(r'<div class="result[^"]*".*?</div>\s*</div>', raw, re.S):
         # Extract link and title
-        m = re.search(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        m = re.search(
+            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S
+        )
         if not m:
             continue
 
@@ -34,22 +37,29 @@ def parse_duckduckgo_results(raw: str) -> list[dict]:
         # DuckDuckGo's URL may be a redirect; extract the real URL
         if "uddg=" in url:
             import urllib.parse
+
             parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
             url = parsed.get("uddg", [url])[0]
 
         # Extract snippet
         snippet = ""
-        snippet_match = re.search(r'<a class="result__snippet"[^>]*>(.*?)</a>', block, re.S)
+        snippet_match = re.search(
+            r'<a class="result__snippet"[^>]*>(.*?)</a>', block, re.S
+        )
         if snippet_match:
-            snippet = htmlmod.unescape(re.sub(r"<[^>]+>", "", snippet_match.group(1))).strip()
+            snippet = htmlmod.unescape(
+                re.sub(r"<[^>]+>", "", snippet_match.group(1))
+            ).strip()
 
         if url.startswith("http") and title:
-            results.append({
-                "title": title,
-                "url": url,
-                "date": "",
-                "snippet": snippet[:200] if snippet else ""
-            })
+            results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "date": "",
+                    "snippet": snippet[:200] if snippet else "",
+                }
+            )
 
     return results[:15]
 

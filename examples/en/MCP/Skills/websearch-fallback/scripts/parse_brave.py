@@ -12,6 +12,7 @@ Output:
 
 Relies on Brave's standard result blocks; use together with brave_search.sh.
 """
+
 import html as htmlmod
 import re
 import sys
@@ -24,7 +25,11 @@ def parse_brave_results(raw: str) -> list[dict]:
     # Brave result block pattern
     for block in re.findall(r'<div class="snippet[^"]*".*?</div>\s*</div>', raw, re.S):
         # Extract link and title
-        m = re.search(r'<a[^>]*class="result-header"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        m = re.search(
+            r'<a[^>]*class="result-header"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+            block,
+            re.S,
+        )
         if not m:
             m = re.search(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
         if not m:
@@ -35,9 +40,13 @@ def parse_brave_results(raw: str) -> list[dict]:
 
         # Extract snippet
         snippet = ""
-        snippet_match = re.search(r'<p class="snippet-description[^"]*"[^>]*>(.*?)</p>', block, re.S)
+        snippet_match = re.search(
+            r'<p class="snippet-description[^"]*"[^>]*>(.*?)</p>', block, re.S
+        )
         if snippet_match:
-            snippet = htmlmod.unescape(re.sub(r"<[^>]+>", "", snippet_match.group(1))).strip()
+            snippet = htmlmod.unescape(
+                re.sub(r"<[^>]+>", "", snippet_match.group(1))
+            ).strip()
 
         # Extract date
         date = ""
@@ -46,12 +55,14 @@ def parse_brave_results(raw: str) -> list[dict]:
             date = date_match.group(1)[:10]  # YYYY-MM-DD
 
         if url.startswith("http") and title:
-            results.append({
-                "title": title,
-                "url": url,
-                "date": date,
-                "snippet": snippet[:200] if snippet else ""
-            })
+            results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "date": date,
+                    "snippet": snippet[:200] if snippet else "",
+                }
+            )
 
     return results[:15]
 

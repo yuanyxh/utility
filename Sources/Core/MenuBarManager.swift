@@ -9,10 +9,14 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var mcpMenuItem: NSMenuItem!
     private var proxyMenuItem: NSMenuItem!
     private var tasksMenuItem: NSMenuItem!
+    private var knowledgeMenuItem: NSMenuItem!
     private var clearItem: NSMenuItem!
     private var quitItem: NSMenuItem!
     private var rssFetchTask: Task<Void, Never>?
     private var runningProcesses: [String: Process] = [:]
+
+    /// 知识面板实例由 AppDelegate 注入 —— PanelManager 靠对象标识区分面板，不能有第二个实例。
+    weak var knowledgePanel: PanelProtocol?
 
     override public init() {
         super.init()
@@ -80,6 +84,13 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // ── Knowledge ──
+        knowledgeMenuItem = NSMenuItem(title: L10n.Knowledge.title, action: nil, keyEquivalent: "")
+        knowledgeMenuItem.submenu = NSMenu()
+        menu.addItem(knowledgeMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // ── RSS ──
         rssMenuItem = NSMenuItem(title: L10n.Menu.rss, action: nil, keyEquivalent: "")
         rssMenuItem.submenu = NSMenu()
@@ -117,6 +128,38 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         refreshMCPItem()
         refreshProxyItem()
         refreshTasksItem()
+        refreshKnowledgeItem()
+    }
+
+    private func refreshKnowledgeItem() {
+        knowledgeMenuItem.title = L10n.Knowledge.title
+        let sub = NSMenu()
+
+        let showItem = NSMenuItem(
+            title: L10n.Knowledge.menuShow, action: #selector(showKnowledgePanel), keyEquivalent: "",
+        )
+        showItem.target = self
+        sub.addItem(showItem)
+
+        let refillItem = NSMenuItem(
+            title: L10n.Knowledge.menuRefill, action: #selector(refillKnowledge), keyEquivalent: "",
+        )
+        refillItem.target = self
+        sub.addItem(refillItem)
+
+        knowledgeMenuItem.submenu = sub
+    }
+
+    @objc private func showKnowledgePanel() {
+        guard let knowledgePanel else {
+            debugLog("[Knowledge] 菜单「显示知识面板」失败: 面板引用未注入")
+            return
+        }
+        EventBus.shared.publish(PanelEvent.requestShow, payload: knowledgePanel)
+    }
+
+    @objc private func refillKnowledge() {
+        KnowledgeService.shared.launchRefill()
     }
 
     private func refreshRSSItem() {
@@ -368,7 +411,22 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             sub.addItem(item)
         }
 
-        let total = configTasks.count + internalTasks.count
+        // 知识补货**不注册进 TaskScheduler**（它的 handleMissed 会把 sub-daily 的 cron 静默退化成
+        // 每天一次）；这里只借「任务」子菜单做入口与状态显示,起进程仍走 KnowledgeService 的闸门 ——
+        // 交给 TaskExecutor 会多出一个不受防重保护的补货进程。
+        var total = configTasks.count + internalTasks.count
+        if ConfigManager.shared.config.knowledge.enabled {
+            sub.addItem(NSMenuItem.separator())
+            let refillItem = NSMenuItem(
+                title: "\(L10n.Knowledge.taskRefill) · \(KnowledgeService.shared.statusText)",
+                action: #selector(refillKnowledge), keyEquivalent: "",
+            )
+            refillItem.target = self
+            refillItem.state = KnowledgeService.shared.isRefillRunning ? .on : .off
+            sub.addItem(refillItem)
+            total += 1
+        }
+
         tasksMenuItem.title = total == 0 ? L10n.Menu.tasks : L10n.Menu.tasksCount(total)
         tasksMenuItem.submenu = sub
     }

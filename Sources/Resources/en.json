@@ -69,5 +69,22 @@
     "menu.proxy_state_crashed": "✕ Crashed",
     "menu.proxy_today": "Today: %.1fK in / %.1fK out",
     "menu.proxy_requests": "Requests: %ld | Invalid: %ld (%.0f%%)",
-    "menu.proxy_disabled": "○ Proxy (Disabled)"
+    "menu.proxy_disabled": "○ Proxy (Disabled)",
+    "menu.knowledge_show": "Show Knowledge Panel",
+    "menu.knowledge_refill": "Refill Now",
+    "knowledge.title": "Knowledge",
+    "knowledge.tab_topic": "Topics",
+    "knowledge.tab_fragment": "Snippets",
+    "knowledge.empty": "Nothing yet — generating in the background",
+    "knowledge.known": "Known",
+    "knowledge.dislike": "Dislike",
+    "knowledge.like": "Like",
+    "knowledge.promote": "Make topic",
+    "knowledge.copy": "Copy",
+    "knowledge.copied": "Copied",
+    "knowledge.close": "Close",
+    "knowledge.sources": "Sources",
+    "knowledge.kind_principle": "Principle",
+    "knowledge.kind_trend": "Trend",
+    "knowledge.task_refill": "Knowledge refill"
 }

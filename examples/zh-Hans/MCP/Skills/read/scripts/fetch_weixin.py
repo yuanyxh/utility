@@ -28,7 +28,10 @@ async def fetch(url: str) -> dict:
         from playwright.async_api import async_playwright
         from bs4 import BeautifulSoup
     except ImportError as e:
-        return {"error": str(e) + "\n请运行：pip install playwright beautifulsoup4 lxml && playwright install chromium"}
+        return {
+            "error": str(e)
+            + "\n请运行：pip install playwright beautifulsoup4 lxml && playwright install chromium"
+        }
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -46,8 +49,12 @@ async def fetch(url: str) -> dict:
 
     soup = BeautifulSoup(html, "lxml")
 
-    title = (soup.select_one("#activity-name") or soup.new_tag("x")).get_text(strip=True)
-    author = (soup.select_one("#js_author_name") or soup.new_tag("x")).get_text(strip=True)
+    title = (soup.select_one("#activity-name") or soup.new_tag("x")).get_text(
+        strip=True
+    )
+    author = (soup.select_one("#js_author_name") or soup.new_tag("x")).get_text(
+        strip=True
+    )
     date = (soup.select_one("#publish_time") or soup.new_tag("x")).get_text(strip=True)
 
     content_el = soup.select_one("#js_content")
@@ -62,7 +69,9 @@ async def fetch(url: str) -> dict:
         img.replace_with(f"\n![image]({src})\n" if src else "")
 
     lines = []
-    for el in content_el.find_all(["p", "h1", "h2", "h3", "h4", "section", "blockquote"]):
+    for el in content_el.find_all(
+        ["p", "h1", "h2", "h3", "h4", "section", "blockquote"]
+    ):
         text = el.get_text(strip=True)
         if not text:
             continue
@@ -74,7 +83,13 @@ async def fetch(url: str) -> dict:
             lines.append(text)
 
     content = "\n\n".join(lines) or content_el.get_text("\n", strip=True)
-    return {"title": title, "author": author, "date": date, "url": url, "content": content}
+    return {
+        "title": title,
+        "author": author,
+        "date": date,
+        "url": url,
+        "content": content,
+    }
 
 
 def to_markdown(r: dict) -> str:

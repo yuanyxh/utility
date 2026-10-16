@@ -246,6 +246,80 @@ extension L10n {
     }
 }
 
+// MARK: - Knowledge Strings
+
+extension L10n {
+    enum Knowledge {
+        static var title: String {
+            string("knowledge.title")
+        }
+
+        static var tabTopic: String {
+            string("knowledge.tab_topic")
+        }
+
+        static var tabFragment: String {
+            string("knowledge.tab_fragment")
+        }
+
+        static var empty: String {
+            string("knowledge.empty")
+        }
+
+        static var known: String {
+            string("knowledge.known")
+        }
+
+        static var dislike: String {
+            string("knowledge.dislike")
+        }
+
+        static var like: String {
+            string("knowledge.like")
+        }
+
+        static var promote: String {
+            string("knowledge.promote")
+        }
+
+        static var copy: String {
+            string("knowledge.copy")
+        }
+
+        static var copied: String {
+            string("knowledge.copied")
+        }
+
+        static var close: String {
+            string("knowledge.close")
+        }
+
+        static var sources: String {
+            string("knowledge.sources")
+        }
+
+        static var kindPrinciple: String {
+            string("knowledge.kind_principle")
+        }
+
+        static var kindTrend: String {
+            string("knowledge.kind_trend")
+        }
+
+        static var taskRefill: String {
+            string("knowledge.task_refill")
+        }
+
+        static var menuShow: String {
+            string("menu.knowledge_show")
+        }
+
+        static var menuRefill: String {
+            string("menu.knowledge_refill")
+        }
+    }
+}
+
 // MARK: - Stage Strings
 
 extension L10n {

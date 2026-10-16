@@ -75,7 +75,9 @@ def main() -> int:
         if "npm" in lower or "node_modules" in lower:
             actions.append("npm cache verify")
         if not actions:
-            actions.append("rerun the verifier after removing stale temporary worktrees")
+            actions.append(
+                "rerun the verifier after removing stale temporary worktrees"
+            )
 
     status = "WARN" if stale_paths else "PASS"
 

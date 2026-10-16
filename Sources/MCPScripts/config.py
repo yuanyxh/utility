@@ -27,6 +27,7 @@ Notes:
 
 from __future__ import annotations
 
+import json
 import os
 
 # Empty string = injected by the Swift layer via env var; when not injected, the related feature is disabled
@@ -107,3 +108,42 @@ def summary_exclude_tags() -> set[str]:
     """Read the excluded tag list (comma-separated) from env var SUMMARY_EXCLUDE_TAGS."""
     raw = get("SUMMARY_EXCLUDE_TAGS", "")
     return {t.strip() for t in raw.split(",") if t.strip()}
+
+
+def _int(raw: str, default: int) -> int:
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return default
+
+
+def _json_list(raw: str) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def knowledge_domains() -> list:
+    """碎片领域池种子（JSON 数组）。"""
+    return _json_list(get("KNOWLEDGE_DOMAINS", ""))
+
+
+def knowledge_topics() -> list[dict]:
+    """主题种子（JSON 数组，元素 {name, kind}）。"""
+    return [t for t in _json_list(get("KNOWLEDGE_TOPICS", "")) if isinstance(t, dict)]
+
+
+def knowledge_topic_target(default: int = 3) -> int:
+    return _int(get("KNOWLEDGE_TOPIC_TARGET", ""), default)
+
+
+def knowledge_fragment_target(default: int = 5) -> int:
+    return _int(get("KNOWLEDGE_FRAGMENT_TARGET", ""), default)
+
+
+def knowledge_max_fail_streak(default: int = 3) -> int:
+    return _int(get("KNOWLEDGE_MAX_FAIL_STREAK", ""), default)

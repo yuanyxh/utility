@@ -133,6 +133,25 @@
 - 栈空 → `NSApplication.shared.hide(nil)`
 - Stage 独立不入栈
 
+### 知识面板
+- 卡片池 = `~/.config/utility/knowledge.sqlite`，schema 所有者是 Python（`knowledge_pool.py`）；Swift 侧（`KnowledgeStore`）**只做裸 SQL 读写、绝不建表**，且每个方法都容忍「表不存在」
+- 补货 = `knowledge_refill.py` 子进程，由 `KnowledgeService` 自建 Timer 驱动（面板只读池子，秒开）
+  - ⚠️ **不能走 TaskScheduler**：`handleMissed()` 以「今天 00:00 后的第一个 cron 点」为基准，任何 sub-daily 的 cron 都静默退化成每天一次（`*/30 * * * *` 实测一天只跑一次且无报错）
+  - ⚠️ **`runCaptureOutput` 默认不传 environment**，子进程继承 launchd 启动的 GUI 进程环境（无 `AI_API_KEY` / `UTILITY_DATA_DIR`）→ 脚本「成功」但一张卡都出不来。必须显式传 `PythonScriptRunner.environment(overrides: [:])`
+- ⚠️ **Markdown 不能直接塞 `AttributedString(markdown:)`**：它只给 `presentationIntent` 语义属性、**不带任何字体**，结果是标题与正文一样大、加粗不变粗、列表没有项目符号，而且**不报错**。`KnowledgeMarkdownView` 逐 run 翻译 intent
+  - 新 SDK 的 `intent.components` 元素是 `IntentType` 包装，枚举在它的 `.kind` 上（直接当 `Kind` 用会编译失败）
+- ⚠️ **跨进程 WAL**：Python 子进程与 Swift 面板同时打开同一个文件，两侧都要 WAL + busy timeout（只设一侧会回落 delete 模式互相阻塞）；「读 + UPDATE」放同一事务，失败必须 `debugLog`
+- 卡片生成的失败源**几乎全是上游 LLM 超时/断连**，不是内容判据：`knowledge_card` 曾带 thinking 生成 8k，单次 60~180s；现关思考 + `max_tokens=4096`
+- `knowledge_engine._llm_json` 把「调用没返回内容」与「返回了但解析不出」分成两条日志 —— 混在一起会让上游超时看起来像提示词问题
+- **自检的证据必须给全文,不能截断**：实测把 10469 字截到 6000 字,模型立刻把后半段的真实内容逐条判成「卡片自行添加」,同一张卡从 `ok` 翻成 `not ok` —— 截断在这里是批量制造假阳性
+- **系统休眠不执行**：`willSleep` 置 `suspended` 并停掉两个 timer；已在跑的补货子进程由 `runCaptureOutput` 的 `shouldCancel` 闭包中止（否则它被冻结后一直挂着,唤醒时立刻撞上 wall-clock 超时）。`didWake` 清标志 + `rearm()` + 立刻补一轮
+- 菜单栏「任务」里有一条知识补货（显示池容量 / 上次结果 / 运行中打勾），但它**不注册进 TaskScheduler** —— 只借子菜单做入口，起进程仍走 `KnowledgeService` 的闸门（交给 `TaskExecutor` 会多出一个不受防重保护的补货进程）
+
+### 全局热键
+- `HotkeyManager.keyCodeMap` 必须完整（26 字母 + 常用符号），与 `kVK_ANSI_*` 一致：缺哪个键，配了它的热键就静默 `parse` 失败并弹「热键解析失败」——**只影响用户自己配的那个键**，看起来像配置写错了（`option+k` 就这么栽过：表里只有 14 个字母）
+- `parse` 的 keyCode 必须用 `Optional`：`a` 的 ANSI 键码是 0，拿 0 当「未匹配」会让 `cmd+a` 解析失败
+- 热键只在启动时注册一次，配置重载不重注册，改热键要重启 app
+
 ### NSTableView
 - `selectionHighlightStyle = .none` + manual frame + cell 子类 layout
 - 避免 NSTableView 缓存 rowView 导致无限内存

@@ -200,7 +200,9 @@ def tag_baseline(root: Path) -> str | None:
         lines.append(f"commits since tag: {count}")
         if count == "0":
             lines.append("HEAD is the tagged commit")
-    lines.append("local reachability only; confirm this tag is the latest published release")
+    lines.append(
+        "local reachability only; confirm this tag is the latest published release"
+    )
     block("TAG BASELINE", lines, "WARN")
     return tag
 
@@ -282,14 +284,15 @@ def version_sync(root: Path, tag: str | None) -> str | None:
             "N/A",
         )
         return None
-    lines = [f"{name}: {evidence_value(value)}" for name, value in sorted(found.items())]
+    lines = [
+        f"{name}: {evidence_value(value)}" for name, value in sorted(found.items())
+    ]
     status = "FAIL" if errors else "PASS"
     lines.extend(f"unsafe repository input: {error}" for error in errors)
     invalid_evidence = [
         name
         for name, value in found.items()
-        if len(value) > 128
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        if len(value) > 128 or any(ord(char) < 32 or ord(char) == 127 for char in value)
     ]
     if invalid_evidence:
         lines.append(
@@ -309,13 +312,17 @@ def version_sync(root: Path, tag: str | None) -> str | None:
         lines.append("version fields disagree: align them before releasing")
         status = "FAIL"
     manifest = next(iter(normalized)) if len(normalized) == 1 else None
-    raw_manifest = next(iter(found.values())) if len(normalized) == 1 and found else None
+    raw_manifest = (
+        next(iter(found.values())) if len(normalized) == 1 and found else None
+    )
     parsed_manifest = parse_semver(raw_manifest) if raw_manifest else None
     if manifest and parsed_manifest is None:
         lines.append("manifest version is not exact SemVer")
         status = "FAIL"
     if parsed_manifest and parsed_manifest[1] is not None:
-        lines.append("manifest is a prerelease version; do not treat it as stable-tag parity")
+        lines.append(
+            "manifest is a prerelease version; do not treat it as stable-tag parity"
+        )
         if status == "PASS":
             status = "WARN"
     if parsed_manifest and tag:
@@ -327,7 +334,9 @@ def version_sync(root: Path, tag: str | None) -> str | None:
             if parsed_manifest == parsed_tag:
                 lines.append("manifest exactly matches stable reachable tag")
             elif manifest_core < tag_core or (
-                manifest_core == tag_core and manifest_pre is not None and tag_pre is None
+                manifest_core == tag_core
+                and manifest_pre is not None
+                and tag_pre is None
             ):
                 lines.append("manifest BEHIND stable reachable tag: version regressed")
                 status = "FAIL"
@@ -354,7 +363,9 @@ def changelog_mentions(root: Path, manifest: str | None) -> None:
             changelog = candidate
             break
     if changelog is None or not manifest:
-        reason = "no changelog file" if changelog is None else "no single manifest version"
+        reason = (
+            "no changelog file" if changelog is None else "no single manifest version"
+        )
         block("CHANGELOG VERSION", [reason], "N/A")
         return
     text, error = read_repo_text(changelog, changelog.name)

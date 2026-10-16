@@ -360,6 +360,16 @@ async def achat(
 # ---------------------------------------------------------------------------
 
 
+def _prefer_first_nonempty(pairs):
+    """Duplicate keys: keep the first non-empty value — models occasionally emit a repeated
+    key with an empty filler, and last-wins silently discards the real one."""
+    out = {}
+    for k, v in pairs:
+        if k not in out or (not out[k] and v):
+            out[k] = v
+    return out
+
+
 def parse_json(raw: str | None) -> dict | None:
     """Extract a JSON object from LLM output. Best-effort: fenced code blocks / surrounding chatter / trailing commas / unescaped quotes."""
     if not raw:
@@ -375,16 +385,22 @@ def parse_json(raw: str | None) -> dict | None:
     if start != -1 and end != -1:
         json_str = json_str[start : end + 1]
     try:
-        return json.loads(json_str, strict=False)
+        return json.loads(
+            json_str, strict=False, object_pairs_hook=_prefer_first_nonempty
+        )
     except json.decoder.JSONDecodeError:
         fixed = re.sub(r",\s*([}\]])", r"\1", json_str)
         try:
-            return json.loads(fixed, strict=False)
+            return json.loads(
+                fixed, strict=False, object_pairs_hook=_prefer_first_nonempty
+            )
         except json.decoder.JSONDecodeError:
             # When the LLM copies source text it may bring literal ASCII double quotes into a string value unescaped -> escape and retry
             quoted = _escape_inline_quotes(fixed)
             try:
-                return json.loads(quoted, strict=False)
+                return json.loads(
+                    quoted, strict=False, object_pairs_hook=_prefer_first_nonempty
+                )
             except json.decoder.JSONDecodeError:
                 return None
 
