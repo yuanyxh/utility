@@ -37,6 +37,7 @@ from proxy_response_note import (
     RESPONSE_NOTE_ENV_KEY,
     NoteBodyBuffer,
     SSENoteInjector,
+    strip_notes_from_messages,
 )
 from proxy_skill_dedup import dedup_tool_results
 from proxy_usage import (
@@ -434,6 +435,19 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         logger.info(
             json.dumps({"msg": "output_filter", "api_format": api_format, **filtered})
         )
+
+    # Strip the note lines the model echoed back from earlier turns: the note is injected into
+    # the assistant's text block, so it enters the history and the model reproduces that line
+    # on its own. Removing it here keeps it out of the upstream context.
+    if RESPONSE_NOTE_ENABLED:
+        stripped = strip_notes_from_messages(request_body.get("messages") or [])
+        if stripped:
+            body_bytes = json.dumps(request_body).encode()
+            logger.info(
+                json.dumps(
+                    {"msg": "note_strip", "removed": stripped, "api_format": api_format}
+                )
+            )
 
     # Request protocol conversion: client anthropic ↔ provider openai (standard gateway mapping)
     if api_format == "anthropic" and provider_format == "openai":

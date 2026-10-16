@@ -28,6 +28,7 @@ from __future__ import annotations
 import codecs
 import json
 import os
+import re
 
 from proxy_skill_dedup import FALLBACK_LANG
 
@@ -155,6 +156,66 @@ def build_note(
         tpl = NOTE_APPLIED.get(lang) or NOTE_APPLIED[FALLBACK_LANG]
         segs.append(tpl.format(parts=labels))
     return SEG_JOIN.join(segs)
+
+
+#: The note's trailing segment, derived from the tables above so the strip side cannot drift
+#: from the build side (once the note is in the history, the model echoes that line back).
+NOTE_APPLIED_PREFIXES: tuple[str, ...] = tuple(
+    tpl.split("{parts}")[0] for tpl in NOTE_APPLIED.values()
+)
+NOTE_EMPTY_EXACT: frozenset[str] = frozenset(NOTE_EMPTY.values())
+
+_MODEL_SEG_RE = re.compile(r"[\w.\-]+")
+
+
+def is_note_line(line: str) -> bool:
+    """Whether a line has the shape of the appended note — used to strip the model's echoes of it."""
+    segs = [s.strip() for s in line.split(SEG_JOIN)]
+    if len(segs) < 2 or not _MODEL_SEG_RE.fullmatch(segs[0]):
+        return False
+    tail = segs[-1]
+    return tail in NOTE_EMPTY_EXACT or tail.startswith(NOTE_APPLIED_PREFIXES)
+
+
+def strip_notes_from_text(text: str) -> tuple[str, int]:
+    """Drop note-shaped lines along with the blank line that preceded each. Returns (text, count)."""
+    out: list[str] = []
+    removed = 0
+    for line in text.split("\n"):
+        if is_note_line(line):
+            removed += 1
+            while out and not out[-1].strip():
+                out.pop()
+            continue
+        out.append(line)
+    return "\n".join(out), removed
+
+
+def strip_notes_from_messages(messages: list) -> int:
+    """Strip note echoes from **assistant** messages (both API formats). Returns the count removed.
+
+    Only assistant messages are touched: the note is only ever produced on the response side, so
+    user text (where a Markdown table row contains " | ") is left alone.
+    """
+    removed = 0
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            new, count = strip_notes_from_text(content)
+            if count:
+                msg["content"] = new
+                removed += count
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                new, count = strip_notes_from_text(block.get("text") or "")
+                if count:
+                    block["text"] = new
+                    removed += count
+    return removed
 
 
 def _data_of(event: str) -> dict:
