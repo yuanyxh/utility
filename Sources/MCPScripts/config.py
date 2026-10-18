@@ -147,3 +147,9 @@ def knowledge_fragment_target(default: int = 5) -> int:
 
 def knowledge_max_fail_streak(default: int = 3) -> int:
     return _int(get("KNOWLEDGE_MAX_FAIL_STREAK", ""), default)
+
+
+def knowledge_max_shown(default: int = 2) -> int:
+    """一张卡展示多少次后不再算「新鲜」；非正值回退默认（0 = 未配置）。"""
+    value = _int(get("KNOWLEDGE_MAX_SHOWN", ""), default)
+    return value if value > 0 else default

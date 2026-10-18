@@ -20,13 +20,15 @@ from log_utils import setup_logging
 logger = setup_logging("knowledge_refill")
 
 
-def _refill_fragments(budget: int) -> tuple[int, int, list]:
+def _refill_fragments(budget: int, max_shown: int) -> tuple[int, int, list]:
     """碎片：高频、短。额度与主题各算各的（共用计数会让先跑的碎片把主题饿死）。"""
     results = []
     added = 0
     target = config.knowledge_fragment_target()
     while added < engine.CARDS_PER_KIND_PER_RUN and budget >= 3:
-        if pool.pool_count(pool.KIND_FRAGMENT) >= target:
+        # 判据必须与 Swift `KnowledgeService` 同为「新鲜卡」：按总量判断时旧卡恒等于 target，
+        # 子进程会在循环入口直接 break，补货形同虚设。
+        if pool.fresh_count(pool.KIND_FRAGMENT, max_shown) >= target:
             break
         dom = pool.pick_fragment_domain()
         if dom is None:
@@ -70,14 +72,15 @@ def _refill_fragments(budget: int) -> tuple[int, int, list]:
     return budget, added, results
 
 
-def _refill_topics(budget: int) -> tuple[int, int, list]:
+def _refill_topics(budget: int, max_shown: int) -> tuple[int, int, list]:
     """主题化：沿主线按序推进。额度与碎片各算各的。"""
     results = []
     added = 0
     max_streak = config.knowledge_max_fail_streak()
     target = config.knowledge_topic_target()
     while added < engine.CARDS_PER_KIND_PER_RUN and budget >= 3:
-        if pool.pool_count(pool.KIND_TOPIC) >= target:
+        # 同 `_refill_fragments`：按 pool_count 判断会让补货永远不产出。
+        if pool.fresh_count(pool.KIND_TOPIC, max_shown) >= target:
             break
         topic = pool.next_topic()
         if topic is None:
@@ -155,10 +158,11 @@ def main() -> int:
     )
 
     budget = engine.MAX_LLM_CALLS_PER_RUN
+    max_shown = config.knowledge_max_shown()
     results: list = []
     # 两类各算各的额度:共享计数时先跑的碎片会把主题饿死(碎片池长期不满时)
-    budget, frag_made, r1 = _refill_fragments(budget)
-    budget, topic_made, r2 = _refill_topics(budget)
+    budget, frag_made, r1 = _refill_fragments(budget, max_shown)
+    budget, topic_made, r2 = _refill_topics(budget, max_shown)
     results += r1 + r2
     made = frag_made + topic_made
 

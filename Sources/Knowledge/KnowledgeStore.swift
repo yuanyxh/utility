@@ -45,20 +45,7 @@ final class KnowledgeStore {
 
     // MARK: - 读
 
-    func poolCount(kind: String) -> Int {
-        guard let queue else { return 0 }
-        do {
-            return try queue.read { db in
-                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = 'pool'",
-                                 arguments: [kind]) ?? 0
-            }
-        } catch {
-            debugLog("[Knowledge] poolCount(\(kind)) 失败: \(error)")
-            return 0
-        }
-    }
-
-    /// 展示次数未达上限的卡。补货判据必须用它而不是 `poolCount`：卡被看过仍是 `pool`，
+    /// 展示次数未达上限的卡。补货判据必须用它，不能按池总量判断：卡被看过仍是 `pool`，
     /// 按总量判断会永远「充足」，池子只轮转不换血（实测两天反复看到同 8 张）。
     func freshCount(kind: String, maxShown: Int) -> Int {
         guard let queue else { return 0 }

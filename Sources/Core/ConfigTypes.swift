@@ -516,6 +516,7 @@ public struct KnowledgeConfig: Codable {
     var poolTargetTopic: Int = 3
     var poolTargetFragment: Int = 5
     var maxFailStreak: Int = 3
+    var maxShownPerCard: Int = 2
     var hotkey: String = "option+k"
     var domains: [String] = []
     var topics: [KnowledgeTopicSeed] = []
@@ -531,6 +532,7 @@ public struct KnowledgeConfig: Codable {
         poolTargetTopic = try c.decodeIfPresent(Int.self, forKey: .poolTargetTopic) ?? 3
         poolTargetFragment = try c.decodeIfPresent(Int.self, forKey: .poolTargetFragment) ?? 5
         maxFailStreak = try c.decodeIfPresent(Int.self, forKey: .maxFailStreak) ?? 3
+        maxShownPerCard = try c.decodeIfPresent(Int.self, forKey: .maxShownPerCard) ?? 2
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+k"
         domains = try c.decodeIfPresent([String].self, forKey: .domains) ?? []
         topics = try c.decodeIfPresent([KnowledgeTopicSeed].self, forKey: .topics) ?? []

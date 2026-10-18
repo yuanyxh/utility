@@ -180,6 +180,7 @@ enum PythonScriptRunner {
         env[EnvKeys.knowledgeTopicTarget] = String(knowledge.poolTargetTopic)
         env[EnvKeys.knowledgeFragmentTarget] = String(knowledge.poolTargetFragment)
         env[EnvKeys.knowledgeMaxFailStreak] = String(knowledge.maxFailStreak)
+        env[EnvKeys.knowledgeMaxShown] = String(knowledge.maxShownPerCard)
         return env
     }
 

@@ -231,6 +231,7 @@ knowledge:
   poolTargetTopic: 3            # refill only when fresh cards (shown < 2) drop below this
   poolTargetFragment: 5
   maxFailStreak: 3              # N dry runs in a row marks a topic done
+  maxShownPerCard: 2            # a card counts as "fresh" until shown this many times
   hotkey: option+k
   # Fragment sources: one card per domain, rotating through this list.
   domains:

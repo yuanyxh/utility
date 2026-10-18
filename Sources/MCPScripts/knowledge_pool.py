@@ -126,6 +126,21 @@ def pool_count(kind: str) -> int:
     return row[0] if row else 0
 
 
+def fresh_count(kind: str, max_shown: int) -> int:
+    """展示次数未达上限的池中卡数量，与 Swift `KnowledgeStore.freshCount` 同口径。
+
+    补货判据必须用它而不是 `pool_count`：卡被看过仍是 `pool`，按总量判断会永远「充足」，
+    补货每轮都在循环入口 break、一次 LLM 都不调（实测 13:51 后连续 9 轮 made=0），
+    池子只轮转不换血，面板反复显示同一批旧卡。
+    """
+    with dbconn(db_path()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = ? AND shown_count < ?",
+            (kind, ST_POOL, max_shown),
+        ).fetchone()
+    return row[0] if row else 0
+
+
 def next_card(kind: str, excluding_topic: int | None = None) -> dict | None:
     """取一张池中卡片并累加 shown_count。读与写在同一事务内，避免自锁。
 
