@@ -37,12 +37,6 @@ final class MCPClient {
         return try await post("/api/project/structure", body: body)
     }
 
-    /// List third-party packages.
-    func packages(dbPath: String, type: String = "") async throws -> PackagesResult {
-        let body = RequestBody(dbPath: dbPath, type: type)
-        return try await post("/api/project/packages", body: body)
-    }
-
     /// Get exported symbols for a file or directory.
     func exports(dbPath: String, path: String) async throws -> ExportsResult {
         let body = RequestBody(dbPath: dbPath, path: path)
@@ -83,7 +77,6 @@ private struct RequestBody: Codable {
     var dbPath: String = ""
     var query: String = ""
     var path: String = ""
-    var type: String = ""
 }
 
 // MARK: - Response types
@@ -118,19 +111,6 @@ struct StructureResult: Decodable {
     struct FileNode: Decodable {
         let path: String
         let ext: String
-    }
-}
-
-struct PackagesResult: Decodable {
-    let packages: [PackageInfo]
-    let total: Int
-
-    struct PackageInfo: Decodable {
-        let name: String
-        let version: String?
-        let type: String
-        let description: String?
-        let sourceUrl: String?
     }
 }
 

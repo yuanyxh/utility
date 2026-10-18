@@ -74,7 +74,6 @@ from server_search import (
     DEFAULT_PROJECT_STRUCTURE_LIMIT,
     tool_project_search,
     tool_project_structure,
-    tool_project_packages,
     tool_project_exports,
     _query_project_notes,
 )
@@ -122,8 +121,6 @@ NOTES_DIR = notes_dir()
 
 SKILLS_DIR = os.path.join(NOTES_DIR, "MCP", "Skills")
 
-DESCRIPTIONS_FILE = os.path.join(NOTES_DIR, "MCP", "DESCRIPTIONS.md")
-
 #: Default result limit for recall. Authoritative source is
 #: `tool_defaults.arg_default` (config surface: config.yaml `mcp.toolDefaults`); the
 #: tool schema's default and the runtime fallback both use this constant, avoiding two
@@ -136,18 +133,17 @@ DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
 DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
 TOOL_DEFAULTS: dict[str, str] = {
-    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。content: 记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, 禁止硬凑背景。有背景时按三要素组织——场景(项目/上下文)、决策(怎么做/选)、演进(当前状态/后续变化), 缺的要素省略不硬凑。多条内容请用 remember_batch。",
+    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
     "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
-    "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。禁止用 grep/git log 代替。",
+    "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。",
     "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
     "forget": "用户要求删除记忆, 或记忆内容有误/过时 → 调用本工具。删除指定 ID 的记忆。",
     "project_search": "优先使用本工具查找(符号/文件/Package)的定义和位置, 避免全量读取文件。支持中文同义词扩展。项目依赖图查找。",
     "project_structure": "优先使用本工具了解项目目录结构，替代 ls/find 遍历。指定子路径查看下一级。",
-    "project_packages": "列出项目三方依赖。",
     "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
     "project_notes": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须并行调用本工具。recall 变体, 搜索项目本地信息",
-    "tool_resource": "当指示加载 references 文件或需要查看 scripts 脚本内容时调用。返回附属资源内容（references/agents/scripts 目录下的参考文档）。",
-    "set_memory_processed": "设置/重置记忆的已处理标识位（metadata.processed 位掩码）。bit0=1 表示已被总结脚本成功处理。测试与还原用：value=1 设置、value=0 重置，幂等。",
+    "tool_resource": "当指示加载 references 文件或需要查看 scripts 脚本内容时调用。返回附属资源内容。",
+    "set_memory_processed": "设置/重置记忆的已处理标识位。bit0=1 表示已被总结脚本成功处理。测试与还原用：value=1 设置、value=0 重置，幂等。",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
@@ -512,8 +508,8 @@ def search_cold_layer(
     return results[:limit]
 
 
-def _parse_skill_frontmatter(raw: str, filename: str) -> tuple[str, str, str]:
-    name, description, content = None, "", raw
+def _parse_skill_frontmatter(raw: str, filename: str) -> tuple[str, str, str, bool]:
+    name, description, content, enabled = None, "", raw, True
     if raw.startswith("---"):
         parts = raw.split("---", 2)
         if len(parts) >= 3:
@@ -529,9 +525,12 @@ def _parse_skill_frontmatter(raw: str, filename: str) -> tuple[str, str, str]:
                         name = value
                     elif key == "description":
                         description = value
+                    elif key == "enable":
+                        # 缺省或任何非 false 值都注册；只有显式 false 才跳过
+                        enabled = value.lower() != "false"
     if not name:
         name = filename[:-3]
-    return name, description, content
+    return name, description, content, enabled
 
 
 def _normalize_name(name: str) -> str:
@@ -564,8 +563,8 @@ def _scan_skills() -> dict[str, dict]:
                 try:
                     with open(path, "r", encoding="utf-8") as fh:
                         raw = fh.read()
-                    name, description, content = _parse_skill_frontmatter(raw, f)
-                    if name:
+                    name, description, content, enabled = _parse_skill_frontmatter(raw, f)
+                    if name and enabled:
                         skills[_normalize_name(name)] = {
                             "name": name,
                             "description": description,
@@ -598,35 +597,10 @@ def _find_skill_dir(name: str) -> str | None:
                 raw = fh.read()
         except Exception:
             continue
-        fname, _, _ = _parse_skill_frontmatter(raw, skill_md)
+        fname, _, _, _ = _parse_skill_frontmatter(raw, skill_md)
         if fname and _normalize_name(fname) == name:
             return skill_dir
     return None
-
-
-def _load_tool_descriptions() -> dict[str, str]:
-    result: dict[str, str] = {}
-    if not os.path.isfile(DESCRIPTIONS_FILE):
-        return result
-    try:
-        with open(DESCRIPTIONS_FILE, "r", encoding="utf-8") as fh:
-            raw = fh.read()
-    except Exception:
-        return result
-    current_name = None
-    current_lines: list[str] = []
-    for line in raw.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("### "):
-            if current_name and current_lines:
-                result[current_name] = "\n".join(current_lines).strip()
-            current_name = stripped[4:].strip()
-            current_lines = []
-        elif current_name:
-            current_lines.append(line)
-    if current_name and current_lines:
-        result[current_name] = "\n".join(current_lines).strip()
-    return result
 
 
 def _dumps(obj) -> str:
@@ -942,11 +916,10 @@ server = Server(SERVER_NAME)
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
-    desc = _load_tool_descriptions()
     tools = [
         Tool(
             name="remember",
-            description=desc.get("remember", TOOL_DEFAULTS["remember"]),
+            description=TOOL_DEFAULTS["remember"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -970,7 +943,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="remember_batch",
-            description=desc.get("remember_batch", TOOL_DEFAULTS["remember_batch"]),
+            description=TOOL_DEFAULTS["remember_batch"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1005,7 +978,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="recall",
-            description=desc.get("recall", TOOL_DEFAULTS["recall"]),
+            description=TOOL_DEFAULTS["recall"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1025,7 +998,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="catch_up",
-            description=desc.get("catch_up", TOOL_DEFAULTS["catch_up"]),
+            description=TOOL_DEFAULTS["catch_up"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1038,7 +1011,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="forget",
-            description=desc.get("forget", TOOL_DEFAULTS["forget"]),
+            description=TOOL_DEFAULTS["forget"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1054,9 +1027,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="set_memory_processed",
-            description=desc.get(
-                "set_memory_processed", TOOL_DEFAULTS["set_memory_processed"]
-            ),
+            description=TOOL_DEFAULTS["set_memory_processed"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1082,7 +1053,7 @@ async def handle_list_tools() -> list[Tool]:
         # ── Project tools ──
         Tool(
             name="project_search",
-            description=desc.get("project_search", TOOL_DEFAULTS["project_search"]),
+            description=TOOL_DEFAULTS["project_search"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1113,9 +1084,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="project_structure",
-            description=desc.get(
-                "project_structure", TOOL_DEFAULTS["project_structure"]
-            ),
+            description=TOOL_DEFAULTS["project_structure"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1137,26 +1106,8 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="project_packages",
-            description=desc.get("project_packages", TOOL_DEFAULTS["project_packages"]),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dbPath": {
-                        "type": "string",
-                        "description": param_text("param.db_path"),
-                    },
-                    "type": {
-                        "type": "string",
-                        "description": param_text("param.package_type"),
-                    },
-                },
-                "required": ["dbPath"],
-            },
-        ),
-        Tool(
             name="project_exports",
-            description=desc.get("project_exports", TOOL_DEFAULTS["project_exports"]),
+            description=TOOL_DEFAULTS["project_exports"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1174,7 +1125,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="project_notes",
-            description=desc.get("project_notes", TOOL_DEFAULTS["project_notes"]),
+            description=TOOL_DEFAULTS["project_notes"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1197,7 +1148,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="tool_resource",
-            description=desc.get("tool_resource", TOOL_DEFAULTS["tool_resource"]),
+            description=TOOL_DEFAULTS["tool_resource"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1542,20 +1493,6 @@ async def _handle_project_structure(arguments: dict) -> list[TextContent]:
             arguments["dbPath"],
             arguments.get("path", ""),
             _int_arg(arguments, "limit", DEFAULT_PROJECT_STRUCTURE_LIMIT),
-        )
-        return [TextContent(type="text", text=_dumps(result))]
-    except Exception:
-        # Re-raise to handle_call_tool: returning {"error": ...} here makes the SDK treat
-        # it as success, so a real failure is read by the client as "found it, just no
-        # results". Logging is done uniformly by the fallback layer.
-        raise
-
-
-@_register("project_packages")
-async def _handle_project_packages(arguments: dict) -> list[TextContent]:
-    try:
-        result = await asyncio.to_thread(
-            tool_project_packages, arguments["dbPath"], arguments.get("type", "")
         )
         return [TextContent(type="text", text=_dumps(result))]
     except Exception:
@@ -2001,14 +1938,6 @@ async def main():
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    async def api_project_packages(request):
-        body = await request.json()
-        try:
-            result = tool_project_packages(body.get("dbPath", ""), body.get("type", ""))
-            return JSONResponse(result)
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
-
     async def api_project_exports(request):
         body = await request.json()
         try:
@@ -2037,9 +1966,6 @@ async def main():
                 "/api/project/structure",
                 endpoint=api_project_structure,
                 methods=["POST"],
-            ),
-            Route(
-                "/api/project/packages", endpoint=api_project_packages, methods=["POST"]
             ),
             Route(
                 "/api/project/exports", endpoint=api_project_exports, methods=["POST"]

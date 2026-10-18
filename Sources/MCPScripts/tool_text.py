@@ -1,9 +1,8 @@
 """MCP 工具**参数描述**的内置国际化。
 
 参数描述是工具 schema 的一部分、会被模型读到，而「界面语言」与「谁在用」并无绑定
-关系——按语言给出与提示词外置是同一件事的两半。工具**描述**（`TOOL_DEFAULTS` 与用户
-自定义的 `DESCRIPTIONS.md`）**刻意不在此列**：它本来就有用户自己的覆盖渠道，且比参数
-描述长、改动频繁，内置一份译文本只会多出一份没人维护的副本。
+关系——按语言给出与提示词外置是同一件事的两半。工具**描述**（`TOOL_DEFAULTS`）**刻意
+不在此列**：它比参数描述长、改动频繁，内置一份译文本只会多出一份没人维护的副本。
 
 语言判据与提示词**同源**（`config.ui_language()` ← `UTILITY_LANG` ← `general.language`），
 该语言没有该文案时回退基线 `zh-Hans`（与 `prompt_loader.FALLBACK_LANG` 同值，由
@@ -38,7 +37,6 @@ PARAM_TEXT: dict[str, dict[str, str]] = {
     #: 三要素口径（场景/决策/演进），与 `server.py` 的 `TOOL_DEFAULTS["remember"]` **逐字**
     #: 一致——两处曾一个三要素、一个五要素，同一段模型行为被两套说法描述。用户裁定
     #: 「三要素为主」后改齐；`TOOL_DEFAULTS` 侧本就是三要素，故只动这里。
-    #: ⚠️ 用户自定义的 `DESCRIPTIONS.md` 是另一份自有文案（notes 目录、不随包分发），不受此约束。
     "param.memory_content": {
         "zh-Hans": (
             "记忆内容。有产生背景时首行 [背景说明], 次行起 [事实] ...; 无背景直接写事实, "
@@ -100,10 +98,6 @@ PARAM_TEXT: dict[str, dict[str, str]] = {
     "param.subpath": {
         "zh-Hans": "可选子路径",
         "en": "Optional sub-path to inspect",
-    },
-    "param.package_type": {
-        "zh-Hans": "可选筛选: spm/npm/pip",
-        "en": "Optional filter: spm/npm/pip",
     },
     "param.file_or_dir": {
         "zh-Hans": "文件或目录路径",

@@ -1234,37 +1234,6 @@ def tool_project_structure(
     return result
 
 
-def tool_project_packages(db_path: str, pkg_type: str = "") -> dict:
-    if not os.path.isfile(db_path):
-        return {"error": f"Database not found: {db_path}"}
-    with dbconn(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        if pkg_type:
-            rows = conn.execute(
-                "SELECT name, version, type, description, source_url "
-                "FROM packages WHERE type = ? ORDER BY name",
-                (pkg_type,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT name, version, type, description, source_url "
-                "FROM packages ORDER BY type, name"
-            ).fetchall()
-    return {
-        "packages": [
-            {
-                "name": r["name"],
-                "version": r["version"],
-                "type": r["type"],
-                "description": r["description"],
-                "sourceUrl": r["source_url"],
-            }
-            for r in rows
-        ],
-        "total": len(rows),
-    }
-
-
 def tool_project_exports(db_path: str, path: str) -> dict:
     if not os.path.isfile(db_path):
         return {"error": f"Database not found: {db_path}"}

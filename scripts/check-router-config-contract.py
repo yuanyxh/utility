@@ -955,14 +955,12 @@ def collect_param_descriptions(path: str) -> tuple[set[str], list[str]]:
     """Usage of parameter descriptions inside `handle_list_tools()`: `(referenced key set, list not going through i18n)`.
 
     Uses AST rather than regex: the word `description` has several other meanings in server.py
-    (parsing `DESCRIPTIONS.md`, the tool-level `Tool(description=...)`), and a regex over the whole
-    file would count them too, whereas this contract applies **only** to parameter descriptions in
-    `inputSchema`.
+    (the tool-level `Tool(description=...)`), and a regex over the whole file would count them too,
+    whereas this contract applies **only** to parameter descriptions in `inputSchema`.
 
     It only looks inside the function and only recognizes dict `"description"` keys: a tool-level
     description goes through the `Tool(description=...)` keyword argument and is naturally out of
-    scope——it is determined by the user-overridable `DESCRIPTIONS.md`, and no built-in multilingual
-    support is provided.
+    scope.
     """
     src = _read(path)
     if src is None:

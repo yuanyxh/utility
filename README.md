@@ -43,7 +43,7 @@ python3 -m venv ~/.config/utility/mcp-venv
 | Config dir | `~/.config/utility/` | all config and data | — |
 | Config file | `~/.config/utility/config.yaml` | app configuration | — |
 | Python venv | `~/.config/utility/mcp-venv/` | AI-layer runtime | — |
-| Notes dir | `~/.config/utility/notes/` | sedimented documents; the `MCP/` subdir holds Skills, Rules, DESCRIPTIONS.md | `mcp.knowledgeBasePath` |
+| Notes dir | `~/.config/utility/notes/` | sedimented documents; the `MCP/` subdir holds Skills, Rules | `mcp.knowledgeBasePath` |
 | Vector store | `~/.config/utility/data/qdrant/` | hot / cold vectors | `mcp.qdrantPath` |
 | App data | `~/.config/utility/data.sqlite` | clipboard, RSS, … | — |
 | Token usage | `~/.config/utility/token_usage.sqlite` | recorded by the proxy | — |
@@ -421,7 +421,6 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `set_memory_processed` | read/write the processed bit |
 | `project_search` | multi-layer codebase search |
 | `project_structure` | project directory structure |
-| `project_packages` | third-party dependency list |
 | `project_exports` | a file's or directory's public interface |
 | `project_notes` | search project-local notes |
 | `tool_resource` | read a skill's companion resources |
@@ -435,7 +434,6 @@ Configured by `mcp.knowledgeBasePath`, default `~/.config/utility/notes/`:
 |---|---|
 | `MCP/Skills/` | each `.md` or directory containing `SKILL.md` registers as an MCP tool |
 | `MCP/Rules/` | rules / conventions the daily summary distilled from memories |
-| `MCP/DESCRIPTIONS.md` | override built-in tool descriptions by `### <tool name>` |
 | `MCP/System_Prompts.md` | rules the proxy injects into each turn's user message |
 | `Extracts/` | intermediate extraction products of the daily summary |
 | other `.md` / dirs | sedimented knowledge articles |
@@ -453,6 +451,8 @@ description: when it should trigger and what it does; the model uses this to dec
 The body returned when the tool is called.
 ```
 
+Add `enable: false` to skip registration without deleting the file; omitted or any other value keeps it registered.
+
 A directory skill may carry companion resources (`references/`, `agents/`, `scripts/` are read via `tool_resource` and are not registered as tools):
 
 ```
@@ -461,18 +461,6 @@ MCP/Skills/my-skill/
 ├── references/
 ├── agents/
 └── scripts/
-```
-
-**DESCRIPTIONS.md**
-
-Override a tool's description by `### <tool name>` (tool names as in the MCP tools table above):
-
-```markdown
-### remember
-Write a single fact to shared memory.
-
-### recall
-Search memories, the knowledge base, and local notes.
 ```
 
 **System_Prompts.md**
@@ -518,7 +506,7 @@ Intermediate extraction products of the daily summary, grouped into topic direct
 | `examples/zh-Hans/MCP/` | Chinese |
 | `examples/en/MCP/` | English |
 
-Each set contains `System_Prompts.md`, `DESCRIPTIONS.md`, and 8 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`). To use one, copy it into the notes directory's `MCP/`:
+Each set contains `System_Prompts.md` and 8 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`). To use one, copy it into the notes directory's `MCP/`:
 
 ```bash
 cp -R examples/en/MCP/* ~/.config/utility/notes/MCP/

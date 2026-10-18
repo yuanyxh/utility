@@ -43,7 +43,7 @@ python3 -m venv ~/.config/utility/mcp-venv
 | 配置目录 | `~/.config/utility/` | 全部配置与数据 | — |
 | 配置文件 | `~/.config/utility/config.yaml` | 应用配置 | — |
 | Python venv | `~/.config/utility/mcp-venv/` | AI 层运行环境 | — |
-| 笔记目录 | `~/.config/utility/notes/` | 沉淀的文档；`MCP/` 子目录存 Skills、Rules、DESCRIPTIONS.md | `mcp.knowledgeBasePath` |
+| 笔记目录 | `~/.config/utility/notes/` | 沉淀的文档；`MCP/` 子目录存 Skills、Rules | `mcp.knowledgeBasePath` |
 | 向量库 | `~/.config/utility/data/qdrant/` | 热层 / 冷层向量 | `mcp.qdrantPath` |
 | 应用数据 | `~/.config/utility/data.sqlite` | 剪切板、RSS 等 | — |
 | Token 用量 | `~/.config/utility/token_usage.sqlite` | 代理记录 | — |
@@ -392,7 +392,6 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `set_memory_processed` | 读写记忆 processed 位 |
 | `project_search` | 代码库多层级检索 |
 | `project_structure` | 项目目录结构 |
-| `project_packages` | 第三方依赖清单 |
 | `project_exports` | 文件或目录的公共接口 |
 | `project_notes` | 项目本地笔记检索 |
 | `tool_resource` | 读取 skill 附属资源 |
@@ -406,7 +405,6 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 |---|---|
 | `MCP/Skills/` | 每个 `.md` 或含 `SKILL.md` 的目录注册为一个 MCP 工具 |
 | `MCP/Rules/` | 每日总结从记忆提炼的规则 / 约定 |
-| `MCP/DESCRIPTIONS.md` | 按 `### <工具名>` 覆盖内置工具描述 |
 | `MCP/System_Prompts.md` | 代理每轮注入到用户消息的规则 |
 | `Extracts/` | 每日总结的中间提取产物 |
 | 其余 `.md` / 目录 | 总结沉淀的知识文章 |
@@ -424,6 +422,8 @@ description: 触发时机与用途，模型据此判断何时调用
 工具被调用时返回的正文。
 ```
 
+在 frontmatter 中写 `enable: false` 可跳过注册（文件保留）；缺省或其它值仍注册。
+
 目录式可带附属资源(`references/`、`agents/`、`scripts/` 下的文件经 `tool_resource` 读取，不单独注册为工具)：
 
 ```
@@ -432,18 +432,6 @@ MCP/Skills/my-skill/
 ├── references/
 ├── agents/
 └── scripts/
-```
-
-**DESCRIPTIONS.md**
-
-按 `### <工具名>`(工具名同上方 MCP 工具表)覆盖该工具的 description：
-
-```markdown
-### remember
-写入单条事实到共享记忆。
-
-### recall
-在记忆、知识库与本地笔记中检索。
 ```
 
 **System_Prompts.md**
@@ -489,7 +477,7 @@ description: 操作前，获取本行为规范；全局通用规范。
 | `examples/zh-Hans/MCP/` | 中文版 |
 | `examples/en/MCP/` | 英文版 |
 
-每套含 `System_Prompts.md`、`DESCRIPTIONS.md` 与 8 个 skill(`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`)。取用时把对应语言目录下的内容复制到笔记目录的 `MCP/`:
+每套含 `System_Prompts.md` 与 8 个 skill(`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`)。取用时把对应语言目录下的内容复制到笔记目录的 `MCP/`:
 
 ```bash
 cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
