@@ -22,6 +22,9 @@ final class KnowledgeService: NSObject {
     /// 自动弹出的 timer 只当**唤醒节拍**:真正的开关是「距上次弹出是否已过 autoShowIntervalMinutes」。
     /// 拿间隔本身当节拍会退化成「连续运行时长」,被重载/重启/休眠反复归零(实测一天 12 次 rearm,60 分钟从未凑齐)
     private static let autoShowBeatSeconds: TimeInterval = 60
+    /// 一张卡展示满这么多次后不再算「新鲜」。补货看过期卡数量而非池总量,
+    /// 否则卡被看过仍是 `pool`,池永远满、每轮都是同一批。
+    private static let maxShownPerCard = 2
 
     var isRefillRunning: Bool {
         refillLock.lock()
@@ -35,12 +38,16 @@ final class KnowledgeService: NSObject {
         let summary = lastSummary
         let at = lastRefillAt
         refillLock.unlock()
-        let topics = KnowledgeStore.shared.poolCount(kind: KnowledgePanelController.kindTopic)
-        let fragments = KnowledgeStore.shared.poolCount(kind: KnowledgePanelController.kindFragment)
+        let topics = KnowledgeStore.shared.freshCount(
+            kind: KnowledgePanelController.kindTopic, maxShown: Self.maxShownPerCard,
+        )
+        let fragments = KnowledgeStore.shared.freshCount(
+            kind: KnowledgePanelController.kindFragment, maxShown: Self.maxShownPerCard,
+        )
         let stamp = at.map { Self.timeFormatter.string(from: $0) } ?? "-"
         return summary.isEmpty
-            ? "池 \(topics)/\(fragments) · \(stamp)"
-            : "池 \(topics)/\(fragments) · \(stamp) · \(summary)"
+            ? "新 \(topics)/\(fragments) · \(stamp)"
+            : "新 \(topics)/\(fragments) · \(stamp) · \(summary)"
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -149,11 +156,15 @@ final class KnowledgeService: NSObject {
             return
         }
 
-        let topics = KnowledgeStore.shared.poolCount(kind: KnowledgePanelController.kindTopic)
-        let fragments = KnowledgeStore.shared.poolCount(kind: KnowledgePanelController.kindFragment)
+        let topics = KnowledgeStore.shared.freshCount(
+            kind: KnowledgePanelController.kindTopic, maxShown: Self.maxShownPerCard,
+        )
+        let fragments = KnowledgeStore.shared.freshCount(
+            kind: KnowledgePanelController.kindFragment, maxShown: Self.maxShownPerCard,
+        )
         guard topics < knowledge.poolTargetTopic || fragments < knowledge.poolTargetFragment else {
-            // 「池一直不动」的第一嫌疑就是这里 —— 没有这条时,日志里连「跳过过」都看不到
-            debugLog("[Knowledge] 补货节拍跳过: 池已充足 topics=\(topics)/\(knowledge.poolTargetTopic)"
+            // 「内容一直重复」的第一嫌疑就是这里 —— 没有这条时,日志里连「跳过过」都看不到
+            debugLog("[Knowledge] 补货节拍跳过: 新鲜卡充足 topics=\(topics)/\(knowledge.poolTargetTopic)"
                 + " fragments=\(fragments)/\(knowledge.poolTargetFragment)")
             return
         }

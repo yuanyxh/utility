@@ -145,7 +145,9 @@
 - `knowledge_engine._llm_json` 把「调用没返回内容」与「返回了但解析不出」分成两条日志 —— 混在一起会让上游超时看起来像提示词问题
 - **自检的证据必须给全文,不能截断**：实测把 10469 字截到 6000 字,模型立刻把后半段的真实内容逐条判成「卡片自行添加」,同一张卡从 `ok` 翻成 `not ok` —— 截断在这里是批量制造假阳性
 - **系统休眠不执行**：`willSleep` 置 `suspended` 并停掉两个 timer；已在跑的补货子进程由 `runCaptureOutput` 的 `shouldCancel` 闭包中止（否则它被冻结后一直挂着,唤醒时立刻撞上 wall-clock 超时）。`didWake` 清标志 + `rearm()` + 立刻补一轮
-- 菜单栏「任务」里有一条知识补货（显示池容量 / 上次结果 / 运行中打勾），但它**不注册进 TaskScheduler** —— 只借子菜单做入口，起进程仍走 `KnowledgeService` 的闸门（交给 `TaskExecutor` 会多出一个不受防重保护的补货进程）
+- 菜单栏「任务」里有一条知识补货（显示新鲜卡数量 / 上次结果 / 运行中打勾），但它**不注册进 TaskScheduler** —— 只借子菜单做入口，起进程仍走 `KnowledgeService` 的闸门（交给 `TaskExecutor` 会多出一个不受防重保护的补货进程）
+- **补货判据是「新鲜卡」而非池总量**：`freshCount(kind:maxShown:)` 只数 `shown_count < 2` 的池中卡。卡被看过仍是 `pool`，按 `poolCount` 判断会永远「充足」，池子只轮转不换血（实测两天反复看到同 8 张）
+- **自动关闭只属于定时弹出的卡**：`showAuto()` 置 `autoCloseEligible`，手动打开清掉；窗口成为 key 时停表，失焦（含 app 失活）后从 0 重新计时
 
 ### 全局热键
 - `HotkeyManager.keyCodeMap` 必须完整（26 字母 + 常用符号），与 `kVK_ANSI_*` 一致：缺哪个键，配了它的热键就静默 `parse` 失败并弹「热键解析失败」——**只影响用户自己配的那个键**，看起来像配置写错了（`option+k` 就这么栽过：表里只有 14 个字母）

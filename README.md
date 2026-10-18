@@ -256,8 +256,8 @@ Every card is fetched, written and then self-checked against its sources before 
 | `knowledge.refillIntervalMinutes` | `30` | wake-up beat for refilling; one run takes minutes, so keep it larger |
 | `knowledge.autoShowEnabled` | `true` | auto-pop the panel on a timer |
 | `knowledge.autoShowIntervalMinutes` | `120` | how often it pops |
-| `knowledge.autoCloseSeconds` | `25` | auto-close after this many seconds; `0` = never |
-| `knowledge.poolTargetTopic` / `poolTargetFragment` | `3` / `5` | refill only when the pool drops below this |
+| `knowledge.autoCloseSeconds` | `25` | auto-close after this many seconds once the panel loses focus; `0` = never |
+| `knowledge.poolTargetTopic` / `poolTargetFragment` | `3` / `5` | refill only when fresh cards (shown fewer than 2 times) drop below this |
 | `knowledge.maxFailStreak` | `3` | a topic with N dry runs in a row is marked done |
 | `knowledge.hotkey` | `option+k` | opens the panel |
 | `knowledge.domains` | built-in list | snippet sources, rotated through |

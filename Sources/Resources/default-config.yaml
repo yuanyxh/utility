@@ -227,8 +227,8 @@ knowledge:
   refillIntervalMinutes: 30     # refill wake-up beat; keep it larger than one run
   autoShowEnabled: true
   autoShowIntervalMinutes: 120  # auto-pop the panel every N minutes
-  autoCloseSeconds: 25          # auto-close after N seconds; 0 = never
-  poolTargetTopic: 3            # refill only when the pool drops below this
+  autoCloseSeconds: 25          # auto-close after N seconds once the panel loses focus; 0 = never
+  poolTargetTopic: 3            # refill only when fresh cards (shown < 2) drop below this
   poolTargetFragment: 5
   maxFailStreak: 3              # N dry runs in a row marks a topic done
   hotkey: option+k

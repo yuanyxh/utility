@@ -40,6 +40,8 @@ public final class KnowledgePanelController: NSWindowController {
     private var currentCards: [String: KnowledgeCard] = [:]
     private var currentKind = KnowledgePanelController.kindTopic
     private var autoCloseTimer: Timer?
+    /// 只有定时弹出的这一张参与自动关闭:聚焦期间停表,失焦后从 0 重新计时。
+    private var autoCloseEligible = false
 
     public init() {
         let panel = NSPanel(
@@ -67,6 +69,18 @@ public final class KnowledgePanelController: NSWindowController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onWindowBecameKey),
+            name: NSWindow.didBecomeKeyNotification, object: panel,
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onWindowResignKey),
+            name: NSWindow.didResignKeyNotification, object: panel,
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onAppResignActive),
+            name: NSApplication.didResignActiveNotification, object: nil,
         )
     }
 
@@ -145,6 +159,8 @@ public final class KnowledgePanelController: NSWindowController {
 
         configure(knownButton, L10n.Knowledge.known, #selector(onKnown))
         configure(dislikeButton, L10n.Knowledge.dislike, #selector(onDislike))
+        // 踩是破坏性操作:红色突出,并排在赞之后,避免误点
+        dislikeButton.bezelColor = .systemRed
         configure(likeButton, L10n.Knowledge.like, #selector(onLike))
         configure(promoteButton, L10n.Knowledge.promote, #selector(onPromote))
         configure(copyButton, L10n.Knowledge.copy, #selector(onCopy))
@@ -153,7 +169,7 @@ public final class KnowledgePanelController: NSWindowController {
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttonRow = NSStackView(views: [
-            buttonSpacer, knownButton, dislikeButton, likeButton,
+            buttonSpacer, knownButton, likeButton, dislikeButton,
             promoteButton, copyButton, closeButton,
         ])
         buttonRow.orientation = .horizontal
@@ -350,8 +366,10 @@ public final class KnowledgePanelController: NSWindowController {
     // MARK: - 自动关闭
 
     /// 手动打开不加自动关闭；只有定时弹出的卡才需要它。
-    private func armAutoClose() {
+    /// 聚焦中(窗口 key)不起表:用户正在看,失焦时会重新从 0 开始。
+    private func armAutoClose(force: Bool = false) {
         disarmAutoClose()
+        if !force, window?.isKeyWindow == true { return }
         let seconds = ConfigManager.shared.config.knowledge.autoCloseSeconds
         guard seconds > 0 else { return }
         let timer = Timer(timeInterval: TimeInterval(seconds), repeats: false) { [weak self] _ in
@@ -365,6 +383,24 @@ public final class KnowledgePanelController: NSWindowController {
     private func disarmAutoClose() {
         autoCloseTimer?.invalidate()
         autoCloseTimer = nil
+    }
+
+    /// 用户点进面板 —— 聚焦期间不应自动关闭。
+    @objc private func onWindowBecameKey() {
+        guard autoCloseEligible else { return }
+        disarmAutoClose()
+    }
+
+    /// 失焦后从 0 重新计时：即使弹出时已经计了一半，也要给足完整阅读时间。
+    @objc private func onWindowResignKey() {
+        guard autoCloseEligible, window?.isVisible == true else { return }
+        armAutoClose()
+    }
+
+    /// nonactivatingPanel 切到其他 app 时不一定走 resignKey,应用失活同样视为失焦。
+    @objc private func onAppResignActive() {
+        guard autoCloseEligible, window?.isVisible == true else { return }
+        armAutoClose(force: true)
     }
 
     // MARK: - 显示
@@ -402,9 +438,10 @@ public final class KnowledgePanelController: NSWindowController {
         refreshTitles()
     }
 
-    /// 定时自动弹：不 makeKey、不 activate —— 窗口从不 becomeKey,故 PanelManager 的
-    /// didResignKey 路径不会触发,自动关闭完全靠 armAutoClose 的 timer。
+    /// 定时自动弹：不 makeKey、不 activate —— PanelManager 的 didResignKey 路径不会触发,
+    /// 自动关闭完全靠 armAutoClose 的 timer；用户点进面板(窗口 becomeKey)时停表,失焦后重起。
     func showAuto() {
+        autoCloseEligible = true
         positionWindow()
         window?.orderFront(nil)
         advance()
@@ -440,6 +477,7 @@ extension KnowledgePanelController: PanelProtocol {
     }
 
     func showPanel(context _: [String: Any]?) {
+        autoCloseEligible = false
         disarmAutoClose()
         if !isPanelVisible { positionWindow() }
         window?.makeKeyAndOrderFront(nil)
@@ -448,6 +486,7 @@ extension KnowledgePanelController: PanelProtocol {
     }
 
     func closePanel() {
+        autoCloseEligible = false
         disarmAutoClose()
         window?.orderOut(nil)
     }

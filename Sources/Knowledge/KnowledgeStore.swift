@@ -58,6 +58,24 @@ final class KnowledgeStore {
         }
     }
 
+    /// 展示次数未达上限的卡。补货判据必须用它而不是 `poolCount`：卡被看过仍是 `pool`，
+    /// 按总量判断会永远「充足」，池子只轮转不换血（实测两天反复看到同 8 张）。
+    func freshCount(kind: String, maxShown: Int) -> Int {
+        guard let queue else { return 0 }
+        do {
+            return try queue.read { db in
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = 'pool' AND shown_count < ?",
+                    arguments: [kind, maxShown],
+                ) ?? 0
+            }
+        } catch {
+            debugLog("[Knowledge] freshCount(\(kind)) 失败: \(error)")
+            return 0
+        }
+    }
+
     /// 取一张池中卡片并累加 `shown_count`：读与写放**同一个写事务**，免得跨进程时自锁。
     /// 没有 `shown` 状态是刻意的 —— 自动关闭的卡只排到轮转尾部，下次还会出现而非被静默烧掉。
     func nextCard(kind: String, excludingTopic: Int64? = nil) -> KnowledgeCard? {
