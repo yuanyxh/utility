@@ -117,6 +117,18 @@ def _int(raw: str, default: int) -> int:
         return default
 
 
+def log_max_size(default: int = 10 * 1024 * 1024) -> int:
+    """Log file size limit before rotation (`general.logMaxSize`, injected by Swift)."""
+    value = _int(get("UTILITY_LOG_MAX_SIZE", ""), default)
+    return value if value > 0 else default
+
+
+def log_backup_count(default: int = 3) -> int:
+    """Number of rotated log backups kept (`general.logBackupCount`, injected by Swift)."""
+    value = _int(get("UTILITY_LOG_BACKUP_COUNT", ""), default)
+    return value if value > 0 else default
+
+
 def _json_list(raw: str) -> list:
     if not raw:
         return []

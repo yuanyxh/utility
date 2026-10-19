@@ -105,6 +105,10 @@ enum EnvKeys {
     /// Both the MCP service and the scheduled summary read them, so they need two injection points.
     static let noteExcludeDirs = "NOTE_EXCLUDE_DIRS"
     static let noteExtensions = "NOTE_EXTENSIONS"
+
+    /// Log rotation shared by Swift `debug.log` and every Python logger (`general.log*`).
+    static let logMaxSize = "UTILITY_LOG_MAX_SIZE"
+    static let logBackupCount = "UTILITY_LOG_BACKUP_COUNT"
 }
 
 // MARK: - Shared Pasteboard Types

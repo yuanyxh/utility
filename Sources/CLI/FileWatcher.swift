@@ -90,8 +90,6 @@ final class FileWatcher {
 
     /// Called on `eventQueue` (serial). FSEventStream requires a serial dispatch queue.
     private func onEvent(paths: [String], flags: [FSEventStreamEventFlags]) {
-        debugLog("[Watcher] FSEvent received: \(paths.count) path(s)")
-
         let config = ScannerConfig(projectPath: projectPath)
         var relevant = Set<String>()
 
@@ -134,18 +132,12 @@ final class FileWatcher {
             relevant.insert(relPath)
         }
 
-        guard !relevant.isEmpty else {
-            debugLog("[Watcher] All \(paths.count) event(s) filtered out")
-            return
-        }
-
-        debugLog("[Watcher] Relevant: \(relevant.sorted().joined(separator: ", "))")
+        guard !relevant.isEmpty else { return }
 
         // Push to stack (dedup) and schedule timer if needed
         lock.lock()
         let wasEmpty = pending.isEmpty
         pending.formUnion(relevant)
-        debugLog("[Watcher] Pending: \(pending.count) file(s), wasEmpty=\(wasEmpty), isScanning=\(isScanning)")
 
         if wasEmpty, !isScanning {
             scheduleTimer()
@@ -157,12 +149,8 @@ final class FileWatcher {
 
     /// Called while holding `lock`. Schedules a 3-second scan timer if none is pending.
     private func scheduleTimer() {
-        guard !timerScheduled else {
-            debugLog("[Watcher] Timer already scheduled, skip")
-            return
-        }
+        guard !timerScheduled else { return }
         timerScheduled = true
-        debugLog("[Watcher] Timer scheduled: scan in 3s")
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
             self?.executeScan()
         }
@@ -174,7 +162,6 @@ final class FileWatcher {
         timerScheduled = false
 
         guard !pending.isEmpty else {
-            debugLog("[Watcher] Scan skipped: nothing pending")
             lock.unlock()
             return
         }
@@ -184,7 +171,6 @@ final class FileWatcher {
         isScanning = true
         lock.unlock()
 
-        debugLog("[Watcher] Scan starting: \(paths.count) file(s)")
         processChanges(paths)
         debugLog("[Watcher] Scan done")
 
@@ -194,7 +180,6 @@ final class FileWatcher {
         lock.unlock()
 
         if hasMore {
-            debugLog("[Watcher] More items during scan, rescheduling")
             lock.lock()
             scheduleTimer()
             lock.unlock()
@@ -232,7 +217,6 @@ final class FileWatcher {
                     }
                     updateDirFileCount(db: db, dirPath: parentDir)
                     updated += 1
-                    debugLog("[Watcher] Deleted: \(relPath)")
                 } catch {
                     debugLog("[Watcher] Delete failed: \(relPath): \(error.localizedDescription)")
                     failed += 1
@@ -244,7 +228,6 @@ final class FileWatcher {
             guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8),
                   scanner.extractor(for: ext) != nil || ASTExtractorRunner.isSupported(ext)
             else {
-                debugLog("[Watcher] Unsupported: \(relPath)")
                 continue
             }
 
@@ -252,13 +235,11 @@ final class FileWatcher {
             var symbols: [SymbolRecord] = []
             let prevFails = (try? db.failedFileCount(path: relPath)) ?? 0
             var extractionError: String?
-            var extractionSource = ""
 
             // Priority 1: AST pipeline
             if ASTExtractorRunner.isSupported(ext), prevFails < 3 {
                 if let astSymbols = ASTExtractorRunner.extract(from: content, filePath: relPath, ext: ext) {
                     symbols = astSymbols
-                    extractionSource = "ast"
                 } else {
                     extractionError = "AST extraction failed"
                 }
@@ -268,7 +249,6 @@ final class FileWatcher {
             if symbols.isEmpty, let extractor {
                 symbols = extractor.extract(from: content, filePath: relPath)
                 if !symbols.isEmpty {
-                    extractionSource = "regex"
                     extractionError = nil
                 }
             }
@@ -308,7 +288,6 @@ final class FileWatcher {
 
                 updateDirFileCount(db: db, dirPath: parentDir)
                 updated += 1
-                debugLog("[Watcher] Indexed: \(relPath) (\(symbols.count) syms via \(extractionSource))")
             } catch {
                 debugLog("[Watcher] Re-extract failed: \(relPath): \(error.localizedDescription)")
                 try? db.dbQueue.write { db in

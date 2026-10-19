@@ -16,9 +16,9 @@ general:
   # Enable the system proxy. When on, macOS system proxy settings are read automatically.
   proxyEnabled: false
 
-  # Logging
-  logMaxSize: 10485760  # max log file size in bytes (default 10MB)
-  logBackupCount: 3     # number of rotated backups
+  # Logging (applies to debug.log and every Python module logger under ~/.cache/utility/)
+  logMaxSize: 10485760  # max log file size in bytes before rotation (default 10MB)
+  logBackupCount: 3     # max rotated backups kept per log file
 
   # HTTP timeout
   httpTimeout: 30       # default HTTP request timeout in seconds

@@ -623,17 +623,27 @@ SUMMARY_PREFIXES = CLIENT_TEXT.summary_prefixes
 UNREGISTERED_BLOB_MIN_CHARS = 2000
 
 
+_OBSERVED_BLOBS: set[str] = set()
+_OBSERVED_BLOB_LOG_LIMIT = 20
+
+
 def _observe_unregistered_blob(content_str: str) -> None:
-    if len(content_str) >= UNREGISTERED_BLOB_MIN_CHARS:
-        logger.info(
-            json.dumps(
-                {
-                    "msg": "client_text_miss",
-                    "length": len(content_str),
-                    "sample": content_str[:80],
-                }
-            )
+    if len(content_str) < UNREGISTERED_BLOB_MIN_CHARS:
+        return
+    # The same unregistered text repeats every turn: log each distinct head once, cap the total.
+    sample = content_str[:80]
+    if sample in _OBSERVED_BLOBS or len(_OBSERVED_BLOBS) >= _OBSERVED_BLOB_LOG_LIMIT:
+        return
+    _OBSERVED_BLOBS.add(sample)
+    logger.info(
+        json.dumps(
+            {
+                "msg": "client_text_miss",
+                "length": len(content_str),
+                "sample": sample,
+            }
         )
+    )
 
 
 #: Truncation cap for the session identifier's system prefix (same order of magnitude as

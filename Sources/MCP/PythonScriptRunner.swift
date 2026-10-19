@@ -128,6 +128,9 @@ enum PythonScriptRunner {
         for (key, value) in noteEnvironment() {
             env[key] = value
         }
+        for (key, value) in logEnvironment() {
+            env[key] = value
+        }
 
         // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
         if let notesDir = resolvedNotesDir() {
@@ -201,6 +204,19 @@ enum PythonScriptRunner {
         return env
     }
 
+    /// Log rotation limits, same source as `DebugLogRotate` (`general.logMaxSize` / `logBackupCount`).
+    static func logEnvironment() -> [String: String] {
+        let general = ConfigManager.shared.config.general
+        var env: [String: String] = [:]
+        if general.logMaxSize > 0 {
+            env[EnvKeys.logMaxSize] = String(general.logMaxSize)
+        }
+        if general.logBackupCount > 0 {
+            env[EnvKeys.logBackupCount] = String(general.logBackupCount)
+        }
+        return env
+    }
+
     private static func encodeJSON(_ value: Any) -> String? {
         guard let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -232,6 +248,9 @@ enum PythonScriptRunner {
             overrides[key] = value
         }
         for (key, value) in noteEnvironment() {
+            overrides[key] = value
+        }
+        for (key, value) in logEnvironment() {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle

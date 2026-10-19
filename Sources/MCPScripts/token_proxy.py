@@ -322,7 +322,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         if _is_classifier_candidate(request_body):
             _inject_classifier_disabled(request_body, api_format)
             body_bytes = json.dumps(request_body).encode()
-            logger.info(
+            logger.debug(
                 json.dumps(
                     {
                         "msg": "classifier_thinking_disabled",
@@ -334,7 +334,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 )
             )
         else:
-            logger.info(
+            logger.debug(
                 json.dumps(
                     {
                         "msg": "classifier_check_skip",

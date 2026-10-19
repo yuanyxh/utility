@@ -11,6 +11,8 @@ import logging.handlers
 import os
 from datetime import datetime, timezone
 
+from config import log_backup_count, log_max_size
+
 _CACHE_BASE = os.path.expanduser("~/.cache/utility")
 
 
@@ -23,12 +25,13 @@ def setup_logging(name: str, level=logging.INFO, json_format=False):
         return root
 
     log_path = os.path.join(_CACHE_BASE, f"{name}.log")
-    fh = logging.handlers.TimedRotatingFileHandler(
+    # Size rotation, matching Swift debug.log: <name>.log -> .1 -> .2, keeps at most N backups.
+    fh = logging.handlers.RotatingFileHandler(
         filename=log_path,
-        when="midnight",
-        interval=1,
-        backupCount=30,
+        maxBytes=log_max_size(),
+        backupCount=log_backup_count(),
         encoding="utf-8",
+        delay=True,  # create the file on the first actual record, not at import time
     )
 
     if json_format:
