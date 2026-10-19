@@ -65,6 +65,7 @@ enum PythonScripts {
     static let summarize = "summarize.py"
     static let astExtractor = "ast_extractor.py"
     static let knowledgeRefill = "knowledge_refill.py"
+    static let rssDaily = "rss_daily.py"
 }
 
 // MARK: - Python Subprocess Environment Variable Names
@@ -109,6 +110,10 @@ enum EnvKeys {
     /// Log rotation shared by Swift `debug.log` and every Python logger (`general.log*`).
     static let logMaxSize = "UTILITY_LOG_MAX_SIZE"
     static let logBackupCount = "UTILITY_LOG_BACKUP_COUNT"
+
+    /// RSS 日报配置（JSON，来自 `rss.daily`）与 app 自身可执行文件路径（供脚本调用 `rss --fetch`）。
+    static let rssDailyConfig = "RSS_DAILY_CONFIG"
+    static let utilityCLIPath = "UTILITY_CLI_PATH"
 }
 
 // MARK: - Shared Pasteboard Types

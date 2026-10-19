@@ -131,6 +131,9 @@ enum PythonScriptRunner {
         for (key, value) in logEnvironment() {
             env[key] = value
         }
+        for (key, value) in rssDailyEnvironment() {
+            env[key] = value
+        }
 
         // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
         if let notesDir = resolvedNotesDir() {
@@ -222,6 +225,21 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)
     }
 
+    /// RSS 日报任务配置（JSON）与 app 可执行文件路径。
+    /// 与 `aiEnvironment()` 同理，必须同时出现在 `baseEnvironment()` 与 `taskEnvironmentOverrides()` 两个注入点。
+    static func rssDailyEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        if let data = try? JSONEncoder().encode(ConfigManager.shared.config.rss.daily),
+           let json = String(data: data, encoding: .utf8)
+        {
+            env[EnvKeys.rssDailyConfig] = json
+        }
+        if let executable = Bundle.main.executablePath {
+            env[EnvKeys.utilityCLIPath] = executable
+        }
+        return env
+    }
+
     /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
     static func resolvedNotesDir() -> String? {
         guard let mcp = ConfigManager.shared.config.mcp else { return nil }
@@ -251,6 +269,9 @@ enum PythonScriptRunner {
             overrides[key] = value
         }
         for (key, value) in logEnvironment() {
+            overrides[key] = value
+        }
+        for (key, value) in rssDailyEnvironment() {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle

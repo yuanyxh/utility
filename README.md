@@ -204,6 +204,26 @@ rss:
       url: "https://developer.mozilla.org/en-US/blog/rss.xml"
 ```
 
+**Built-in daily digest**
+
+With `rss.daily.enabled: true` the app registers the internal task `rss-daily` (also triggerable from the menu bar): fetch → history dedup → LLM pre-filter → body fetch and summary → write `<outputDir>/YYYY/<quarter>/YYYY-MM-DD.md`.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `rss.daily.enabled` | `false` | register the built-in digest task |
+| `rss.daily.cron` | `0 10 * * *` | 5-field cron; empty string = manual trigger only |
+| `rss.daily.outputDir` | `""` | output root; empty = `$NOTES_DIR/RSS` |
+| `rss.daily.markRead` | `true` | mark processed items read after a successful write |
+| `rss.daily.maxConcurrency` | `4` | concurrent body fetches |
+| `rss.daily.articleMaxChars` | `12000` | per-article truncation |
+| `rss.daily.filterBatch` | `40` | entries per pre-filter call |
+| `rss.daily.summaryBatch` | `4` | articles per summary call |
+| `rss.daily.maxDigestLinks` | `10` | max external links expanded from a weekly digest |
+| `rss.daily.fetchTimeout` | `20` | per-page fetch timeout (seconds) |
+| `rss.daily.llmTimeout` | `120` | per LLM call timeout (seconds) |
+| `rss.daily.clash.enabled` | `false` | switch a Clash proxy group during fetching, then restore |
+| `rss.daily.clash.group` / `target` | `🐟 漏网之鱼` / `🚀 节点选择` | group and target node |
+
 ### Scheduled tasks
 
 **Actions**
@@ -225,9 +245,9 @@ rss:
 
 ```yaml
 tasks:
-  - name: daily rss digest
+  - name: daily report
     trigger: '0 10 * * *'
-    exec: { type: sh, command: ~/.hermes/scripts/utility-rss-daily.sh }
+    exec: { type: sh, command: ~/scripts/daily-report.sh }
     enabled: true
     mode: cron
 ```

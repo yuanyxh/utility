@@ -43,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Start the Token proxy monitor
         startTokenProxy()
 
+        // Register the built-in RSS daily task
+        updateRSSDailyTask()
+
         KnowledgeService.shared.panel = knowledgePanel
         KnowledgeService.shared.start()
         // 菜单入口走这个引用;漏赋值时 showKnowledgePanel 的 guard 会静默 return(点了没反应、无日志)
@@ -110,6 +113,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         // Knowledge panel: rebuild the two timers per the new intervals / enabled flag
         KnowledgeService.shared.rearm()
+
+        // RSS daily: re-evaluate the built-in task against the new config
+        updateRSSDailyTask()
     }
 
     /// Register/unregister the built-in memory summary task. Idempotent: unregister when disabled; register directly when enabled.
@@ -151,6 +157,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[MCP] Summary task registered (cron: \(trigger))")
+    }
+
+    /// Register/unregister the built-in RSS daily task. Idempotent: unregister only when disabled;
+    /// register directly when enabled (same-name replacement — unregistering first would clear last_fire
+    /// and make handleMissed re-fire the task after every restart).
+    private func updateRSSDailyTask() {
+        let daily = ConfigManager.shared.config.rss.daily
+        guard daily.enabled,
+              let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.rssDaily)
+        else {
+            TaskScheduler.shared.unregisterInternalTask(named: "rss-daily")
+            debugLog("[RSS] Daily task disabled or unavailable")
+            return
+        }
+
+        let mcp = ConfigManager.shared.config.mcp
+        let overrides = PythonScriptRunner.taskEnvironmentOverrides(
+            memoryServerURL: HTTP.localBaseURL(port: mcp?.port ?? 0),
+            excludeTags: mcp?.excludeTags.joined(separator: ",") ?? "",
+        )
+        let cmd = PythonScriptRunner.shellCommand(script: scriptPath, environmentOverrides: overrides)
+
+        let cron = daily.cron.trimmingCharacters(in: .whitespacesAndNewlines)
+        let task = TaskConfig(
+            name: "rss-daily",
+            trigger: cron,
+            exec: .sh(cmd),
+            enabled: true,
+            mode: cron.isEmpty ? .manual : .cron,
+        )
+        TaskScheduler.shared.registerInternalTask(task)
+        debugLog("[RSS] Daily task registered (\(cron.isEmpty ? "manual" : "cron: \(cron)"))")
     }
 
     private func registerAllHotkeys() {

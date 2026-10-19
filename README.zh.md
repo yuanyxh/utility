@@ -204,6 +204,26 @@ rss:
       url: "https://developer.mozilla.org/en-US/blog/rss.xml"
 ```
 
+**内置日报**
+
+`rss.daily.enabled: true` 时注册内部任务 `rss-daily`（菜单栏也可手动触发）：抓取 → 历史去重 → LLM 初筛 → 正文抓取与总结 → 写入 `<outputDir>/YYYY/季度/YYYY-MM-DD.md`。
+
+| 配置项 | 默认 | 作用 |
+|---|---|---|
+| `rss.daily.enabled` | `false` | 是否注册内置日报任务 |
+| `rss.daily.cron` | `0 10 * * *` | 五段 cron；空字符串 = 仅手动触发 |
+| `rss.daily.outputDir` | `""` | 输出根目录；空 = `$NOTES_DIR/RSS` |
+| `rss.daily.markRead` | `true` | 生成成功后把本次处理的条目标记已读 |
+| `rss.daily.maxConcurrency` | `4` | 正文并发抓取数 |
+| `rss.daily.articleMaxChars` | `12000` | 单篇正文截断长度 |
+| `rss.daily.filterBatch` | `40` | 初筛每批条数 |
+| `rss.daily.summaryBatch` | `4` | 总结每批条数 |
+| `rss.daily.maxDigestLinks` | `10` | 周刊最多拆解外链数 |
+| `rss.daily.fetchTimeout` | `20` | 单页抓取超时（秒） |
+| `rss.daily.llmTimeout` | `120` | 单次 LLM 调用超时（秒） |
+| `rss.daily.clash.enabled` | `false` | 抓取期间切换 Clash 代理组，结束后恢复 |
+| `rss.daily.clash.group` / `target` | `🐟 漏网之鱼` / `🚀 节点选择` | 切换的组与目标节点 |
+
 ### 定时任务
 
 **操作**
@@ -225,9 +245,9 @@ rss:
 
 ```yaml
 tasks:
-  - name: daily rss digest
+  - name: daily report
     trigger: '0 10 * * *'
-    exec: { type: sh, command: utility-rss-daily.sh }
+    exec: { type: sh, command: ~/scripts/daily-report.sh }
     enabled: true
     mode: cron
 ```

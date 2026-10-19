@@ -562,11 +562,62 @@ public struct StageConfig: Codable {
 
 public struct RSSConfig: Codable {
     var feeds: [RSSFeedConfig] = []
+    var daily: RSSDailyConfig = .init()
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         feeds = try c.decodeIfPresent([RSSFeedConfig].self, forKey: .feeds) ?? []
+        daily = try c.decodeIfPresent(RSSDailyConfig.self, forKey: .daily) ?? .init()
+    }
+}
+
+/// RSS 日报内置任务配置。cron 为空字符串时只注册手动任务（菜单栏点击触发）。
+public struct RSSDailyConfig: Codable {
+    var enabled: Bool = false
+    var cron: String = "0 10 * * *"
+    /// Empty = `<NOTES_DIR>/RSS`
+    var outputDir: String = ""
+    var markRead: Bool = true
+    var maxConcurrency: Int = 4
+    var articleMaxChars: Int = 12000
+    var filterBatch: Int = 40
+    var summaryBatch: Int = 4
+    var maxDigestLinks: Int = 10
+    var fetchTimeout: Int = 20
+    var llmTimeout: Int = 120
+    var clash: RSSClashConfig = .init()
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        cron = try c.decodeIfPresent(String.self, forKey: .cron) ?? "0 10 * * *"
+        outputDir = try c.decodeIfPresent(String.self, forKey: .outputDir) ?? ""
+        markRead = try c.decodeIfPresent(Bool.self, forKey: .markRead) ?? true
+        maxConcurrency = try c.decodeIfPresent(Int.self, forKey: .maxConcurrency) ?? 4
+        articleMaxChars = try c.decodeIfPresent(Int.self, forKey: .articleMaxChars) ?? 12000
+        filterBatch = try c.decodeIfPresent(Int.self, forKey: .filterBatch) ?? 40
+        summaryBatch = try c.decodeIfPresent(Int.self, forKey: .summaryBatch) ?? 4
+        maxDigestLinks = try c.decodeIfPresent(Int.self, forKey: .maxDigestLinks) ?? 10
+        fetchTimeout = try c.decodeIfPresent(Int.self, forKey: .fetchTimeout) ?? 20
+        llmTimeout = try c.decodeIfPresent(Int.self, forKey: .llmTimeout) ?? 120
+        clash = try c.decodeIfPresent(RSSClashConfig.self, forKey: .clash) ?? .init()
+    }
+}
+
+/// 可选：日报期间切换 Clash 代理组，结束后恢复原选择。
+public struct RSSClashConfig: Codable {
+    var enabled: Bool = false
+    var group: String = "🐟 漏网之鱼"
+    var target: String = "🚀 节点选择"
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        group = try c.decodeIfPresent(String.self, forKey: .group) ?? "🐟 漏网之鱼"
+        target = try c.decodeIfPresent(String.self, forKey: .target) ?? "🚀 节点选择"
     }
 }
 

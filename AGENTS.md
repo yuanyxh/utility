@@ -176,6 +176,14 @@
   - `modelProxy.clientAccel` / `clientText` 段例外：解码走 `ConfigTypes.decodeAny`（用 `Decoder.container(keyedBy: AnyKey.self)` 另开任意键名容器），每个键**同时登记 camelCase 与 snake_case 两种拼写**（修复上述历史失效且不破坏既有配置）
     - ⚠️ 不要用 `K(stringValue:)` 去试探键名：合成 CodingKeys 的 `init?(stringValue:)` 只认 case 名，传 snake_case 恒返回 nil，回退分支会变成死代码（实测过）
 
+### RSS 内置日报
+
+- 采集唯一实现是 `RSSManager.fetchAll()`（CLI `utility rss --fetch`）；`rss_daily.py` 只裸 SQL 读 `rss_item` 并回写 `is_read`，不重复实现抓取
+- 日报由内部任务 `rss-daily` 驱动（`AppDelegate.updateRSSDailyTask()`），`cron` 为空时注册 `manual` 模式；启用时直接 register，禁止先 unregister
+- `rss_filter` / `rss_digest` / `rss_summary` 三次 LLM 调用必须传 `extra_body={"thinking": {"type": "disabled"}}`：该 provider 不关闭思考时会耗尽 `max_tokens` 且单次调用可达数分钟
+- LLM 只返回 JSON；标题格式、来源方括号、归档路径全部由 `rss_render.py` 确定性拼装
+- 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报；LLM 未配置时退出码 1，不写空日报
+
 ### MCP 服务
 - server.py / summarize.py / token_proxy.py 在 `Sources/MCPScripts/` 目录，脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
 - 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
