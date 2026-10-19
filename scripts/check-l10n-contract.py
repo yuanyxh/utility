@@ -175,8 +175,8 @@ def main() -> int:
                     f"{os.path.relpath(path, ROOT)}:{lineno}: hardcoded language tag {value!r}"
                 )
 
-    # Group 5: Python literal keys exist. `param_text("param.x")` resolves to `mcp.param.x`.
-    param_refs: set[str] = set()
+    # Group 5: Python literal keys exist. Parameter descriptions are fixed English and
+    # are checked by check-router-config-contract.py, not against this catalog.
     for path in iter_files(PY_SOURCES, ".py"):
         if path == PY_CATALOG:
             continue
@@ -185,15 +185,11 @@ def main() -> int:
             if not (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
+                and node.func.id == "t"
                 and node.args
                 and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)
             ):
-                continue
-            if node.func.id == "param_text":
-                param_refs.add(node.args[0].value)
-                continue
-            if node.func.id != "t":
                 continue
             key = node.args[0].value
             if key not in baseline:
@@ -212,11 +208,8 @@ def main() -> int:
     )
     for key in sorted(baseline):
         namespace = key.split(".", 1)[0]
-        if key.startswith("mcp.param."):
-            if key[len("mcp.") :] not in param_refs:
-                warnings.append(f"unreferenced Python key: {key}")
-        elif namespace in {"mcp", "proxy"}:
-            if f'"{key}"' not in python_usage:
+        if namespace in {"mcp", "proxy"}:
+            if not re.search(re.escape(key).join(("[\"']", "[\"']")), python_usage):
                 warnings.append(f"unreferenced Python key: {key}")
         elif not re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage):
             warnings.append(f"unreferenced Swift key: {key} ({swift_accessor(key)})")

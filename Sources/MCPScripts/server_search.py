@@ -1159,9 +1159,9 @@ def tool_project_search(
             "expandedQuery": expanded,
             "layers": active_layers,
             "disambiguation": (
-                f"找到 {len(symbol_found)} 个匹配, 符号名相同, 位于不同文件：\n"
+                f"Found {len(symbol_found)} matches with the same name in different files:\n"
                 + "\n".join(options)
-                + "\n指定 file_path 或 kind 参数可精确定位。"
+                + "\nPass file_path or kind to narrow it down."
             ),
             "results": all_found[:limit],
             "total": total,
@@ -1229,7 +1229,7 @@ def tool_project_structure(
 
     if len(dirs) > MAX_ITEMS or len(files) > MAX_ITEMS:
         result["truncated"] = True
-        result["hint"] = "结果过多已被截断，指定子路径精确定位"
+        result["hint"] = "Result truncated; pass a subpath to narrow it down"
 
     return result
 

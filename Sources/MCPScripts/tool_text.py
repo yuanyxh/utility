@@ -1,17 +1,50 @@
-"""MCP tool parameter descriptions — thin alias over the shared catalog.
+"""Fixed-English MCP tool parameter descriptions.
 
-Keys stay `param.<semantic>` at the call site and resolve to `mcp.param.<semantic>` in the
-catalog. `server.py` keeps calling `param_text(...)`, so the schema cannot silently grow a
-bare description literal.
+Tool and parameter descriptions are always English; this layer is not tied to `UTILITY_LANG`.
+Keys are semantic, so text shared by several tools is defined once.
 """
 
 from __future__ import annotations
 
-from l10n import MissingText, t
+from l10n import MissingText
 
-#: Backwards-compatible name for importers that catch the old exception.
 MissingParamText = MissingText
+
+PARAM_DESCRIPTIONS: dict[str, str] = {
+    "param.memory_content": (
+        "One fact. With background: line 1 [background], then [fact]; organize as "
+        "scenario/decision/evolution and omit missing parts. Without background: state the "
+        "fact directly; never fabricate one."
+    ),
+    "param.memories": "Facts to write; same semantics as remember's content.",
+    "param.query": "Search query",
+    "param.max_results": "Max results",
+    "param.since_days": "Days back to look; default 3",
+    "param.memory_ids": "Memory IDs",
+    "param.memory_id": "Memory ID to delete",
+    "param.point_id": "Optional point ID",
+    "param.layer": "Layer to delete from; default hot",
+    "param.bit": "Bit index; 0 = summarized",
+    "param.bit_value": "1 = set, 0 = reset",
+    "param.db_path": "Required. Absolute path to .utility/deps.sqlite",
+    "param.search_keyword": (
+        "Required. Search keyword; Chinese synonyms are expanded automatically"
+    ),
+    "param.file_path": "Optional. Restrict to a file path (fuzzy match)",
+    "param.symbol_kind": "Optional. Restrict to a symbol kind (class/fun/val/...)",
+    "param.subpath": "Optional subpath; returns its next level",
+    "param.file_or_dir": "File or directory path",
+    "param.notes_keyword": "Search keyword; natural language is supported",
+    "param.project_dir": "Absolute path to the project directory",
+    "param.parent_name": "Registered tool name, e.g. check/write/think",
+    "param.resource_path": (
+        "Path relative to the tool directory, e.g. references/durable-context.md"
+    ),
+}
 
 
 def param_text(key: str) -> str:
-    return t(f"mcp.{key}")
+    try:
+        return PARAM_DESCRIPTIONS[key]
+    except KeyError:
+        raise MissingParamText(f"unregistered parameter text key: {key!r}") from None

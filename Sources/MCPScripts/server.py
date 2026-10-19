@@ -132,18 +132,19 @@ DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
 #: same table as the other tools leaves no room for drift.
 DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
-TOOL_DEFAULTS: dict[str, str] = {
-    "remember": "用户说「记住/记录」、bug 修复完成、得知关键要点、输出/更新架构设计 → 必须调用本工具。写入单条事实到共享记忆。多条内容请用 remember_batch。",
-    "remember_batch": "有多条内容需要记录时优先使用, 可大幅减少调用次数。批量写入多条记忆, 功能与 remember 一致。",
-    "recall": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须调用本工具。在共享记忆库、知识库和笔记中搜索。",
-    "catch_up": "用户说「刚才/上次/之前/上回/近期」或问做了什么/进展/未解决问题 → 必须调用本工具。禁止用 git log 代替。获取最近记忆列表, 用于跨会话上下文恢复。",
-    "forget": "用户要求删除记忆, 或记忆内容有误/过时 → 调用本工具。删除指定 ID 的记忆。",
-    "project_search": "优先使用本工具查找(符号/文件/Package)的定义和位置, 避免全量读取文件。支持中文同义词扩展。项目依赖图查找。",
-    "project_structure": "优先使用本工具了解项目目录结构，替代 ls/find 遍历。指定子路径查看下一级。",
-    "project_exports": "优先使用本工具获取文件或目录的公共接口, 避免全量读取文件。",
-    "project_notes": "用户说「查一下/搜索/找一下/之前那个」、提到历史/已有信息 → 必须并行调用本工具。recall 变体, 搜索项目本地信息",
-    "tool_resource": "当指示加载 references 文件或需要查看 scripts 脚本内容时调用。返回附属资源内容。",
-    "set_memory_processed": "设置/重置记忆的已处理标识位。bit0=1 表示已被总结脚本成功处理。测试与还原用：value=1 设置、value=0 重置，幂等。",
+#: Fixed English tool descriptions; parameter guidance lives in `tool_text.PARAM_DESCRIPTIONS`.
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "remember": "Trigger: user says remember/record, a bug is fixed, an insight is learned, or an architecture design changes. Writes one fact to shared memory.",
+    "remember_batch": "Batch version of remember; prefer it for multiple facts to cut calls.",
+    "recall": "Trigger: user says look up/search/find that earlier one, or refers to history or existing information. Searches shared memory, knowledge base, and notes.",
+    "catch_up": "Trigger: user says just now/last time/previously/recently, or asks what was done, the progress, or what remains unresolved. Do not substitute git log.",
+    "forget": "Trigger: user asks to delete a memory, or a memory is wrong/outdated. Deletes it permanently.",
+    "project_search": "Prefer over reading whole files to locate symbols, files, and packages. Searches the project dependency graph.",
+    "project_structure": "Prefer over ls/find traversal to understand the project layout.",
+    "project_exports": "Prefer over reading a whole file to get its public interface.",
+    "project_notes": "Like recall, but searches local project notes only.",
+    "tool_resource": "Load a file under references or a script under scripts when instructed.",
+    "set_memory_processed": "Set or reset the processed bit of memories. Idempotent.",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
@@ -919,7 +920,7 @@ async def handle_list_tools() -> list[Tool]:
     tools = [
         Tool(
             name="remember",
-            description=TOOL_DEFAULTS["remember"],
+            description=TOOL_DESCRIPTIONS["remember"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -943,12 +944,13 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="remember_batch",
-            description=TOOL_DEFAULTS["remember_batch"],
+            description=TOOL_DESCRIPTIONS["remember_batch"],
             inputSchema={
                 "type": "object",
                 "properties": {
                     "memories": {
                         "type": "array",
+                        "description": param_text("param.memories"),
                         "items": {
                             "type": "object",
                             "properties": {
@@ -978,7 +980,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="recall",
-            description=TOOL_DEFAULTS["recall"],
+            description=TOOL_DESCRIPTIONS["recall"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -998,7 +1000,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="catch_up",
-            description=TOOL_DEFAULTS["catch_up"],
+            description=TOOL_DESCRIPTIONS["catch_up"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1011,23 +1013,30 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="forget",
-            description=TOOL_DEFAULTS["forget"],
+            description=TOOL_DESCRIPTIONS["forget"],
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "memory_id": {"type": "string"},
-                    "point_id": {"type": "string"},
+                    "memory_id": {
+                        "type": "string",
+                        "description": param_text("param.memory_id"),
+                    },
+                    "point_id": {
+                        "type": "string",
+                        "description": param_text("param.point_id"),
+                    },
                     "layer": {
                         "type": "string",
                         "enum": ["hot", "cold", "all"],
                         "default": "hot",
+                        "description": param_text("param.layer"),
                     },
                 },
             },
         ),
         Tool(
             name="set_memory_processed",
-            description=TOOL_DEFAULTS["set_memory_processed"],
+            description=TOOL_DESCRIPTIONS["set_memory_processed"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1053,7 +1062,7 @@ async def handle_list_tools() -> list[Tool]:
         # ── Project tools ──
         Tool(
             name="project_search",
-            description=TOOL_DEFAULTS["project_search"],
+            description=TOOL_DESCRIPTIONS["project_search"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1084,7 +1093,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="project_structure",
-            description=TOOL_DEFAULTS["project_structure"],
+            description=TOOL_DESCRIPTIONS["project_structure"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1107,7 +1116,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="project_exports",
-            description=TOOL_DEFAULTS["project_exports"],
+            description=TOOL_DESCRIPTIONS["project_exports"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1125,7 +1134,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="project_notes",
-            description=TOOL_DEFAULTS["project_notes"],
+            description=TOOL_DESCRIPTIONS["project_notes"],
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1148,7 +1157,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="tool_resource",
-            description=TOOL_DEFAULTS["tool_resource"],
+            description=TOOL_DESCRIPTIONS["tool_resource"],
             inputSchema={
                 "type": "object",
                 "properties": {

@@ -27,9 +27,8 @@ just not cross-language):
                   to `Resources/<lang>.json`; the baseline language is the same value on both sides
   6. param descriptions —— every parameter description in `server.py`'s `handle_list_tools()` must
                   come from `tool_text.param_text(...)` (no bare literals); referenced keys must
-                  exist in the generated catalog (`mcp.param.*`), the catalog must have no orphan
-                  parameter keys, and each key's language set must include the baseline; the
-                  baseline language is the same value as group 5
+                  exist in `tool_text.PARAM_DESCRIPTIONS`, and the table must have no orphan keys.
+                  These texts are fixed English and are not part of the language catalog
   7. upstream encoding —— when forwarding upstream, `token_proxy.py` must not pass through the
                   client's `accept-encoding`, must explicitly declare a whitelist, and every
                   encoding in the whitelist must be decodable by this process (the criterion comes
@@ -117,6 +116,7 @@ PROMPT_FEATURES = {
     "gen_new": ("topic", "facts", "dir_tree", "tops_block", "exclude_dirs"),
     "gen_merge": ("topic", "facts", "target", "context"),
     "extract_rules": ("facts_text", "level_labels", "titles_block"),
+    "prune_rules": ("level", "limit", "items"),
     "contradiction": ("items_text", "content"),
     # Python side (knowledge panel refill pipeline)
     "knowledge_expand": ("theme", "done"),
@@ -1013,32 +1013,25 @@ def collect_param_descriptions(path: str) -> tuple[set[str], list[str]]:
 def find_param_text_violations(
     refs: set[str],
     problems: list[str],
-    table: dict[str, dict[str, str]],
-    baseline_lang: str | None,
+    table: dict[str, str],
 ) -> list[str]:
-    """Pure function: the contract violation list of tool parameter description i18n.
+    """Pure function: the contract violation list of tool parameter descriptions.
 
-    Each of the five assertions corresponds to a real failure:
-    - a description in the schema not going through `param_text` → that parameter ever has only one
-      language (this is how a missed edit happens), only visible when languages are mixed, and no one
-      looks at every parameter;
-    - a referenced key that doesn't exist in the table → raises `MissingParamText` at runtime, making
-      **the entire tool list unusable** (not one description degrading to fallback text, but the
-      client getting no tool at all);
-    - a key in the table that no one references → left over after a rename, and later readers assume
-      editing one place is enough;
-    - a key missing the baseline language → that key resolves to nothing under any language while the
-      other keys work, the hardest to notice;
-    - inconsistent language sets across keys → the schema is presented as a whole at once, and having
-      some parameters in Chinese and some in English is worse than "all untranslated".
+    Each of the three assertions corresponds to a real failure:
+    - a description in the schema not going through `param_text` → a parameter silently loses its
+      guidance, and no one inspects every parameter;
+    - a referenced key that doesn't exist in the table → raises `MissingParamText` at runtime,
+      making **the entire tool list unusable**;
+    - a key in the table that no one references → left over after a rename, and later readers
+      assume editing one place is enough.
     """
     violations = [
-        f"server.py's parameter description does not go through param_text (i18n not covered): {p}"
+        f"server.py's parameter description does not go through param_text: {p}"
         for p in problems
     ]
     if not table:
         violations.append(
-            f"parsed no parameter text from {os.path.relpath(TOOL_TEXT_PY, ROOT)} —— catalog namespace renamed, please update this script"
+            f"parsed no parameter text from {os.path.relpath(TOOL_TEXT_PY, ROOT)} —— the table was renamed, please update this script"
         )
         return violations
 
@@ -1047,35 +1040,9 @@ def find_param_text_violations(
         for key in sorted(refs - set(table))
     ]
     violations += [
-        f"{key!r} in PARAM_TEXT has no schema reference (left over after a rename?)"
+        f"{key!r} in PARAM_DESCRIPTIONS has no schema reference (left over after a rename?)"
         for key in sorted(set(table) - refs)
     ]
-
-    if not baseline_lang:
-        violations.append(
-            "parsed no tool_text.FALLBACK_LANG —— constant renamed, please update this script"
-        )
-        return violations
-
-    for key in sorted(table):
-        if baseline_lang not in table[key]:
-            violations.append(
-                f"PARAM_TEXT[{key!r}] is missing the baseline language {baseline_lang!r} —— it resolves to nothing under any language"
-            )
-
-    # Consistent language sets: report the minority against the "majority", avoiding a whole-table error drowning out the real difference
-    lang_sets = {key: frozenset(langs) for key, langs in table.items()}
-    distinct = set(lang_sets.values())
-    if len(distinct) > 1:
-        majority = max(
-            distinct, key=lambda s: sum(1 for v in lang_sets.values() if v == s)
-        )
-        violations += [
-            f"PARAM_TEXT[{key!r}]'s languages {sorted(langs)} differ from the majority keys' {sorted(majority)}"
-            " —— the schema is presented as a whole, and mixed languages are worse than uniformly untranslated"
-            for key, langs in sorted(lang_sets.items())
-            if langs != majority
-        ]
     return violations
 
 
@@ -1083,8 +1050,8 @@ def find_baseline_lang_violations(langs: dict[str, str | None]) -> list[str]:
     """Pure function: the baseline language must have the same value in **all** modules that hold it.
 
     It decides "which set of text to fall back to when the current language lacks it"——prompts and
-    tool parameter descriptions share the same criterion. If any one drifts, the same missing text
-    yields different results on the two paths, and neither side raises an error.
+    the L10n catalog share the same criterion. If any one drifts, the same missing text yields
+    different results on the two paths, and neither side raises an error.
     """
     missing = sorted(source for source, value in langs.items() if not value)
     if missing:
@@ -1137,8 +1104,8 @@ class ContractInputs:
     swift_context_warn_env: str | None
     param_ref_keys: set[str]
     param_problems: list[str]
-    param_table: dict[str, dict[str, str]]
-    python_tool_text_lang: str | None
+    param_table: dict[str, str]
+    python_l10n_baseline: str | None
     upstream_header_guards: set[str]
     upstream_accept_encoding: str | None
     upstream_encoding_problems: list[str]
@@ -1167,8 +1134,8 @@ def _drop_struct(inp: ContractInputs, struct: str) -> dict[str, set[str]]:
 def collect_inputs(
     client_groups: dict[str, tuple[str, tuple[str, ...]]],
     python_fallback_lang: str | None,
-    param_table: dict[str, dict[str, str]],
-    python_tool_text_lang: str | None,
+    param_table: dict[str, str],
+    python_l10n_baseline: str | None,
 ) -> ContractInputs:
     """Collect the contract inputs from the real sources on both sides (the sole collection point)."""
     param_ref_keys, param_problems = collect_param_descriptions(SERVER_PY)
@@ -1229,7 +1196,7 @@ def collect_inputs(
         param_ref_keys=param_ref_keys,
         param_problems=param_problems,
         param_table=param_table,
-        python_tool_text_lang=python_tool_text_lang,
+        python_l10n_baseline=python_l10n_baseline,
         upstream_header_guards=upstream_guards,
         upstream_accept_encoding=upstream_accept_encoding,
         upstream_encoding_problems=upstream_encoding_problems,
@@ -1278,13 +1245,12 @@ def check_all(
             inp.param_ref_keys,
             inp.param_problems,
             inp.param_table,
-            inp.python_tool_text_lang,
         )
         + find_baseline_lang_violations(
             {
                 "PromptManager.fallbackLanguage": inp.swift_fallback_lang,
                 "prompt_loader.FALLBACK_LANG": inp.python_fallback_lang,
-                "l10n.BASELINE_LANG": inp.python_tool_text_lang,
+                "l10n.BASELINE_LANG": inp.python_l10n_baseline,
             }
         )
     )
@@ -1427,7 +1393,7 @@ def selftest(
         "prompt: baseline language mismatched on the two sides": replace(
             base, swift_fallback_lang="en"
         ),
-        # tool parameter description i18n (added in stage 7)
+        # tool parameter descriptions (fixed English)
         "param: schema contains a bare description not via param_text": replace(
             base,
             param_problems=[
@@ -1440,24 +1406,7 @@ def selftest(
         ),
         "param: the table has a key no one references": replace(
             base,
-            param_table={
-                **base.param_table,
-                "param.orphan": {"zh-Hans": "orphan text", "en": "orphan"},
-            },
-        ),
-        "param: a key is missing the baseline language": replace(
-            base,
-            param_table={**base.param_table, "param.query": {"en": "Search query"}},
-        ),
-        "param: a key's language set differs from the majority": replace(
-            base,
-            param_table={
-                **base.param_table,
-                "param.query": {"zh-Hans": "search query"},
-            },
-        ),
-        "param: baseline language differs from the prompt side": replace(
-            base, python_tool_text_lang="en"
+            param_table={**base.param_table, "param.orphan": "orphan"},
         ),
     }
 
@@ -1529,15 +1478,9 @@ def main() -> int:
             parse_template as parse_prompt_template,
         )
 
-        # The parameter-description group's table is the generated catalog, filtered to its namespace
-        from l10n import BASELINE_LANG as PY_TOOL_TEXT_LANG
-        from l10n_catalog import CATALOG as PY_L10N_CATALOG
-
-        PY_PARAM_TEXT = {
-            key[len("mcp."):]: value
-            for key, value in PY_L10N_CATALOG.items()
-            if key.startswith("mcp.param.")
-        }
+        # The parameter-description table is fixed English and lives in tool_text
+        from l10n import BASELINE_LANG as PY_L10N_BASELINE
+        from tool_text import PARAM_DESCRIPTIONS as PY_PARAM_TEXT
     except Exception as e:  # an import failure means the Python side is already broken, which likewise must not be silent
         print(
             f"[contract] failed to import the Python contracts: {type(e).__name__}: {e}"
@@ -1553,7 +1496,7 @@ def main() -> int:
 
     try:
         inputs = collect_inputs(
-            client_groups, PY_FALLBACK_LANG, PY_PARAM_TEXT, PY_TOOL_TEXT_LANG
+            client_groups, PY_FALLBACK_LANG, PY_PARAM_TEXT, PY_L10N_BASELINE
         )
     except SystemExit as e:  # parse_swift_payloads exits directly on a regex mismatch
         return int(e.code or 2)

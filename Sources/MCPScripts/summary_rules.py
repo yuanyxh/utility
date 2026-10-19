@@ -11,13 +11,14 @@ import re
 from pathlib import Path
 
 import prompt_loader
+from l10n import all_templates, t
 from log_utils import setup_logging
 from summary_llm import (
+    NOTES_DIR,
+    SUMMARY_LLM_TIMEOUT,
     _llm_chat,
     _parse_json_any,
     write_error_log,
-    NOTES_DIR,
-    SUMMARY_LLM_TIMEOUT,
 )
 
 # ---------------------------------------------------------------------------
@@ -37,16 +38,47 @@ RULES_LLM_TEMPERATURE = (
 #: shared with single summary and batch aggregation, unlike the old assumption that "this
 #: stage's prompt is bigger so it needs longer": in practice all three hit the same upstream timeout.
 RULES_LLM_TIMEOUT = SUMMARY_LLM_TIMEOUT
-# Multi-level rules: global + per-project-type; anything the LLM can't classify falls into global
-RULES_LEVELS = {
-    "global": "全局通用",
-    "web_frontend": "Web 前端",
-    "mobile": "移动端",
-    "macos_tool": "macOS 工具",
-    "backend": "后端/服务",
+# Multi-level rules: global + per-project-type; anything the LLM can't classify falls into global.
+# Level ids are stable; their display labels come from the catalog.
+_LEVEL_KEYS = {
+    "global": "mcp.rules.level.global",
+    "web_frontend": "mcp.rules.level.web_frontend",
+    "mobile": "mcp.rules.level.mobile",
+    "macos_tool": "mcp.rules.level.macos_tool",
+    "backend": "mcp.rules.level.backend",
 }
+RULES_LEVELS = tuple(_LEVEL_KEYS)
 
 logger = setup_logging("summarize")
+
+
+def _level_label(level: str) -> str:
+    return t(_LEVEL_KEYS[level])
+
+
+def _field_prefixes(key: str) -> tuple[str, ...]:
+    """Leading labels of a field template across all languages (`- 领域:` / `- Domain:`)."""
+    prefixes = []
+    for template in all_templates(key).values():
+        prefix = template.split("{value}")[0].strip()
+        if prefix:
+            prefixes.append(prefix)
+    return tuple(dict.fromkeys(prefixes))
+
+
+_FIELD_PREFIXES = {
+    field: _field_prefixes(f"mcp.rules.field_{field}")
+    for field in ("domain", "norm", "source", "date", "keywords")
+}
+
+
+def _match_field(line: str) -> tuple[str, str] | None:
+    """Match an entry line against any language's field label."""
+    for field, prefixes in _FIELD_PREFIXES.items():
+        for prefix in prefixes:
+            if line.startswith(prefix + " "):
+                return field, line[len(prefix) + 1 :].strip()
+    return None
 
 
 def _parse_rules_entries(text: str) -> list[dict]:
@@ -65,21 +97,14 @@ def _parse_rules_entries(text: str) -> list[dict]:
                 "date": "",
                 "keywords": [],
             }
-        elif cur:
-            if line.startswith("- 领域: "):
-                cur["domain"] = line[len("- 领域: ") :].strip()
-            elif line.startswith("- 规范: "):
-                cur["norm"] = line[len("- 规范: ") :].strip()
-            elif line.startswith("- 来源: "):
-                cur["source"] = line[len("- 来源: ") :].strip()
-            elif line.startswith("- 提炼于: "):
-                cur["date"] = line[len("- 提炼于: ") :].strip()
-            elif line.startswith("- 关键词: "):
+        elif cur and (matched := _match_field(line)):
+            field, value = matched
+            if field == "keywords":
                 cur["keywords"] = [
-                    k.strip()
-                    for k in re.split(r"[、,，]", line[len("- 关键词: ") :].strip())
-                    if k.strip()
+                    k.strip() for k in re.split(r"[、,，]", value) if k.strip()
                 ]
+            else:
+                cur[field] = value
     if cur:
         entries.append(cur)
     return entries
@@ -88,47 +113,42 @@ def _parse_rules_entries(text: str) -> list[dict]:
 def _render_rules_file(level: str, entries: list[dict]) -> str:
     """Render the full content of a rules file (frontmatter + entry section).
 
-    description tailors the trigger wording to the rules level so that, once
-    registered as an MCP tool by _scan_skills, the LLM can judge when to call it:
-    - global: behavioral constraints + general principles, spanning multiple
-      domains -> broad trigger "fetch this behavioral spec before acting"
-    - project type: triggered "when starting development on that type of project"
-    keywords are kept in the body entries as a scope note, and are not folded into
-    description (to avoid keyword stuffing).
+    `description` tailors the trigger wording to the level for readers of the file:
+    - global: broad trigger spanning multiple domains
+    - project type: triggered when starting development on that type of project
+    Keywords stay in the body entries as a scope note, not in `description`.
     """
-    label = RULES_LEVELS[level]
+    label = _level_label(level)
     if level == "global":
-        description = (
-            f"操作前，获取本行为规范；全局通用规范，共 {len(entries)} 条，"
-            f"适用于编码、审查、协作、总结等任何操作前的行为约束与通用原则。"
-        )
+        description = t("mcp.rules.global_description", count=len(entries))
     else:
-        description = (
-            f"当开始开发{label}项目时触发，获取{label}开发规范指南；"
-            f"{label}通用规范，共 {len(entries)} 条。"
-        )
+        description = t("mcp.rules.level_description", label=label, count=len(entries))
     lines = [
         "---",
         f"name: norms_{level}",
         f"description: {description}",
         "---",
         "",
-        f"# {label}规范",
+        t("mcp.rules.file_title", label=label),
         "",
-        f"> 由 summarize 阶段3 自动提炼维护。条目带来源可追溯，容量上限 "
-        f"{RULES_MAX_PER_FILE} 条。",
+        t("mcp.rules.header_note", limit=RULES_MAX_PER_FILE),
         "",
-        "## 条目",
+        t("mcp.rules.section_entries"),
         "",
     ]
     for e in entries:
         lines.append(f"### {e['title']}")
-        lines.append(f"- 领域: {e.get('domain', '')}")
-        lines.append(f"- 规范: {e.get('norm', '')}")
+        lines.append(t("mcp.rules.field_domain", value=e.get("domain", "")))
+        lines.append(t("mcp.rules.field_norm", value=e.get("norm", "")))
         if e.get("keywords"):
-            lines.append(f"- 关键词: {'、'.join(e['keywords'])}")
-        lines.append(f"- 来源: {e.get('source', '')}")
-        lines.append(f"- 提炼于: {e.get('date', '')}")
+            lines.append(
+                t(
+                    "mcp.rules.field_keywords",
+                    value=t("mcp.rules.keywords_separator").join(e["keywords"]),
+                )
+            )
+        lines.append(t("mcp.rules.field_source", value=e.get("source", "")))
+        lines.append(t("mcp.rules.field_date", value=e.get("date", "")))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -154,19 +174,23 @@ def _trim_rules_entries(level: str, entries: list[dict]) -> list[dict]:
     """When over capacity, let the LLM prune the least reusable entries, keeping no more than the limit."""
     if len(entries) <= RULES_MAX_PER_FILE:
         return entries
+    separator = t("mcp.rules.topic_separator")
     item_list = "\n".join(
-        f"- [{i}] {e['title']}：{e.get('norm', '')[:80]}" for i, e in enumerate(entries)
+        t(
+            "mcp.rules.item_line",
+            index=i,
+            title=e["title"],
+            sep=separator,
+            summary=e.get("norm", "")[:80],
+        )
+        for i, e in enumerate(entries)
     )
-    prompt = f"""\
-规范文件「{RULES_LEVELS[level]}」条目超过上限 {RULES_MAX_PER_FILE} 条，需要淘汰复用价值最低的条目。
-
-现有条目：
-{item_list}
-
-要求：保留最有复用价值、最能指导行动的 {RULES_MAX_PER_FILE} 条，淘汰过时/低复用/重复的。
-
-返回 JSON：{{"keep_indexes": [保留的条目下标数组]}}
-只返回严格标准的 JSON 对象，不要代码块包裹。"""
+    prompt = prompt_loader.prompt(
+        "prune_rules",
+        level=_level_label(level),
+        limit=str(RULES_MAX_PER_FILE),
+        items=item_list,
+    )
     raw = _llm_chat(
         prompt,
         temperature=0.1,
@@ -199,8 +223,9 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
     if not groups:
         return {"skipped": "no_groups"}
 
+    separator = t("mcp.rules.topic_separator")
     facts_text = "\n".join(
-        f"- {g.get('topic', '')}：{g.get('facts', '')}" for g in groups
+        f"- {g.get('topic', '')}{separator}{g.get('facts', '')}" for g in groups
     )
 
     # Existing title lists, so the LLM can avoid duplicates during extraction
@@ -208,11 +233,14 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
     for level in RULES_LEVELS:
         entries, _ = _load_rules_entries(level)
         existing_titles[level] = [e["title"] for e in entries]
+    empty = t("mcp.rules.empty_list")
     titles_block = "\n".join(
-        f"[{level}] {'; '.join(titles)}" if titles else f"[{level}] （空）"
+        f"[{level}] {'; '.join(titles)}" if titles else f"[{level}] {empty}"
         for level, titles in existing_titles.items()
     )
-    level_labels = "\n".join(f"- {k}: {v}" for k, v in RULES_LEVELS.items())
+    level_labels = "\n".join(
+        f"- {level}: {_level_label(level)}" for level in RULES_LEVELS
+    )
 
     prompt = prompt_loader.prompt(
         "extract_rules",
@@ -272,7 +300,7 @@ def _run_phase3(groups: list[dict], today_str: str) -> dict:
         entries.append(
             {
                 "title": title,
-                "domain": RULES_LEVELS[level],
+                "domain": _level_label(level),
                 "norm": summary,
                 "keywords": keywords,
                 "source": str(norm.get("source", "")).strip(),

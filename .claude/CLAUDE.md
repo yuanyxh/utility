@@ -34,7 +34,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | 符号提取 Scanner | `.claude/docs/architecture/scanner.md` |
 | PythonScriptRunner / PythonDaemon / 日志 | `.claude/docs/architecture/python-runtime.md` |
 | Token Proxy | `.claude/docs/architecture/token-proxy.md` |
-| llm_client / 提示词 / 参数描述 i18n | `.claude/docs/architecture/llm-and-prompts.md` |
+| llm_client / 提示词 / MCP 描述文案 | `.claude/docs/architecture/llm-and-prompts.md` |
 | 知识面板 | `.claude/docs/architecture/knowledge-panel.md` |
 | MCP 服务 server.py | `.claude/docs/architecture/mcp-server.md` |
 | Orchestrate 设计沉淀 / Claude CLI 标志 | `.claude/docs/architecture/design-notes.md` |
@@ -80,8 +80,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 提示词在 `Sources/MCPScripts/prompts/<lang>/<feature>.md`；目录优先级：用户覆盖（语言无关）→ 内置（当前语言 → `zh-Hans` 基线）
 - 渲染**禁用** `str.format` / 逐 key 替换，必须按名字**一次性**替换
 - 语言唯一判据 `L10n.resolvedLanguage()` / `UTILITY_LANG`
-- 工具参数描述只做 `inputSchema.description`；未登记的键抛 `MissingParamText`，不回退成键名
-- `param.memory_content` 与 `TOOL_DEFAULTS["remember"]` 必须同为三要素口径
+- 工具描述与参数描述固定英文，不进语言目录；参数描述只做 `inputSchema.description`，未登记的键抛 `MissingParamText`
+- `param.memory_content` 与 `TOOL_DESCRIPTIONS["remember"]` 必须同为三要素口径
 
 ### MCP 服务（server.py）
 - 冷层集合维度不一致：`logger.error` + **禁用冷层**，不拒绝启动

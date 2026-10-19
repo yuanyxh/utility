@@ -12,34 +12,35 @@ single-instance throttle) and main().
 """
 
 import difflib
-import os
-import json
-import sqlite3
-import time
-import re
 import fcntl
 import hashlib
+import json
+import os
+import re
+import sqlite3
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import prompt_loader
 from config import (
     data_dir,
     notes_dir,
     summary_exclude_tags,
 )
-import prompt_loader
+from l10n import all_templates, t
 from log_utils import (
     setup_logging as _log_setup,
 )
 from summary_llm import (
     _HTTP,
     AI_API_KEY,
+    SUMMARY_LLM_TIMEOUT,
     _llm_chat,
     _parse_json_any,
     write_error_log,
-    SUMMARY_LLM_TIMEOUT,
 )
 from summary_rules import _run_phase3
 from summary_stats import _print_report_v2
@@ -106,12 +107,20 @@ SUMMARY_TOPIC_JACCARD = 0.05
 
 SUMMARY_FRAGMENT_LINE_MIN = 10
 
-SUMMARY_PLACEHOLDER_PATTERNS = (
-    "未详述",
-    "未记录",
-    "未提供",
-    "具体方案未",
-)
+
+def _marker_set(key: str) -> tuple[str, ...]:
+    """Union of a newline-separated marker list across languages.
+
+    Detection must work for content generated under either language (and for memories
+    written before the language changed), so every language's markers are accepted.
+    """
+    markers: list[str] = []
+    for template in all_templates(key).values():
+        markers.extend(line.strip() for line in template.splitlines() if line.strip())
+    return tuple(dict.fromkeys(markers))
+
+
+SUMMARY_PLACEHOLDER_PATTERNS = _marker_set("mcp.summary.placeholder_markers")
 
 MEMORY_QUALITY_MIN_LEN = 15
 
@@ -125,42 +134,18 @@ MEMORY_QUALITY_REVIEW_VOTES = 3
 
 MEMORY_QUALITY_LLM_THREADS = 4
 
-QUALITY_TRUNC_PLACEHOLDERS = (
-    "内容截断，保留已有信息",
-    "内容截断，仅保留已有信息",
-    "内容截断，仅保留此信息",
-    "内容截断，保留此信息",
-    "内容截断仅保留已有信息",
-    "内容截断仅保留此信息",
-    "已截断，保留已有信息",
-    "截断，保留已有信息",
-    "截断，仅保留已有信息",
-    "仅保留已有信息",
-    "仅保留此信息",
-    # ── v5 additions: 5 real forms from the notes source not previously covered ──
-    "（内容截断）保留已有信息",
-    "内容截断（保留已有信息）",
-    "导致响应内容截断（保留已有信息）",
-    "当内容截断时，保留已有信息",
-    "内容截断，此处保留已有信息",
-    "相关内容截断保留",
-)
+QUALITY_TRUNC_PLACEHOLDERS = _marker_set("mcp.summary.truncation_markers")
 
 _QUALITY_TRUNC_RE = re.compile(
     r"(?:内容|相关)?内容截断[（(]?[，,、]?(?:时|此处)?[）)]?仅?保留(?:已有|此)(?:信息|内容)"
+    r"|(?:content\s+)?truncated[,;:]?\s*(?:only\s+)?(?:the\s+)?(?:existing\s+)?information\s+(?:kept|retained)"
+    r"|only\s+(?:the\s+)?(?:existing|this)\s+information\s+(?:kept|retained)",
+    re.IGNORECASE,
 )
 
-QUALITY_NONTRUNC_PLACEHOLDERS = ("未详述", "未记录", "未提供", "具体方案未")
+QUALITY_NONTRUNC_PLACEHOLDERS = _marker_set("mcp.summary.placeholder_markers")
 
-QUALITY_PLACEHOLDER_SUBS = (
-    "内容截断",
-    "保留已有信息",
-    "未详述",
-    "未记录",
-    "未提供",
-    "具体方案未",
-    "待补充",
-)
+QUALITY_PLACEHOLDER_SUBS = _marker_set("mcp.summary.placeholder_subterms")
 
 _QUALITY_EMPTY_TITLE = re.compile(r"^[-*#]?\s*(?:\*\*)?[^：:]{2,40}(?:\*\*)?：\s*$")
 
@@ -319,10 +304,10 @@ def scan_notes_structure(root: Path, max_depth: int = 3) -> str:
                 elif entry.suffix == ".md":
                     lines.append("  " * depth + f"- {name}")
         except PermissionError:
-            lines.append("  " * depth + "(无权限)")
+            lines.append("  " * depth + t("mcp.summary.no_permission"))
         return lines
 
-    return "\n".join(_scan(root)) if root.exists() else "(空)"
+    return "\n".join(_scan(root)) if root.exists() else t("mcp.summary.empty_tree")
 
 
 def _normalize_slug(s: str) -> str:
@@ -341,7 +326,7 @@ def _normalize_slug(s: str) -> str:
 def resolve_target_file(target_dir: Path, title: str) -> tuple[Path, bool]:
     slug = _normalize_slug(title)
     if not slug:
-        slug = "未分類"
+        slug = t("mcp.summary.uncategorized")
     filepath = target_dir / f"{slug}.md"
 
     # Collect all existing .md files across all extract dirs
@@ -490,11 +475,15 @@ def _quality_strip_quoted(text: str) -> str:
 
 def _quality_residual_chars(text: str) -> int:
     """Count of remaining meaningful CJK characters after removing placeholder strings and punctuation/digits/English."""
-    t = text
+    t = text.lower()
     for p in QUALITY_PLACEHOLDER_SUBS:
-        t = t.replace(p, "")
+        t = t.replace(p.lower(), "")
     t = re.sub(r"[\s\-*#.。，、：:（）()【】\[\]0-9A-Za-z_`|/\\]+", "", t)
     return len(t)
+
+
+def _has_cjk(text: str) -> bool:
+    return any("一" <= ch <= "鿿" for ch in text)
 
 
 def _quality_is_cn_short_snapshot(t: str) -> bool:
@@ -502,7 +491,7 @@ def _quality_is_cn_short_snapshot(t: str) -> bool:
     c = "".join(t.split())
     if len(c) >= MEMORY_QUALITY_CN_SHORT_MAX:
         return False
-    if not any("一" <= ch <= "鿿" for ch in t):
+    if not _has_cjk(t):
         return False
     return any(v in t for v in _QUALITY_CN_STATE_VERBS)
 
@@ -530,23 +519,31 @@ def _quality_rule_judge(text: str) -> tuple[str, str]:
     # compact-normalize, so newlines/spaces no longer split the placeholder string
     # (Workflow measured the missed-match form 「内容截断，保留已有\n信息」).
     outside = _quality_strip_quoted(t)
-    outside_compact = "".join(outside.split())
+    outside_compact = "".join(outside.split()).lower()
     for p in QUALITY_TRUNC_PLACEHOLDERS:
-        if "".join(p.split()) in outside_compact:
+        if "".join(p.split()).lower() in outside_compact:
             return "drop", f"unquoted truncation placeholder string ({p})"
     if _QUALITY_TRUNC_RE.search(outside_compact):
         return "drop", "unquoted truncation placeholder string (regex fallback)"
     # Quoted truncation placeholder -> borderline (same compact match, likely meta-discussion)
-    compact_all = "".join(t.split())
+    compact_all = "".join(t.split()).lower()
     if any(
-        "".join(p.split()) in compact_all for p in QUALITY_TRUNC_PLACEHOLDERS
+        "".join(p.split()).lower() in compact_all for p in QUALITY_TRUNC_PLACEHOLDERS
     ) or _QUALITY_TRUNC_RE.search(compact_all):
         return (
             "review",
             "quoted truncation placeholder string (likely meta-discussion, sent to LLM for review)",
         )
     # Other placeholder words -> residual-information judgment
-    if any(p in t for p in QUALITY_NONTRUNC_PLACEHOLDERS):
+    if any(p.lower() in t.lower() for p in QUALITY_NONTRUNC_PLACEHOLDERS):
+        # The residual metric counts CJK characters only; it reads every English-only text
+        # as "0 residual" and would hard-drop legitimate English memories. Defer those to
+        # the LLM judge instead.
+        if not _has_cjk(t):
+            return (
+                "keep",
+                "placeholder word in non-CJK text (residual metric not applicable)",
+            )
         rc = _quality_residual_chars(t)
         if rc < MEMORY_QUALITY_RESIDUAL_MIN:
             return (
@@ -686,7 +683,7 @@ def _build_facts_text_v2(memories: list[dict]) -> str:
 
     return "\n".join(
         f"- [{','.join(m.get('metadata', {}).get('tags', []))}] "
-        f"[{_memory_date(m) or '日期未知'}] "
+        f"[{_memory_date(m) or t('mcp.summary.unknown_date')}] "
         f"{_clean(m.get('memory') or m.get('content') or '')}"
         for m in memories
     )
@@ -774,7 +771,11 @@ def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
     groups: list[dict] = []
     for bi, batch in enumerate(batches):
         facts_text = _build_facts_text_v2(batch)
-        batch_label = f"（{bi + 1}/{len(batches)} 批）" if len(batches) > 1 else ""
+        batch_label = (
+            t("mcp.summary.batch_label", index=bi + 1, total=len(batches))
+            if len(batches) > 1
+            else ""
+        )
         batch_groups, raw = _aggregate_round(facts_text, batch_label)
         if batch_groups is None:
             write_error_log(
@@ -797,7 +798,7 @@ def _run_aggregate_v2(memories: list[dict]) -> tuple[list[dict] | None, int]:
     for rnd in range(1, AGGREGATE_MAX_ROUNDS + 1):
         prev_len = len(groups)
         round_groups, _raw = _aggregate_round(
-            _groups_to_facts(groups), f"（第 {rnd} 轮递归合并）"
+            _groups_to_facts(groups), t("mcp.summary.round_label", round=rnd)
         )
         if round_groups is None:
             logger.warning(
@@ -1102,7 +1103,11 @@ def _decide_merge(group: dict, hits: list[dict]) -> dict | None:
 def _gen_new(group: dict, dir_tree: str, existing_tops: set[str]) -> dict | None:
     """think enabled, generate a new article: {"dir", "title", "content"}. Returns None on failure."""
     facts = str(group.get("facts", ""))
-    tops_block = "、".join(sorted(existing_tops)) if existing_tops else "（空）"
+    tops_block = (
+        t("mcp.summary.list_separator").join(sorted(existing_tops))
+        if existing_tops
+        else t("mcp.summary.empty_tops")
+    )
     prompt = prompt_loader.prompt(
         "gen_new",
         topic=group.get("topic", ""),
@@ -1534,8 +1539,10 @@ def _run_refine(groups: list[dict], dir_tree: str) -> tuple[list[dict], dict]:
                 logger.warning(f"topic {topic!r} content too short, skipping")
                 continue
             # QC placeholder detection: content containing placeholder wording like 「未详述/待补全」 is treated as low quality and not written
+            content_lower = content_text.lower()
             ph = next(
-                (p for p in SUMMARY_PLACEHOLDER_PATTERNS if p in content_text), None
+                (p for p in SUMMARY_PLACEHOLDER_PATTERNS if p.lower() in content_lower),
+                None,
             )
             if ph:
                 stats["too_low_quality"] += 1
@@ -1652,10 +1659,11 @@ def _merge_into_file(
     H1 section is replaced (deduplicated), otherwise a new section is added at the end
     (history preserved). Returns whether the write succeeded."""
     content = _strip_leading_h1(content)
-    block = f"# {title}\n\n> 补充于 {today_str}\n\n{content}\n"
+    supplement = t("mcp.summary.supplement_header", date=today_str)
+    block = f"# {title}\n\n{supplement}\n\n{content}\n"
     if not is_append:
         filepath.write_text(
-            f"# {title}\n\n> 自动总结于 {today_str}\n\n{content}\n",
+            f"# {title}\n\n{t('mcp.summary.auto_summary_header', date=today_str)}\n\n{content}\n",
             encoding="utf-8",
         )
         return True
@@ -1675,13 +1683,13 @@ def _merge_into_file(
             old = seg.rstrip()
             if supersedes:
                 # Correction type: mark the old section as deprecated at its end, to avoid old and new conclusions coexisting and contradicting each other
-                old += "\n\n> 已废弃（被以下补充取代）"
+                old += "\n\n" + t("mcp.summary.deprecated_note")
             out.append(
                 old
                 + "\n\n---\n\n# "
                 + title
-                + "\n\n> 补充于 "
-                + today_str
+                + "\n\n"
+                + supplement
                 + "\n\n"
                 + content
                 + "\n"
@@ -1785,7 +1793,7 @@ def _write_articles_v2(
                     logger.warning(f"QC: {filepath} abnormal size ({size // 1024}KB)")
             except OSError:
                 pass
-            updated[str(filepath)] = "追加" if is_append else "新建"
+            updated[str(filepath)] = "append" if is_append else "new"
             write_to_cold_layer(
                 content=item["content"],
                 source_file=str(filepath),
@@ -1892,10 +1900,15 @@ def main():
     phase3 = _run_phase3(groups, today_str)
     rules_updates = phase3.get("updated", "")
     if rules_updates:
-        git_commit(f"规范提炼：{rules_updates}", stage="rules")
+        git_commit(t("mcp.summary.commit_rules", files=rules_updates), stage="rules")
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    overview = f"{now_str} - 记忆总结（{len(recent_memories)} 条事实，{len(updated_files)} 个文件）"
+    overview = t(
+        "mcp.summary.commit_overview",
+        time=now_str,
+        facts=len(recent_memories),
+        files=len(updated_files),
+    )
     git_commit(overview, stage="after write")
 
     _mark_run_success()

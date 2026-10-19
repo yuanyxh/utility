@@ -1,13 +1,19 @@
 """Terminal report module for summarize.
 
 Split out of summarize.py (2026-08-30, refactor phase 3): terminal report printing
-for the memory-summary pipeline. Self-contained (no external dependencies). Code was
-moved as-is, logic unchanged.
+for the memory-summary pipeline. Labels come from the shared catalog.
 """
 
 from __future__ import annotations
 
+from l10n import t
+
 COLD_READY = True
+
+_ACTION_KEYS = {
+    "new": "mcp.summary.action_new",
+    "append": "mcp.summary.action_append",
+}
 
 
 def _print_report_v2(
@@ -20,27 +26,46 @@ def _print_report_v2(
     skipped_processed: int = 0,
     skipped_quality: int = 0,
 ):
-    print(f"📝 记忆总结报告 ({today_str})")
-    print(f"   本次处理事实: {memory_count} 条")
+    print(t("mcp.summary.report_title", date=today_str))
+    print(t("mcp.summary.report_processed", count=memory_count))
     if skipped_processed or skipped_quality:
         print(
-            f"   输入过滤: 已处理跳过 {skipped_processed}，低质丢弃 {skipped_quality}"
+            t(
+                "mcp.summary.report_filtered",
+                processed=skipped_processed,
+                quality=skipped_quality,
+            )
         )
     if refine_stats:
         print(
-            f"   阶段2 精炼: {refine_stats['ok']} 成功"
-            f"（新建 {refine_stats['new']} / 归并 {refine_stats['merge']}），"
-            f"关键词失败 {refine_stats['kw_fail']}，生成失败 {refine_stats['gen_fail']}，"
-            f"过短 {refine_stats['too_short']}，"
-            f"占位低质 {refine_stats.get('too_low_quality', 0)}，"
-            f"重复跳过 {refine_stats.get('dup_skip', 0)}，"
-            f"检索命中 {len(refine_stats['hit_files'])}"
+            t(
+                "mcp.summary.report_refine",
+                ok=refine_stats["ok"],
+                new=refine_stats["new"],
+                merge=refine_stats["merge"],
+                kw_fail=refine_stats["kw_fail"],
+                gen_fail=refine_stats["gen_fail"],
+                too_short=refine_stats["too_short"],
+                low_quality=refine_stats.get("too_low_quality", 0),
+                dup_skip=refine_stats.get("dup_skip", 0),
+                hits=len(refine_stats["hit_files"]),
+            )
         )
     if agg_rounds:
-        print(f"   聚合收敛轮数: {agg_rounds}")
-    print(f"   写入文件: {len(updated_files)} 个")
+        print(t("mcp.summary.report_rounds", rounds=agg_rounds))
+    print(t("mcp.summary.report_files", count=len(updated_files)))
     for path, action in updated_files.items():
-        print(f"     {'📄' if action == '新建' else '📎'} {path} ({action})")
+        icon = "📄" if action == "new" else "📎"
+        print(
+            t(
+                "mcp.summary.report_file_line",
+                icon=icon,
+                path=path,
+                action=t(_ACTION_KEYS.get(action, "mcp.summary.action_new")),
+            )
+        )
     if rules_updates:
-        print(f"   📐 规范提炼: {rules_updates}")
-    print(f"   冷层同步: {'✓' if COLD_READY else '⚠️ 未启用'}")
+        print(t("mcp.summary.report_rules", files=rules_updates))
+    print(
+        t("mcp.summary.report_cold_on" if COLD_READY else "mcp.summary.report_cold_off")
+    )
