@@ -41,7 +41,7 @@ LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")
 KEY_RE = re.compile(r"^([a-z][a-z0-9]*)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(?::(\.\d+f|d))?\}")
 SWIFT_BYPASS_RE = re.compile(r"\bL10n\.(?:string|render|format)\s*\(")
-SWIFT_ACRONYMS = {"rss": "RSS"}
+SWIFT_ACRONYMS = {"rss": "RSS", "cli": "CLI"}
 SWIFT_NAME_ACRONYMS = {"url": "URL"}
 
 

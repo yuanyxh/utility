@@ -49,8 +49,12 @@ final class KnowledgeService: NSObject {
         )
         let stamp = at.map { Self.timeFormatter.string(from: $0) } ?? "-"
         return summary.isEmpty
-            ? "新 \(topics)/\(fragments) · \(stamp)"
-            : "新 \(topics)/\(fragments) · \(stamp) · \(summary)"
+            ? L10n.Knowledge.statusNew(
+                topics: topics, fragments: fragments, stamp: stamp,
+            )
+            : L10n.Knowledge.statusNewSummary(
+                topics: topics, fragments: fragments, stamp: stamp, summary: summary,
+            )
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -239,7 +243,7 @@ final class KnowledgeService: NSObject {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let made = obj["made"] as? Int
         else { return "" }
-        return "made=\(made)"
+        return L10n.Knowledge.summaryMade(count: made)
     }
 
     // MARK: - 定时自动弹

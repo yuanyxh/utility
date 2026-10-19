@@ -10,7 +10,7 @@ import Foundation
 struct UtilityCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "utility",
-        abstract: "macOS desktop toolkit CLI",
+        abstract: L10n.CLI.rootAbstract,
         subcommands: [
             RSSCommand.self,
             InitCommand.self,
@@ -21,11 +21,11 @@ struct UtilityCLI: ParsableCommand {
     // ── Agent mode flags (only effective when there is no subcommand) ──
 
     @Option(name: .shortAndLong,
-            help: ArgumentHelp("Agent command, e.g. \"claude -p 'analyze module'\" or \"aider --model sonnet\""))
+            help: ArgumentHelp(L10n.CLI.agentHelp))
     var agent: String?
 
     @Option(name: .customLong("dir"),
-            help: ArgumentHelp("Project directory path (default: current directory)"))
+            help: ArgumentHelp(L10n.CLI.projectHelp))
     var projectDir: String?
 
     func run() throws {

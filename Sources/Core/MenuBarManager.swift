@@ -285,7 +285,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             sub.addItem(NSMenuItem.separator())
 
             // Asynchronously fetch today's usage
-            let summaryItem = NSMenuItem(title: "Loading...", action: nil, keyEquivalent: "")
+            let summaryItem = NSMenuItem(title: L10n.Menu.loading, action: nil, keyEquivalent: "")
             summaryItem.isEnabled = false
             sub.addItem(summaryItem)
 

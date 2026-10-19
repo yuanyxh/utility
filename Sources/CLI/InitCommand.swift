@@ -6,10 +6,10 @@ import Foundation
 struct InitCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "init",
-        abstract: "Scan the project and generate a dependency graph (.utility/deps.sqlite)",
+        abstract: L10n.CLI.initAbstract,
     )
 
-    @Option(name: .shortAndLong, help: ArgumentHelp("Project path (default: current directory)"))
+    @Option(name: .shortAndLong, help: ArgumentHelp(L10n.CLI.initPathHelp))
     var path: String?
 
     func run() throws {

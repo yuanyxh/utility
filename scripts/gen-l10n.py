@@ -33,7 +33,7 @@ PYTHON_NAMESPACES = {"mcp", "proxy"}
 #: Namespaces whose values are raw templates: rendered later by PromptManager, never here.
 RAW_NAMESPACES = {"prompt"}
 
-SWIFT_ACRONYMS = {"rss": "RSS"}
+SWIFT_ACRONYMS = {"rss": "RSS", "cli": "CLI"}
 #: Name segments that keep their all-caps spelling after the first (URL → invalidURL).
 SWIFT_NAME_ACRONYMS = {"url": "URL"}
 SWIFT_RESERVED = {

@@ -11,13 +11,14 @@ import time
 
 import llm_client
 import prompt_loader
+from l10n import t
 from log_utils import setup_logging
 from web_search import (
     _overlap,
+    fetch,
+    wiki,
 )  # 私有名跨模块引用：判据必须与 search/_matches 同源,抄一份必然漂移
-from web_search import fetch
 from web_search import search as web_search_query
-from web_search import wiki
 
 logger = setup_logging("knowledge_refill")
 
@@ -228,7 +229,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     # （「分层协议栈模型」对「TCP/IP 四层模型」），而证据来自主题级检索时必然不含它。
     # 相关性由检索侧保证 —— search 内部有 _matches 过滤，_wiki_title_for 内部有重叠校验。
     if len(text) > MAX_EVIDENCE_CHARS:
-        text = text[:MAX_EVIDENCE_CHARS] + "\n\n[... 依据已截断 ...]"
+        text = text[:MAX_EVIDENCE_CHARS] + t("mcp.knowledge.evidence_truncated")
 
     seen, uniq = set(), []
     for u in urls:
@@ -249,7 +250,7 @@ def advance(theme: str, done_text: str, kind: str, *, topic_kind: str = "") -> d
     calls = 0
 
     p = prompt_loader.prompt(
-        "knowledge_expand", theme=theme, done=done_text or "(还没有)"
+        "knowledge_expand", theme=theme, done=done_text or t("mcp.knowledge.no_content")
     )
     d = _llm_json(p, max_tokens=512, disable_thinking=True, feature="knowledge_expand")
     calls += 1
