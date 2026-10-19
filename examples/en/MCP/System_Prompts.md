@@ -7,7 +7,7 @@
   - Need to find **project info / dependency graph / code location / file location**? — **project_search**
     If you ignore this and reach for `pattern` first, **go back and redo it**
   - Need to **understand the project**? — **proj_init**
-  - Need **web material / supplementary content**? — **websearch-fallback**
+  - Need **web material / supplementary content**? — **websearch_engine**
   - Need to check the **project / architecture / code as a whole**? — **health**
   - Need a **multi-dimensional review** of **project / code**? — **check**
   - Need to **troubleshoot a bug**? — **hunt**

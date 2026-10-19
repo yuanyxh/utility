@@ -79,6 +79,7 @@ from server_search import (
 )
 import llm_client
 import prompt_loader
+import web_search
 from tool_defaults import arg_default
 from tool_text import param_text
 from log_utils import setup_logging
@@ -132,6 +133,16 @@ DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
 #: same table as the other tools leaves no room for drift.
 DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
+DEFAULT_WEBSEARCH_LIMIT = max(
+    1, min(arg_default("websearch_engine", "limit"), 10)
+)
+DEFAULT_WEBSEARCH_FETCH_TOP = max(
+    0, min(arg_default("websearch_engine", "fetch_top"), 3)
+)
+DEFAULT_WEBSEARCH_MAX_CHARS = max(
+    1000, min(arg_default("websearch_engine", "max_chars"), 10000)
+)
+
 #: Fixed English tool descriptions; parameter guidance lives in `tool_text.PARAM_DESCRIPTIONS`.
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "remember": "Trigger: user says remember/record, a bug is fixed, an insight is learned, or an architecture design changes. Writes one fact to shared memory.",
@@ -145,6 +156,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "project_notes": "Like recall, but searches local project notes only.",
     "tool_resource": "Load a file under references or a script under scripts when instructed.",
     "set_memory_processed": "Set or reset the processed bit of memories. Idempotent.",
+    "websearch_engine": "Trigger: user says web search/search online/look up/latest info. Returns result links and, when fetch_top>0, Markdown text of top pages.",
 }
 
 EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
@@ -1173,6 +1185,39 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["parentName", "path"],
             },
         ),
+        Tool(
+            name="websearch_engine",
+            description=TOOL_DESCRIPTIONS["websearch_engine"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": param_text("param.websearch_query"),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": DEFAULT_WEBSEARCH_LIMIT,
+                        "description": param_text("param.websearch_limit"),
+                    },
+                    "fetch_top": {
+                        "type": "integer",
+                        "default": DEFAULT_WEBSEARCH_FETCH_TOP,
+                        "description": param_text("param.fetch_top"),
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": DEFAULT_WEBSEARCH_MAX_CHARS,
+                        "description": param_text("param.max_chars"),
+                    },
+                    "engines": {
+                        "type": "string",
+                        "description": param_text("param.engines"),
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
     ]
     for skill_name, skill in _scan_skills().items():
         tools.append(
@@ -1634,6 +1679,32 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
         logger.error(f"[tool_resource] {e}", exc_info=True)
         raise
     return [TextContent(type="text", text=content)]
+
+
+@_register("websearch_engine")
+async def _handle_websearch_engine(arguments: dict) -> list[TextContent]:
+    query = str(arguments.get("query", "")).strip()
+    if not query:
+        return [
+            TextContent(type="text", text=_dumps({"error": "query is required"}))
+        ]
+    limit = max(1, min(_int_arg(arguments, "limit", DEFAULT_WEBSEARCH_LIMIT), 10))
+    fetch_top = max(
+        0, min(_int_arg(arguments, "fetch_top", DEFAULT_WEBSEARCH_FETCH_TOP), 3)
+    )
+    max_chars = max(
+        1000, min(_int_arg(arguments, "max_chars", DEFAULT_WEBSEARCH_MAX_CHARS), 10000)
+    )
+    engines = arguments.get("engines")
+    if isinstance(engines, list):
+        engines = tuple(str(e).strip() for e in engines if str(e).strip())
+    elif not isinstance(engines, str) or not engines.strip():
+        engines = None
+    # urllib is blocking; keep the MCP event loop free for other calls.
+    result = await asyncio.to_thread(
+        web_search.websearch, query, limit, fetch_top, max_chars, engines
+    )
+    return [TextContent(type="text", text=_dumps(result))]
 
 
 @server.call_tool()

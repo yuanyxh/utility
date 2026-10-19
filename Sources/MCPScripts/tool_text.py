@@ -40,6 +40,11 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "param.resource_path": (
         "Path relative to the tool directory, e.g. references/durable-context.md"
     ),
+    "param.websearch_query": "Search query; Chinese and English are supported",
+    "param.websearch_limit": "Max results; default 5",
+    "param.fetch_top": "Read the top N result pages as Markdown; default 1, max 3",
+    "param.max_chars": "Max Markdown chars per page; default 6000",
+    "param.engines": "Optional comma-separated engines; default is a language-aware cascade",
 }
 
 

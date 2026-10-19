@@ -506,7 +506,7 @@ Intermediate extraction products of the daily summary, grouped into topic direct
 | `examples/zh-Hans/MCP/` | Chinese |
 | `examples/en/MCP/` | English |
 
-Each set contains `System_Prompts.md` and 8 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`). To use one, copy it into the notes directory's `MCP/`:
+Each set contains `System_Prompts.md` and 7 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui`). Web search is a built-in `websearch_engine` tool and needs no skill. To use one, copy it into the notes directory's `MCP/`:
 
 ```bash
 cp -R examples/en/MCP/* ~/.config/utility/notes/MCP/

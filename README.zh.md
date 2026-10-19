@@ -477,7 +477,7 @@ description: 操作前，获取本行为规范；全局通用规范。
 | `examples/zh-Hans/MCP/` | 中文版 |
 | `examples/en/MCP/` | 英文版 |
 
-每套含 `System_Prompts.md` 与 8 个 skill(`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui` / `websearch-fallback`)。取用时把对应语言目录下的内容复制到笔记目录的 `MCP/`:
+每套含 `System_Prompts.md` 与 7 个 skill(`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui`)。联网搜索已内置为 `websearch_engine` 工具，不再需要 skill。取用时把对应语言目录下的内容复制到笔记目录的 `MCP/`:
 
 ```bash
 cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/

@@ -89,6 +89,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - schema 的 `default` 与 handler 兜底必须同源（`arg_default()`）
 - 整数参数一律经 `_int_arg`（显式传 `null` 会让切片变成不截断）
 - MCP 层文案统一英文，重复文案必须走常量
+- `websearch_engine` 内置在 `server.py`（`web_search.py`），旧 `websearch-fallback` skill 已移除；页面内容必须转 Markdown 并限长，禁止把 HTML 直接返回给模型
 
 ### 知识面板
 - 补货**不能走 TaskScheduler**（sub-daily cron 会静默退化成每天一次），用 `KnowledgeService` 自建 Timer
