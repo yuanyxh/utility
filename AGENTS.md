@@ -114,6 +114,9 @@
 - 实际产物目录随 SwiftPM 版本变化（旧 `.build/arm64-apple-macosx/{debug,release}`，新 `.build/out/Products/{Debug,Release}`）——**脚本中禁止硬编码，用 `swift build -c <config> --show-bin-path` 查询**
 - 验证改动进二进制：`strings .build/debug/utility | grep keyword`
 - ⚠️ `package-utility.sh` 曾硬编码 `.build/arm64-apple-macosx/release/utility_utility.bundle` 且包在 `if [ -d ]` 里，新版布局下该目录不存在 → 资源 bundle 被**静默漏拷**（app 18M→9.8M），启动即 `Fatal error: unable to find bundle named utility_utility`（`resource_bundle_accessor.swift`）。资源缺失一律硬失败，不做条件跳过
+- 版本唯一来源是仓库根 `VERSION`：`package-utility.sh` 每次打包自增 patch 并写回，无文件时以 `INITIAL_VERSION=1.0.93` 起步
+- macOS 26 起 `hdiutil create` 弃用，打包改用 `diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"`（目标已存在时自动覆盖）
+- ⚠️ **bash 3.2 会把紧跟 `$VAR` 的全角字符并入变量名**（`$VERSION（` → `VERSION<乱码>: unbound variable`，`set -u` 下直接退出）：变量后接中文/全角标点必须写 `${VAR}`
 
 ### i18n
 - 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改

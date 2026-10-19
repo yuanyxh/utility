@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Utility"
 BUNDLE_ID="com.utility.app"
-VERSION="1.0.93"
+INITIAL_VERSION="1.0.93"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 
 if [ -z "$SIGNING_IDENTITY" ]; then
@@ -18,6 +18,23 @@ fi
 echo "=== 0/5 i18n contract ==="
 python3 scripts/gen-l10n.py --check
 python3 scripts/check-l10n-contract.py
+
+echo ""
+echo "=== 版本自增 ==="
+# 版本唯一来源是仓库根目录的 VERSION；每次打包触发即自增 patch（失败也消耗一个版本号）
+VERSION_FILE="$PWD/VERSION"
+if [ -f "$VERSION_FILE" ]; then
+    VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+else
+    VERSION="$INITIAL_VERSION"
+fi
+if [[ ! "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    echo "错误: VERSION 格式非法: ${VERSION}（期望 MAJOR.MINOR.PATCH）"
+    exit 1
+fi
+VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+echo "$VERSION" > "$VERSION_FILE"
+echo "版本: ${VERSION}（已写入 ${VERSION_FILE}）"
 
 echo ""
 echo "=== 1/5 Clean build ==="
@@ -100,7 +117,7 @@ echo ""
 echo "=== 5/5 Package .dmg ==="
 DMG="${APP_NAME}-${VERSION}.dmg"
 rm -f "$DMG"
-hdiutil create -volname "$APP_NAME" -srcfolder "$APP" -ov -format UDZO "$DMG"
+diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"
 
 echo ""
 echo "=== Done ==="

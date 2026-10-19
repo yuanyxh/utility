@@ -322,7 +322,12 @@ def run(dry_run: bool, day: str) -> int:
 
     switcher = None
     if cfg["clash"]["enabled"]:
-        switcher = ClashSwitcher(cfg["clash"]["group"], cfg["clash"]["target"])
+        switcher = ClashSwitcher(
+            cfg["clash"]["group"],
+            cfg["clash"]["target"],
+            state_file=_db_path().parent / "clash_switch.json",
+        )
+        switcher.recover()
         switcher.switch()
     try:
         expanded = _expand_digests(selected, history, seen, filtered, cfg)
@@ -359,7 +364,9 @@ def run(dry_run: bool, day: str) -> int:
         for issue in rss_render.validate(text):
             logger.warning("format: %s", issue)
         archive.parent.mkdir(parents=True, exist_ok=True)
-        archive.write_text(text, encoding="utf-8")
+        tmp = archive.with_suffix(archive.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, archive)
         logger.info("written %s (articles=%s filtered=%s)", archive, len(articles), len(filtered))
 
         if cfg["markRead"]:

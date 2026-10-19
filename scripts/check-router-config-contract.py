@@ -455,22 +455,28 @@ def find_env_injection_violations(
 
 
 def find_env_key_violations(
-    env_keys: dict[str, str], python_reads: set[str]
+    env_keys: dict[str, str],
+    python_reads: set[str],
+    python_script_reads: set[str],
 ) -> list[str]:
     """Pure function: names declared by `EnvKeys` that differ from the names Python actually reads.
 
     `EnvKeys` is the **single source** of these env names, and both directions are asserted: Swift
     injects but no one reads = dead config; Python reads but no one injects = always empty. A
     half-done rename is exactly the typical failure.
+
+    Script-specific envs (`RSS_DAILY_CONFIG` / `UTILITY_CLI_PATH`) are read directly with
+    `os.environ.get` instead of through `config.py`, so both read surfaces count; group 3 already
+    asserts that every direct read has an injection point.
     """
     if not env_keys:
         return [
             "parsed no EnvKeys from Constants.swift —— regex mismatch, please update this script"
         ]
     return [
-        f"EnvKeys.{const} = {value!r} is injected by Swift, but Python (config.py) never reads this name"
+        f"EnvKeys.{const} = {value!r} is injected by Swift, but Python (config.py or a script) never reads this name"
         for const, value in sorted(env_keys.items())
-        if value not in python_reads
+        if value not in python_reads and value not in python_script_reads
     ]
 
 
@@ -1219,7 +1225,9 @@ def check_all(
             inp.swift_env_injections,
         )
         + find_env_injection_violations(inp.env_keys, inp.swift_env_injections)
-        + find_env_key_violations(inp.env_keys, inp.python_env_reads)
+        + find_env_key_violations(
+            inp.env_keys, inp.python_env_reads, inp.python_script_env_reads
+        )
         + find_script_violations(inp.python_scripts, SCRIPTS)
         + find_service_name_violations(inp.py_server_name, inp.swift_service_name)
         + find_synonym_env_violations(inp.py_synonyms_env, inp.swift_synonyms_env)
