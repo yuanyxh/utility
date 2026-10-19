@@ -175,5 +175,4 @@ struct SwiftExtractor: SymbolExtractor {
         }
         return result.trimmingCharacters(in: .whitespaces)
     }
-
 }

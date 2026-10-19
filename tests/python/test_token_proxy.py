@@ -40,7 +40,9 @@ class _FakeUpstream:
         self._responses: list[tuple[int, bytes, str]] = []
 
     def enqueue_json(self, payload: dict, status: int = 200) -> None:
-        self._responses.append((status, json.dumps(payload).encode(), "application/json"))
+        self._responses.append(
+            (status, json.dumps(payload).encode(), "application/json")
+        )
 
     def enqueue_sse(self, text: str, status: int = 200) -> None:
         self._responses.append((status, text.encode(), "text/event-stream"))
@@ -116,13 +118,26 @@ class PassthroughTests(ProxyTestBase):
             {
                 "id": "chatcmpl-1",
                 "model": "test-model",
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
             }
         )
         resp = await self.proxy.post(
             "/v1/chat/completions",
-            json={"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
         )
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["id"], "chatcmpl-1")
@@ -138,8 +153,18 @@ class ConversionTests(ProxyTestBase):
             {
                 "id": "chatcmpl-2",
                 "model": "test-model",
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5},
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 4,
+                    "completion_tokens": 1,
+                    "total_tokens": 5,
+                },
             }
         )
         resp = await self.proxy.post(
@@ -176,7 +201,11 @@ class NoteTests(ProxyTestBase):
         self.upstream.enqueue_sse(self.SSE)
         resp = await self.proxy.post(
             "/v1/messages",
-            json={"model": "test-model", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+            json={
+                "model": "test-model",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
         )
         text = await resp.text()
         self.assertIn("upstream-model", text)
@@ -184,8 +213,10 @@ class NoteTests(ProxyTestBase):
 
     async def test_assistant_note_echo_is_stripped_before_upstream(self) -> None:
         token_proxy.RESPONSE_NOTE_ENABLED = True
-        note = "upstream-model" + proxy_response_note.SEG_JOIN + next(
-            iter(proxy_response_note.NOTE_EMPTY_EXACT)
+        note = (
+            "upstream-model"
+            + proxy_response_note.SEG_JOIN
+            + next(iter(proxy_response_note.NOTE_EMPTY_EXACT))
         )
         self.upstream.enqueue_json(
             {
@@ -226,12 +257,19 @@ class RetryTests(ProxyTestBase):
                 "id": "ok-after-retry",
                 "model": "test-model",
                 "choices": [],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
             }
         )
         resp = await self.proxy.post(
             "/v1/chat/completions",
-            json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
         )
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["id"], "ok-after-retry")
@@ -240,7 +278,9 @@ class RetryTests(ProxyTestBase):
 
 class InjectionPositionTests(unittest.TestCase):
     def test_rule_goes_after_the_last_tool_result(self) -> None:
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", delete=False, encoding="utf-8"
+        ) as fh:
             fh.write("RULE-BODY")
             prompt_path = fh.name
 
@@ -254,7 +294,11 @@ class InjectionPositionTests(unittest.TestCase):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "t1",
+                                "content": "result",
+                            },
                             {"type": "text", "text": "user follow-up"},
                         ],
                     }
@@ -268,7 +312,9 @@ class InjectionPositionTests(unittest.TestCase):
 
         self.assertEqual(injected, 1)
         blocks = body["messages"][0]["content"]
-        self.assertEqual([block["type"] for block in blocks], ["tool_result", "text", "text"])
+        self.assertEqual(
+            [block["type"] for block in blocks], ["tool_result", "text", "text"]
+        )
         self.assertIn("RULE-BODY", blocks[1]["text"])
         self.assertEqual(blocks[2]["text"], "user follow-up")
 

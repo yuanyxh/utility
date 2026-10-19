@@ -166,6 +166,7 @@ def _init_hot_memory() -> bool:
     logger.error(f"Hot layer init failed after {HOT_INIT_MAX_RETRIES} attempts")
     return False
 
+
 _ensure_hot_lock = asyncio.Lock()
 
 
@@ -195,6 +196,7 @@ async def ensure_hot_memory() -> bool:
         logger.critical(fail_msg)
         sys.exit(1)
     return False
+
 
 def _notes_snippet(text: str, needle: str, max_lines: int = 3) -> str:
     """Take the first max_lines lines containing needle, in the same format as the
@@ -297,6 +299,7 @@ def search_cold_layer(
         logger.warning(f"Notes search failed: {e}")
     results.sort(key=_heat_sort_key, reverse=True)
     return results[:limit]
+
 
 _HOT_RESULT_KEYS = (
     "id",
@@ -428,7 +431,9 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
         old_meta["dispute_reason"] = reason
         get_hot_memory().delete(memory_id)
         try:
-            get_hot_memory().add(old_content, user_id=DEFAULT_USER_ID, metadata=old_meta)
+            get_hot_memory().add(
+                old_content, user_id=DEFAULT_USER_ID, metadata=old_meta
+            )
         except Exception as e:
             # A failure on the main path must be logged: previously it silently
             # degraded to an add without metadata, writing metadata=null and letting that
@@ -577,6 +582,7 @@ async def contradiction_check_cold(content: str, point_id: str) -> None:
                 )
     except Exception as e:
         logger.warning(f"Cold contradiction check failed: {e}")
+
 
 @_register("remember")
 async def _handle_remember(arguments: dict) -> list[TextContent]:
@@ -757,7 +763,9 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
         ]
     since_days = arguments.get("since_days", 3)
     try:
-        data = get_hot_memory().get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=5000)
+        data = get_hot_memory().get_all(
+            filters={"user_id": DEFAULT_USER_ID}, top_k=5000
+        )
         if isinstance(data, dict):
             data = data.get("results", [])
     except Exception as e:
@@ -797,7 +805,9 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
                 pass
     if layer in ("cold", "all") and point_id and get_qdrant():
         try:
-            get_qdrant().delete(collection_name=COLD_COLLECTION, points_selector=[point_id])
+            get_qdrant().delete(
+                collection_name=COLD_COLLECTION, points_selector=[point_id]
+            )
         except Exception:
             pass
     return [TextContent(type="text", text=dumps({"success": True}))]

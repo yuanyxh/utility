@@ -103,6 +103,7 @@ from log_utils import setup_logging
 
 logger = setup_logging("server")
 
+
 def _cleanup_qdrant_locks() -> None:
     """After a Qdrant Local mode crash, a leftover lock file blocks the next startup, so clean it up before starting."""
     for root_dir in (
@@ -131,7 +132,6 @@ SERVER_NAME = "mino-brain"
 SERVER_VERSION = "1.0.0"
 
 MCP_PORT = int(os.environ.get("MCP_PORT", "9001"))
-
 
 
 def _collection_vector_size(client, collection_name: str) -> int | None:
@@ -187,11 +187,6 @@ except Exception as e:
     set_qdrant(None)
 
 
-
-
-
-
-
 # mem0 hot-layer results are emitted as-is, and fields vary across versions; a blacklist
 # would miss some, so a whitelist is used. Removal rationale: memory and content are
 # byte-identical duplicates (measured 248/248, 38% of output); hash/role/user_id are
@@ -215,8 +210,6 @@ def _register(name: str):
         return func
 
     return decorator
-
-
 
 
 @_register("project_search")
@@ -384,9 +377,7 @@ async def _handle_tool_resource(arguments: dict) -> list[TextContent]:
 async def _handle_websearch_engine(arguments: dict) -> list[TextContent]:
     query = str(arguments.get("query", "")).strip()
     if not query:
-        return [
-            TextContent(type="text", text=dumps({"error": "query is required"}))
-        ]
+        return [TextContent(type="text", text=dumps({"error": "query is required"}))]
     limit = max(1, min(int_arg(arguments, "limit", DEFAULT_WEBSEARCH_LIMIT), 10))
     fetch_top = max(
         0, min(int_arg(arguments, "fetch_top", DEFAULT_WEBSEARCH_FETCH_TOP), 3)
@@ -508,7 +499,9 @@ async def main():
         since_str = request.query_params.get("since", "")
         limit = int(request.query_params.get("limit", 200))
         try:
-            data = get_hot_memory().get_all(filters={"user_id": DEFAULT_USER_ID}, top_k=5000)
+            data = get_hot_memory().get_all(
+                filters={"user_id": DEFAULT_USER_ID}, top_k=5000
+            )
             if isinstance(data, dict):
                 data = data.get("results", [])
         except Exception:

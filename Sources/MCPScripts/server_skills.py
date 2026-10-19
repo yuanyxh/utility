@@ -70,7 +70,9 @@ def scan_skills() -> dict[str, dict]:
                 try:
                     with open(path, "r", encoding="utf-8") as fh:
                         raw = fh.read()
-                    name, description, content, enabled = parse_skill_frontmatter(raw, f)
+                    name, description, content, enabled = parse_skill_frontmatter(
+                        raw, f
+                    )
                     if name and enabled:
                         skills[normalize_name(name)] = {
                             "name": name,

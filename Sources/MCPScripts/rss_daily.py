@@ -117,7 +117,9 @@ def mark_read(ids: list[str]) -> None:
     conn = sqlite3.connect(str(_db_path()), timeout=5)
     try:
         conn.execute("PRAGMA busy_timeout=5000")
-        conn.executemany("UPDATE rss_item SET is_read = 1 WHERE id = ?", [(i,) for i in ids])
+        conn.executemany(
+            "UPDATE rss_item SET is_read = 1 WHERE id = ?", [(i,) for i in ids]
+        )
         conn.commit()
     finally:
         conn.close()
@@ -151,7 +153,11 @@ def fetch_feeds() -> bool:
         logger.warning("rss --fetch failed: %s", exc)
         return False
     if proc.returncode != 0:
-        logger.warning("rss --fetch exited %s: %s", proc.returncode, (proc.stderr or "").strip()[:500])
+        logger.warning(
+            "rss --fetch exited %s: %s",
+            proc.returncode,
+            (proc.stderr or "").strip()[:500],
+        )
         return False
     logger.info("%s", (proc.stdout or "").strip())
     return True
@@ -196,7 +202,9 @@ def decide(items: list[dict], cfg: dict) -> dict[int, dict]:
             attempts=2,
         )
         if not parsed:
-            logger.warning("filter batch %s..%s failed, keep all", start, start + len(chunk))
+            logger.warning(
+                "filter batch %s..%s failed, keep all", start, start + len(chunk)
+            )
             continue
         for entry in parsed.get("items") or []:
             if not isinstance(entry, dict):
@@ -299,7 +307,12 @@ def run(dry_run: bool, day: str) -> int:
             continue
         seen.add(key)
         candidates.append(item)
-    logger.info("unread=%s candidates=%s prefiltered=%s", len(items), len(candidates), len(filtered))
+    logger.info(
+        "unread=%s candidates=%s prefiltered=%s",
+        len(items),
+        len(candidates),
+        len(filtered),
+    )
 
     decisions = decide(candidates, cfg) if configured else {}
     selected: list[dict] = []
@@ -353,12 +366,16 @@ def run(dry_run: bool, day: str) -> int:
             if not summary or not (summary.get("summary") or "").strip():
                 filtered.append(_filtered(entry["item"], "总结失败"))
                 continue
-            articles.append({
-                "title": entry["item"]["title"],
-                "url": entry["item"]["link"],
-                "title_translation": (summary.get("title_translation") or "").strip(),
-                "summary": summary.get("summary").strip(),
-            })
+            articles.append(
+                {
+                    "title": entry["item"]["title"],
+                    "url": entry["item"]["link"],
+                    "title_translation": (
+                        summary.get("title_translation") or ""
+                    ).strip(),
+                    "summary": summary.get("summary").strip(),
+                }
+            )
 
         text = rss_render.render(day, articles, filtered)
         for issue in rss_render.validate(text):
@@ -367,7 +384,12 @@ def run(dry_run: bool, day: str) -> int:
         tmp = archive.with_suffix(archive.suffix + ".tmp")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, archive)
-        logger.info("written %s (articles=%s filtered=%s)", archive, len(articles), len(filtered))
+        logger.info(
+            "written %s (articles=%s filtered=%s)",
+            archive,
+            len(articles),
+            len(filtered),
+        )
 
         if cfg["markRead"]:
             mark_read([item["id"] for item in items])
@@ -417,30 +439,36 @@ def _expand_digests(
         for link in links:
             key = rss_render.normalize_url(link["url"])
             if key in history:
-                filtered.append({
-                    "title": link["title"],
-                    "url": link["url"],
-                    "feed": item["feed_name"],
-                    "reason": "历史已收录",
-                })
+                filtered.append(
+                    {
+                        "title": link["title"],
+                        "url": link["url"],
+                        "feed": item["feed_name"],
+                        "reason": "历史已收录",
+                    }
+                )
                 continue
             if key in seen:
                 continue
             seen.add(key)
-            expanded.append({
-                "item": {
-                    "title": link["title"],
-                    "link": link["url"],
-                    "feed_name": item["feed_name"],
-                },
-                "kind": "article",
-            })
+            expanded.append(
+                {
+                    "item": {
+                        "title": link["title"],
+                        "link": link["url"],
+                        "feed_name": item["feed_name"],
+                    },
+                    "kind": "article",
+                }
+            )
     return expanded
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="RSS daily digest")
-    parser.add_argument("--dry-run", action="store_true", help="stop after filtering; write nothing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="stop after filtering; write nothing"
+    )
     parser.add_argument("--date", help="YYYY-MM-DD (default: today)")
     args = parser.parse_args()
     if args.date:

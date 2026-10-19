@@ -52,14 +52,16 @@ def render(day: str, articles: list[dict], filtered: list[dict]) -> str:
         lines.append("今日无有效内容。")
         lines.append("")
     for item in articles:
-        lines.extend([
-            "---",
-            "",
-            f"## [{decorate_title(item['title'], item.get('title_translation', ''))}]({item['url']})",
-            "",
-            f"> {(item.get('summary') or '').strip()}",
-            "",
-        ])
+        lines.extend(
+            [
+                "---",
+                "",
+                f"## [{decorate_title(item['title'], item.get('title_translation', ''))}]({item['url']})",
+                "",
+                f"> {(item.get('summary') or '').strip()}",
+                "",
+            ]
+        )
     if articles:
         lines.extend(["---", ""])
     if filtered:
@@ -85,6 +87,8 @@ def validate(text: str) -> list[str]:
             issues.append(f"主条目标题无中文翻译：{match.group(1)[:50]}")
     if re.search(r"\]\(http[^)]*\)[（(][^）)]*[一-龥]", text):
         issues.append("存在 [英文](url)(中文) 格式残留")
-    for match in re.finditer(r"^- \[[^\]]+\]\([^)]+\)\s*—\s*([^\s\[])", text, re.MULTILINE):
+    for match in re.finditer(
+        r"^- \[[^\]]+\]\([^)]+\)\s*—\s*([^\s\[])", text, re.MULTILINE
+    ):
         issues.append(f"过滤条目来源缺方括号：{match.group(0)[:60]}")
     return issues

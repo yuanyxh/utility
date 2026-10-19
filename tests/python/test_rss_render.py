@@ -50,7 +50,9 @@ class DecorateTitleTests(unittest.TestCase):
         )
 
     def test_keeps_cjk_title_as_is(self) -> None:
-        self.assertEqual(rss_render.decorate_title("已经是中文", "already"), "已经是中文")
+        self.assertEqual(
+            rss_render.decorate_title("已经是中文", "already"), "已经是中文"
+        )
 
     def test_skips_identical_translation(self) -> None:
         self.assertEqual(rss_render.decorate_title("Same", "Same"), "Same")
@@ -60,8 +62,22 @@ class RenderTests(unittest.TestCase):
     def test_articles_and_filtered_sections(self) -> None:
         text = rss_render.render(
             "2026-10-19",
-            [{"title": "Title", "url": "https://example.com/a", "title_translation": "标题", "summary": "摘要"}],
-            [{"title": "Skip", "url": "https://example.com/b", "feed": "Feed", "reason": "无长期价值"}],
+            [
+                {
+                    "title": "Title",
+                    "url": "https://example.com/a",
+                    "title_translation": "标题",
+                    "summary": "摘要",
+                }
+            ],
+            [
+                {
+                    "title": "Skip",
+                    "url": "https://example.com/b",
+                    "feed": "Feed",
+                    "reason": "无长期价值",
+                }
+            ],
         )
         self.assertIn("# RSS 日报 — 2026-10-19", text)
         self.assertIn("## [Title(标题)](https://example.com/a)", text)
@@ -77,7 +93,14 @@ class RenderTests(unittest.TestCase):
     def test_validate_flags_untranslated_main_entry(self) -> None:
         text = rss_render.render(
             "2026-10-19",
-            [{"title": "English Only", "url": "https://example.com/a", "title_translation": "", "summary": "s"}],
+            [
+                {
+                    "title": "English Only",
+                    "url": "https://example.com/a",
+                    "title_translation": "",
+                    "summary": "s",
+                }
+            ],
             [],
         )
         issues = rss_render.validate(text)

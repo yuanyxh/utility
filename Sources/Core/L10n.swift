@@ -183,13 +183,13 @@ enum L10n {
     private static func renderArg(_ arg: Arg?, spec: String?) -> String? {
         switch (arg, spec) {
         case let (.string(value), nil):
-            return value
+            value
         case let (.int(value), "d"):
-            return String(value)
+            String(value)
         case let (.double(value), .some(spec)) where spec.hasSuffix("f"):
-            return String(format: "%\(spec)", value)
+            String(format: "%\(spec)", value)
         default:
-            return nil
+            nil
         }
     }
 }

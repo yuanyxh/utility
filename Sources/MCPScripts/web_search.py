@@ -78,7 +78,15 @@ _MIN_INTERVAL = {
 #: Chinese queries hit the CN engines first; English queries avoid their noise.
 CJK_ORDER = ("sogou", "so360", "baidu", "bing", "marginalia", "brave", "duckduckgo")
 LATIN_ORDER = ("bing", "marginalia", "brave", "duckduckgo", "sogou", "so360", "baidu")
-DEFAULT_ENGINES = ("bing", "sogou", "so360", "baidu", "marginalia", "brave", "duckduckgo")
+DEFAULT_ENGINES = (
+    "bing",
+    "sogou",
+    "so360",
+    "baidu",
+    "marginalia",
+    "brave",
+    "duckduckgo",
+)
 #: Stop cascading once this many candidates exist; IDF ranking needs a corpus.
 _CANDIDATE_TARGET = 15
 #: Drop candidates whose weighted token coverage is below this floor.
@@ -252,7 +260,10 @@ def engine_status() -> dict:
     now = time.monotonic()
     with _health_lock:
         return {
-            name: {"failures": state["failures"], "cooldown_s": max(0, int(state["until"] - now))}
+            name: {
+                "failures": state["failures"],
+                "cooldown_s": max(0, int(state["until"] - now)),
+            }
             for name, state in sorted(_health.items())
         }
 
@@ -312,7 +323,10 @@ def _get(url: str, engine: str, timeout: int = TIMEOUT, retries: int = 2):
             raise
         except urllib.error.HTTPError as exc:
             last = exc
-            if exc.code in (403, 408, 425, 429, 500, 502, 503, 504) and attempt < retries:
+            if (
+                exc.code in (403, 408, 425, 429, 500, 502, 503, 504)
+                and attempt < retries
+            ):
                 time.sleep(_retry_delay(exc, attempt))
                 continue
             raise
@@ -355,7 +369,9 @@ def fetch(url: str, engine: str = "bing", timeout: int = TIMEOUT) -> str:
 def _text(fragment: str) -> str:
     # Comments carry structured payloads; script/style bodies are not page text.
     fragment = re.sub(r"<!--.*?-->", "", fragment, flags=re.DOTALL)
-    fragment = re.sub(r"<(script|style)\b.*?</\1>", "", fragment, flags=re.DOTALL | re.I)
+    fragment = re.sub(
+        r"<(script|style)\b.*?</\1>", "", fragment, flags=re.DOTALL | re.I
+    )
     return htmlmod.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
 
 
@@ -419,7 +435,9 @@ def _dedup(results: list, limit: int | None = None) -> list:
 def _parse_bing(raw: str) -> list:
     out = []
     for block in re.findall(r'<li class="b_algo".*?</li>', raw, re.DOTALL):
-        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        m = re.search(
+            r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL
+        )
         if not m or not m.group(1).startswith("http"):
             continue
         snippet = ""
@@ -440,9 +458,13 @@ def _parse_bing(raw: str) -> list:
 
 def _parse_duckduckgo(raw: str) -> list:
     out = []
-    for block in re.findall(r'<div class="result[^"]*".*?</div>\s*</div>', raw, re.DOTALL):
+    for block in re.findall(
+        r'<div class="result[^"]*".*?</div>\s*</div>', raw, re.DOTALL
+    ):
         m = re.search(
-            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL
+            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+            block,
+            re.DOTALL,
         )
         if not m:
             continue
@@ -466,7 +488,9 @@ def _parse_duckduckgo(raw: str) -> list:
 
 def _parse_brave(raw: str) -> list:
     out = []
-    for block in re.findall(r'<div class="snippet[^"]*".*?</div>\s*</div>', raw, re.DOTALL):
+    for block in re.findall(
+        r'<div class="snippet[^"]*".*?</div>\s*</div>', raw, re.DOTALL
+    ):
         m = re.search(
             r'<a[^>]*class="result-header"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
             block,
@@ -537,7 +561,9 @@ def _parse_so360(raw: str) -> list:
         r'<li class="res-list[^"]*".*?(?=<li class="res-list|</ol>)', raw, re.DOTALL
     ):
         m = re.search(
-            r'<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a\s([^>]*)>(.*?)</a>', block, re.DOTALL
+            r'<h3[^>]*class="res-title[^"]*"[^>]*>\s*<a\s([^>]*)>(.*?)</a>',
+            block,
+            re.DOTALL,
         )
         if not m:
             continue
@@ -604,7 +630,9 @@ def _parse_baidu(raw: str) -> list:
         raw,
         re.DOTALL,
     ):
-        m = re.search(r'<h3[^>]*>.*?<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        m = re.search(
+            r'<h3[^>]*>.*?<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL
+        )
         if not m:
             continue
         href = htmlmod.unescape(m.group(1)).strip()
@@ -635,7 +663,9 @@ def _parse_marginalia(raw: str) -> list:
     for block in re.findall(
         r'<section[^>]*class="[^"]*search-result[^"]*".*?</section>', raw, re.DOTALL
     ):
-        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        m = re.search(
+            r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL
+        )
         if not m or not m.group(1).startswith("http"):
             continue
         snippet = ""
@@ -822,9 +852,7 @@ def _resolve_baidu_jump(url: str) -> str:
 
 def _resolve_jumps(results: list) -> list:
     targets = [
-        r
-        for r in results
-        if "/link?url=" in r["url"] or "baidu.com/link?" in r["url"]
+        r for r in results if "/link?url=" in r["url"] or "baidu.com/link?" in r["url"]
     ]
     if not targets:
         return results
@@ -852,7 +880,9 @@ def _query_tokens(query: str) -> list[str]:
     q = query.lower()
     tokens = _ASCII_RUN_RE.findall(q)
     for run in _CJK_RUN_RE.findall(q):
-        tokens += [run] if len(run) == 1 else [run[i : i + 2] for i in range(len(run) - 1)]
+        tokens += (
+            [run] if len(run) == 1 else [run[i : i + 2] for i in range(len(run) - 1)]
+        )
     return tokens
 
 
@@ -953,8 +983,7 @@ def search_report(query: str, engines=None, min_results: int = 5):
             info["kept"] = sum(1 for r in results if r.get("engine") == engine)
     known = [e for e in order if e in _PARSERS]
     all_failed = bool(known) and all(
-        status.get(engine, {}).get("status")
-        in ("failed", "cooldown", "parse_failed")
+        status.get(engine, {}).get("status") in ("failed", "cooldown", "parse_failed")
         for engine in known
     )
     report = {
@@ -1030,10 +1059,7 @@ def _truncate(text: str, max_chars: int) -> str:
         cut = text.rfind("\n", 0, max_chars)
         if cut < max_chars // 2:
             cut = max_chars
-        return (
-            text[:cut].rstrip()
-            + f"\n\n[... truncated {len(text) - cut} chars ...]"
-        )
+        return text[:cut].rstrip() + f"\n\n[... truncated {len(text) - cut} chars ...]"
     return text
 
 
@@ -1066,9 +1092,7 @@ class _MarkdownParser(HTMLParser):
         return urllib.parse.urljoin(self.base_url, href) if href else ""
 
     def _is_boilerplate(self, attrs: dict) -> bool:
-        marker = " ".join(
-            filter(None, (attrs.get("class", ""), attrs.get("id", "")))
-        )
+        marker = " ".join(filter(None, (attrs.get("class", ""), attrs.get("id", ""))))
         return bool(marker and _BOILERPLATE_RE.search(marker))
 
     def handle_starttag(self, tag, attrs):

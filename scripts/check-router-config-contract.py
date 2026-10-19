@@ -1025,7 +1025,9 @@ def collect_param_descriptions(*paths: str) -> tuple[set[str], list[str]]:
                         f"line {node.lineno}: undeterminable description form {type(value_node).__name__}"
                     )
     if not found and not problems:
-        problems.append("tool schema factory not found —— renamed, please update this script")
+        problems.append(
+            "tool schema factory not found —— renamed, please update this script"
+        )
     return refs, problems
 
 

@@ -79,8 +79,7 @@ def selftest() -> None:
     )
     check(
         "rank: unrelated last and zero",
-        ranked[-1]["title"] == "国际资金清算系统_百度百科"
-        and ranked[-1]["score"] == 0,
+        ranked[-1]["title"] == "国际资金清算系统_百度百科" and ranked[-1]["score"] == 0,
         str(ranked)[:160],
     )
     check(
@@ -257,7 +256,8 @@ def selftest() -> None:
         ]
         check(
             "proxy: opener uses proxy",
-            bool(handlers) and handlers[0].proxies.get("https") == "http://127.0.0.1:7897",
+            bool(handlers)
+            and handlers[0].proxies.get("https") == "http://127.0.0.1:7897",
             str(handlers[0].proxies if handlers else None),
         )
         original_map = w._proxy_map

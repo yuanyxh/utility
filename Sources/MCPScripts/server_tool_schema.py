@@ -25,9 +25,7 @@ DEFAULT_RECALL_LIMIT = arg_default("recall", "limit")
 #: same table as the other tools leaves no room for drift.
 DEFAULT_PROJECT_NOTES_LIMIT = arg_default("project_notes", "limit")
 
-DEFAULT_WEBSEARCH_LIMIT = max(
-    1, min(arg_default("websearch_engine", "limit"), 10)
-)
+DEFAULT_WEBSEARCH_LIMIT = max(1, min(arg_default("websearch_engine", "limit"), 10))
 DEFAULT_WEBSEARCH_FETCH_TOP = max(
     0, min(arg_default("websearch_engine", "fetch_top"), 3)
 )

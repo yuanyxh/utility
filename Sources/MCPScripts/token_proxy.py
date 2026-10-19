@@ -443,7 +443,9 @@ def _apply_rewrites(state: _ProxyState) -> None:
     # after record — the record layer must keep the original, otherwise the measurement
     # yardstick destroys itself.
     if SKILL_DEDUP_ENABLED:
-        deduped = dedup_tool_results(state.request_body, state.api_format, ui_language())
+        deduped = dedup_tool_results(
+            state.request_body, state.api_format, ui_language()
+        )
         if deduped:
             state.note_parts.append("skillDedup")
             state.body_bytes = json.dumps(state.request_body).encode()
@@ -471,7 +473,9 @@ def _apply_rewrites(state: _ProxyState) -> None:
             state.note_parts.append("outputFilter")
             state.body_bytes = json.dumps(state.request_body).encode()
         logger.info(
-            json.dumps({"msg": "output_filter", "api_format": state.api_format, **filtered})
+            json.dumps(
+                {"msg": "output_filter", "api_format": state.api_format, **filtered}
+            )
         )
 
     # Strip the note lines the model echoed back from earlier turns: the note is injected into
@@ -483,14 +487,20 @@ def _apply_rewrites(state: _ProxyState) -> None:
             state.body_bytes = json.dumps(state.request_body).encode()
             logger.info(
                 json.dumps(
-                    {"msg": "note_strip", "removed": stripped, "api_format": state.api_format}
+                    {
+                        "msg": "note_strip",
+                        "removed": stripped,
+                        "api_format": state.api_format,
+                    }
                 )
             )
 
     # Request protocol conversion: client anthropic ↔ provider openai (standard gateway mapping)
     if state.api_format == "anthropic" and state.provider_format == "openai":
         state.request_body = json.loads(state.body_bytes)
-        state.request_body = ProtocolConverter.request_anthropic_to_openai(state.request_body)
+        state.request_body = ProtocolConverter.request_anthropic_to_openai(
+            state.request_body
+        )
         state.body_bytes = json.dumps(state.request_body).encode()
         logger.debug(
             json.dumps(
@@ -503,7 +513,9 @@ def _apply_rewrites(state: _ProxyState) -> None:
         )
     elif state.api_format == "openai" and state.provider_format == "anthropic":
         state.request_body = json.loads(state.body_bytes)
-        state.request_body = ProtocolConverter.request_openai_to_anthropic(state.request_body)
+        state.request_body = ProtocolConverter.request_openai_to_anthropic(
+            state.request_body
+        )
         state.body_bytes = json.dumps(state.request_body).encode()
         logger.debug(
             json.dumps(
@@ -641,7 +653,8 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
 
                     # Upstream openai → client anthropic: the response needs conversion (Claude Code scenario)
                     convert_resp = (
-                        state.provider_format == "openai" and state.api_format == "anthropic"
+                        state.provider_format == "openai"
+                        and state.api_format == "anthropic"
                     )
                     converter = (
                         OpenAIToAnthropicStream() if (convert_resp and is_sse) else None
@@ -742,7 +755,9 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                                             {
                                                 "msg": "stream_multiple_message_start",
                                                 "count": note_sink.message_starts,
-                                                "model": state.request_body.get("model", ""),
+                                                "model": state.request_body.get(
+                                                    "model", ""
+                                                ),
                                                 "path": state.request.path,
                                             }
                                         )
@@ -834,7 +849,9 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                         out_format = "anthropic"
                     else:
                         usage_data = (
-                            _extract_usage_from_sse(sse_bytes, api_format=state.api_format)
+                            _extract_usage_from_sse(
+                                sse_bytes, api_format=state.api_format
+                            )
                             if is_sse and sse_bytes
                             else None
                         )
@@ -843,7 +860,9 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                     if usage_data:
                         # Supplement model: some APIs' SSE responses lack a model field
                         if not usage_data.get("model"):
-                            usage_data["model"] = state.request_body.get("model", "unknown")
+                            usage_data["model"] = state.request_body.get(
+                                "model", "unknown"
+                            )
                         output_preview = (
                             _extract_output_from_sse(sse_bytes, api_format=out_format)
                             if sse_bytes

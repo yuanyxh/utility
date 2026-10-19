@@ -78,7 +78,9 @@ class ClashSwitcher:
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             self._state_file.write_text(
-                json.dumps({"group": self._group, "previous": self._backup}, ensure_ascii=False),
+                json.dumps(
+                    {"group": self._group, "previous": self._backup}, ensure_ascii=False
+                ),
                 encoding="utf-8",
             )
         except OSError as exc:
@@ -102,7 +104,9 @@ class ClashSwitcher:
             self._drop_state()
             return
         group = (data.get("group") or "").strip() if isinstance(data, dict) else ""
-        previous = (data.get("previous") or "").strip() if isinstance(data, dict) else ""
+        previous = (
+            (data.get("previous") or "").strip() if isinstance(data, dict) else ""
+        )
         if not group or not previous:
             self._drop_state()
             return
@@ -110,7 +114,9 @@ class ClashSwitcher:
         self._backup = previous
         self._socket = _find_socket()
         if not self._socket:
-            logger.warning("clash state found but control socket missing; retry next run")
+            logger.warning(
+                "clash state found but control socket missing; retry next run"
+            )
             return
         self.restore()
 
@@ -135,7 +141,9 @@ class ClashSwitcher:
             if status not in (200, 204):
                 logger.warning("clash switch failed: HTTP %s", status)
                 return False
-            logger.info("clash group %s: %s -> %s", self._group, self._backup, self._target)
+            logger.info(
+                "clash group %s: %s -> %s", self._group, self._backup, self._target
+            )
             self._write_state()
             return True
         except (OSError, ValueError) as exc:

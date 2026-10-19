@@ -70,11 +70,13 @@ def extract_digest_links(
         if not url.startswith("http") or url in seen:
             continue
         seen.add(url)
-        links.append({
-            "title": (item.get("title") or "").strip(),
-            "url": url,
-            "why": (item.get("why") or "").strip(),
-        })
+        links.append(
+            {
+                "title": (item.get("title") or "").strip(),
+                "url": url,
+                "why": (item.get("why") or "").strip(),
+            }
+        )
         if len(links) >= max(1, limit):
             break
     return links

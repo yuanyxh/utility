@@ -118,7 +118,9 @@ def run_archive_sync_impl(hot_memory, qdrant) -> tuple[int, int, int]:
     return deleted_hot, archived_count, decayed_count
 
 
-async def run_archive_sync(hot_memory, qdrant, ensure_hot_memory) -> tuple[int, int, int]:
+async def run_archive_sync(
+    hot_memory, qdrant, ensure_hot_memory
+) -> tuple[int, int, int]:
     # Same reason as recall: `run_archive_sync_impl` only checks `if hot_memory` and does
     # not initialize it. If there is no hot-layer call for more than one archive period
     # (24h), archiving spins idly and only reports hot_deleted=0. It must be invoked on the
@@ -146,5 +148,3 @@ async def archive_scheduler(get_state, ensure_hot_memory):
         except Exception as e:
             logger.warning(f"Archive check failed: {e}")
         await asyncio.sleep(ARCHIVE_INTERVAL_HOURS * 3600)
-
-
