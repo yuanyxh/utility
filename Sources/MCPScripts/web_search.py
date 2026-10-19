@@ -11,6 +11,7 @@ import gzip
 import html as htmlmod
 import http.cookiejar
 import json
+import math
 import random
 import re
 import threading
@@ -78,6 +79,10 @@ _MIN_INTERVAL = {
 CJK_ORDER = ("sogou", "so360", "baidu", "bing", "marginalia", "brave", "duckduckgo")
 LATIN_ORDER = ("bing", "marginalia", "brave", "duckduckgo", "sogou", "so360", "baidu")
 DEFAULT_ENGINES = ("bing", "sogou", "so360", "baidu", "marginalia", "brave", "duckduckgo")
+#: Stop cascading once this many candidates exist; IDF ranking needs a corpus.
+_CANDIDATE_TARGET = 15
+#: Drop candidates whose weighted token coverage is below this floor.
+_MIN_SCORE = 0.25
 ENGINE_COOLDOWN = 600.0
 MAX_TOTAL_CHARS = 16000
 SEARCH_BUDGET = 25.0
@@ -348,6 +353,9 @@ def fetch(url: str, engine: str = "bing", timeout: int = TIMEOUT) -> str:
 
 
 def _text(fragment: str) -> str:
+    # Comments carry structured payloads; script/style bodies are not page text.
+    fragment = re.sub(r"<!--.*?-->", "", fragment, flags=re.DOTALL)
+    fragment = re.sub(r"<(script|style)\b.*?</\1>", "", fragment, flags=re.DOTALL | re.I)
     return htmlmod.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
 
 
@@ -360,13 +368,52 @@ def _unredirect(url: str) -> str:
     return url
 
 
-def _dedup(results: list, limit: int = 15) -> list:
+#: Baidu ad slots link through baidu.php / e.baidu.com; `mu` then points at an
+#: internal placeholder host instead of the advertiser's real page.
+_AD_URL_MARKERS = (
+    "baidu.php",
+    "e.baidu.com",
+    "nourl.ubs.baidu.com",
+    "recommend_list.baidu.com",
+)
+
+
+def _is_ad_url(url: str) -> bool:
+    if not url:
+        return True
+    low = url.lower()
+    return any(marker in low for marker in _AD_URL_MARKERS)
+
+
+#: A search engine's own result/aggregation page carries no page content.
+_ENGINE_PAGES = (
+    ("www.sogou.com", "/sogou"),
+    ("www.sogou.com", "/web"),
+    ("www.baidu.com", "/s"),
+    ("www.so.com", "/s"),
+    ("www.bing.com", "/search"),
+    ("cn.bing.com", "/search"),
+    ("html.duckduckgo.com", "/html/"),
+    ("search.brave.com", "/search"),
+    ("old-search.marginalia.nu", "/search"),
+)
+
+
+def _is_engine_page(url: str) -> bool:
+    parts = urllib.parse.urlparse(url.lower())
+    return any(
+        parts.netloc == host and parts.path.startswith(path)
+        for host, path in _ENGINE_PAGES
+    )
+
+
+def _dedup(results: list, limit: int | None = None) -> list:
     seen, out = set(), []
     for r in results:
         if r["url"] not in seen and r["title"]:
             seen.add(r["url"])
             out.append(r)
-    return out[:limit]
+    return out if limit is None else out[:limit]
 
 
 def _parse_bing(raw: str) -> list:
@@ -466,7 +513,11 @@ def _parse_sogou(raw: str) -> list:
         if not url.startswith("http"):
             continue
         snippet = ""
-        p = re.search(r'<p[^>]*class="[^"]*space-txt[^"]*"[^>]*>(.*?)</p>', block, re.DOTALL)
+        p = re.search(
+            r'<(?:p|div)[^>]*class="[^"]*space-txt[^"]*"[^>]*>(.*?)</(?:p|div)>',
+            block,
+            re.DOTALL,
+        )
         if p:
             snippet = _text(p.group(1))
         out.append(
@@ -513,6 +564,38 @@ def _parse_so360(raw: str) -> list:
     return out
 
 
+_BAIDU_SDATA_RE = re.compile(r"<!--s-data:(.*?)-->", re.DOTALL)
+
+
+def _baidu_summary(block: str) -> str:
+    """New Baidu cards keep the snippet in an s-data comment, not c-abstract."""
+    raw = _BAIDU_SDATA_RE.search(block)
+    if raw:
+        try:
+            payload = json.loads(htmlmod.unescape(raw.group(1)))
+            lines = payload.get("summaryData", {}).get("generalLines", [])
+            parts = [
+                item.get("text", "")
+                for line in lines
+                for item in line.get("data", [])
+                if item.get("text")
+            ]
+            text = _text(" ".join(parts))
+            if text:
+                return text
+        except (ValueError, TypeError, AttributeError):
+            pass
+    for pattern in (
+        r'<div[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</div>',
+        r'<span[^>]*class="[^"]*content-right[^"]*"[^>]*>(.*?)</span>',
+        r'<div[^>]*class="[^"]*c-span-last[^"]*"[^>]*>(.*?)</div>',
+    ):
+        hit = re.search(pattern, block, re.DOTALL)
+        if hit:
+            return _text(hit.group(1))
+    return ""
+
+
 def _parse_baidu(raw: str) -> list:
     out = []
     for block in re.findall(
@@ -524,27 +607,24 @@ def _parse_baidu(raw: str) -> list:
         m = re.search(r'<h3[^>]*>.*?<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
         if not m:
             continue
-        url = htmlmod.unescape(m.group(1)).strip()
-        if not url.startswith("http"):
+        href = htmlmod.unescape(m.group(1)).strip()
+        # Whole-block ad: the title link itself is a promotion redirect.
+        if "baidu.php" in href.lower():
             continue
-        snippet = ""
-        for pattern in (
-            r'<div[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</div>',
-            r'<span[^>]*class="[^"]*content-right[^"]*"[^>]*>(.*?)</span>',
-            r'<div[^>]*class="[^"]*c-span-last[^"]*"[^>]*>(.*?)</div>',
-        ):
-            hit = re.search(pattern, block, re.DOTALL)
-            if hit:
-                snippet = _text(hit.group(1))
-                break
-        if not snippet:
-            snippet = _text(re.sub(r"<h3.*?</h3>", "", block, flags=re.DOTALL))[:200]
+        # `mu` is the real target for organic results and a placeholder for ads.
+        mu = re.search(r'\smu="([^"]*)"', block)
+        url = htmlmod.unescape(mu.group(1)).strip() if mu else href
+        if _is_ad_url(url) or not url.startswith("http"):
+            continue
+        title = _text(m.group(2))
+        if not title:
+            continue
         out.append(
             {
-                "title": _text(m.group(2)),
+                "title": title,
                 "url": url,
                 "date": "",
-                "snippet": snippet[:200],
+                "snippet": _baidu_summary(block)[:200],
             }
         )
     return out
@@ -763,19 +843,42 @@ def _resolve_one_jump(result: dict) -> str:
 # ── relevance ───────────────────────────────────────────────────────────────
 
 
-def _matches(result: dict, query: str) -> bool:
-    hay = (result["title"] + " " + result["snippet"]).lower()[:400]
+_ASCII_RUN_RE = re.compile(r"[a-z0-9]+")
+_CJK_RUN_RE = re.compile(r"[㐀-鿿]+")
+
+
+def _query_tokens(query: str) -> list[str]:
+    """ASCII words plus CJK bigrams; no dictionary or tokenizer required."""
+    q = query.lower()
+    tokens = _ASCII_RUN_RE.findall(q)
+    for run in _CJK_RUN_RE.findall(q):
+        tokens += [run] if len(run) == 1 else [run[i : i + 2] for i in range(len(run) - 1)]
+    return tokens
+
+
+def _score_results(results: list, query: str) -> list:
+    """Rank candidates by query-token coverage with corpus-local IDF weights."""
     q = query.lower().strip()
-    if not q:
-        return True
-    if q in hay:
-        return True
-    terms = [t for t in q.split() if t]
-    if len(terms) > 1:
-        return all(t in hay for t in terms)
-    # A long single token must overlap substantially; a 4-char gate let random
-    # gibberish through whenever the snippet happened to contain "query".
-    return _overlap(q, hay) >= min(len(q), 8)
+    if not q or not results:
+        return results
+    tokens = _query_tokens(q) or [q]
+    docs = [(r["title"] + " " + r.get("snippet", "")).lower() for r in results]
+    n = len(docs)
+    weights = {
+        t: math.log(1 + n / (1 + sum(1 for d in docs if t in d))) for t in set(tokens)
+    }
+    total = sum(weights.values()) or 1.0
+    for result, doc in zip(results, docs):
+        title = result["title"].lower()
+        score = sum(w for t, w in weights.items() if t in doc) / total
+        if q in doc:
+            score += 1.0
+        if q in title:
+            score += 0.5
+        elif any(t in title for t in tokens):
+            score += 0.1
+        result["score"] = round(score, 4)
+    return sorted(results, key=lambda r: (-r["score"], len(r["title"])))
 
 
 def _order_for(query: str):
@@ -836,16 +939,18 @@ def search_report(query: str, engines=None, min_results: int = 5):
                 "error": f"{type(exc).__name__}: {exc}",
             }
         else:
-            status[engine] = {"status": "ok", "parsed": len(parsed), "matched": 0}
-        matched = [r for r in parsed if _matches(r, query)]
-        for r in matched:
+            status[engine] = {"status": "ok", "parsed": len(parsed)}
+        for r in parsed:
             r.setdefault("engine", engine)
-        out.extend(matched)
-        status[engine]["matched"] = len(matched)
-        if len(out) >= min_results:
+        out.extend(r for r in parsed if not _is_engine_page(r["url"]))
+        if len(out) >= _CANDIDATE_TARGET:
             stopped_at = engine
             break
-    results = _resolve_jumps(_dedup(out))
+    ranked = _score_results(_resolve_jumps(_dedup(out)), query)
+    results = [r for r in ranked if r.get("score", 0) >= _MIN_SCORE][:min_results]
+    for engine, info in status.items():
+        if info.get("status") == "ok":
+            info["kept"] = sum(1 for r in results if r.get("engine") == engine)
     known = [e for e in order if e in _PARSERS]
     all_failed = bool(known) and all(
         status.get(engine, {}).get("status")
@@ -854,6 +959,7 @@ def search_report(query: str, engines=None, min_results: int = 5):
     )
     report = {
         "total": len(results),
+        "candidates": len(out),
         "engines": status,
         "attempted": attempted,
         "stopped_at": stopped_at,

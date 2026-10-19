@@ -63,20 +63,38 @@ def selftest() -> None:
     malformed = w.html_to_markdown("<p>unclosed<div><script>x")
     check("malformed: no exception", isinstance(malformed, str))
 
-    check(
-        "relevance: positive",
-        w._matches({"title": "端到端原则", "snippet": "网络设计"}, "端到端原则"),
+    ranked = w._score_results(
+        [
+            {"title": "网络地址转换（NAT）详解", "snippet": ""},
+            {"title": "国际资金清算系统_百度百科", "snippet": "SWIFT 组织"},
+            {"title": "NAT穿透原理", "snippet": ""},
+            {"title": "网络协议概述", "snippet": ""},
+        ],
+        "网络NAT",
     )
     check(
-        "relevance: negative",
-        not w._matches({"title": "端", "snippet": "端字的解释"}, "端到端原则"),
+        "rank: relevant first",
+        ranked[0]["title"] == "网络地址转换（NAT）详解",
+        str(ranked)[:160],
     )
     check(
-        "relevance: long gibberish",
-        not w._matches(
-            {"title": "SQL query tutorial", "snippet": "query"},
-            "zzzz-no-such-query-12345",
-        ),
+        "rank: unrelated last and zero",
+        ranked[-1]["title"] == "国际资金清算系统_百度百科"
+        and ranked[-1]["score"] == 0,
+        str(ranked)[:160],
+    )
+    check(
+        "rank: partial kept",
+        any(r["title"] == "NAT穿透原理" for r in ranked),
+    )
+    gibberish = w._score_results(
+        [{"title": "SQL query tutorial", "snippet": "query"}],
+        "zzzz-no-such-query-12345",
+    )
+    check(
+        "rank: gibberish below floor",
+        gibberish[0]["score"] < w._MIN_SCORE,
+        str(gibberish[0]),
     )
     check(
         "challenge: detector",
@@ -146,6 +164,81 @@ def selftest() -> None:
             len(parsed) == 1 and parsed[0]["title"].startswith("T"),
             str(parsed)[:120],
         )
+
+    baidu_mixed = (
+        '<div class="result c-container"><h3>'
+        '<a href="https://www.baidu.com/baidu.php?url=AD">AD1</a></h3></div>'
+        '<div class="result c-container"><h3>'
+        '<a href="http://www.baidu.com/link?url=ok">T7</a></h3>'
+        '<div class="c-abstract">S7</div>'
+        '<span mu="https://real.test/a"></span></div>'
+        '<div class="result c-container"><h3>'
+        '<a href="http://www.baidu.com/link?url=ad2">AD2</a></h3>'
+        '<span mu="http://nourl.ubs.baidu.com/1"></span></div>'
+        '<div class="result c-container">'
+        '<span mu="http://28608.recommend_list.baidu.com/"></span></div></body>'
+    )
+    baidu_parsed = w._parse_baidu(baidu_mixed)
+    check(
+        "baidu: ads dropped",
+        len(baidu_parsed) == 1,
+        str(baidu_parsed)[:200],
+    )
+    check(
+        "baidu: real url from mu",
+        bool(baidu_parsed) and baidu_parsed[0]["url"] == "https://real.test/a",
+        str(baidu_parsed[:1]),
+    )
+
+    baidu_sdata = (
+        '<div class="result c-container"><h3>'
+        '<a href="http://www.baidu.com/link?url=x">T8</a></h3>'
+        '<!--s-data:{"summaryData":{"generalLines":['
+        '{"data":[{"text":"<em>北京</em>英语摘要"}]}]}}-->'
+        '<span mu="https://real.test/b"></span></div></body>'
+    )
+    sdata_parsed = w._parse_baidu(baidu_sdata)
+    check(
+        "baidu: s-data summary",
+        len(sdata_parsed) == 1 and "北京英语摘要" in sdata_parsed[0]["snippet"],
+        str(sdata_parsed)[:160],
+    )
+    check(
+        "baidu: no comment leakage",
+        bool(sdata_parsed) and "summaryData" not in sdata_parsed[0]["snippet"],
+        str(sdata_parsed[:1]),
+    )
+
+    sogou_div = (
+        '<div class="vrwrap"><h3 class="vr-title">'
+        '<a href="https://x.test/9">T9</a></h3>'
+        "<style>.x{color:red}</style>"
+        '<div class="fz-mid space-txt base-ellipsis">S9 摘要</div></div>'
+    )
+    sogou_parsed = w._parse_sogou(sogou_div)
+    check(
+        "sogou: div snippet",
+        len(sogou_parsed) == 1 and "S9" in sogou_parsed[0]["snippet"],
+        str(sogou_parsed)[:140],
+    )
+    check(
+        "sogou: style stripped",
+        bool(sogou_parsed) and "color" not in sogou_parsed[0]["snippet"],
+        str(sogou_parsed[:1]),
+    )
+
+    check(
+        "filter: engine pages dropped",
+        w._is_engine_page("https://www.sogou.com/sogou?query=x")
+        and w._is_engine_page("https://www.baidu.com/s?wd=x")
+        and w._is_engine_page("https://www.bing.com/search?q=x"),
+    )
+    check(
+        "filter: content pages kept",
+        not w._is_engine_page("https://baike.baidu.com/item/x")
+        and not w._is_engine_page("https://www.baidu.com/link?url=x")
+        and not w._is_engine_page("https://zhuanlan.zhihu.com/p/1"),
+    )
 
     # System proxy (macOS _scproxy + env) must reach the urllib opener.
     old_proxy = os.environ.get("HTTPS_PROXY")

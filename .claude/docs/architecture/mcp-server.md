@@ -14,6 +14,11 @@
 - `MEM0_CONFIG["embedder"]["config"]` 不支持 `cache_dir` 参数（`BaseEmbedderConfig` 不接受），依靠 `FASTEMBED_CACHE_PATH` 环境变量让 mem0 内部 fastembed 找到已有缓存
 - `tool_resource` 工具返回已注册 skill 的附属资源：path 必须位于 `references`/`agents`/`scripts` 之下，双重校验——normpath 语法层挡 `../` 穿越 + realpath 语义层解析 symlink 后仍须位于 skill 目录真实路径内（防附属目录内 symlink 指向外部文件泄露），读取用 realpath 结果避免 TOCTOU
 - `websearch_engine` 是内置工具（`web_search.py`），不再走 Skill 层：多引擎级联（Bing/搜狗/360/百度/Marginalia/Brave/DDG）、按查询语言选顺序、按引擎限流 + 连续失败冷却；可选抓取前 N 页并转 Markdown、按页与总量限长。旧 `websearch-fallback` skill 已移除，页面内容不再以 HTML 返回
+- 百度广告位在解析层整块丢弃（标题链接含 `baidu.php`，或 `mu` 指向 `e.baidu.com` / `nourl.ubs` / `recommend_list`）；自然结果优先用 `mu` 真实地址，跳过 `baidu.com/link` 跳转解析。块内嵌广告不影响该自然结果保留
+- 百度新版卡片的摘要位于 `<!--s-data:{...}-->` 注释的 `summaryData.generalLines[].data[].text`，`_baidu_summary` 优先解析它；`_text` 统一剔除 HTML 注释，避免 JSON 混入摘要。找不到容器时返回空摘要，不用整块文本兜底
+- 搜狗摘要容器实际是 `div.space-txt`（旧正则只认 `p`，导致摘要全空）；`_text` 同时剔除 `script`/`style` 内容，避免 CSS 文本混入摘要
+- 相关性改为「候选合并 + 打分排序」：各引擎解析结果全部进入候选池（仅过滤广告/空标题），按查询 token（ASCII 词 + 中文 bigram，无需分词/词表）的 IDF 加权覆盖率排序，分数 <`_MIN_SCORE`(0.25) 丢弃，取 top N。**不再做 matched 二元过滤**——同义/词序/繁简等变体只影响排名，不会被直接删除。旧 `_matches` 的连续子串判据会让「网络NAT」因结果写成「网络地址转换（NAT）」而全灭
+- 解析后过滤搜索引擎自身的搜索结果页（`_is_engine_page`：`sogou.com/sogou`、`baidu.com/s`、`so.com/s`、`bing.com/search` 等）；`baike.baidu.com` 等内容页与 `baidu.com/link?url=` 跳转链接不受影响
 - `_scan_skills` 递归 os.walk：目录含 SKILL.md（Waza 式目录 skill）→ 跳过 `_SKILL_SKIP_DIRS` 子目录且只注册 SKILL.md 本身；无 SKILL.md 的普通目录 → 其内所有 .md（含附属子目录）照常注册
 - `_find_skill_dir` 按 normalize 后注册名定位 skill 目录；扁平 .md skill 不在目录注册表，定位失败返回 None → `"skill not found"`（设计使然非 bug）
 - **检索同义词表 = 内置默认 + 用户增量**：`synonyms.py` 的 `SYNONYM_MAP` 是内置，`config.yaml` 的 `mcp.synonyms` 是用户增量（**同名覆盖、异名追加**，只写要加的、不必抄回整张表）。Swift `MCPProcessManager.synonymsJSON()` 把用户表序列化后按 `synonymsEnvKey`（`MCP_SYNONYMS`）注入，Python 侧 `load_synonyms()` 合并并缓存（env 在进程启动时固定，改配置要重启服务）。**该 env 不进 `config.py`**（脚本专属 env 的既有约定），故契约第 3 组的「Python 读了 Swift 必须注入」覆盖不到它——脚本单独交叉断言两侧常量同值（`find_synonym_env_violations`），否则改名后内置表照常工作、**用户配的同义词静默失效**（无任何报错）。**不迁入 notes**：检索质量不该成为可被静默改坏的变量，改坏了的表现是「搜不到」，与「这条记录本来就不存在」无法区分
