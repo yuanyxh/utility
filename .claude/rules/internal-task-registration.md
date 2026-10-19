@@ -13,6 +13,11 @@ triggers: ["registerInternalTask", "internal-task", "内置任务", "mcp-summary
     `last_fire`；再 register 后 `handleMissed()` 以「今天 00:00」为基准补触发——每天 cron 时刻
     之后每次重启 / reload 配置都会重复触发一次（mcp-summary 曾因此每天跑多次）
   - disabled / 条件不满足时才 unregister
+- **注册阶段禁止清理 stale 状态**：`registerInternalTask` 必须走 `reschedule(cleanupStale: false)`
+  - ⚠️ 模块是逐个注册的：先注册的任务触发 `cleanupStaleTaskStates()` 时，尚未注册的其他内部任务
+    在 DB 里会被当成「已删除」→ 它们的 `last_fire` 被清掉 → 随后注册时 `handleMissed()` 读到
+    nil，每次重启都补触发一次（2026-10-19 实测：mcp-summary 先注册，删掉了 rss-daily 的状态）
+  - `unregisterInternalTask` 与 `configDidLoad` 的 `reschedule()` 仍清理（此时任务集已完整）
 - 所有环境变量通过内联 cmd 字符串传入，不使用 buildEnv()
 - **任务子进程环境坑**：`TaskExecConfig.toProcess()` 不设置环境变量，子进程完整继承 Utility.app（launchd 启动的 GUI 进程）的受限 PATH——**缺 homebrew 路径**。凡命令依赖 PATH 找可执行文件（如 claude）的任务，`agentCli`/cmd 必须写**全路径**（如 `/opt/homebrew/bin/claude`），否则运行时 `FileNotFoundError` 秒退（2026-08-19 实测崩溃，该任务后因管线整体移除已不存在，但坑本身与任务无关）
 

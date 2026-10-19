@@ -18,12 +18,16 @@ public final class TaskScheduler {
 
     // MARK: - Internal task registration
 
-    /// Register an internal task (registered by modules such as MCP), automatically added to the schedule at startup
+    /// Register an internal task (registered by modules such as MCP), automatically added to the schedule at startup.
+    ///
+    /// Registration must **not** run stale cleanup: modules register one by one at launch, so
+    /// cleaning here treats the internal tasks that have not registered yet as stale and deletes
+    /// their `last_fire` — the next registration then catches up and re-fires on every restart.
     public func registerInternalTask(_ task: TaskConfig) {
         // Replace by name
         internalTasks.removeAll { $0.name == task.name }
         internalTasks.append(task)
-        reschedule()
+        reschedule(cleanupStale: false)
     }
 
     public func unregisterInternalTask(named name: String) {
@@ -48,10 +52,14 @@ public final class TaskScheduler {
         timer = nil
     }
 
-    /// After a config reload: clean up stale task state, catch up missed runs, reschedule the next round
-    public func reschedule() {
+    /// After a config reload: clean up stale task state, catch up missed runs, reschedule the next round.
+    /// `cleanupStale: false` is used during internal-task registration, when not every module has
+    /// registered yet (see `registerInternalTask`).
+    public func reschedule(cleanupStale: Bool = true) {
         timer?.invalidate()
-        cleanupStaleTaskStates()
+        if cleanupStale {
+            cleanupStaleTaskStates()
+        }
         handleMissed()
         scheduleNext()
     }

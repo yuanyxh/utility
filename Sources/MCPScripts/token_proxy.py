@@ -8,6 +8,7 @@ endpoints + service startup.
 """
 
 import asyncio
+from dataclasses import dataclass
 import json
 import os
 import sys
@@ -247,6 +248,22 @@ def _api_format_from_path(upstream_path: str) -> str | None:
     return None
 
 
+@dataclass
+class _ProxyState:
+    """Everything the forwarding stages share; filled in by `_prepare_request`."""
+
+    request: web.Request
+    path: str
+    api_format: str
+    provider: dict
+    provider_format: str
+    request_body: dict
+    body_bytes: bytes
+    record_request_body: dict
+    note_parts: list[str]
+    upstream: str
+
+
 async def handle_proxy(request: web.Request) -> web.StreamResponse:
     """Forward the request to the upstream API, returning the response in a streaming manner."""
     if not UPSTREAM_URL and not PROVIDERS:
@@ -263,7 +280,13 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # protocol, see _models_schema_for.
     if request.method == "GET" and path == "v1/models":
         return await _handle_models(request)
+    state = await _prepare_request(request, path)
+    _apply_rewrites(state)
+    return await _forward(state)
 
+
+async def _prepare_request(request: web.Request, path: str) -> _ProxyState:
+    """Read the body, resolve the protocol/provider, inject rules, and capture the record copy."""
     # Read the request body
     body_bytes = await request.read()
     request_body = {}
@@ -399,22 +422,37 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
     # The list of rewrites triggered this turn, for the response-side "applied: …" append
     note_parts: list[str] = []
+    return _ProxyState(
+        request=request,
+        path=path,
+        api_format=api_format,
+        provider=provider,
+        provider_format=provider_format,
+        request_body=request_body,
+        body_bytes=body_bytes,
+        record_request_body=record_request_body,
+        note_parts=note_parts,
+        upstream=upstream,
+    )
 
+
+def _apply_rewrites(state: _ProxyState) -> None:
+    """Client-format rewrites before forwarding; the record copy stays untouched."""
     # skill full-text dedup: from the second copy onward replace with a short note (the
     # criterion is byte-identical content; the proxy cannot see the skill list). Must be
     # after record — the record layer must keep the original, otherwise the measurement
     # yardstick destroys itself.
     if SKILL_DEDUP_ENABLED:
-        deduped = dedup_tool_results(request_body, api_format, ui_language())
+        deduped = dedup_tool_results(state.request_body, state.api_format, ui_language())
         if deduped:
-            note_parts.append("skillDedup")
-            body_bytes = json.dumps(request_body).encode()
+            state.note_parts.append("skillDedup")
+            state.body_bytes = json.dumps(state.request_body).encode()
             logger.info(
                 json.dumps(
                     {
                         "msg": "skill_dedup",
                         "replaced": deduped,
-                        "api_format": api_format,
+                        "api_format": state.api_format,
                     }
                 )
             )
@@ -423,60 +461,63 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # shell-like tools (Read etc. are file contents the model explicitly asked for;
     # truncating is corruption). Likewise must be after record.
     filtered = filter_tool_outputs(
-        request_body,
-        api_format,
+        state.request_body,
+        state.api_format,
         OUTPUT_FILTER_JSON,
         ui_language(),
     )
     if filtered:
         if filtered.get("saved_bytes"):
-            note_parts.append("outputFilter")
-            body_bytes = json.dumps(request_body).encode()
+            state.note_parts.append("outputFilter")
+            state.body_bytes = json.dumps(state.request_body).encode()
         logger.info(
-            json.dumps({"msg": "output_filter", "api_format": api_format, **filtered})
+            json.dumps({"msg": "output_filter", "api_format": state.api_format, **filtered})
         )
 
     # Strip the note lines the model echoed back from earlier turns: the note is injected into
     # the assistant's text block, so it enters the history and the model reproduces that line
     # on its own. Removing it here keeps it out of the upstream context.
     if RESPONSE_NOTE_ENABLED:
-        stripped = strip_notes_from_messages(request_body.get("messages") or [])
+        stripped = strip_notes_from_messages(state.request_body.get("messages") or [])
         if stripped:
-            body_bytes = json.dumps(request_body).encode()
+            state.body_bytes = json.dumps(state.request_body).encode()
             logger.info(
                 json.dumps(
-                    {"msg": "note_strip", "removed": stripped, "api_format": api_format}
+                    {"msg": "note_strip", "removed": stripped, "api_format": state.api_format}
                 )
             )
 
     # Request protocol conversion: client anthropic ↔ provider openai (standard gateway mapping)
-    if api_format == "anthropic" and provider_format == "openai":
-        request_body = json.loads(body_bytes)
-        request_body = ProtocolConverter.request_anthropic_to_openai(request_body)
-        body_bytes = json.dumps(request_body).encode()
+    if state.api_format == "anthropic" and state.provider_format == "openai":
+        state.request_body = json.loads(state.body_bytes)
+        state.request_body = ProtocolConverter.request_anthropic_to_openai(state.request_body)
+        state.body_bytes = json.dumps(state.request_body).encode()
         logger.debug(
             json.dumps(
                 {
                     "msg": "request_converted",
                     "direction": "anthropic_to_openai",
-                    "provider": provider.get("name", ""),
+                    "provider": state.provider.get("name", ""),
                 }
             )
         )
-    elif api_format == "openai" and provider_format == "anthropic":
-        request_body = json.loads(body_bytes)
-        request_body = ProtocolConverter.request_openai_to_anthropic(request_body)
-        body_bytes = json.dumps(request_body).encode()
+    elif state.api_format == "openai" and state.provider_format == "anthropic":
+        state.request_body = json.loads(state.body_bytes)
+        state.request_body = ProtocolConverter.request_openai_to_anthropic(state.request_body)
+        state.body_bytes = json.dumps(state.request_body).encode()
         logger.debug(
             json.dumps(
                 {
                     "msg": "request_converted",
                     "direction": "openai_to_anthropic",
-                    "provider": provider.get("name", ""),
+                    "provider": state.provider.get("name", ""),
                 }
             )
         )
 
+
+async def _forward(state: _ProxyState) -> web.StreamResponse:
+    """Send the prepared request upstream, stream the response back, and record usage."""
     # Forward headers (pass through, but replace the auth key by provider)
     #
     # accept-encoding is the **exception**: the client's value is not passed through (Claude
@@ -492,15 +533,15 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
         "transfer-encoding",
         "accept-encoding",
     }
-    for k, v in request.headers.items():
+    for k, v in state.request.headers.items():
         if k.lower() not in skip_headers:
             headers[k] = v
     headers["Accept-Encoding"] = UPSTREAM_ACCEPT_ENCODING
-    api_key = api_key_of(provider)
+    api_key = api_key_of(state.provider)
     if api_key:
         headers.pop("x-api-key", None)
         headers.pop("authorization", None)
-        if provider_format == "openai":
+        if state.provider_format == "openai":
             headers["Authorization"] = f"Bearer {api_key}"
         else:
             headers["x-api-key"] = api_key
@@ -526,10 +567,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             # The two forms are equivalent: _SharedSession closes nothing on exit.
             async with _SharedSession() as session:  # noqa: SIM117
                 async with session.request(
-                    method=request.method,
-                    url=upstream,
+                    method=state.request.method,
+                    url=state.upstream,
                     headers=headers,
-                    data=body_bytes,
+                    data=state.body_bytes,
                     timeout=aiohttp.ClientTimeout(
                         total=300,
                         sock_connect=10,
@@ -544,10 +585,10 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             json.dumps(
                                 {
                                     "msg": "proxy_retry",
-                                    "path": request.path,
+                                    "path": state.request.path,
                                     "attempt": attempt + 1,
                                     "latency_ms": latency_ms,
-                                    "model": request_body.get("model", ""),
+                                    "model": state.request_body.get("model", ""),
                                 }
                             )
                         )
@@ -582,7 +623,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         status=upstream_resp.status, headers=forward_headers
                     )
                     diag_stage = "prepare"
-                    await response.prepare(request)
+                    await response.prepare(state.request)
                     diag_stage = "stream"
 
                     # Collect SSE chunks to extract usage
@@ -600,7 +641,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
 
                     # Upstream openai → client anthropic: the response needs conversion (Claude Code scenario)
                     convert_resp = (
-                        provider_format == "openai" and api_format == "anthropic"
+                        state.provider_format == "openai" and state.api_format == "anthropic"
                     )
                     converter = (
                         OpenAIToAnthropicStream() if (convert_resp and is_sse) else None
@@ -672,11 +713,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             if RESPONSE_NOTE_ENABLED:
                                 if is_sse:
                                     note_sink = SSENoteInjector(
-                                        note_parts, ui_language()
+                                        state.note_parts, ui_language()
                                     )
                                 elif upstream_resp.status < 400:
                                     note_sink = NoteBodyBuffer(
-                                        note_parts, ui_language()
+                                        state.note_parts, ui_language()
                                     )
                             async for chunk in upstream_resp.content.iter_any():
                                 last_chunk_at = time.monotonic()
@@ -701,8 +742,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                                             {
                                                 "msg": "stream_multiple_message_start",
                                                 "count": note_sink.message_starts,
-                                                "model": request_body.get("model", ""),
-                                                "path": request.path,
+                                                "model": state.request_body.get("model", ""),
+                                                "path": state.request.path,
                                             }
                                         )
                                     )
@@ -793,16 +834,16 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         out_format = "anthropic"
                     else:
                         usage_data = (
-                            _extract_usage_from_sse(sse_bytes, api_format=api_format)
+                            _extract_usage_from_sse(sse_bytes, api_format=state.api_format)
                             if is_sse and sse_bytes
                             else None
                         )
-                        out_format = api_format
+                        out_format = state.api_format
 
                     if usage_data:
                         # Supplement model: some APIs' SSE responses lack a model field
                         if not usage_data.get("model"):
-                            usage_data["model"] = request_body.get("model", "unknown")
+                            usage_data["model"] = state.request_body.get("model", "unknown")
                         output_preview = (
                             _extract_output_from_sse(sse_bytes, api_format=out_format)
                             if sse_bytes
@@ -841,18 +882,18 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         # non-200), so a JOIN has no orphan rows — this is deliberate
                         # alignment, not an omission.
                         tool_outputs = extract_tool_outputs(
-                            record_request_body, api_format=api_format
+                            state.record_request_body, api_format=state.api_format
                         )
                         task = asyncio.create_task(
                             record_usage(
-                                record_request_body,
+                                state.record_request_body,
                                 usage_data,
                                 upstream_resp.status,
                                 latency_ms,
                                 output_preview,
                                 error_message,
                                 tool_name_override=tool_name,
-                                api_format=api_format,
+                                api_format=state.api_format,
                                 tool_outputs=tool_outputs,
                             )
                         )
@@ -863,11 +904,11 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         json.dumps(
                             {
                                 "msg": "proxy_request",
-                                "method": request.method,
-                                "path": request.path,
+                                "method": state.request.method,
+                                "path": state.request.path,
                                 "status": upstream_resp.status,
                                 "latency_ms": latency_ms,
-                                "model": request_body.get("model", ""),
+                                "model": state.request_body.get("model", ""),
                             }
                         )
                     )
@@ -878,7 +919,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                             json.dumps(
                                 {
                                     "msg": "proxy_http_error_body",
-                                    "model": request_body.get("model", ""),
+                                    "model": state.request_body.get("model", ""),
                                     "status": upstream_resp.status,
                                     "latency_ms": latency_ms,
                                     "body": sse_bytes.decode("utf-8", errors="replace")[
@@ -904,7 +945,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                         {
                             "msg": "proxy_retry",
                             "reason": "connection",
-                            "path": request.path,
+                            "path": state.request.path,
                             "attempt": attempt + 1,
                             "error_type": type(e).__name__,
                             "latency_ms": latency_ms,
@@ -917,7 +958,7 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
                 json.dumps(
                     {
                         "msg": "proxy_error",
-                        "path": request.path,
+                        "path": state.request.path,
                         "error": str(e),
                         # Diagnostic (temporary): exception type + stage. Previously only
                         # str(e) was logged, but "Cannot write to closing transport" is thrown

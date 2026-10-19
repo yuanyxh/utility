@@ -85,6 +85,7 @@ CONSTANTS = os.path.join(SOURCES, "Core", "Constants.swift")
 MCP_MANAGER = os.path.join(SOURCES, "MCP", "MCPProcessManager.swift")
 CONFIG_PY = os.path.join(SCRIPTS, "config.py")
 SERVER_PY = os.path.join(SCRIPTS, "server.py")
+TOOL_SCHEMA_PY = os.path.join(SCRIPTS, "server_tool_schema.py")
 SYNONYMS_PY = os.path.join(SCRIPTS, "synonyms.py")
 TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
 OUTPUT_FILTER_PY = os.path.join(SCRIPTS, "proxy_output_filter.py")
@@ -957,8 +958,11 @@ def _param_text_key(node: ast.AST) -> str | None:
     return None
 
 
-def collect_param_descriptions(path: str) -> tuple[set[str], list[str]]:
-    """Usage of parameter descriptions inside `handle_list_tools()`: `(referenced key set, list not going through i18n)`.
+def collect_param_descriptions(*paths: str) -> tuple[set[str], list[str]]:
+    """Usage of parameter descriptions inside the tool schema factory: `(referenced key set, list not going through i18n)`.
+
+    The schema moved out of `handle_list_tools()` in server.py into `build_tools()` in
+    server_tool_schema.py, so both names are accepted across the given files.
 
     Uses AST rather than regex: the word `description` has several other meanings in server.py
     (the tool-level `Tool(description=...)`), and a regex over the whole file would count them too,
@@ -968,51 +972,60 @@ def collect_param_descriptions(path: str) -> tuple[set[str], list[str]]:
     description goes through the `Tool(description=...)` keyword argument and is naturally out of
     scope.
     """
-    src = _read(path)
-    if src is None:
-        return set(), [f"cannot read {os.path.relpath(path, ROOT)}"]
-    try:
-        tree = ast.parse(src)
-    except SyntaxError as e:
-        return set(), [f"{os.path.relpath(path, ROOT)} syntax error: {e}"]
-
-    func = next(
-        (
-            n
-            for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and n.name == "handle_list_tools"
-        ),
-        None,
-    )
-    if func is None:
-        return set(), [
-            "handle_list_tools not found in server.py —— function renamed, please update this script"
-        ]
-
     refs: set[str] = set()
     problems: list[str] = []
-    for node in ast.walk(func):
-        if not isinstance(node, ast.Dict):
+    found = False
+    for path in paths:
+        src = _read(path)
+        if src is None:
+            problems.append(f"cannot read {os.path.relpath(path, ROOT)}")
             continue
-        for key_node, value_node in zip(node.keys, node.values):
-            if not (
-                isinstance(key_node, ast.Constant) and key_node.value == "description"
-            ):
+        try:
+            tree = ast.parse(src)
+        except SyntaxError as e:
+            problems.append(f"{os.path.relpath(path, ROOT)} syntax error: {e}")
+            continue
+
+        func = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and n.name in ("handle_list_tools", "build_tools")
+            ),
+            None,
+        )
+        if func is None:
+            problems.append(
+                f"{os.path.relpath(path, ROOT)}: neither handle_list_tools nor build_tools found"
+            )
+            continue
+        found = True
+
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Dict):
                 continue
-            key = _param_text_key(value_node)
-            if key is not None:
-                refs.add(key)
-            elif isinstance(value_node, ast.Constant) and isinstance(
-                value_node.value, str
-            ):
-                problems.append(
-                    f"line {node.lineno}: bare literal {value_node.value[:40]!r} (not via param_text)"
-                )
-            else:
-                problems.append(
-                    f"line {node.lineno}: undeterminable description form {type(value_node).__name__}"
-                )
+            for key_node, value_node in zip(node.keys, node.values):
+                if not (
+                    isinstance(key_node, ast.Constant)
+                    and key_node.value == "description"
+                ):
+                    continue
+                key = _param_text_key(value_node)
+                if key is not None:
+                    refs.add(key)
+                elif isinstance(value_node, ast.Constant) and isinstance(
+                    value_node.value, str
+                ):
+                    problems.append(
+                        f"line {node.lineno}: bare literal {value_node.value[:40]!r} (not via param_text)"
+                    )
+                else:
+                    problems.append(
+                        f"line {node.lineno}: undeterminable description form {type(value_node).__name__}"
+                    )
+    if not found and not problems:
+        problems.append("tool schema factory not found —— renamed, please update this script")
     return refs, problems
 
 
@@ -1144,7 +1157,9 @@ def collect_inputs(
     python_l10n_baseline: str | None,
 ) -> ContractInputs:
     """Collect the contract inputs from the real sources on both sides (the sole collection point)."""
-    param_ref_keys, param_problems = collect_param_descriptions(SERVER_PY)
+    param_ref_keys, param_problems = collect_param_descriptions(
+        SERVER_PY, TOOL_SCHEMA_PY
+    )
     # EnvKeys must be parsed first: the constant keys of the injection points (`env[EnvKeys.xxx] = …`) are expanded to real env names via it
     env_keys = parse_static_lets(CONSTANTS, "EnvKeys")
     (

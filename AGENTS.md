@@ -189,6 +189,8 @@
 
 ### MCP 服务
 - server.py / summarize.py / token_proxy.py 在 `Sources/MCPScripts/` 目录，脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
+- server.py 只保留入口 / HTTP endpoints / 项目与网页工具；记忆子系统在 `server_memory.py`，工具 schema 在 `server_tool_schema.py`，归档在 `server_archive.py`，技能扫描在 `server_skills.py`，共享常量/状态/工具在 `server_constants.py` / `server_state.py` / `server_utils.py`。`hot_memory` / `qdrant` 一律经 `server_state` 存取，禁止再引入模块级全局
+- `token_proxy.handle_proxy` 只做编排：`_prepare_request` → `_apply_rewrites` → `_forward`，共享字段放在 `_ProxyState`
 - 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
 - 一次性执行（ast_extractor.py batch/单文件）走 `PythonScriptRunner.runCaptureOutput`（边读边存避免 pipe buffer 阻塞 + 超时 kill）
 - **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
