@@ -22,25 +22,18 @@ os.environ["POSTHOG_DISABLED"] = "1"
 # posthog.disabled); set this env var before import so AnonymousTelemetry skips init
 os.environ["MEM0_TELEMETRY"] = "False"
 
-import json
 import uuid
-import sys
 import time
 import asyncio
 import anyio
 from datetime import datetime, timedelta
 
-from mem0 import Memory
 from qdrant_client import QdrantClient
 import uvicorn
-from qdrant_client import models
 from qdrant_client.models import (
     VectorParams,
     Distance,
     PointStruct,
-    Filter,
-    FieldCondition,
-    MatchValue,
 )
 from mcp.server import Server
 from mcp.server import InitializationOptions
@@ -55,25 +48,14 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
-from config import (
-    ai_api_key,
-    summary_model,
-    summary_api_url,
-    notes_dir,
-    note_exclude_dirs,
-    note_extensions,
-)
 from server_embed import (
-    EMBEDDER_MODEL,
     EMBEDDER_DIMS,
     FASTEMBED_CACHE_DIR,
     _get_shared_embedder,
     describe_dim_mismatch,
-    embed_query,
 )
 from server_tool_schema import (
     DEFAULT_PROJECT_NOTES_LIMIT,
-    DEFAULT_RECALL_LIMIT,
     DEFAULT_WEBSEARCH_FETCH_TOP,
     DEFAULT_WEBSEARCH_LIMIT,
     DEFAULT_WEBSEARCH_MAX_CHARS,
@@ -95,45 +77,27 @@ from server_memory import (
     set_processed_bit,
     spawn_contradiction_check,
 )
-from server_state import get_hot_memory, get_qdrant, set_hot_memory, set_qdrant
+from server_state import get_hot_memory, get_qdrant, set_qdrant
 from server_utils import dumps, int_arg
 from server_constants import (
-    ARCHIVE_DAYS,
-    ARCHIVE_INTERVAL_HOURS,
     COLD_COLLECTION,
-    CONTRADICTION_SIMILARITY_THRESHOLD,
-    CONTRADICTION_TOP_K,
     DEFAULT_HEAT_SCORE,
     DEFAULT_USER_ID,
     ERR_BIT_VALUE_NOT_INT,
     ERR_HOT_LAYER_NOT_READY,
     ERR_MEMORY_IDS_EMPTY,
     ERR_VALUE_INVALID,
-    HEAT_DECAY_PER_DAY,
-    HEAT_INCREMENT,
-    HEAT_MAX,
-    HOT_INIT_MAX_RUNTIME_FAILURES,
-    HOT_INIT_RUNTIME_COOLDOWN,
-    HOT_RETENTION_DAYS,
     MEM0_QDRANT_PATH,
-    PROCESSED_FIELD,
     QDRANT_PATH,
-    SUMMARY_LLM_API_URL,
-    SUMMARY_LLM_MODEL,
-    SUMMARY_LLM_TEMPERATURE,
-    AI_API_KEY,
     PROCESSED_MAX_BIT,
     err_bit_out_of_range,
 )
 from server_skills import (
     SKILL_SKIP_DIRS,
-    SKILLS_DIR,
     find_skill_dir,
     normalize_name,
     scan_skills,
 )
-import llm_client
-import prompt_loader
 import web_search
 from log_utils import setup_logging
 

@@ -8,15 +8,12 @@ struct SwiftExtractor: SymbolExtractor {
     let supportedExtensions: Set<String> = ["swift"]
 
     func extract(from content: String, filePath: String) -> [SymbolRecord] {
-        let cleaned = Self.stripCommentsAndStrings(content)
+        let cleaned = CommentStringStripper.strip(content)
         let lines = cleaned.components(separatedBy: .newlines)
 
         var symbols: [SymbolRecord] = []
-        var braceDepth = 0
+        var tracker = SymbolBodyTracker()
         var currentDocComment: String?
-        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line,
-        // waiting for this or a later line to open the brace and settle it
-        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
         var pendingFunc: (visibility: String?, signature: String, parenDepth: Int, startLine: Int)?
 
         for (lineIdx, rawLine) in lines.enumerated() {
@@ -43,11 +40,7 @@ struct SwiftExtractor: SymbolExtractor {
                     + trimmed.count(where: { $0 == "(" })
                     - trimmed.count(where: { $0 == ")" })
 
-                let lineOpen = trimmed.count(where: { $0 == "{" })
-                let lineClose = trimmed.count(where: { $0 == "}" })
-                let prev = braceDepth
-                braceDepth += lineOpen - lineClose
-                let nextDepth = braceDepth
+                let depth = tracker.advanceDepthOnly(trimmed)
 
                 if newParen <= 0 {
                     // function signature complete
@@ -58,16 +51,10 @@ struct SwiftExtractor: SymbolExtractor {
                                                       startLine: pf.startLine)
                     {
                         symbols.append(s)
-                        let idx = symbols.count - 1
-                        if lineOpen > 0 {
-                            if nextDepth == prev {
-                                symbols[idx].endLine = lineIdx + 1
-                            } else {
-                                bodyStack.append((symIdx: idx, bodyDepth: nextDepth))
-                            }
-                        } else {
-                            bodyStack.append((symIdx: idx, bodyDepth: nil))
-                        }
+                        tracker.attachSymbol(
+                            at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                            expectsBodyLater: true, symbols: &symbols,
+                        )
                     }
                     pendingFunc = nil
                 } else {
@@ -76,34 +63,10 @@ struct SwiftExtractor: SymbolExtractor {
                 continue
             }
 
-            // ── update brace depth ──
-            let openBraces = trimmed.count(where: { $0 == "{" })
-            let closeBraces = trimmed.count(where: { $0 == "}" })
-            let prevDepth = braceDepth
-            braceDepth += openBraces - closeBraces
-            let newDepth = braceDepth
-
-            // ── resolve symbol body end (brace depth fell below body start) ──
-            while let top = bodyStack.last {
-                if top.bodyDepth == nil {
-                    // Waiting for the body to open on a later line: settles if this line opens a brace
-                    if openBraces > 0 {
-                        if newDepth == prevDepth {
-                            symbols[top.symIdx].endLine = lineIdx + 1
-                            bodyStack.removeLast()
-                        } else {
-                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
-                        }
-                    }
-                    break
-                }
-                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
-                    symbols[top.symIdx].endLine = lineIdx + 1
-                    bodyStack.removeLast()
-                } else {
-                    break
-                }
-            }
+            // ── update brace depth and resolve finished bodies ──
+            let depth = tracker.advance(trimmed, lineIdx: lineIdx, symbols: &symbols)
+            let prevDepth = depth.prevDepth
+            let newDepth = depth.newDepth
 
             // Only extract at file-level (depth 0) or inside a type (depth 1)
             guard prevDepth <= 1 else {
@@ -142,21 +105,10 @@ struct SwiftExtractor: SymbolExtractor {
                     startLine: lineIdx + 1,
                 ))
 
-                let idx = symbols.count - 1
-                if openBraces > 0 {
-                    if newDepth == prevDepth {
-                        // Opens and closes on the same line (single-line body, e.g. func f() {})
-                        symbols[idx].endLine = lineIdx + 1
-                    } else {
-                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
-                    }
-                } else if Self.kindHasBody(captures.keyword) {
-                    // Body opens on a later line
-                    bodyStack.append((symIdx: idx, bodyDepth: nil))
-                } else {
-                    // Bodyless declaration (var/let/typealias, etc.)
-                    symbols[idx].endLine = lineIdx + 1
-                }
+                tracker.attachSymbol(
+                    at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                    expectsBodyLater: Self.kindHasBody(captures.keyword), symbols: &symbols,
+                )
 
                 currentDocComment = nil
             } else if newDepth < prevDepth {
@@ -224,77 +176,4 @@ struct SwiftExtractor: SymbolExtractor {
         return result.trimmingCharacters(in: .whitespaces)
     }
 
-    /// Strip // and /* */ comments and string literals for brace-depth tracking.
-    private static func stripCommentsAndStrings(_ text: String) -> String {
-        var result = ""
-        var i = text.startIndex
-        let end = text.endIndex
-
-        var inBlockComment = false
-        var inLineComment = false
-        var inString = false
-
-        while i < end {
-            let c = text[i]
-            let next = text.index(after: i)
-
-            if inBlockComment {
-                if c == "*", next < end, text[next] == "/" {
-                    inBlockComment = false
-                    i = text.index(after: next)
-                } else {
-                    // Preserve newlines so cleaned keeps the same line count as the original (line-number alignment)
-                    if c == "\n" || c == "\r" { result.append(c) }
-                    i = next
-                }
-                continue
-            }
-
-            if inLineComment {
-                if c == "\n" || c == "\r" { result.append(c) }
-                if c == "\n" { inLineComment = false }
-                i = next
-                continue
-            }
-
-            if inString {
-                if c == "\\" && next < end {
-                    i = text.index(after: next) // skip escaped char
-                    continue
-                }
-                if c == "\"" {
-                    inString = false
-                } else if c == "\n" || c == "\r" {
-                    result.append(c)
-                }
-                i = next
-                continue
-            }
-
-            if c == "/", next < end, text[next] == "/" {
-                inLineComment = true
-                i = text.index(after: next)
-                continue
-            }
-
-            if c == "/", next < end, text[next] == "*" {
-                inBlockComment = true
-                i = text.index(after: next)
-                continue
-            }
-
-            // String literal start
-            if c == "\"" {
-                inString = true
-                i = next
-                continue
-            }
-
-            // Regular character — preserve for analysis
-            result.append(c)
-            i = next
-        }
-
-        return result
-    }
 }

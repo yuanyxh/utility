@@ -15,10 +15,8 @@ struct JSTSExtractor: SymbolExtractor {
     func extract(from content: String, filePath: String) -> [SymbolRecord] {
         let lines = content.components(separatedBy: .newlines)
         var symbols: [SymbolRecord] = []
-        var braceDepth = 0
+        var tracker = SymbolBodyTracker()
         var currentDocComment: String?
-        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line
-        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
         for (lineIdx, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
@@ -38,38 +36,14 @@ struct JSTSExtractor: SymbolExtractor {
                 continue
             }
 
-            // ── strip strings for brace-depth tracking ──
+            // ── strip strings, then update brace depth and resolve finished bodies ──
             let stripped = Self.stripStrings(trimmed)
-            let openBraces = stripped.count(where: { $0 == "{" })
-            let closeBraces = stripped.count(where: { $0 == "}" })
-            let prevDepth = braceDepth
-            braceDepth += openBraces - closeBraces
-            let newDepth = braceDepth
-
-            // ── resolve symbol body end (brace depth fell below body start) ──
-            while let top = bodyStack.last {
-                if top.bodyDepth == nil {
-                    if openBraces > 0 {
-                        if newDepth == prevDepth {
-                            symbols[top.symIdx].endLine = lineIdx + 1
-                            bodyStack.removeLast()
-                        } else {
-                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
-                        }
-                    }
-                    break
-                }
-                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
-                    symbols[top.symIdx].endLine = lineIdx + 1
-                    bodyStack.removeLast()
-                } else {
-                    break
-                }
-            }
+            let depth = tracker.advance(stripped, lineIdx: lineIdx, symbols: &symbols)
+            let prevDepth = depth.prevDepth
 
             // Only extract at module level (depth 0)
             guard prevDepth == 0 else {
-                if newDepth < prevDepth { currentDocComment = nil }
+                if depth.newDepth < prevDepth { currentDocComment = nil }
                 continue
             }
 
@@ -93,21 +67,13 @@ struct JSTSExtractor: SymbolExtractor {
                     visibility: visibility,
                     startLine: lineIdx + 1,
                 ))
-                let idx = symbols.count - 1
-                if openBraces > 0 {
-                    if newDepth == prevDepth {
-                        symbols[idx].endLine = lineIdx + 1
-                    } else {
-                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
-                    }
-                } else if Self.kindHasBody(kind) {
-                    bodyStack.append((symIdx: idx, bodyDepth: nil))
-                } else {
-                    symbols[idx].endLine = lineIdx + 1
-                }
+                tracker.attachSymbol(
+                    at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                    expectsBodyLater: Self.kindHasBody(kind), symbols: &symbols,
+                )
 
                 currentDocComment = nil
-            } else if newDepth < prevDepth {
+            } else if depth.newDepth < prevDepth {
                 currentDocComment = nil
             }
         }

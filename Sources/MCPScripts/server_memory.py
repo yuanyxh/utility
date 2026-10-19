@@ -9,7 +9,6 @@ calls are exported without the leading underscore.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
@@ -18,7 +17,6 @@ from datetime import datetime, timedelta
 import llm_client
 import prompt_loader
 from mem0 import Memory
-from qdrant_client import models
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mcp.types import TextContent
 
@@ -31,12 +29,10 @@ from server_constants import (
     DEFAULT_HEAT_SCORE,
     DEFAULT_TIMEOUT,
     DEFAULT_USER_ID,
-    ERR_BIT_VALUE_NOT_INT,
     ERR_HOT_LAYER_NOT_READY,
     ERR_MEMORY_IDS_EMPTY,
     ERR_VALUE_INVALID,
     EXCLUDE_DIRS,
-    HEAT_DECAY_PER_DAY,
     HEAT_INCREMENT,
     HEAT_MAX,
     HOT_INIT_MAX_RETRIES,
@@ -138,10 +134,6 @@ MEM0_CONFIG = {
         },
     },
 }
-
-HOT_INIT_MAX_RETRIES = 3
-
-HOT_INIT_RETRY_DELAY = 5
 
 _hot_runtime_failures = 0
 

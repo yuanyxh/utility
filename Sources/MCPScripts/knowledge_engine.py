@@ -13,11 +13,7 @@ import llm_client
 import prompt_loader
 from l10n import t
 from log_utils import setup_logging
-from web_search import (
-    _overlap,
-    fetch,
-    wiki,
-)  # 私有名跨模块引用：判据必须与 search/_matches 同源,抄一份必然漂移
+from web_search import fetch, wiki
 from web_search import search as web_search_query
 
 logger = setup_logging("knowledge_refill")

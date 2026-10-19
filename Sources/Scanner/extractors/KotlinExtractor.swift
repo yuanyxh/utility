@@ -15,14 +15,12 @@ struct KotlinExtractor: SymbolExtractor {
     let supportedExtensions: Set<String> = ["kt"]
 
     func extract(from content: String, filePath: String) -> [SymbolRecord] {
-        let cleaned = Self.stripCommentsAndStrings(content)
+        let cleaned = CommentStringStripper.strip(content)
         let lines = cleaned.components(separatedBy: .newlines)
 
         var symbols: [SymbolRecord] = []
-        var braceDepth = 0
+        var tracker = SymbolBodyTracker()
         var lastAnnotation: String?
-        // Stack of body-bearing symbols with a pending end: bodyDepth=nil means the body opens on a later line
-        var bodyStack: [(symIdx: Int, bodyDepth: Int?)] = []
 
         for (lineIdx, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
@@ -38,33 +36,9 @@ struct KotlinExtractor: SymbolExtractor {
                 guard trimmed.contains(" ") else { continue }
             }
 
-            // ── update brace depth ──
-            let openBraces = trimmed.count(where: { $0 == "{" })
-            let closeBraces = trimmed.count(where: { $0 == "}" })
-            let prevDepth = braceDepth
-            braceDepth += openBraces - closeBraces
-            let newDepth = braceDepth
-
-            // ── resolve symbol body end (brace depth fell below body start) ──
-            while let top = bodyStack.last {
-                if top.bodyDepth == nil {
-                    if openBraces > 0 {
-                        if newDepth == prevDepth {
-                            symbols[top.symIdx].endLine = lineIdx + 1
-                            bodyStack.removeLast()
-                        } else {
-                            bodyStack[bodyStack.count - 1].bodyDepth = newDepth
-                        }
-                    }
-                    break
-                }
-                if let bodyDepth = top.bodyDepth, newDepth < bodyDepth {
-                    symbols[top.symIdx].endLine = lineIdx + 1
-                    bodyStack.removeLast()
-                } else {
-                    break
-                }
-            }
+            // ── update brace depth and resolve finished bodies ──
+            let depth = tracker.advance(trimmed, lineIdx: lineIdx, symbols: &symbols)
+            let prevDepth = depth.prevDepth
 
             // Extract at file level (0) or inside class body (1)
             guard prevDepth <= 1 else {
@@ -98,16 +72,10 @@ struct KotlinExtractor: SymbolExtractor {
                     visibility: visibility,
                     startLine: lineIdx + 1,
                 ))
-                let idx = symbols.count - 1
-                if openBraces > 0 {
-                    if newDepth == prevDepth {
-                        symbols[idx].endLine = lineIdx + 1
-                    } else {
-                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
-                    }
-                } else {
-                    bodyStack.append((symIdx: idx, bodyDepth: nil))
-                }
+                tracker.attachSymbol(
+                    at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                    expectsBodyLater: true, symbols: &symbols,
+                )
 
                 lastAnnotation = nil
                 continue
@@ -125,16 +93,10 @@ struct KotlinExtractor: SymbolExtractor {
                     visibility: m[1].isEmpty ? nil : m[1],
                     startLine: lineIdx + 1,
                 ))
-                let idx = symbols.count - 1
-                if openBraces > 0 {
-                    if newDepth == prevDepth {
-                        symbols[idx].endLine = lineIdx + 1
-                    } else {
-                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
-                    }
-                } else {
-                    bodyStack.append((symIdx: idx, bodyDepth: nil))
-                }
+                tracker.attachSymbol(
+                    at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                    expectsBodyLater: true, symbols: &symbols,
+                )
                 lastAnnotation = nil
                 continue
             }
@@ -161,16 +123,10 @@ struct KotlinExtractor: SymbolExtractor {
                     visibility: visibility,
                     startLine: lineIdx + 1,
                 ))
-                let idx = symbols.count - 1
-                if openBraces > 0 {
-                    if newDepth == prevDepth {
-                        symbols[idx].endLine = lineIdx + 1
-                    } else {
-                        bodyStack.append((symIdx: idx, bodyDepth: newDepth))
-                    }
-                } else {
-                    bodyStack.append((symIdx: idx, bodyDepth: nil))
-                }
+                tracker.attachSymbol(
+                    at: symbols.count - 1, lineIdx: lineIdx, depth: depth,
+                    expectsBodyLater: true, symbols: &symbols,
+                )
 
                 lastAnnotation = nil
                 continue
@@ -291,76 +247,5 @@ struct KotlinExtractor: SymbolExtractor {
             }
         }
         return sig
-    }
-
-    /// Strip // and /* */ comments and string literals.
-    private static func stripCommentsAndStrings(_ text: String) -> String {
-        var result = ""
-        var i = text.startIndex
-        let end = text.endIndex
-        var inBlockComment = false
-        var inLineComment = false
-        var inString = false
-
-        while i < end {
-            let c = text[i]
-            let next = text.index(after: i)
-
-            if inBlockComment {
-                if c == "*", next < end, text[next] == "/" {
-                    inBlockComment = false
-                    i = text.index(after: next)
-                } else {
-                    // Preserve newlines so cleaned keeps the same line count as the original (line-number alignment)
-                    if c == "\n" || c == "\r" { result.append(c) }
-                    i = next
-                }
-                continue
-            }
-
-            if inLineComment {
-                if c == "\n" || c == "\r" { result.append(c) }
-                if c == "\n" { inLineComment = false }
-                i = next
-                continue
-            }
-
-            if inString {
-                if c == "\\" && next < end {
-                    i = text.index(after: next)
-                    continue
-                }
-                if c == "\"" {
-                    inString = false
-                } else if c == "\n" || c == "\r" {
-                    result.append(c)
-                }
-                i = next
-                continue
-            }
-
-            if c == "/", next < end, text[next] == "/" {
-                inLineComment = true
-                i = text.index(after: next)
-                continue
-            }
-
-            if c == "/", next < end, text[next] == "*" {
-                inBlockComment = true
-                i = text.index(after: next)
-                continue
-            }
-
-            if c == "\"" {
-                inString = true
-                i = next
-                continue
-            }
-
-            result.append(c)
-            i = next
-        }
-
-        return result
     }
 }
