@@ -125,6 +125,9 @@ enum PythonScriptRunner {
         for (key, value) in knowledgeEnvironment() {
             env[key] = value
         }
+        for (key, value) in noteEnvironment() {
+            env[key] = value
+        }
 
         // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
         if let notesDir = resolvedNotesDir() {
@@ -184,6 +187,20 @@ enum PythonScriptRunner {
         return env
     }
 
+    /// Note scanning rules (`mcp.noteExcludeDirs` / `mcp.noteExtensions`).
+    /// Empty lists are not injected -- the Python side then skips nothing / uses its built-in extensions.
+    static func noteEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        guard let mcp = ConfigManager.shared.config.mcp else { return env }
+        if !mcp.noteExcludeDirs.isEmpty, let json = encodeJSON(mcp.noteExcludeDirs) {
+            env[EnvKeys.noteExcludeDirs] = json
+        }
+        if !mcp.noteExtensions.isEmpty, let json = encodeJSON(mcp.noteExtensions) {
+            env[EnvKeys.noteExtensions] = json
+        }
+        return env
+    }
+
     private static func encodeJSON(_ value: Any) -> String? {
         guard let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
         return String(data: data, encoding: .utf8)
@@ -214,6 +231,9 @@ enum PythonScriptRunner {
         for (key, value) in knowledgeEnvironment() {
             overrides[key] = value
         }
+        for (key, value) in noteEnvironment() {
+            overrides[key] = value
+        }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
         if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
@@ -233,6 +253,11 @@ enum PythonScriptRunner {
 
     // MARK: - Shell command construction (for TaskScheduler .sh tasks)
 
+    /// Single-quote a value for `/bin/bash -c` (embedded single quotes are escaped).
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// Build a shell command string: `KEY=VALUE ... pythonVenv script args`.
     /// TaskScheduler's .sh runs through `/bin/bash -c`; the child process inherits the app's restricted PATH and
     /// TaskExecConfig.toProcess() does not set environment variables, so the environment must be inlined as `KEY=VALUE` prefixes.
@@ -250,7 +275,9 @@ enum PythonScriptRunner {
         var parts: [String] = []
         // Sorting keeps the output stable (KEY order does not affect bash semantics)
         for key in environmentOverrides.keys.sorted() {
-            parts.append("\(key)=\(environmentOverrides[key] ?? "")")
+            // Quoting is required: bash strips the double quotes of a JSON array
+            // (`["a","b"]` -> `[a,b]`) and splits values containing spaces.
+            parts.append("\(key)=\(shellQuote(environmentOverrides[key] ?? ""))")
         }
         parts.append(pythonVenvPath)
         parts.append(script)

@@ -141,6 +141,17 @@ mcp:
   qdrantPath: ''
   knowledgeBasePath: ''
 
+  # Note scanning (recall + daily summary). Empty = skip nothing;
+  # non-empty = full override (not incremental). Names match at any depth,
+  # so both "Private" and "/notes/Private" work. Add "Extracts" here if the
+  # summary must not rescan its own output.
+  noteExcludeDirs: []
+
+  # Note file extensions. Empty = built-in generic set
+  # (.md/.txt/.py/.yaml/.yml/.json/.toml); non-empty = full override.
+  # "md", ".MD" and "*.md" are all accepted; matching is case-insensitive.
+  noteExtensions: []
+
   # fastembed model cache (empty string = default ~/.cache/utility/fastembed/)
   fastembedCacheDir: ''
   # Empty string = use the built-in default model sentence-transformers/all-MiniLM-L6-v2

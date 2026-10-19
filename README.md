@@ -530,6 +530,8 @@ Restart the service after adding or changing a skill.
 | `mcp.synonyms` | `{}` | search synonyms, an increment over the built-in table |
 | `mcp.toolDefaults` | e.g. `recall: 6` | default result caps per tool |
 | `mcp.qdrantPath` / `knowledgeBasePath` | `""` | storage paths; empty uses the default paths |
+| `mcp.noteExcludeDirs` | `[]` | note directories skipped by recall/summary; empty skips none, non-empty fully overrides |
+| `mcp.noteExtensions` | `[]` | note file extensions; empty uses the built-in generic set, non-empty fully overrides |
 | `mcp.embedderModel` | `""` | embedding model; empty uses `sentence-transformers/all-MiniLM-L6-v2` |
 | `mcp.fastembedCacheDir` | `""` | model cache; empty uses `~/.cache/utility/fastembed/` |
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |

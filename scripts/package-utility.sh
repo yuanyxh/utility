@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Utility"
 BUNDLE_ID="com.utility.app"
-VERSION="1.0.91"
+VERSION="1.0.92"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 
 if [ -z "$SIGNING_IDENTITY" ]; then

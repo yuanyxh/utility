@@ -100,6 +100,11 @@ enum EnvKeys {
     /// 一张卡展示多少次后不再算「新鲜」。Swift 显示侧与 Python 补货侧必须同值，
     /// 否则「Swift 认为池空、Python 认为池满」会让补货静默变成空转。
     static let knowledgeMaxShown = "KNOWLEDGE_MAX_SHOWN"
+
+    /// Note scanning rules (JSON arrays), from `mcp.noteExcludeDirs` / `mcp.noteExtensions`.
+    /// Both the MCP service and the scheduled summary read them, so they need two injection points.
+    static let noteExcludeDirs = "NOTE_EXCLUDE_DIRS"
+    static let noteExtensions = "NOTE_EXTENSIONS"
 }
 
 // MARK: - Shared Pasteboard Types

@@ -60,6 +60,8 @@ from config import (
     summary_model,
     summary_api_url,
     notes_dir,
+    note_exclude_dirs,
+    note_extensions,
 )
 from server_embed import (
     EMBEDDER_MODEL,
@@ -159,9 +161,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "websearch_engine": "Trigger: user says web search/search online/look up/latest info. Returns result links and, when fetch_top>0, Markdown text of top pages.",
 }
 
-EXCLUDE_DIRS = {"Self_Data", "Works_Jobs", "SaveWebPages", "Resources", "Attachments"}
+#: Directory names skipped by the notes walk. Empty = skip nothing; the list is
+#: fully user-configured (`mcp.noteExcludeDirs`), no personal defaults in code.
+EXCLUDE_DIRS = note_exclude_dirs()
 
-NOTE_EXTENSIONS = (".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml")
+#: Note file extensions. Empty config falls back to the built-in generic set.
+NOTE_EXTENSIONS = note_extensions(
+    (".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml")
+)
 
 # Can be overridden via the SERVER_TIMEOUT env var (the Swift layer reads it from GeneralConfig.httpTimeout)
 DEFAULT_TIMEOUT = float(os.environ.get("SERVER_TIMEOUT", "60.0"))
@@ -487,7 +494,7 @@ def search_cold_layer(
                 d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")
             ]
             for f in files:
-                if not f.endswith(NOTE_EXTENSIONS):
+                if not f.lower().endswith(NOTE_EXTENSIONS):
                     continue
                 path = os.path.join(root, f)
                 rel = os.path.relpath(path, NOTES_DIR)

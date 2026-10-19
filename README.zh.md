@@ -501,6 +501,8 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 | `mcp.synonyms` | `{}` | 检索同义词增量补充(同名覆盖、异名追加) |
 | `mcp.toolDefaults` | `recall: 6` 等 | 各工具默认返回条数 |
 | `mcp.qdrantPath` / `knowledgeBasePath` | `""` | 存储路径；留空用默认路径 |
+| `mcp.noteExcludeDirs` | `[]` | recall/总结跳过的笔记目录；留空不跳过，非空完全覆盖 |
+| `mcp.noteExtensions` | `[]` | 笔记文件扩展名；留空用内置通用集合，非空完全覆盖 |
 | `mcp.embedderModel` | `""` | 嵌入模型；留空用 `sentence-transformers/all-MiniLM-L6-v2` |
 | `mcp.fastembedCacheDir` | `""` | 模型缓存；留空用 `~/.cache/utility/fastembed/` |
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | 崩溃后的重启策略 |

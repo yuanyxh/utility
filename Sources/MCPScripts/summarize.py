@@ -28,6 +28,8 @@ import prompt_loader
 from config import (
     data_dir,
     notes_dir,
+    note_exclude_dirs,
+    note_extensions,
     summary_exclude_tags,
 )
 from l10n import all_templates, t
@@ -52,14 +54,13 @@ NOTES_DIR = Path(notes_dir())
 # Empty string = injected by the Swift layer via an environment variable; when not injected, related features are disabled
 MEMORY_SERVER_URL = os.environ.get("MEMORY_SERVER_URL", "")
 
-SUMMARY_EXCLUDE_DIRS = {
-    "Self_Data",
-    "Works_Jobs",
-    "SaveWebPages",
-    "Resources",
-    "Attachments",
-    "Extracts",
-}
+#: Directories skipped when reading the notes tree. Empty = skip nothing; the
+#: list is fully user-configured (`mcp.noteExcludeDirs`). Put "Extracts" there
+#: if summaries must not rescan their own output.
+SUMMARY_EXCLUDE_DIRS = note_exclude_dirs()
+
+#: Extensions listed in the notes-tree prompt. Empty config = markdown only.
+SUMMARY_NOTE_EXTENSIONS = note_extensions((".md",))
 
 SUMMARY_MEMORY_DAYS = 3
 
@@ -301,7 +302,7 @@ def scan_notes_structure(root: Path, max_depth: int = 3) -> str:
                 if entry.is_dir():
                     lines.append("  " * depth + f"- {name}/")
                     lines.extend(_scan(entry, depth + 1))
-                elif entry.suffix == ".md":
+                elif entry.suffix.lower() in SUMMARY_NOTE_EXTENSIONS:
                     lines.append("  " * depth + f"- {name}")
         except PermissionError:
             lines.append("  " * depth + t("mcp.summary.no_permission"))

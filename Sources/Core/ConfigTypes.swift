@@ -68,6 +68,11 @@ public struct MCPConfig: Codable {
     var qdrantPath: String = ""
     var knowledgeBasePath: String = ""
 
+    /// Note scanning: directory names skipped at any depth. Empty = skip nothing (no built-in list).
+    var noteExcludeDirs: [String] = []
+    /// Note scanning: file extensions. Empty = the built-in generic set.
+    var noteExtensions: [String] = []
+
     /// fastembed model cache (empty string = not configured, uses ~/.cache/utility/fastembed/)
     var fastembedCacheDir: String = ""
     /// Empty string = use the built-in default model
@@ -106,6 +111,8 @@ public struct MCPConfig: Codable {
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 0
         qdrantPath = try c.decodeIfPresent(String.self, forKey: .qdrantPath) ?? ""
         knowledgeBasePath = try c.decodeIfPresent(String.self, forKey: .knowledgeBasePath) ?? ""
+        noteExcludeDirs = try c.decodeIfPresent([String].self, forKey: .noteExcludeDirs) ?? []
+        noteExtensions = try c.decodeIfPresent([String].self, forKey: .noteExtensions) ?? []
         fastembedCacheDir = try c.decodeIfPresent(String.self, forKey: .fastembedCacheDir) ?? ""
         embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? ""
         hotRetentionDays = try c.decodeIfPresent(Int.self, forKey: .hotRetentionDays) ?? 180

@@ -127,6 +127,46 @@ def _json_list(raw: str) -> list:
     return data if isinstance(data, list) else []
 
 
+def _json_strings(raw: str) -> list[str]:
+    return [v for v in _json_list(raw) if isinstance(v, str)]
+
+
+def note_exclude_dirs() -> set[str]:
+    """Note directory names to skip (JSON array). Empty = exclude nothing.
+
+    Entries match by basename at any depth, so "Private" and "/notes/Private"
+    are equivalent. ".", ".." and glob-looking entries are ignored.
+    """
+    names: set[str] = set()
+    for value in _json_strings(get("NOTE_EXCLUDE_DIRS", "")):
+        name = value.strip().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        if name and name not in {".", ".."} and not any(c in name for c in "*?[]"):
+            names.add(name)
+    return names
+
+
+def note_extensions(default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Note file extensions (JSON array). Empty/invalid = ``default``.
+
+    "md" / ".MD" / "*.md" all normalize to ".md"; entries containing path
+    separators or leftover glob characters are ignored.
+    """
+    out: list[str] = []
+    for value in _json_strings(get("NOTE_EXTENSIONS", "")):
+        ext = value.strip().lower()
+        if ext.startswith("*."):
+            ext = ext[1:]
+        if not ext:
+            continue
+        if not ext.startswith("."):
+            ext = "." + ext
+        if ext == "." or any(c in ext for c in "*?[]/\\"):
+            continue
+        if ext not in out:
+            out.append(ext)
+    return tuple(out) or tuple(default)
+
+
 def knowledge_domains() -> list:
     """碎片领域池种子（JSON 数组）。"""
     return _json_list(get("KNOWLEDGE_DOMAINS", ""))
