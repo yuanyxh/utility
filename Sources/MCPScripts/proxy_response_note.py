@@ -30,43 +30,15 @@ import json
 import os
 import re
 
-from proxy_skill_dedup import FALLBACK_LANG
+from l10n import all_templates, compact_number, t
 
 #: The line is built by joining these segments.
 SEG_JOIN = " | "
 
-#: The rewrite-list segment. {parts} is a list like "Bash filter/Skill note".
-NOTE_APPLIED: dict[str, str] = {
-    "zh-Hans": "已执行: {parts}",
-    "en": "applied: {parts}",
-}
-
-#: Display names of each rewrite mechanism; the keys correspond one-to-one with the request-side stats.
-PART_LABELS: dict[str, dict[str, str]] = {
-    "outputFilter": {"zh-Hans": "Bash 过滤", "en": "bash filter"},
-    "skillDedup": {"zh-Hans": "Skill 短提示", "en": "skill dedup"},
-}
-
-#: Alternate text when nothing was rewritten this turn — the model name is the main
-#: information of this line and should not make the whole line disappear just because
-#: nothing was rewritten
-NOTE_EMPTY: dict[str, str] = {
-    "zh-Hans": "无改写",
-    "en": "no rewrite",
-}
-
-#: Context-size segment. The number comes from the upstream's own usage (message_start),
-#: not from a local text estimate: an estimate drifts from the provider's tokenizer and
-#: would misinform the very decision this segment exists to support.
-NOTE_CONTEXT: dict[str, str] = {
-    "zh-Hans": "上下文 {ctx}",
-    "en": "{ctx} context",
-}
-
-#: Appended past the threshold — the whole reason the number is shown.
-CONTEXT_HINT: dict[str, str] = {
-    "zh-Hans": " · 建议新开会话",
-    "en": " · consider a new session",
+#: Request-side stat name -> catalog key (the stats are internal identifiers; the text is not).
+_PART_KEYS: dict[str, str] = {
+    "outputFilter": "proxy.note.part.output_filter",
+    "skillDedup": "proxy.note.part.skill_dedup",
 }
 
 #: Above this many context tokens the line suggests starting a new session; 0 disables the hint.
@@ -99,14 +71,8 @@ RESPONSE_NOTE_ENV_KEY = "MODEL_PROXY_RESPONSE_NOTE"
 
 
 def _label(key: str, lang: str) -> str:
-    table = PART_LABELS.get(key) or {}
-    return table.get(lang) or table.get(FALLBACK_LANG) or key
-
-
-def _format_context(n: int, lang: str) -> str:
-    if lang == "en":
-        return f"{n / 1000:.0f}K" if n >= 1000 else str(n)
-    return f"{n / 10000:.1f} 万" if n >= 10000 else str(n)
+    catalog_key = _PART_KEYS.get(key)
+    return t(catalog_key, lang=lang) if catalog_key else key
 
 
 def context_tokens_of(usage: dict) -> int | None:
@@ -129,10 +95,9 @@ def context_tokens_of(usage: dict) -> int | None:
 def _context_segment(context_tokens: int | None, lang: str) -> str | None:
     if not context_tokens or context_tokens <= 0:
         return None
-    tpl = NOTE_CONTEXT.get(lang) or NOTE_CONTEXT[FALLBACK_LANG]
-    seg = tpl.format(ctx=_format_context(context_tokens, lang))
+    seg = t("proxy.note.context", lang=lang, ctx=compact_number(context_tokens, lang))
     if CONTEXT_WARN_TOKENS > 0 and context_tokens >= CONTEXT_WARN_TOKENS:
-        seg += CONTEXT_HINT.get(lang) or CONTEXT_HINT[FALLBACK_LANG]
+        seg += t("proxy.note.context_hint", lang=lang)
     return seg
 
 
@@ -150,20 +115,19 @@ def build_note(
     if ctx:
         segs.append(ctx)
     if not parts:
-        segs.append(NOTE_EMPTY.get(lang) or NOTE_EMPTY[FALLBACK_LANG])
+        segs.append(t("proxy.note.empty", lang=lang))
     else:
         labels = "/".join(_label(p, lang) for p in parts)
-        tpl = NOTE_APPLIED.get(lang) or NOTE_APPLIED[FALLBACK_LANG]
-        segs.append(tpl.format(parts=labels))
+        segs.append(t("proxy.note.applied", lang=lang, parts=labels))
     return SEG_JOIN.join(segs)
 
 
-#: The note's trailing segment, derived from the tables above so the strip side cannot drift
-#: from the build side (once the note is in the history, the model echoes that line back).
+#: The note's trailing segment, derived from every language's template so the strip side
+#: cannot drift from the build side (even if the UI language changed mid-session).
 NOTE_APPLIED_PREFIXES: tuple[str, ...] = tuple(
-    tpl.split("{parts}")[0] for tpl in NOTE_APPLIED.values()
+    tpl.split("{parts}")[0] for tpl in all_templates("proxy.note.applied").values()
 )
-NOTE_EMPTY_EXACT: frozenset[str] = frozenset(NOTE_EMPTY.values())
+NOTE_EMPTY_EXACT: frozenset[str] = frozenset(all_templates("proxy.note.empty").values())
 
 _MODEL_SEG_RE = re.compile(r"[\w.\-]+")
 

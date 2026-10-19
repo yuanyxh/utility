@@ -21,9 +21,9 @@
 - OpenAIClient/CustomClient 保持不动——新工具不为兼容已有代码而扭曲设计
 
 ### i18n
-- JSON-dict 模式，`L10n + Bundle.module`
-- `%@`（String）、`%ld`（Int）
-- `refreshAllTitles()` 模式刷新运行时语言
+- 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
+- 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换（替换值不会被二次扫描）
+- 语言解析、逐 key 回退、渲染都在 `L10n.swift`；`refreshAllTitles()` 模式刷新运行时语言
 
 ### Stage 拖放
 - `NSPasteboard(name: .drag)` 拖放结束后不清空，changeCount 不变

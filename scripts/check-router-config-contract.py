@@ -26,10 +26,10 @@ just not cross-language):
                   fallback on the Swift side additionally require the body to be verbatim-identical
                   to `Resources/<lang>.json`; the baseline language is the same value on both sides
   6. param descriptions —— every parameter description in `server.py`'s `handle_list_tools()` must
-                  come from `tool_text.param_text(...)` (no bare literals), referenced keys must
-                  exist in `PARAM_TEXT`, the table must have no orphan keys, and each key's language
-                  set must be consistent and include the baseline; the baseline language is the same
-                  value as group 5
+                  come from `tool_text.param_text(...)` (no bare literals); referenced keys must
+                  exist in the generated catalog (`mcp.param.*`), the catalog must have no orphan
+                  parameter keys, and each key's language set must include the baseline; the
+                  baseline language is the same value as group 5
   7. upstream encoding —— when forwarding upstream, `token_proxy.py` must not pass through the
                   client's `accept-encoding`, must explicitly declare a whitelist, and every
                   encoding in the whitelist must be decodable by this process (the criterion comes
@@ -1038,7 +1038,7 @@ def find_param_text_violations(
     ]
     if not table:
         violations.append(
-            f"parsed no PARAM_TEXT from {os.path.relpath(TOOL_TEXT_PY, ROOT)} —— constant renamed, please update this script"
+            f"parsed no parameter text from {os.path.relpath(TOOL_TEXT_PY, ROOT)} —— catalog namespace renamed, please update this script"
         )
         return violations
 
@@ -1284,7 +1284,7 @@ def check_all(
             {
                 "PromptManager.fallbackLanguage": inp.swift_fallback_lang,
                 "prompt_loader.FALLBACK_LANG": inp.python_fallback_lang,
-                "tool_text.FALLBACK_LANG": inp.python_tool_text_lang,
+                "l10n.BASELINE_LANG": inp.python_tool_text_lang,
             }
         )
     )
@@ -1529,11 +1529,15 @@ def main() -> int:
             parse_template as parse_prompt_template,
         )
 
-        # The parameter-description group's key table and baseline likewise come from the production module itself
-        from tool_text import (
-            FALLBACK_LANG as PY_TOOL_TEXT_LANG,
-            PARAM_TEXT as PY_PARAM_TEXT,
-        )
+        # The parameter-description group's table is the generated catalog, filtered to its namespace
+        from l10n import BASELINE_LANG as PY_TOOL_TEXT_LANG
+        from l10n_catalog import CATALOG as PY_L10N_CATALOG
+
+        PY_PARAM_TEXT = {
+            key[len("mcp."):]: value
+            for key, value in PY_L10N_CATALOG.items()
+            if key.startswith("mcp.param.")
+        }
     except Exception as e:  # an import failure means the Python side is already broken, which likewise must not be silent
         print(
             f"[contract] failed to import the Python contracts: {type(e).__name__}: {e}"

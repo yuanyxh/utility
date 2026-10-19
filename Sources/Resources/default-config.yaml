@@ -10,7 +10,7 @@ general:
   # UI language. Leave empty to follow the system; valid values: zh / en
   # It also decides the prompt language and the language of MCP tool parameter
   # descriptions: the Python side uses it to pick `prompts/<lang>/*.md` and the
-  # text in `tool_text.PARAM_TEXT` (untranslated entries fall back to the Chinese baseline).
+  # shared catalog (untranslated entries fall back to the Chinese baseline).
   language: ''
 
   # Enable the system proxy. When on, macOS system proxy settings are read automatically.
@@ -55,7 +55,7 @@ modelProxy:
   restartDelayMs: 2000
   # Full-text skill dedup: when the same skill is called repeatedly, the second copy
   # onward is replaced with a short notice (the first full text is kept).
-  # The notice language follows general.language (built-in zh-Hans / en).
+  # The notice language follows general.language (shared catalog: zh-Hans / en).
   skillDedupEnabled: true
   # Append one line at the end of the response showing what the proxy rewrote this round,
   # e.g. `mimo-v2.5 | 上下文 12.0 万 | 已执行: Bash 过滤/Skill 短提示`. Added only to final

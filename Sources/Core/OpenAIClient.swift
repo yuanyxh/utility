@@ -307,18 +307,18 @@ public enum OpenAIError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return L10n.Translation.invalidURL
+            return L10n.Error.invalidURL
         case .invalidResponse:
-            return L10n.Translation.invalidResponse
+            return L10n.Error.invalidResponse
         case .emptyData:
-            return L10n.Translation.emptyResponse
+            return L10n.Error.emptyResponse
         case let .httpError(code, body):
             return "HTTP \(code): \(body.prefix(200))"
         case let .encodeFailed(error):
-            return L10n.Translation.encodeFailed(error.localizedDescription)
+            return L10n.Error.encodeFailed(message: error.localizedDescription)
         case let .decodeFailed(error, data):
             let preview = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-            return L10n.Translation.parseFailed("\(error.localizedDescription)\n\(preview)")
+            return L10n.Error.parseFailed(message: "\(error.localizedDescription)\n\(preview)")
         }
     }
 }

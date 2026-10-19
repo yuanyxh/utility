@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import re
 
-from proxy_skill_dedup import FALLBACK_LANG
+from l10n import t
 
 API_OPENAI = "openai"
 
@@ -44,15 +44,9 @@ HEAD_RATIO = 0.7
 FOLD_MIN_RUN = 3
 FOLD_MIN_LEN = 4
 
-TRUNCATE_MARK: dict[str, str] = {
-    "zh-Hans": "\n[... 已截断 {n} 字节 ...]\n",
-    "en": "\n[... {n} bytes truncated ...]\n",
-}
-
 
 def _mark(lang: str, n: int) -> str:
-    tpl = TRUNCATE_MARK.get(lang) or TRUNCATE_MARK[FALLBACK_LANG]
-    return tpl.format(n=n)
+    return t("proxy.filter.truncated", lang=lang, n=n)
 
 
 def _get_text(container: dict) -> str | None:

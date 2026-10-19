@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Utility"
 BUNDLE_ID="com.utility.app"
-VERSION="1.0.88"
+VERSION="1.0.89"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:-}"
 
 if [ -z "$SIGNING_IDENTITY" ]; then
@@ -15,6 +15,11 @@ if [ -z "$SIGNING_IDENTITY" ]; then
     exit 1
 fi
 
+echo "=== 0/5 i18n contract ==="
+python3 scripts/gen-l10n.py --check
+python3 scripts/check-l10n-contract.py
+
+echo ""
 echo "=== 1/5 Clean build ==="
 rm -rf .build
 swift build -c release

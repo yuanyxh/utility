@@ -60,18 +60,19 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import data_dir, ui_language
+from config import data_dir
+from l10n import BASELINE_LANG, resolved_language
 from log_utils import setup_logging
 
 logger = setup_logging("prompt_loader")
 
 #: Baseline language. Any language missing this feature falls back to it; the built-in defaults
 #: must guarantee this language is complete.
-FALLBACK_LANG = "zh-Hans"
+FALLBACK_LANG = BASELINE_LANG
 
-# The language is read via `config.ui_language()` (`UTILITY_LANG`, injected by Swift from
-# `general.language`)——the authoritative env name lives in Swift `EnvKeys.utilityLang`, and the
-# sole entry point for Python-side config reading is config.py.
+# The language is read via `l10n.resolved_language()` ← `config.ui_language()`
+# (`UTILITY_LANG`, injected by Swift from `general.language`), the same resolver the
+# catalog uses.
 
 #: Characters allowed in a feature name (used for filename concatenation, guards against directory traversal)
 _FEATURE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -119,7 +120,7 @@ def _override_root() -> Path | None:
 
 
 def current_lang() -> str:
-    return ui_language().strip() or FALLBACK_LANG
+    return resolved_language()
 
 
 # ---------------------------------------------------------------------------

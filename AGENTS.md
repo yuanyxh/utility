@@ -116,9 +116,9 @@
 - ⚠️ `package-utility.sh` 曾硬编码 `.build/arm64-apple-macosx/release/utility_utility.bundle` 且包在 `if [ -d ]` 里，新版布局下该目录不存在 → 资源 bundle 被**静默漏拷**（app 18M→9.8M），启动即 `Fatal error: unable to find bundle named utility_utility`（`resource_bundle_accessor.swift`）。资源缺失一律硬失败，不做条件跳过
 
 ### i18n
-- JSON-dict 模式，`L10n + Bundle.module`
-- `%@`（String）、`%ld`（Int）
-- `refreshAllTitles()` 模式刷新运行时语言
+- 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
+- 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换
+- Python 侧走同一目录生成的 `l10n_catalog.py` + `l10n.py`；`refreshAllTitles()` 模式刷新运行时语言
 
 ### 并发
 - `Task?.cancel()` + `guard isCancelled` 模式

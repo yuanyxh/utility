@@ -136,13 +136,13 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         let sub = NSMenu()
 
         let showItem = NSMenuItem(
-            title: L10n.Knowledge.menuShow, action: #selector(showKnowledgePanel), keyEquivalent: "",
+            title: L10n.Menu.knowledgeShow, action: #selector(showKnowledgePanel), keyEquivalent: "",
         )
         showItem.target = self
         sub.addItem(showItem)
 
         let refillItem = NSMenuItem(
-            title: L10n.Knowledge.menuRefill, action: #selector(refillKnowledge), keyEquivalent: "",
+            title: L10n.Menu.knowledgeRefill, action: #selector(refillKnowledge), keyEquivalent: "",
         )
         refillItem.target = self
         sub.addItem(refillItem)
@@ -178,7 +178,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         markReadItem.target = self
         sub.addItem(markReadItem)
 
-        rssMenuItem.title = count > 0 ? L10n.Menu.rssUnread(count) : L10n.Menu.rss
+        rssMenuItem.title = count > 0 ? L10n.Menu.rssUnread(count: count) : L10n.Menu.rss
         rssMenuItem.submenu = sub
     }
 
@@ -200,7 +200,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             // Restart action (available when MCP is active or crashed/stopped)
             let canRestart = state != .initializing && state != .restarting
             let restartItem = NSMenuItem(
-                title: L10n.MCP.restartService, action: #selector(restartMCPService), keyEquivalent: "",
+                title: L10n.Menu.mcpRestart, action: #selector(restartMCPService), keyEquivalent: "",
             )
             restartItem.target = self
             restartItem.isEnabled = canRestart
@@ -211,9 +211,9 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             // Data paths
             if let mcp = ConfigManager.shared.config.mcp {
                 let pathItems = [
-                    L10n.MCP.qdrantPath(mcp.qdrantPath),
-                    L10n.MCP.knowledgeBase(mcp.knowledgeBasePath),
-                    L10n.MCP.modelCache(mcp.fastembedCacheDir),
+                    L10n.Menu.mcpQdrantPath(path: mcp.qdrantPath),
+                    L10n.Menu.mcpKnowledgeBase(path: mcp.knowledgeBasePath),
+                    L10n.Menu.mcpModelCache(path: mcp.fastembedCacheDir),
                 ]
                 for text in pathItems {
                     let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
@@ -222,7 +222,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 }
             }
         } else {
-            let disabledItem = NSMenuItem(title: L10n.MCP.disabled, action: nil, keyEquivalent: "")
+            let disabledItem = NSMenuItem(title: L10n.Menu.mcpDisabled, action: nil, keyEquivalent: "")
             disabledItem.isEnabled = false
             sub.addItem(disabledItem)
         }
@@ -232,11 +232,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func mcpStateText(_ state: MCPProcessManager.State) -> String {
         switch state {
-        case .running: L10n.MCP.stateRunning
-        case .initializing: L10n.MCP.stateInitializing
-        case .restarting: L10n.MCP.stateRestarting
-        case .stopped: L10n.MCP.stateStopped
-        case .crashed: L10n.MCP.stateCrashed
+        case .running: L10n.Menu.mcpStateRunning
+        case .initializing: L10n.Menu.mcpStateInitializing
+        case .restarting: L10n.Menu.mcpStateRestarting
+        case .stopped: L10n.Menu.mcpStateStopped
+        case .crashed: L10n.Menu.mcpStateCrashed
         }
     }
 
@@ -294,7 +294,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
                 let inputK = Double(summary.input_tokens) / 1000
                 let outputK = Double(summary.output_tokens) / 1000
-                summaryItem.title = L10n.Proxy.today(inputK, outputK)
+                summaryItem.title = L10n.Menu.proxyToday(inputK: inputK, outputK: outputK)
 
                 if summary.total_requests > 0 {
                     sub.addItem(NSMenuItem.separator())
@@ -302,7 +302,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                         ? Double(summary.invalid_requests) / Double(summary.total_requests) * 100
                         : 0
                     let infoItem = NSMenuItem(
-                        title: L10n.Proxy.requests(summary.total_requests, summary.invalid_requests, invalidPct),
+                        title: L10n.Menu.proxyRequests(
+                            total: summary.total_requests,
+                            invalid: summary.invalid_requests,
+                            pct: invalidPct,
+                        ),
                         action: nil, keyEquivalent: "",
                     )
                     infoItem.isEnabled = false
@@ -310,7 +314,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 }
             }
         } else {
-            let disabledItem = NSMenuItem(title: L10n.Proxy.disabled, action: nil, keyEquivalent: "")
+            let disabledItem = NSMenuItem(title: L10n.Menu.proxyDisabled, action: nil, keyEquivalent: "")
             disabledItem.isEnabled = false
             sub.addItem(disabledItem)
         }
@@ -320,9 +324,9 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func proxyStateText(_ state: TokenProxyManager.State) -> String {
         switch state {
-        case .running: L10n.Proxy.stateRunning
-        case .stopped: L10n.Proxy.stateStopped
-        case .crashed: L10n.Proxy.stateCrashed
+        case .running: L10n.Menu.proxyStateRunning
+        case .stopped: L10n.Menu.proxyStateStopped
+        case .crashed: L10n.Menu.proxyStateCrashed
         }
     }
 
@@ -427,7 +431,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             total += 1
         }
 
-        tasksMenuItem.title = total == 0 ? L10n.Menu.tasks : L10n.Menu.tasksCount(total)
+        tasksMenuItem.title = total == 0 ? L10n.Menu.tasks : L10n.Menu.tasksCount(count: total)
         tasksMenuItem.submenu = sub
     }
 
@@ -454,7 +458,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 guard !Task.isCancelled else { return }
                 debugLog("[MenuBar] RSS fetch failed: \(error)")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.rssFetchFailed, body: error.localizedDescription,
+                    title: L10n.Notify.rssFetchFailed, body: error.localizedDescription,
                 ))
             }
         }
@@ -521,12 +525,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                     self?.runningProcesses.removeValue(forKey: name)
                     if result.success {
                         EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                            title: L10n.Menu.taskCompleted(name), body: "",
+                            title: L10n.Notify.taskCompleted(name: name), body: "",
                         ))
                     } else {
                         let errMsg = result.error.isEmpty ? "exit code != 0" : String(result.error.prefix(200))
                         EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                            title: L10n.Menu.taskFailed(name), body: errMsg,
+                            title: L10n.Notify.taskFailed(name: name), body: errMsg,
                         ))
                     }
                 }
@@ -550,7 +554,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         } catch {
             debugLog("[LoginItem] Failed: \(error)")
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.launchAtLoginFailed, body: error.localizedDescription,
+                title: L10n.Notify.launchAtLoginFailed, body: error.localizedDescription,
             ))
         }
     }
@@ -578,7 +582,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.configReloadFailed, body: error.localizedDescription,
+                title: L10n.Notify.configReloadFailed, body: error.localizedDescription,
             ))
         }
     }

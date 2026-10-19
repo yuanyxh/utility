@@ -143,12 +143,12 @@ public final class TaskScheduler {
                 let reason = result.error.isEmpty ? "exit code != 0" : result.error
                 debugLog("[Task] \(task.name) failed:\(String(reason.prefix(2000)))")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.taskFailed(task.name), body: String(reason.prefix(200)),
+                    title: L10n.Notify.taskFailed(name: task.name), body: String(reason.prefix(200)),
                 ))
             } else {
                 debugLog("[Task] \(task.name) completed.")
                 EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                    title: L10n.Menu.taskCompleted(task.name), body: "",
+                    title: L10n.Notify.taskCompleted(name: task.name), body: "",
                 ))
             }
         }

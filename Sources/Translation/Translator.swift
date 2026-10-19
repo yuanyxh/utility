@@ -103,8 +103,8 @@ public enum TranslationError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .missingAPIKey: L10n.Translation.missingApiKey
-        case .apiError: L10n.Translation.apiFailed
+        case .missingAPIKey: L10n.Error.missingApiKey
+        case .apiError: L10n.Error.apiFailed
         }
     }
 }

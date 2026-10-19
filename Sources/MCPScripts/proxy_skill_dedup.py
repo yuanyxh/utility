@@ -20,26 +20,17 @@ among the hardest to troubleshoot).
 
 from __future__ import annotations
 
+from l10n import t
+
 API_OPENAI = "openai"
-
-#: The short-note text (selected by UI language; falls back to `FALLBACK_LANG`
-#: when that language is missing). The language criterion is shared with
-#: tool_text / prompt_loader (`config.ui_language()`).
-SKILL_DEDUP_NOTES: dict[str, str] = {
-    "zh-Hans": "{name} 的结果已存在，见上文",
-    "en": "{name} result already exists; see above",
-}
-
-FALLBACK_LANG = "zh-Hans"
 
 #: Placeholder when the tool name cannot be mapped, avoiding rendering "skill  loaded above"
 UNKNOWN_NAME = "?"
 
 
 def note_for(name: str, lang: str) -> str:
-    """Select the language and render the short note; untranslated languages fall back to the baseline."""
-    template = SKILL_DEDUP_NOTES.get(lang) or SKILL_DEDUP_NOTES[FALLBACK_LANG]
-    return template.replace("{name}", name or UNKNOWN_NAME)
+    """Render the short note in the given language via the shared catalog."""
+    return t("proxy.dedup.note", lang=lang, name=name or UNKNOWN_NAME)
 
 
 def _tool_result_text(block: dict) -> str | None:

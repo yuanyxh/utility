@@ -16,12 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         do { try ConfigManager.shared.load() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.configLoadFailed, body: error.localizedDescription,
+                title: L10n.Notify.configLoadFailed, body: error.localizedDescription,
             ))
         }
         do { try AppDatabase.shared.setup() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Menu.dbInitFailed, body: error.localizedDescription,
+                title: L10n.Notify.dbInitFailed, body: error.localizedDescription,
             ))
         }
 

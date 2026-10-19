@@ -251,9 +251,9 @@ final class MCPProcessManager {
             }
 
             if brewPython == nil {
-                let msg = L10n.MCP.envPythonMissing
+                let msg = L10n.Notify.mcpEnvPythonMissing
                 log("[MCP] ❌ \(msg)")
-                notify(L10n.MCP.envCheckTitle, msg)
+                notify(L10n.Notify.mcpEnvCheckTitle, msg)
             } else {
                 let reqPath = "Sources/MCPScripts/requirements.txt"
                 let steps = """
@@ -262,7 +262,7 @@ final class MCPProcessManager {
                   ~/.config/utility/mcp-venv/bin/pip install -r \(reqPath)
                 """
                 log("[MCP] ❌ Virtual environment not ready\n\(steps)")
-                notify(L10n.MCP.envCheckTitle, L10n.MCP.envVenvMissing)
+                notify(L10n.Notify.mcpEnvCheckTitle, L10n.Notify.mcpEnvVenvMissing)
             }
             pythonAvailable = false
             return false
@@ -350,7 +350,7 @@ final class MCPProcessManager {
     }
 
     private func notifyCrash() {
-        notify(L10n.MCP.notifyCrashedTitle, L10n.MCP.notifyCrashedBody(maxRestarts))
+        notify(L10n.Notify.mcpCrashedTitle, L10n.Notify.mcpCrashed(count: maxRestarts))
     }
 }
 

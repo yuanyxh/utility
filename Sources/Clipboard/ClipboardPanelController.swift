@@ -282,7 +282,7 @@ extension ClipboardPanelController: NSTableViewDataSource, NSTableViewDelegate {
             if let json = try? JSONDecoder().decode([String: [String]].self, from: item.content),
                let paths = json["paths"]
             {
-                return L10n.Clipboard.fileCount(paths.count)
+                return L10n.Clipboard.fileCount(count: paths.count)
             }
             return L10n.Clipboard.file
         case "html":

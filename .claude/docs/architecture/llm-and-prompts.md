@@ -32,11 +32,12 @@
 - **契约校验脚本第 5 组**：断言 24 份模板（12 feature × 2 语言）都被**生产解析器**（`prompt_loader.parse_template`）接受、占位符与基线登记一致、翻译版的 `json_keys` 与基线一致；Swift 侧有 L10n 兜底的两个 feature 还要求正文与 `Resources/<lang>.json` 逐字一致；基线语言两侧同值。基线语言**强制齐全**（它是其它语言的回退目标），`en` 按存在性校验——渐进补译是正常节奏。两个设计要点：解析取自**入参文本**而非重读磁盘（否则自检喂不进「假设的坏文件」，变异会静默无效）；遍历**期望集合**（语言 × feature）而非入参字典的键（否则「模板漏发」会因 key 消失而被静静漏掉）
 - **翻译不能改结构**：占位符名、JSON 契约键（`"judge":`、`"relation":` 这些会被代码解析的键）在译文里必须原样保留——译文改名不会报错，只会在运行期表现为「渲染缺参」或「模型没按契约输出却检测不出来」。故 `json_keys` 有跨语言一致性断言，占位符有「与基线登记一致」断言
 
-### 工具参数描述国际化（tool_text.py）
+### 工具参数描述国际化（catalog + tool_text.py）
 - **只做参数描述**（`inputSchema` 里的 `description`）。工具**描述**不在此列：`TOOL_DEFAULTS` 更长、改动更频繁，内置一份译文本只会多出一份没人维护的副本
 - **键是语义名而非「工具.参数」路径**：18 条唯一文案在 schema 里出现 **23 处**（`param.db_path` 被 4 个 `project_*` 工具引用、`param.max_results` ×2、`param.memory_content` ×2）。按路径命名会让同一句文案在翻译时分叉成几份，「改一处忘三处」会随翻译一起放大
-- `param_text(key)` 的语言判据与提示词**同源**（`config.ui_language()` ← `UTILITY_LANG` ← `general.language`），缺该语言回退 `zh-Hans`；`tool_text.FALLBACK_LANG` / `prompt_loader.FALLBACK_LANG` / `PromptManager.fallbackLanguage` **三处同值**由契约脚本断言（漂移会让同一份缺失在两条路径上得到不同结果，且都不报错）
-- **未登记的键抛 `MissingParamText`，不回退成键名**：静默回退会把 `param.xxx` 这样的内部标识当文案发给模型；这类错误在静态层就被契约脚本拦下，运行期再兜底只会掩盖它
+- 文案已并入共享目录 `Sources/Resources/<lang>.json`（key 前缀 `mcp.param.*`），由 `gen-l10n.py` 生成 `l10n_catalog.py`；`tool_text.param_text("param.x")` 只是 `l10n.t("mcp.param.x")` 的薄别名，server.py 调用点不变
+- `param_text(key)` 的语言判据与提示词**同源**（`l10n.resolved_language()` ← `config.ui_language()` ← `UTILITY_LANG` ← `general.language`），缺该语言回退 `zh-Hans`；`l10n.BASELINE_LANG` / `prompt_loader.FALLBACK_LANG` / `PromptManager.fallbackLanguage` **三处同值**由契约脚本断言（漂移会让同一份缺失在两条路径上得到不同结果，且都不报错）
+- **未登记的键抛 `MissingText`（`MissingParamText` 是其别名），不回退成键名**：静默回退会把 `param.xxx` 这样的内部标识当文案发给模型；这类错误在静态层就被契约脚本拦下，运行期再兜底只会掩盖它
 - **契约第 6 组**（静态 AST，不 import server.py——它导入即拉起 mem0/qdrant）：`handle_list_tools()` 内所有 `"description"` 必须经 `param_text(...)` 取，裸字面量与「无法判定的形式」都算违反；引用的键必须存在、表中不得有孤儿键、各键语言集合**一致且含基线**。看的是 dict 的 `"description"` 键，工具级 `Tool(description=...)` 是关键字参数、天然在范围外
 - **混语言比统一未翻译更糟**：schema 是一次性整体呈现的，故断言「各键语言集合一致」而非「每键有基线即可」——后者允许一部分参数中文、一部分英文
 - **`param.memory_content` 与 `TOOL_DEFAULTS["remember"]` 必须同为三要素口径**（场景/决策/演进）：两处描述的是同一段模型行为，分叉时模型收到两套要求（曾一处三要素、一处五要素，2026-09-18 用户裁定「三要素为主」后改齐）

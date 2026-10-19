@@ -57,7 +57,7 @@ public struct StageItem: Codable, FetchableRecord, PersistableRecord, Identifiab
             return L10n.Stage.file
         case "fileGroup":
             let count = resolveFileGroup().count
-            return L10n.Stage.fileCount(count)
+            return L10n.Stage.fileCount(count: count)
         case "html":
             let str = String(data: content, encoding: .utf8) ?? ""
             // Get a plain-text summary (strip tags)

@@ -112,7 +112,7 @@ public final class ClipboardWatcher {
             if let data = try? JSONEncoder().encode(["paths": paths]) {
                 let clip = ClipboardItem(
                     type: "file_batch", content: data,
-                    application: L10n.Clipboard.fileCount(urls.count),
+                    application: L10n.Clipboard.fileCount(count: urls.count),
                 )
                 try? storage.add(clip)
             }
