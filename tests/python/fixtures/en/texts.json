@@ -57,5 +57,10 @@
   "genarticles.review.action.no_blockquotes": "Use > for conclusions/spec text",
   "genarticles.latest.header": "# Latest batch: {batch}",
   "genarticles.latest.status": "- Status: {status}",
-  "genarticles.latest.item": "- {id}: {title}\\n  - Article: {path}\\n  - Review: {review}"
+  "genarticles.latest.item": "- {id}: {title}\\n  - Article: {path}\\n  - Review: {review}",
+  "genarticles.review.action.mermaid_too_complex": "Simplify to one main flow; split or drop extra branches/subgraphs",
+  "genarticles.review.action.footnote_missing_def": "Add the footnote definition or use an inline link",
+  "genarticles.review.action.footnote_unused_def": "Remove footnote definitions that are never referenced",
+  "genarticles.review.action.emphasis_overuse": "Reduce bold; keep it for key conclusions/terms",
+  "genarticles.review.action.unclosed_emphasis": "Fix unclosed bold or strikethrough markers"
 }

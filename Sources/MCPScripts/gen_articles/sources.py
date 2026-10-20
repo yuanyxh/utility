@@ -22,7 +22,7 @@ def _hot_items(config: Config, query: str,
         return [], f"{type(exc).__name__}: {exc}"
 
 
-def _sections(text: str) -> list[tuple[int, str]]:
+def _sections(text: str, limit: int = 4000) -> list[tuple[int, str]]:
     lines = text.splitlines()
     starts = [
         i for i, line in enumerate(lines)
@@ -35,13 +35,14 @@ def _sections(text: str) -> list[tuple[int, str]]:
         end = starts[n + 1] if n + 1 < len(starts) else len(lines)
         body = "\n".join(lines[start:end]).strip()
         if len(body) >= 120:
-            out.append((start + 1, body[:4000]))
+            out.append((start + 1, body[:limit]))
     return out
 
 
 def _extract_items(config: Config, limit: int) -> list[dict]:
     root = config.extracts_dir
     excluded = set(config.material.get("excludeDirs", []))
+    section_limit = int(config.material.get("maxCharsPerItem", 4000))
     items = []
     for path in sorted(root.rglob("*.md")):
         if len(items) >= limit * 8:
@@ -61,7 +62,7 @@ def _extract_items(config: Config, limit: int) -> list[dict]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for line, section in _sections(text):
+        for line, section in _sections(text, section_limit):
             items.append({
                 "kind": "note",
                 "path": str(rel),
@@ -87,7 +88,8 @@ def collect_material(topic: str, config: Config) -> dict:
         float(config.material.get("minRelevance", 0.35)),
         float(config.material.get("minValue", 0.25)),
     )
-    items = items[:limit + extracts_limit]
+    max_items = int(config.material.get("maxItems", limit + extracts_limit))
+    items = items[:max_items]
     return {
         "topic": topic,
         "fetched_at": datetime.now(timezone.utc).isoformat(),

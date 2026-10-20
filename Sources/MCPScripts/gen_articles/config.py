@@ -40,6 +40,9 @@ DEFAULTS = {
         "hotLimit": 20,
         "extractsLimit": 20,
         "minItems": 2,
+        "maxItems": 20,
+        "maxCharsPerItem": 4000,
+        "maxTotalChars": 32000,
         "minRelevance": 0.35,
         "minValue": 0.25,
         "sourceCooldownDays": 14,
@@ -171,4 +174,11 @@ def validate(config: Config) -> list[str]:
         errors.append("material.minItems must be > 0")
     if config.material.get("minRelevance", 0) < 0:
         errors.append("material.minRelevance must be >= 0")
+    for key in ("maxItems", "maxCharsPerItem", "maxTotalChars"):
+        try:
+            value = int(config.material.get(key, 0))
+        except (TypeError, ValueError):
+            value = 0
+        if value < 1:
+            errors.append(f"material.{key} must be > 0")
     return errors

@@ -77,6 +77,11 @@ REQUIRED_THRESHOLD_KEYS = (
     "strict_call_limit", "strict_inline_per_1k", "strict_hardcore_floor",
     "strict_depth_floor", "colloquial_limit", "colloquial_warn", "min_han",
     "max_comments", "max_para", "uniform_cv", "inline_warn_per_1k",
+    "mermaid_nodes_warn", "mermaid_nodes_fail", "mermaid_depth_warn",
+    "mermaid_depth_fail", "mermaid_out_degree_warn", "mermaid_branch_warn",
+    "mermaid_edges_extra", "mermaid_subgraphs_warn",
+    "mermaid_sequence_participants_warn",
+    "mermaid_sequence_messages_warn", "strong_warn_per_1k",
 )
 
 

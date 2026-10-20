@@ -24,6 +24,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "param.memory_id": "Memory ID to delete",
     "param.point_id": "Optional point ID",
     "param.layer": "Layer to delete from; default hot",
+    "param.layers": "Layers to search: hot, cold, or both; default both",
     "param.bit": "Bit index; 0 = summarized",
     "param.bit_value": "1 = set, 0 = reset",
     "param.db_path": "Required. Absolute path to .utility/deps.sqlite",

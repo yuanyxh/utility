@@ -57,5 +57,10 @@
   "genarticles.review.action.no_blockquotes": "结论/规范原文用 > 引用",
   "genarticles.latest.header": "# 最近批次：{batch}",
   "genarticles.latest.status": "- 状态：{status}",
-  "genarticles.latest.item": "- {id}：{title}\\n  - 文章：{path}\\n  - 复核：{review}"
+  "genarticles.latest.item": "- {id}：{title}\\n  - 文章：{path}\\n  - 复核：{review}",
+  "genarticles.review.action.mermaid_too_complex": "把图简化成单一主干流程图，拆分或删掉多余分支/subgraph",
+  "genarticles.review.action.footnote_missing_def": "补齐脚注定义，或改成行内链接",
+  "genarticles.review.action.footnote_unused_def": "删除未被引用的脚注定义",
+  "genarticles.review.action.emphasis_overuse": "减少加粗，只保留关键结论/术语",
+  "genarticles.review.action.unclosed_emphasis": "修正未闭合的加粗或删除线标记"
 }

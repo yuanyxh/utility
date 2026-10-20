@@ -96,9 +96,13 @@ def format_repair(run_dir: Path, index: int | None = None,
         warnings_improved = (
             len(after_fmt["warnings"]) < len(before["warnings"])
         )
+        diagrams_kept = (
+            after_fmt["mermaid_count"] >= min(before["mermaid_count"], 3)
+        )
         improved = (
             out != path
             and after_lint["result"] == "PASS"
+            and diagrams_kept
             and (markdown_improved or lint_improved or warnings_improved)
         )
         if improved:

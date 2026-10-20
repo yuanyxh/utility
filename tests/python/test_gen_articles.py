@@ -13,7 +13,13 @@ from gen_articles.config import ConfigError, load, validate
 from gen_articles.language_pack import LanguagePack, PackError
 from gen_articles.generate import _material_count
 from gen_articles.production import _scan_latest, _write_latest
-from gen_articles.material import filter_items, render_markdown
+from gen_articles.markdown import format_report
+from gen_articles.material import (
+    _shrink_content,
+    filter_items,
+    render_markdown,
+    topic_relevance,
+)
 from gen_articles.lint import lint_text
 from gen_articles.sources import _extract_items, _sections
 from gen_articles.topics import (
@@ -305,6 +311,155 @@ class SourceTest(unittest.TestCase):
         self.assertEqual([i["id"] for i in kept], ["b"])
         self.assertEqual(len(dropped), 1)
 
+    def test_chinese_topic_relevance_falls_back_to_bigrams(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _project(root)
+            runtime.configure(load(root))
+            topic = "定时任务误判失败的排查方法：如何通过多维证据链确认任务真实状态"
+            content = (
+                "定时任务误判失败后，需要通过多维证据链确认任务真实状态；"
+                "判据是成功标记、日志结尾和进程正常退出。"
+            )
+            score, hits = topic_relevance(topic, content)
+            self.assertGreaterEqual(score, 0.35)
+            self.assertGreaterEqual(hits, 2)
+
+    def test_high_relevance_overrides_low_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _project(root)
+            runtime.configure(load(root))
+            topic = "SQLite WAL 写入并发边界"
+            items = [{
+                "kind": "note", "path": "n.md", "line": 1, "score": 0.5,
+                "content": "上次 SQLite WAL 写入并发边界测试的结论。" * 12,
+            }]
+            kept, dropped = filter_items(items, topic, 0.35, 0.25)
+            self.assertEqual(len(kept), 1)
+            self.assertEqual(dropped, [])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MaterialBudgetTest(unittest.TestCase):
+    def test_shrink_keeps_middle_evidence(self):
+        text = "开头" * 400 + "\nSELECT * FROM memories WHERE id = 1\n" + "结尾" * 400
+        shrunk = _shrink_content(text, 400)
+        self.assertLessEqual(len(shrunk), 400)
+        self.assertIn("SELECT * FROM memories", shrunk)
+        self.assertTrue(shrunk.startswith("开头"))
+
+    def test_render_caps_items_and_total_chars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _project(root)
+            cfg = load(root)
+            cfg.raw["material"].update({
+                "maxItems": 2, "maxCharsPerItem": 300, "maxTotalChars": 400,
+            })
+            runtime.configure(cfg)
+            items = [{
+                "kind": "note", "path": f"n{i}.md", "line": i,
+                "score": 1, "value": 0.5, "content": "正文" * 300,
+            } for i in range(4)]
+            text = render_markdown({
+                "topic": "T", "fetched_at": "now", "endpoint": "x",
+                "items": items, "dropped_count": 0,
+            })
+            self.assertEqual(text.count("\n## "), 2)
+            self.assertIn("- 条目：2", text)
+            body = text.split("\n\n", 1)[1]
+            self.assertLessEqual(len(body), 600)
+
+
+class MarkdownFormatTest(unittest.TestCase):
+    def _report(self, text: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _project(root)
+            runtime.configure(load(root))
+            return format_report(text)
+
+    def test_extended_formats_are_counted(self):
+        report = self._report(
+            "## 标题\n\n正文[^1]\n\n- [ ] 待办\n- [x] 完成\n\n"
+            "![图](a.png)\n\n---\n\n[^1]: 来源\n"
+        )
+        self.assertEqual(report["footnotes"], 1)
+        self.assertEqual(report["task_items"], 2)
+        self.assertEqual(report["images"], 1)
+        self.assertEqual(report["rules"], 1)
+        self.assertNotIn("footnote_missing_def",
+                         {w["code"] for w in report["warnings"]})
+
+    def test_emphasis_counts_ignore_code(self):
+        report = self._report(
+            "## 标题\n\n**重点**和*强调*以及~~废弃~~，"
+            "`**代码**`与 ```\n~~块~~\n``` 不算。\n"
+        )
+        self.assertEqual(report["strong"], 1)
+        self.assertEqual(report["emphasis"], 1)
+        self.assertEqual(report["strikethrough"], 1)
+        self.assertNotIn("unclosed_emphasis",
+                         {w["code"] for w in report["warnings"]})
+
+    def test_unclosed_emphasis_is_flagged(self):
+        report = self._report("## 标题\n\n这里有 **未闭合 的加粗。\n")
+        self.assertIn("unclosed_emphasis",
+                      {w["code"] for w in report["warnings"]})
+
+    def test_bold_overuse_is_flagged(self):
+        spans = "".join(f"**词{i}**" for i in range(20))
+        report = self._report("## 标题\n\n" + "正文" * 500 + spans)
+        self.assertEqual(report["strong"], 20)
+        self.assertIn("emphasis_overuse",
+                      {w["code"] for w in report["warnings"]})
+
+    def test_malformed_footnotes_are_flagged(self):
+        missing = self._report("## 标题\n\n正文[^x]\n")
+        codes = {w["code"] for w in missing["warnings"]}
+        self.assertIn("footnote_missing_def", codes)
+        unused = self._report("## 标题\n\n[^y]: 未引用\n")
+        codes = {w["code"] for w in unused["warnings"]}
+        self.assertIn("footnote_unused_def", codes)
+
+    def test_simple_tree_mermaid_passes_complexity(self):
+        report = self._report(
+            "```mermaid\ngraph TB\n"
+            "  A[\"编辑器\"] --> W[\"工作流\"]\n"
+            "  W --> B[\"模型\"]\n  W --> U[\"本地 MCP 服务\"]\n"
+            "  W --> M[\"记忆库\"]\n  B --> C[\"上游\"]\n"
+            "  B --> R[\"规则\"]\n  U --> U1[\"SQLite\"]\n"
+            "  U --> U2[\"检索\"]\n  M --> D1[\"记忆体\"]\n"
+            "  M --> D2[\"Extracts\"]\n  C --> O[\"输出\"]\n"
+            "```\n"
+        )
+        metrics = report["mermaid_metrics"][0]
+        self.assertEqual(metrics["kind"], "flowchart")
+        self.assertGreaterEqual(metrics["nodes"], 11)
+        self.assertNotIn("mermaid_too_complex",
+                         {w["code"] for w in report["warnings"]})
+        self.assertEqual(report["diagram_score"], 1.0)
+
+    def test_large_simple_tree_not_flagged(self):
+        lines = ["```mermaid", "flowchart TD", '  H["hub"]']
+        for hub in range(3):
+            lines.append(f'  H --> B{hub}["branch {hub}"]')
+            for leaf in range(6):
+                lines.append(f'  B{hub} --> L{hub}_{leaf}["leaf"]')
+        lines.append("```")
+        report = self._report("\n".join(lines))
+        self.assertEqual(report["mermaid_metrics"][0]["nodes"], 22)
+        self.assertNotIn("mermaid_too_complex",
+                         {w["code"] for w in report["warnings"]})
+
+    def test_wide_mermaid_is_flagged(self):
+        lines = ["```mermaid", "flowchart TD", '  H["hub"]']
+        lines += [f'  H --> N{i}["node {i}"]' for i in range(8)]
+        lines.append("```")
+        report = self._report("\n".join(lines))
+        self.assertIn("mermaid_too_complex",
+                      {w["code"] for w in report["warnings"]})

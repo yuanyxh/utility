@@ -9,6 +9,7 @@ import re
 
 from gen_articles import runtime
 from gen_articles.i18n import t as tr
+from gen_articles.textnorm import bigrams, norm
 
 
 def dedupe(items: list[dict]) -> list[dict]:
@@ -95,6 +96,14 @@ def topic_relevance(topic: str, content: str) -> tuple[float, int]:
     coverage = len(hits) / len(terms)
     distinctive = sum(1 for term in hits if len(term) >= 3 or term.isascii())
     score = 0.7 * coverage + 0.3 * min(distinctive / 3, 1.0)
+    topic_grams = bigrams(norm(topic))
+    if topic_grams:
+        matched = len(topic_grams & bigrams(norm(content)))
+        bigram_score = (
+            0.8 * matched / len(topic_grams) + 0.2 * min(matched / 4, 1.0)
+        )
+        if bigram_score > score:
+            return round(bigram_score, 3), matched
     return round(score, 3), len(hits)
 
 
@@ -109,10 +118,8 @@ def filter_items(items: list[dict], topic: str | None = None,
             relevance, hits = topic_relevance(topic, item["content"])
             item["relevance"] = relevance
         min_hits = 1 if len(_topic_terms(topic or "")) == 1 else 2
-        weak_density = (
-            low == "low_density" and relevance >= 0.45 and hits >= min_hits
-        )
-        if low and not weak_density:
+        relevant_low = relevance >= 0.45 and hits >= min_hits
+        if low and not relevant_low:
             dropped.append({
                 "kind": item.get("kind"),
                 "id": item.get("id"),
@@ -170,18 +177,59 @@ def project_tokens(markdown: str) -> tuple[str, ...]:
     ))
 
 
+EVIDENCE_LINE = re.compile(
+    r"```|^\s*(?:\$|curl|git|sqlite3|python3?|npm|swift|bash)\b|"
+    r"\b(?:Error|Exception|Traceback|SIG[A-Z]+|SQLSTATE)\b|"
+    r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|\b\d+\.\d+(?:\.\d+)?\b|"
+    r"https?://|^\s*(?:SELECT|PRAGMA|INSERT|UPDATE|CREATE|BEGIN|COMMIT)\b",
+    re.I | re.M,
+)
+
+
+def _shrink_content(text: str, limit: int) -> str:
+    """Keep head/tail plus middle evidence lines; deterministic and budget-bounded."""
+    if len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    head_len = max(1, int(limit * 0.7))
+    tail_len = max(0, int(limit * 0.2))
+    head = text[:head_len]
+    tail = text[-tail_len:] if tail_len else ""
+    middle = text[head_len:len(text) - tail_len] if tail_len else text[head_len:]
+    evidence = [
+        line.strip() for line in middle.splitlines()
+        if EVIDENCE_LINE.search(line)
+    ][:5]
+    out = head
+    if evidence:
+        out += "\n\n" + "\n".join(evidence) + "\n\n…\n"
+    else:
+        out += "\n…\n"
+    out += tail
+    if len(out) <= limit:
+        return out
+    return out[:max(0, limit - 1)].rstrip() + "…"
+
+
 def render_markdown(material: dict) -> str:
-    lines = [
-        tr("genarticles.material.header", topic=material["topic"]),
-        "",
-        tr("genarticles.material.fetched", at=material["fetched_at"]),
-        tr("genarticles.material.source", endpoint=material["endpoint"]),
-        tr("genarticles.material.items", count=len(material["items"])),
-        tr("genarticles.material.filtered",
-           count=material.get("dropped_count", 0)),
-        "",
-    ]
-    for i, item in enumerate(material["items"], 1):
+    cfg = runtime.config().material
+    max_items = int(cfg.get("maxItems", 20))
+    per_item = int(cfg.get("maxCharsPerItem", 4000))
+    total_budget = int(cfg.get("maxTotalChars", 32000))
+    remaining = max(0, total_budget)
+    body: list[str] = []
+    rendered = 0
+    for item in material["items"][:max_items]:
+        if remaining <= 0:
+            break
+        content = _shrink_content(
+            item["content"], min(per_item, remaining)
+        )
+        if not content:
+            break
+        rendered += 1
+        remaining = max(0, remaining - len(content))
         source = source_id(item)
         if item["kind"] == "memory":
             meta = f"score={item.get('score')} tags={','.join(item.get('tags', []))}"
@@ -189,5 +237,16 @@ def render_markdown(material: dict) -> str:
             meta = f"score={item.get('score')}"
         if item.get("value") is not None:
             meta += f" value={item['value']}"
-        lines.extend([f"## {i}. {source}", "", f"`{meta}`", "", item["content"], ""])
+        body.extend([f"## {rendered}. {source}", "", f"`{meta}`", "", content, ""])
+    lines = [
+        tr("genarticles.material.header", topic=material["topic"]),
+        "",
+        tr("genarticles.material.fetched", at=material["fetched_at"]),
+        tr("genarticles.material.source", endpoint=material["endpoint"]),
+        tr("genarticles.material.items", count=rendered),
+        tr("genarticles.material.filtered",
+           count=material.get("dropped_count", 0)),
+        "",
+        *body,
+    ]
     return "\n".join(lines)

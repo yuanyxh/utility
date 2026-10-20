@@ -128,6 +128,11 @@ def build_tools() -> list[Tool]:
                         "description": param_text("param.max_results"),
                     },
                     "include_archived": {"type": "boolean", "default": False},
+                    "layers": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["hot", "cold"]},
+                        "description": param_text("param.layers"),
+                    },
                 },
                 "required": ["query"],
             },
