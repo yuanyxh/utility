@@ -10,8 +10,9 @@ import re
 from gen_articles import runtime
 
 
-def merge_short_sentences(text: str, target_p50: float = 55,
-                          max_chars: int = 110) -> str:
+def merge_short_sentences(
+    text: str, target_p50: float = 55, max_chars: int = 110
+) -> str:
     """把相邻短句用分号连接，只改标点，不改词语与事实。"""
     pack = runtime.pack()
     unit = pack.unit_re
@@ -29,13 +30,13 @@ def merge_short_sentences(text: str, target_p50: float = 55,
                 a, b = parts[i].rstrip(), parts[i + 1].lstrip()
                 la = len(unit.findall(a))
                 lb = len(unit.findall(b))
-                if (a.endswith(pack.raw["sentence_terminal"])
-                        and la < target_p50 * 0.8
-                        and lb < target_p50 * 0.8
-                        and la + lb <= max_chars):
-                    parts[i:i + 2] = [
-                        a[:-1] + pack.sentence_join + b
-                    ]
+                if (
+                    a.endswith(pack.raw["sentence_terminal"])
+                    and la < target_p50 * 0.8
+                    and lb < target_p50 * 0.8
+                    and la + lb <= max_chars
+                ):
+                    parts[i : i + 2] = [a[:-1] + pack.sentence_join + b]
                     changed = True
                     continue
                 i += 1
@@ -61,22 +62,36 @@ def _infer_code_language(body: str) -> str:
         except json.JSONDecodeError:
             pass
     lines = [
-        line for line in text.splitlines()
+        line
+        for line in text.splitlines()
         if line.strip() and not line.strip().startswith(("#", "//"))
     ]
     head = "\n".join(lines[:3])
-    if re.match(r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|PRAGMA|"
-                r"WITH|BEGIN|COMMIT|ALTER|DROP)\b", head, re.I):
+    if re.match(
+        r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|PRAGMA|"
+        r"WITH|BEGIN|COMMIT|ALTER|DROP)\b",
+        head,
+        re.I,
+    ):
         return "sql"
-    if re.match(r"^\s*(?:\$|sqlite3|curl|git|brew|npm|pnpm|python3?|"
-                r"swift|cd|ls|cat|echo|sudo|mkdir|chmod)\b", head):
+    if re.match(
+        r"^\s*(?:\$|sqlite3|curl|git|brew|npm|pnpm|python3?|"
+        r"swift|cd|ls|cat|echo|sudo|mkdir|chmod)\b",
+        head,
+    ):
         return "bash"
-    if re.search(r"\b(?:func|guard|struct|enum)\b|"
-                 r"^\s*import\s+(?:SwiftUI|Foundation|AppKit|UIKit|Combine|GRDB)\b",
-                 head, re.M):
+    if re.search(
+        r"\b(?:func|guard|struct|enum)\b|"
+        r"^\s*import\s+(?:SwiftUI|Foundation|AppKit|UIKit|Combine|GRDB)\b",
+        head,
+        re.M,
+    ):
         return "swift"
-    if re.match(r"^\s*(?:def |class |import |from .+ import |"
-                r"for .+ in |while |if __name__|print\()", head):
+    if re.match(
+        r"^\s*(?:def |class |import |from .+ import |"
+        r"for .+ in |while |if __name__|print\()",
+        head,
+    ):
         return "python"
     if re.search(r"\b(?:const|let|function|=>|console\.log)\b", head):
         return "javascript"
@@ -96,15 +111,16 @@ def label_code_blocks(text: str) -> str:
             inside = True
             continue
         if line.strip() == "```" and lines[start].strip() == "```":
-            body = "\n".join(lines[start + 1:i])
+            body = "\n".join(lines[start + 1 : i])
             lang = _infer_code_language(body)
             lines[start] = lines[start].replace("```", f"```{lang}", 1)
         inside = False
     return "\n".join(lines)
 
 
-def split_long_paragraphs(text: str, max_chars: int = 120,
-                          chunk_chars: int = 90) -> str:
+def split_long_paragraphs(
+    text: str, max_chars: int = 120, chunk_chars: int = 90
+) -> str:
     """把超长自然段按句子边界拆开，不改动代码块、标题、表格与列表。"""
     pack = runtime.pack()
     unit = pack.unit_re
@@ -135,5 +151,5 @@ def strip_preamble(text: str) -> str:
     text = text.strip()
     m = re.search(r"^#\s+.+$", text, re.M)
     if m:
-        text = text[m.start():]
+        text = text[m.start() :]
     return text.strip() + "\n"

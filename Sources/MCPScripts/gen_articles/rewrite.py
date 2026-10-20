@@ -46,15 +46,20 @@ def repairable_issues(issues: list[dict]) -> list[dict]:
     return [issue for issue in issues if issue.get("code") in REPAIRABLE_CODES]
 
 
-def build_rewrite_prompt(article: str, issues: list[dict],
-                         warnings: list[dict]) -> tuple[str, str]:
+def build_rewrite_prompt(
+    article: str, issues: list[dict], warnings: list[dict]
+) -> tuple[str, str]:
     none = tr("genarticles.prompt.none")
     issue_text = "\n".join(f"- {i['message']}" for i in issues) or none
     warning_text = "\n".join(f"- {w['message']}" for w in warnings) or none
     return (
         runtime.pack().prompt("gen_articles_rewrite_system", soul=runtime.soul_text()),
-        runtime.pack().prompt("gen_articles_rewrite_user", article=article,
-                    issue_text=issue_text, warning_text=warning_text),
+        runtime.pack().prompt(
+            "gen_articles_rewrite_user",
+            article=article,
+            issue_text=issue_text,
+            warning_text=warning_text,
+        ),
     )
 
 
@@ -72,29 +77,32 @@ def merge_run(run_dir: Path, index: int | None = None) -> list[dict]:
         before = article_features(article)
         merged = merge_short_sentences(article, target)
         if merged == article:
-            results.append({"index": i, "status": "ok",
-                            "p50": before["sent_p50"]})
+            results.append({"index": i, "status": "ok", "p50": before["sent_p50"]})
             continue
         out = candidate_path(run_dir, i, "merge")
         out.write_text(merged, encoding="utf-8")
         after = article_features(merged)
         lint = strict_lint(merged, tokens)
-        improved = (
-            after["sent_p50"] > before["sent_p50"]
-            and lint["result"] == "PASS"
+        improved = after["sent_p50"] > before["sent_p50"] and lint["result"] == "PASS"
+        results.append(
+            {
+                "index": i,
+                "status": "merged" if improved else "unchanged",
+                "p50_before": before["sent_p50"],
+                "p50_after": after["sent_p50"],
+                "target": target,
+                "path": str(out),
+            }
         )
-        results.append({
-            "index": i,
-            "status": "merged" if improved else "unchanged",
-            "p50_before": before["sent_p50"],
-            "p50_after": after["sent_p50"],
-            "target": target,
-            "path": str(out),
-        })
         if improved:
             commit_candidate(
-                meta, meta_path, candidate, path=out, features=after,
-                source_field="merged_from", source_name=path.name,
+                meta,
+                meta_path,
+                candidate,
+                path=out,
+                features=after,
+                source_field="merged_from",
+                source_name=path.name,
             )
     return results
 
@@ -111,44 +119,52 @@ def split_run(run_dir: Path, index: int | None = None) -> list[dict]:
         before = article_features(article)
         split = split_long_paragraphs(article)
         if split == article:
-            results.append({"index": i, "status": "ok",
-                            "para": before["para_mean"]})
+            results.append({"index": i, "status": "ok", "para": before["para_mean"]})
             continue
         out = candidate_path(run_dir, i, "split")
         out.write_text(split, encoding="utf-8")
         after = article_features(split)
         lint = strict_lint(split, tokens)
-        improved = (
-            after["para_mean"] < before["para_mean"]
-            and lint["result"] == "PASS"
+        improved = after["para_mean"] < before["para_mean"] and lint["result"] == "PASS"
+        results.append(
+            {
+                "index": i,
+                "status": "split" if improved else "unchanged",
+                "para_before": before["para_mean"],
+                "para_after": after["para_mean"],
+                "path": str(out),
+            }
         )
-        results.append({
-            "index": i,
-            "status": "split" if improved else "unchanged",
-            "para_before": before["para_mean"],
-            "para_after": after["para_mean"],
-            "path": str(out),
-        })
         if improved:
             commit_candidate(
-                meta, meta_path, candidate, path=out, features=after,
-                source_field="split_from", source_name=path.name,
+                meta,
+                meta_path,
+                candidate,
+                path=out,
+                features=after,
+                source_field="split_from",
+                source_name=path.name,
             )
     return results
 
 
-def build_pacing_prompt(article: str, target_p50: float,
-                        target_p90: float) -> tuple[str, str]:
+def build_pacing_prompt(
+    article: str, target_p50: float, target_p90: float
+) -> tuple[str, str]:
     return (
         runtime.pack().prompt("gen_articles_pacing_system", soul=runtime.soul_text()),
-        runtime.pack().prompt("gen_articles_pacing_user",
-                    target_p50=f"{target_p50:.0f}",
-                    target_p90=f"{target_p90:.0f}", article=article),
+        runtime.pack().prompt(
+            "gen_articles_pacing_user",
+            target_p50=f"{target_p50:.0f}",
+            target_p90=f"{target_p90:.0f}",
+            article=article,
+        ),
     )
 
 
-def pacing_rewrite(run_dir: Path, index: int | None = None,
-                   max_tokens: int = 8192) -> list[dict]:
+def pacing_rewrite(
+    run_dir: Path, index: int | None = None, max_tokens: int = 8192
+) -> list[dict]:
     meta_path, meta = load_meta(run_dir)
     profile = profile_for(meta.get("genre", ""))
     target = profile_mean(profile, "sent_p50", 55)
@@ -163,42 +179,55 @@ def pacing_rewrite(run_dir: Path, index: int | None = None,
         article = path.read_text(encoding="utf-8")
         before = article_features(article)
         need_pace = (
-            before["sent_p50"] < target * 0.9
-            or before["para_mean"] > para_target * 2
+            before["sent_p50"] < target * 0.9 or before["para_mean"] > para_target * 2
         )
         if not need_pace:
-            results.append({"index": i, "status": "ok",
-                            "p50": before["sent_p50"], "target": target})
+            results.append(
+                {
+                    "index": i,
+                    "status": "ok",
+                    "p50": before["sent_p50"],
+                    "target": target,
+                }
+            )
             continue
         system, user = build_pacing_prompt(article, target, target90)
-        fixed = strip_preamble(chat_with_retry(
-            client, user, system, 0.3, max_tokens, True
-        ))
+        fixed = strip_preamble(
+            chat_with_retry(client, user, system, 0.3, max_tokens, True)
+        )
         after = article_features(fixed)
         out = candidate_path(run_dir, i, "pace")
         out.write_text(fixed, encoding="utf-8")
         lint = strict_lint(fixed, tokens)
         improved = after["sent_p50"] > before["sent_p50"] and lint["result"] == "PASS"
-        results.append({
-            "index": i,
-            "status": "paced" if improved else "unchanged",
-            "p50_before": before["sent_p50"],
-            "p50_after": after["sent_p50"],
-            "para_before": before["para_mean"],
-            "para_after": after["para_mean"],
-            "target": target,
-            "path": str(out),
-        })
+        results.append(
+            {
+                "index": i,
+                "status": "paced" if improved else "unchanged",
+                "p50_before": before["sent_p50"],
+                "p50_after": after["sent_p50"],
+                "para_before": before["para_mean"],
+                "para_after": after["para_mean"],
+                "target": target,
+                "path": str(out),
+            }
+        )
         if improved:
             commit_candidate(
-                meta, meta_path, candidate, path=out, features=after,
-                source_field="paced_from", source_name=path.name,
+                meta,
+                meta_path,
+                candidate,
+                path=out,
+                features=after,
+                source_field="paced_from",
+                source_name=path.name,
             )
     return results
 
 
-def rewrite_run(run_dir: Path, index: int | None = None,
-                rounds: int = 1, max_tokens: int = 8192) -> list[dict]:
+def rewrite_run(
+    run_dir: Path, index: int | None = None, rounds: int = 1, max_tokens: int = 8192
+) -> list[dict]:
     meta_path, meta = load_meta(run_dir)
     client = LLMClient()
     tokens = project_tokens_from_run(run_dir)
@@ -221,13 +250,15 @@ def rewrite_run(run_dir: Path, index: int | None = None,
         else:
             issues = before["hard_issues"]
         if before["result"] != "PASS" and not repairable_issues(issues):
-            results.append({
-                "index": i,
-                "status": "skip_unrepairable",
-                "before": issues,
-                "after": issues,
-                "path": str(path),
-            })
+            results.append(
+                {
+                    "index": i,
+                    "status": "skip_unrepairable",
+                    "before": issues,
+                    "after": issues,
+                    "path": str(path),
+                }
+            )
             continue
         backup = run_dir / "candidates" / "original" / f"candidate_{i}.md"
         backup.parent.mkdir(parents=True, exist_ok=True)
@@ -239,9 +270,7 @@ def rewrite_run(run_dir: Path, index: int | None = None,
             if lint["result"] == "PASS" and lint["opening_background"]:
                 status = "fixed"
                 break
-            if lint["result"] == "FAIL" and not repairable_issues(
-                lint["hard_issues"]
-            ):
+            if lint["result"] == "FAIL" and not repairable_issues(lint["hard_issues"]):
                 break
             prompt_issues = lint["hard_issues"] or [
                 w for w in lint["warnings"] if w.get("code") == "opening_context"
@@ -251,9 +280,9 @@ def rewrite_run(run_dir: Path, index: int | None = None,
             system, user = build_rewrite_prompt(
                 current, prompt_issues, lint["warnings"]
             )
-            current = strip_preamble(chat_with_retry(
-                client, user, system, 0.3, max_tokens, True
-            ))
+            current = strip_preamble(
+                chat_with_retry(client, user, system, 0.3, max_tokens, True)
+            )
             out = run_dir / "candidates" / f"candidate_{i}_r{round_no}.md"
             out.write_text(current, encoding="utf-8")
         after = strict_lint(current, tokens)
@@ -267,16 +296,21 @@ def rewrite_run(run_dir: Path, index: int | None = None,
             status = "fixed"
         elif improved:
             status = "partial"
-        results.append({
-            "index": i,
-            "status": status,
-            "before": issues,
-            "after": after["hard_issues"],
-            "path": str(out),
-        })
+        results.append(
+            {
+                "index": i,
+                "status": status,
+                "before": issues,
+                "after": after["hard_issues"],
+                "path": str(out),
+            }
+        )
         if status in ("fixed", "partial"):
             commit_candidate(
-                meta, meta_path, candidate, path=out,
+                meta,
+                meta_path,
+                candidate,
+                path=out,
                 features=article_features(current),
                 source_field="rewritten_from",
                 source_name=str(backup.relative_to(run_dir)),

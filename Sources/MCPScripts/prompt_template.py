@@ -62,7 +62,7 @@ def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
             f"{path}: name={name!r} does not match the requested feature={feature!r}"
         )
 
-    text = raw[m.end():]
+    text = raw[m.end() :]
     declared = _parse_list(meta.get("placeholders", ""))
     found = tuple(dict.fromkeys(_PLACEHOLDER_RE.findall(text)))
     if set(declared) != set(found):
@@ -90,9 +90,7 @@ def render(tpl: PromptTemplate, variables: dict) -> str:
         )
     extra = [k for k in variables if k not in tpl.placeholders]
     if extra:
-        logger.warning(
-            "%s: call passes extra argument %s", tpl.feature, extra
-        )
+        logger.warning("%s: call passes extra argument %s", tpl.feature, extra)
 
     def _sub(match: re.Match[str]) -> str:
         name = match.group(1)

@@ -19,15 +19,31 @@ from gen_articles.rewrite import (
 )
 
 
-def run_pipeline(topic: str, genre: str | None, candidates: int,
-                 out: Path | None, rounds: int, judge: bool,
-                 max_tokens: int, temperature: float,
-                 disable_thinking: bool = True, use_plan: bool = True,
-                 material_path: Path | None = None) -> dict:
+def run_pipeline(
+    topic: str,
+    genre: str | None,
+    candidates: int,
+    out: Path | None,
+    rounds: int,
+    judge: bool,
+    max_tokens: int,
+    temperature: float,
+    disable_thinking: bool = True,
+    use_plan: bool = True,
+    material_path: Path | None = None,
+) -> dict:
     try:
-        meta = generate(topic, genre, candidates, out, temperature, max_tokens,
-                        disable_thinking=disable_thinking, use_plan=use_plan,
-                        material_path=material_path)
+        meta = generate(
+            topic,
+            genre,
+            candidates,
+            out,
+            temperature,
+            max_tokens,
+            disable_thinking=disable_thinking,
+            use_plan=use_plan,
+            material_path=material_path,
+        )
     except MaterialError as exc:
         run_dir = Path(exc.run_dir)
         return {
@@ -50,7 +66,8 @@ def run_pipeline(topic: str, genre: str | None, candidates: int,
     rewritten = rewrite_run(run_dir, rounds=rounds, max_tokens=max_tokens)
     formatted = (
         format_repair(run_dir, rounds=rounds, max_tokens=max_tokens)
-        if rounds > 0 else []
+        if rounds > 0
+        else []
     )
     paced = pacing_rewrite(run_dir, max_tokens=max_tokens) if rounds > 0 else []
     merged = merge_run(run_dir) if rounds > 0 else []
@@ -65,9 +82,7 @@ def run_pipeline(topic: str, genre: str | None, candidates: int,
             clean = bool(json.loads(review_state.read_text())["clean"])
         except (OSError, ValueError, KeyError, TypeError):
             clean = False
-    selected_ok = bool(
-        selection["selected"] and selection["selected"].get("lint_ok")
-    )
+    selected_ok = bool(selection["selected"] and selection["selected"].get("lint_ok"))
     status = "ok" if selected_ok and clean else "review_required"
     return {
         "run_dir": str(run_dir),

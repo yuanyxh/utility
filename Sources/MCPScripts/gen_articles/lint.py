@@ -49,30 +49,32 @@ def _hits(patterns: dict[str, re.Pattern], text: str) -> list[str]:
     return [name for name, pat in patterns.items() if pat.search(text)]
 
 
-def _first_project_unexplained(pack: LanguagePack, first_para: str,
-                               pattern: re.Pattern | None) -> bool:
+def _first_project_unexplained(
+    pack: LanguagePack, first_para: str, pattern: re.Pattern | None
+) -> bool:
     if pattern is None:
         return False
     match = pattern.search(first_para)
     if not match:
         return False
-    window = first_para[max(0, match.start() - 60): match.end() + 120]
+    window = first_para[max(0, match.start() - 60) : match.end() + 120]
     return not pack.pattern("first_project_explain").search(window)
 
 
-def _project_pattern(pack: LanguagePack,
-                     tokens: tuple[str, ...] | list[str]) -> re.Pattern | None:
+def _project_pattern(
+    pack: LanguagePack, tokens: tuple[str, ...] | list[str]
+) -> re.Pattern | None:
     generic = {tag.lower() for tag in pack.words("generic_tags")}
     tokens = [
-        t.strip() for t in tokens
+        t.strip()
+        for t in tokens
         if t and t.strip() and t.strip().lower() not in generic
     ]
     if not tokens:
         return None
     # 标签里的连字符在正文中可能写成空格：token-proxy -> Token Proxy
     escaped = "|".join(
-        re.escape(t).replace(r"\ ", r"[-\s]?").replace(r"\-", r"[-\s]?")
-        for t in tokens
+        re.escape(t).replace(r"\ ", r"[-\s]?").replace(r"\-", r"[-\s]?") for t in tokens
     )
     return re.compile(rf"(?<![0-9A-Za-z_])(?:{escaped})(?![0-9A-Za-z_])", re.I)
 
@@ -85,7 +87,7 @@ def _internal_ids(pack: LanguagePack, text: str) -> list[str]:
         token = match.group(0)
         if token.isdigit():
             continue
-        window = prose[max(0, match.start() - 30): match.end() + 30]
+        window = prose[max(0, match.start() - 30) : match.end() + 30]
         if pack.pattern("checksum_context", re.I).search(window):
             continue
         if pack.pattern("commit_context", re.I).search(window) or f"`{token}`" in prose:
@@ -93,8 +95,9 @@ def _internal_ids(pack: LanguagePack, text: str) -> list[str]:
     return found
 
 
-def _has_background(pack: LanguagePack, opening: str,
-                    tokens: tuple[str, ...] | list[str] = ()) -> bool:
+def _has_background(
+    pack: LanguagePack, opening: str, tokens: tuple[str, ...] | list[str] = ()
+) -> bool:
     """首段前两句给通用语境，或前两段出现对象到类别的定义句。"""
     paragraphs = [p for p in re.split(pack.paragraph_split, opening) if p.strip()]
     lead = re.split(pack.sentence_end, paragraphs[0])[:2] if paragraphs else []
@@ -117,7 +120,7 @@ def _example_gaps(pack: LanguagePack, text: str) -> list[str]:
     blocks: list[tuple[str, str]] = []
     pos = 0
     for match in CODE_BLOCK.finditer(text):
-        blocks.append(("prose", text[pos:match.start()]))
+        blocks.append(("prose", text[pos : match.start()]))
         blocks.append(("code", match.group(0)))
         pos = match.end()
     blocks.append(("prose", text[pos:]))
@@ -130,16 +133,15 @@ def _example_gaps(pack: LanguagePack, text: str) -> list[str]:
             cue = pack.pattern("example_cue").search(para)
             if not cue:
                 continue
-            nxt = next((b for b in blocks[i + 1:] if b[1].strip()), None)
-            if nxt is None or not re.match(
-                r"^(?:```|>|\|)", nxt[1].lstrip()
-            ):
+            nxt = next((b for b in blocks[i + 1 :] if b[1].strip()), None)
+            if nxt is None or not re.match(r"^(?:```|>|\|)", nxt[1].lstrip()):
                 gaps.append(cue.group(0))
     return gaps
 
 
-def _universal_claims(pack: LanguagePack, prose: str,
-                      project_pattern: re.Pattern | None) -> list[str]:
+def _universal_claims(
+    pack: LanguagePack, prose: str, project_pattern: re.Pattern | None
+) -> list[str]:
     """把项目实现写成行业规律的断言：普遍量词 + 内部术语，且无范围限定。"""
     claims = []
     generic = {word.upper() for word in pack.words("generic_acronyms")}
@@ -151,7 +153,8 @@ def _universal_claims(pack: LanguagePack, prose: str,
         if not pack.pattern("universal_claim").search(text):
             continue
         terms = [
-            term for term in pack.pattern("opaque_term").findall(text)
+            term
+            for term in pack.pattern("opaque_term").findall(text)
             if term.upper() not in generic
         ]
         if terms or (project_pattern and project_pattern.search(text)):
@@ -181,11 +184,13 @@ def _comment_stats(code_blocks: list[str]) -> list[dict]:
     stats = []
     for block in code_blocks:
         lines = [
-            line for line in block.splitlines()
+            line
+            for line in block.splitlines()
             if line.strip() and not line.strip().startswith("```")
         ]
         comments = [
-            line for line in lines
+            line
+            for line in lines
             if line.strip().startswith(("#", "//"))
             and not line.strip().startswith("#!")
         ]
@@ -194,30 +199,37 @@ def _comment_stats(code_blocks: list[str]) -> list[dict]:
 
 
 def _depth_metrics(text: str, code_text: str, code_blocks: list[str]) -> dict:
-    file_refs = set(re.findall(
-        r"(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|tsx|json|yaml|yml|md|mdx|go|rs|java|kt|swift|sh|conf|ini|service|sql|toml|lock|log|db|sqlite|sqlite3)(?::\d+)?(?![A-Za-z0-9_])",
-        text,
-    ))
+    file_refs = set(
+        re.findall(
+            r"(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|tsx|json|yaml|yml|md|mdx|go|rs|java|kt|swift|sh|conf|ini|service|sql|toml|lock|log|db|sqlite|sqlite3)(?::\d+)?(?![A-Za-z0-9_])",
+            text,
+        )
+    )
     commands = re.findall(
         r"(?m)^\s*(?:\$|(?:npm|npx|pnpm|yarn|git|curl|docker|kubectl|python3?|sqlite3|node|go|swift|vim|cat|grep|lsof|ss|netstat|top|ps|kill)\b)[^\n]*",
         code_text,
     )
     stack = re.findall(
         r"Traceback \(most recent call last\)|File \"[^\"]+\", line \d+|^\s+at .+\(.*:\d+:\d+\)",
-        text, re.M,
+        text,
+        re.M,
     )
     max_block = max((len(b.splitlines()) for b in code_blocks), default=0)
-    qualified = set(re.findall(
-        r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b", code_text
-    ))
+    qualified = set(
+        re.findall(
+            r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b", code_text
+        )
+    )
     versions = set(re.findall(r"\b\d+\.(?:\d+|x)(?:\.(?:\d+|x))?\b", text, re.I))
-    error_codes = set(re.findall(
-        r"\b(?:E[A-Z]{3,}|[A-Z][A-Za-z]+Error|[A-Z][A-Za-z]+Exception|"
-        r"[A-Z][A-Z0-9_]*_ERROR|SIG[A-Z]+|SQLSTATE\s+[0-9A-Z]{5}|"
-        r"HTTP\s?\d{3}|\d{3}\s+[A-Z][a-z]+|"
-        r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b|fatal:",
-        text,
-    ))
+    error_codes = set(
+        re.findall(
+            r"\b(?:E[A-Z]{3,}|[A-Z][A-Za-z]+Error|[A-Z][A-Za-z]+Exception|"
+            r"[A-Z][A-Z0-9_]*_ERROR|SIG[A-Z]+|SQLSTATE\s+[0-9A-Z]{5}|"
+            r"HTTP\s?\d{3}|\d{3}\s+[A-Z][a-z]+|"
+            r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b|fatal:",
+            text,
+        )
+    )
     quotes = len(re.findall(r"^>\s+\S", text, re.M))
     spec_refs = len(re.findall(r"RFC\s?\d+(?:\s?§\s?[\d.]+)?", text))
     signals = {
@@ -239,23 +251,26 @@ def _depth_metrics(text: str, code_text: str, code_blocks: list[str]) -> dict:
     }
 
 
-def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
-              strict_hardcore: bool = False, third_party: bool = False,
-              project_tokens: tuple[str, ...] | list[str] = ()) -> dict:
+def lint_text(
+    text: str,
+    max_inline_code: int = 2,
+    source_profile: bool = False,
+    strict_hardcore: bool = False,
+    third_party: bool = False,
+    project_tokens: tuple[str, ...] | list[str] = (),
+) -> dict:
     pack = runtime.pack()
     prose = _strip_code(text)
     paras = _paragraphs(pack, prose)
     section_lengths = _section_lengths(pack, text)
     mean = statistics.mean(section_lengths) if section_lengths else 0
     cv = statistics.pstdev(section_lengths) / mean if mean else 0.0
-    uniform = (
-        len(section_lengths) >= 4
-        and cv < pack.threshold("uniform_cv")
-    )
+    uniform = len(section_lengths) >= 4 and cv < pack.threshold("uniform_cv")
 
     inline = INLINE_CODE.findall(prose)
     call_like = [
-        s for s in inline
+        s
+        for s in inline
         if not re.fullmatch(r"[A-Za-z_][\w.-]*=[\w./:-]+", s.strip())
         and re.search(r"[()=]|\[|\]", s)
     ]
@@ -266,18 +281,15 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
 
     opening = " ".join(paras[:2])
     first_sentence = re.split(pack.opening_sentence_end, paras[0])[0] if paras else ""
-    definition_opening = (
-        bool(pack.pattern("def_opening").search(first_sentence))
-        and not pack.pattern("definition_guard").search(first_sentence)
-    )
+    definition_opening = bool(
+        pack.pattern("def_opening").search(first_sentence)
+    ) and not pack.pattern("definition_guard").search(first_sentence)
     scope_opening = bool(pack.pattern("scope_opening").search(opening))
     causal_opening = bool(pack.pattern("causal_opening").search(opening))
     concrete_opening = bool(pack.pattern("concrete_opening").search(opening))
     problem_hits = _literal_count(opening, pack.words("problem"))
     has_context = _literal_count(opening, pack.words("context")) > 0
-    lab_opening = bool(
-        pack.pattern("lab_opening").search(opening) or problem_hits >= 3
-    )
+    lab_opening = bool(pack.pattern("lab_opening").search(opening) or problem_hits >= 3)
     opening_background = _has_background(pack, opening, project_tokens)
     internal_ids = _internal_ids(pack, text)
     placeholders = pack.pattern("placeholder").findall(prose)
@@ -287,7 +299,9 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
 
     code_blocks = CODE_BLOCK.findall(text)
     code_text = "\n".join(code_blocks)
-    title = next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), "")
+    title = next(
+        (line[2:].strip() for line in text.splitlines() if line.startswith("# ")), ""
+    )
     formal_title = bool(pack.pattern("title_formal").search(title))
     colloquial_title = bool(
         pack.pattern("title_colloquial").search(title)
@@ -296,19 +310,24 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
     question_title = title.rstrip().endswith(tuple(pack.raw["question_marks"]))
     title_ok = not question_title and formal_title and not colloquial_title
     colloquial_headings = [
-        h for h in re.findall(r"^##\s+(.+)$", text, re.M)
+        h
+        for h in re.findall(r"^##\s+(.+)$", text, re.M)
         if pack.pattern("colloquial_heading").search(h)
     ]
     comment_stats = _comment_stats(code_blocks)
     max_comments = max((s["comments"] for s in comment_stats), default=0)
     identifiers = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\s*\(", code_text))
     numbers = [
-        n for n in re.findall(r"\d+\.\d+|\d{3,}", prose)
+        n
+        for n in re.findall(r"\d+\.\d+|\d{3,}", prose)
         if not re.fullmatch(r"(19|20)\d{2}", n)
     ]
     error_outputs = sum(
-        1 for b in code_blocks
-        if re.search(r"\b(Error|Exception|Traceback|False|True|timeout|exit|failed)\b", b)
+        1
+        for b in code_blocks
+        if re.search(
+            r"\b(Error|Exception|Traceback|False|True|timeout|exit|failed)\b", b
+        )
     )
     pronoun_re = re.compile("|".join(re.escape(w) for w in pack.words("pronouns")))
     first_person = len(pronoun_re.findall(prose))
@@ -339,37 +358,67 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
     if not transferable:
         generality_score -= 0.2
     generality_score = round(max(0.0, min(1.0, generality_score)), 3)
-    register = max(0, min(100, 100 - max(0, colloquial_per_1k - 2) * 15
-                          + min(20, technical_per_1k * 0.5)))
+    register = max(
+        0,
+        min(
+            100,
+            100 - max(0, colloquial_per_1k - 2) * 15 + min(20, technical_per_1k * 0.5),
+        ),
+    )
 
-    density = min(100, len(code_blocks) * 8 + len(identifiers) * 2 + len(numbers) * 3
-                  + dead * 6 + trade * 6 + error_outputs * 8)
+    density = min(
+        100,
+        len(code_blocks) * 8
+        + len(identifiers) * 2
+        + len(numbers) * 3
+        + dead * 6
+        + trade * 6
+        + error_outputs * 8,
+    )
     depth = _depth_metrics(text, code_text, code_blocks)
     hardcore = round(density * 0.35 + depth["depth_score"] * 0.45 + register * 0.20)
-    narrative = min(100, first_person * 5 + dead * 8 + (20 if has_context else 0)
-                    + min(20, narrative_verbs * 2))
-    anti_ai = max(0, 100 - len(hard_ai) * 25 - len(soft_ai) * 8
-                  - (30 if lab_opening else 0) - (10 if uniform else 0))
-    format_score = max(0, 100 - len(punct) * 10 - len(paren) * 10
-                       - (20 if _max_para(pack, prose) > pack.threshold("max_para") else 0)
-                       - (10 if len(inline) > max_inline_code else 0))
-    overall = round(hardcore * 0.35 + narrative * 0.25 + anti_ai * 0.25 + format_score * 0.15)
+    narrative = min(
+        100,
+        first_person * 5
+        + dead * 8
+        + (20 if has_context else 0)
+        + min(20, narrative_verbs * 2),
+    )
+    anti_ai = max(
+        0,
+        100
+        - len(hard_ai) * 25
+        - len(soft_ai) * 8
+        - (30 if lab_opening else 0)
+        - (10 if uniform else 0),
+    )
+    format_score = max(
+        0,
+        100
+        - len(punct) * 10
+        - len(paren) * 10
+        - (20 if _max_para(pack, prose) > pack.threshold("max_para") else 0)
+        - (10 if len(inline) > max_inline_code else 0),
+    )
+    overall = round(
+        hardcore * 0.35 + narrative * 0.25 + anti_ai * 0.25 + format_score * 0.15
+    )
 
     hard_issues = []
     if len(punct) > 5:
-        hard_issues.append(issue("half_width_punct", count=len(punct),
-                                 sample=punct[:3]))
+        hard_issues.append(
+            issue("half_width_punct", count=len(punct), sample=punct[:3])
+        )
     if hard_ai:
-        hard_issues.append(issue("strong_ai_template",
-                                 hits="/".join(hard_ai)))
+        hard_issues.append(issue("strong_ai_template", hits="/".join(hard_ai)))
     if len(soft_ai) >= 3:
-        hard_issues.append(issue("soft_ai_template", count=len(soft_ai),
-                                 hits="/".join(soft_ai)))
+        hard_issues.append(
+            issue("soft_ai_template", count=len(soft_ai), hits="/".join(soft_ai))
+        )
     if lab_opening:
         hard_issues.append(issue("lab_opening"))
     if strict_hardcore and colloquial_per_1k > pack.threshold("colloquial_limit"):
-        hard_issues.append(issue("colloquial_density",
-                                 density=colloquial_per_1k))
+        hard_issues.append(issue("colloquial_density", density=colloquial_per_1k))
     call_limit = pack.threshold(
         "strict_call_limit" if strict_hardcore else "base_call_limit"
     )
@@ -377,11 +426,23 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
         "strict_inline_per_1k" if strict_hardcore else "base_inline_per_1k"
     )
     if not source_profile and len(call_like) > call_limit:
-        hard_issues.append(issue("inline_calls", count=len(call_like),
-                                 limit=call_limit, sample=call_like[:3]))
+        hard_issues.append(
+            issue(
+                "inline_calls",
+                count=len(call_like),
+                limit=call_limit,
+                sample=call_like[:3],
+            )
+        )
     if not source_profile and len(inline) >= 10 and inline_per_1k > inline_limit:
-        hard_issues.append(issue("inline_density", density=inline_per_1k,
-                                 limit=inline_limit, sample=inline[:3]))
+        hard_issues.append(
+            issue(
+                "inline_density",
+                density=inline_per_1k,
+                limit=inline_limit,
+                sample=inline[:3],
+            )
+        )
     if third_party and project_title:
         hard_issues.append(issue("title_project_name"))
     if third_party and project_first:
@@ -389,9 +450,11 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
     if third_party and not opening_background:
         hard_issues.append(issue("opening_context"))
     if internal_ids:
-        hard_issues.append(issue("internal_identifiers",
-                                 count=len(internal_ids),
-                                 sample=internal_ids[:3]))
+        hard_issues.append(
+            issue(
+                "internal_identifiers", count=len(internal_ids), sample=internal_ids[:3]
+            )
+        )
 
     warnings = []
     if definition_opening:
@@ -412,43 +475,51 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
         warnings.append(issue("no_transferable"))
     if project_hits and not project_first and not project_title:
         warnings.append(issue("project_name_repeated", count=len(project_hits)))
-    if pack.threshold("colloquial_warn") < colloquial_per_1k <= pack.threshold("colloquial_limit"):
-        warnings.append(issue("colloquial_density_warn",
-                              density=colloquial_per_1k))
+    if (
+        pack.threshold("colloquial_warn")
+        < colloquial_per_1k
+        <= pack.threshold("colloquial_limit")
+    ):
+        warnings.append(issue("colloquial_density_warn", density=colloquial_per_1k))
     if 0 < len(call_like) <= call_limit:
         warnings.append(issue("inline_calls_warn", count=len(call_like)))
-    if (len(inline) >= 10
-            and pack.threshold("inline_warn_per_1k") < inline_per_1k <= inline_limit):
+    if (
+        len(inline) >= 10
+        and pack.threshold("inline_warn_per_1k") < inline_per_1k <= inline_limit
+    ):
         warnings.append(issue("inline_density_warn", density=inline_per_1k))
     base_low = hardcore < pack.threshold("base_hardcore_floor")
-    strict_low = (
-        hardcore < pack.threshold("strict_hardcore_floor")
-        or depth["depth_count"] < pack.threshold("strict_depth_floor")
+    strict_low = hardcore < pack.threshold("strict_hardcore_floor") or depth[
+        "depth_count"
+    ] < pack.threshold("strict_depth_floor")
+    hardcore_issue = issue(
+        "hardcore_density",
+        score=hardcore,
+        depth=depth["depth_count"],
+        missing="/".join(depth["depth_missing"]),
     )
-    hardcore_issue = issue("hardcore_density", score=hardcore,
-                           depth=depth["depth_count"],
-                           missing="/".join(depth["depth_missing"]))
     if base_low or (strict_hardcore and strict_low):
         hard_issues.append(hardcore_issue)
     elif strict_low:
         warnings.append(hardcore_issue)
     if 0 < len(punct) <= 5:
-        warnings.append(issue("half_width_punct", count=len(punct),
-                              sample=punct[:3]))
+        warnings.append(issue("half_width_punct", count=len(punct), sample=punct[:3]))
     if question_title:
         warnings.append(issue("question_title"))
     elif not title_ok:
         warnings.append(issue("informal_title"))
     if colloquial_headings:
-        warnings.append(issue("colloquial_heading",
-                              sample="/".join(colloquial_headings)))
+        warnings.append(
+            issue("colloquial_heading", sample="/".join(colloquial_headings))
+        )
     if max_comments > pack.threshold("max_comments"):
         warnings.append(issue("comment_block", count=max_comments))
     if any(s["lines"] >= 8 and s["comments"] / s["lines"] > 0.5 for s in comment_stats):
         warnings.append(issue("comment_ratio"))
     if uniform:
-        warnings.append(issue("uniform_sections", sections=section_lengths,
-                              cv=f"{cv:.2f}"))
+        warnings.append(
+            issue("uniform_sections", sections=section_lengths, cv=f"{cv:.2f}")
+        )
     max_para = _max_para(pack, prose)
     if max_para > pack.threshold("max_para"):
         warnings.append(issue("long_paragraph", chars=max_para))
@@ -456,7 +527,7 @@ def lint_text(text: str, max_inline_code: int = 2, source_profile: bool = False,
         warnings.append(issue("short_body", count=han))
     if not code_blocks:
         warnings.append(issue("no_code"))
-    tail = prose[int(len(prose) * 0.8):]
+    tail = prose[int(len(prose) * 0.8) :]
     if not pack.pattern("unresolved").search(tail):
         warnings.append(issue("no_unresolved"))
 

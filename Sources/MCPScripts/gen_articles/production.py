@@ -22,6 +22,7 @@ from gen_articles.sources import collect_material
 from gen_articles.topics import discover_topics, write_manifest
 from gen_articles.trace import Trace
 
+
 def _lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+")
@@ -70,20 +71,23 @@ def _scan_latest(output_dir: Path) -> dict | None:
     rows = []
     for _, item in sorted(latest.values(), key=lambda pair: pair[0]):
         selected = item.get("selected") or {}
-        rows.append({
-            "id": item.get("id", ""),
-            "status": item.get("status", ""),
-            "title": selected.get("title", ""),
-            "path": _selected_path(Path(item.get("run_dir", "")), selected),
-            "run_dir": item.get("run_dir", ""),
-            "review": item.get("review", ""),
-        })
+        rows.append(
+            {
+                "id": item.get("id", ""),
+                "status": item.get("status", ""),
+                "title": selected.get("title", ""),
+                "path": _selected_path(Path(item.get("run_dir", "")), selected),
+                "run_dir": item.get("run_dir", ""),
+                "review": item.get("review", ""),
+            }
+        )
     return {
         "batch_id": batch_dir.name,
         "finished_at": datetime.fromtimestamp(
             items[0].stat().st_mtime, timezone.utc
         ).isoformat(),
-        "status": "ok" if rows and all(r["status"] == "ok" for r in rows)
+        "status": "ok"
+        if rows and all(r["status"] == "ok" for r in rows)
         else "review_required",
         "results": rows,
     }
@@ -93,14 +97,16 @@ def _write_latest(output_dir: Path, batch_id: str, summary: dict) -> None:
     rows = []
     for row in summary.get("results", []):
         selected = row.get("selected") or {}
-        rows.append({
-            "id": row.get("id", ""),
-            "status": row.get("status", ""),
-            "title": selected.get("title", ""),
-            "path": selected.get("path", ""),
-            "run_dir": row.get("run_dir", ""),
-            "review": row.get("review", ""),
-        })
+        rows.append(
+            {
+                "id": row.get("id", ""),
+                "status": row.get("status", ""),
+                "title": selected.get("title", ""),
+                "path": selected.get("path", ""),
+                "run_dir": row.get("run_dir", ""),
+                "review": row.get("review", ""),
+            }
+        )
     data = {
         "batch_id": batch_id,
         "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -109,18 +115,26 @@ def _write_latest(output_dir: Path, batch_id: str, summary: dict) -> None:
     }
     path = output_dir / "latest.json"
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     tmp.replace(path)
-    lines = [tr("genarticles.latest.header", batch=batch_id),
-             tr("genarticles.latest.status", status=data["status"]), ""]
+    lines = [
+        tr("genarticles.latest.header", batch=batch_id),
+        tr("genarticles.latest.status", status=data["status"]),
+        "",
+    ]
     for row in rows:
-        lines.append(tr(
-            "genarticles.latest.item", id=row["id"], title=row["title"],
-            path=row["path"] or "-", review=row["review"] or "-",
-        ))
-    (output_dir / "latest.md").write_text("\n".join(lines) + "\n",
-                                          encoding="utf-8")
+        lines.append(
+            tr(
+                "genarticles.latest.item",
+                id=row["id"],
+                title=row["title"],
+                path=row["path"] or "-",
+                review=row["review"] or "-",
+            )
+        )
+    (output_dir / "latest.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _entry(topic: str) -> dict:
@@ -135,8 +149,10 @@ def _entry(topic: str) -> dict:
 def _timeout(seconds: int):
     if seconds <= 0:
         return
+
     def handler(signum, frame):
         raise TimeoutError(f"timeout after {seconds}s")
+
     signal.signal(signal.SIGALRM, handler)
     signal.alarm(seconds)
 
@@ -162,19 +178,28 @@ def run(args) -> int:
         return 0
     errors = config_mod.validate(cfg)
     if args.validate_config or args.dry_run:
-        print(json.dumps({
-            "root": str(cfg.root),
-            "output": str(cfg.output_dir),
-            "extracts": str(cfg.extracts_dir),
-            "soul": str(cfg.soul),
-            "profiles": str(cfg.profiles),
-            "anchors": str(cfg.anchors),
-            "digest": cfg.digest,
-            "errors": errors,
-        }, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "root": str(cfg.root),
+                    "output": str(cfg.output_dir),
+                    "extracts": str(cfg.extracts_dir),
+                    "soul": str(cfg.soul),
+                    "profiles": str(cfg.profiles),
+                    "anchors": str(cfg.anchors),
+                    "digest": cfg.digest,
+                    "errors": errors,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0 if not errors else 3
     if errors:
-        print(tr("genarticles.preflight_failed", messages="\n- ".join(errors)), file=sys.stderr)
+        print(
+            tr("genarticles.preflight_failed", messages="\n- ".join(errors)),
+            file=sys.stderr,
+        )
         return 3
 
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -185,27 +210,37 @@ def run(args) -> int:
     try:
         lock = _lock(cfg.output_dir / ".gen_articles.lock")
     except RuntimeError as exc:
-        print(tr("genarticles.busy") if str(exc) == "busy" else str(exc), file=sys.stderr)
+        print(
+            tr("genarticles.busy") if str(exc) == "busy" else str(exc), file=sys.stderr
+        )
         return 4
     try:
         if args.preview_material:
             material = collect_material(args.preview_material, cfg)
             path = cfg.output_dir / "preview_material.json"
-            path.write_text(json.dumps(material, ensure_ascii=False, indent=2),
-                            encoding="utf-8")
-            print(json.dumps({
-                "items": len(material["items"]),
-                "dropped": material["dropped_count"],
-                "path": str(path),
-            }, ensure_ascii=False, indent=2))
+            path.write_text(
+                json.dumps(material, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(
+                json.dumps(
+                    {
+                        "items": len(material["items"]),
+                        "dropped": material["dropped_count"],
+                        "path": str(path),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
 
         _timeout(int(cfg.pipeline.get("maxMinutes", 0)) * 60)
         if args.topic:
             entries = [_entry(args.topic)]
             manifest = batch_root / "topics.json"
-            manifest.write_text(json.dumps(entries, ensure_ascii=False,
-                                           indent=2), encoding="utf-8")
+            manifest.write_text(
+                json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         elif args.manifest:
             manifest = Path(args.manifest).expanduser()
             if not manifest.is_absolute():
@@ -239,14 +274,23 @@ def run(args) -> int:
         _write_latest(cfg.output_dir, batch_id, summary)
         code = 0 if summary["status"] == "ok" else 2
         trace.finish(summary["status"], code, summary)
-        trace.event("batch_end", status=summary["status"],
-                    queue=len(summary.get("review_queue", [])))
-        print(json.dumps({
-            "status": summary["status"],
-            "summary": str(batch_root / "batch_summary.json"),
-            "review": str(batch_root / "review_queue.json"),
-            "manifest": str(trace.manifest_path),
-        }, ensure_ascii=False, indent=2))
+        trace.event(
+            "batch_end",
+            status=summary["status"],
+            queue=len(summary.get("review_queue", [])),
+        )
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "summary": str(batch_root / "batch_summary.json"),
+                    "review": str(batch_root / "review_queue.json"),
+                    "manifest": str(trace.manifest_path),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return code
     except TimeoutError as exc:
         trace.finish("timeout", 1, None)

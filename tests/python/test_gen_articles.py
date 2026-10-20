@@ -42,14 +42,19 @@ def _project(root: Path, language: str = "zh-Hans") -> None:
         (pack / "pack.json").write_text(json.dumps(data), encoding="utf-8")
         shutil.copy(FIXTURE_EN_TEXTS, pack / "texts.json")
     (root / "extracts").mkdir()
-    (root / "config.json").write_text(json.dumps({
-        "version": 1,
-        "language": language,
-        "pack": f"packs/{language}",
-        "outputDir": "runs",
-        "extractsDir": "extracts",
-        "material": {"minItems": 2, "minRelevance": 0.5},
-    }), encoding="utf-8")
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "language": language,
+                "pack": f"packs/{language}",
+                "outputDir": "runs",
+                "extractsDir": "extracts",
+                "material": {"minItems": 2, "minRelevance": 0.5},
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 class ConfigTest(unittest.TestCase):
@@ -64,13 +69,12 @@ class ConfigTest(unittest.TestCase):
             runtime.configure(cfg)
             self.assertEqual(runtime.anchors(), [])
 
-
-
     def test_diagnostics_use_stable_codes(self):
         result = lint_text("# 记录一次测试\n\n前一阵子做了个测试，结果没成功。")
         self.assertTrue(result["hard_issues"])
-        self.assertTrue(all("code" in i and "message" in i
-                            for i in result["hard_issues"]))
+        self.assertTrue(
+            all("code" in i and "message" in i for i in result["hard_issues"])
+        )
         codes = {i["code"] for i in result["hard_issues"]}
         self.assertIn("hardcore_density", codes)
 
@@ -79,14 +83,20 @@ class ConfigTest(unittest.TestCase):
             root = Path(tmp)
             _project(root, "en")
             runtime.configure(load(root))
-            text = render_markdown({
-                "topic": "T", "fetched_at": "now", "endpoint": "x",
-                "items": [], "dropped_count": 0,
-            })
+            text = render_markdown(
+                {
+                    "topic": "T",
+                    "fetched_at": "now",
+                    "endpoint": "x",
+                    "items": [],
+                    "dropped_count": 0,
+                }
+            )
             self.assertTrue(text.startswith("# Material: T"))
 
     def test_review_and_report_follow_language(self):
         from gen_articles.review import _review
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _project(root, "en")
@@ -113,17 +123,23 @@ class ConfigTest(unittest.TestCase):
             root = Path(tmp)
             _project(root)
             runtime.configure(load(root))
-            _write_latest(root, "batch-1", {
-                "status": "ok",
-                "results": [{
-                    "id": "auto_x", "status": "ok",
-                    "selected": {"title": "T", "path": "/tmp/a.md"},
-                    "run_dir": "/tmp/run", "review": "/tmp/review.md",
-                }],
-            })
-            data = json.loads(
-                (root / "latest.json").read_text(encoding="utf-8")
+            _write_latest(
+                root,
+                "batch-1",
+                {
+                    "status": "ok",
+                    "results": [
+                        {
+                            "id": "auto_x",
+                            "status": "ok",
+                            "selected": {"title": "T", "path": "/tmp/a.md"},
+                            "run_dir": "/tmp/run",
+                            "review": "/tmp/review.md",
+                        }
+                    ],
+                },
             )
+            data = json.loads((root / "latest.json").read_text(encoding="utf-8"))
             self.assertEqual(data["batch_id"], "batch-1")
             self.assertEqual(data["results"][0]["path"], "/tmp/a.md")
             self.assertTrue((root / "latest.md").exists())
@@ -135,14 +151,26 @@ class ConfigTest(unittest.TestCase):
             (run / "candidates").mkdir(parents=True)
             article = run / "candidates" / "candidate_1.md"
             article.write_text("# T", encoding="utf-8")
-            (run / "meta.json").write_text(json.dumps({
-                "candidates": [{"index": 1, "path": str(article)}],
-            }), encoding="utf-8")
-            (run / "batch_item.json").write_text(json.dumps({
-                "id": "run-a", "status": "ok",
-                "selected": {"index": 1, "title": "T"},
-                "run_dir": str(run), "review": "",
-            }), encoding="utf-8")
+            (run / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "candidates": [{"index": 1, "path": str(article)}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run / "batch_item.json").write_text(
+                json.dumps(
+                    {
+                        "id": "run-a",
+                        "status": "ok",
+                        "selected": {"index": 1, "title": "T"},
+                        "run_dir": str(run),
+                        "review": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
             data = _scan_latest(root / "runs")
             self.assertEqual(data["results"][0]["path"], str(article))
 
@@ -155,9 +183,7 @@ class ConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _project(root)
-            (root / "packs/zh-Hans/SOUL.md").rename(
-                root / "packs/zh-Hans/SOUL.md.bak"
-            )
+            (root / "packs/zh-Hans/SOUL.md").rename(root / "packs/zh-Hans/SOUL.md.bak")
             cfg = load(root)
             self.assertTrue(any("SOUL" in e for e in validate(cfg)))
 
@@ -180,18 +206,19 @@ class LanguagePackTest(unittest.TestCase):
         for path in sorted(engine.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
-                if (isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Name)
-                        and node.func.id == "tr"
-                        and node.args
-                        and isinstance(node.args[0], ast.Constant)
-                        and isinstance(node.args[0].value, str)):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "tr"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
                     used.add(node.args[0].value)
         from gen_articles.review import REVIEW_ACTIONS
+
         used.update(REVIEW_ACTIONS.values())
-        texts = json.loads(
-            (FIXTURE_PACK / "texts.json").read_text(encoding="utf-8")
-        )
+        texts = json.loads((FIXTURE_PACK / "texts.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(used - set(texts)), [])
 
     def test_engine_has_no_cjk_string_literals(self):
@@ -201,19 +228,25 @@ class LanguagePackTest(unittest.TestCase):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             docstrings = set()
             for node in ast.walk(tree):
-                if isinstance(node, (ast.Module, ast.FunctionDef,
-                                     ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(
+                    node,
+                    (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                ):
                     body = node.body
-                    if (body and isinstance(body[0], ast.Expr)
-                            and isinstance(body[0].value, ast.Constant)
-                            and isinstance(body[0].value.value, str)):
+                    if (
+                        body
+                        and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)
+                    ):
                         docstrings.add(id(body[0].value))
             for node in ast.walk(tree):
-                if (isinstance(node, ast.Constant)
-                        and isinstance(node.value, str)
-                        and id(node) not in docstrings
-                        and any("\u4e00" <= ch <= "\u9fff"
-                                for ch in node.value)):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and id(node) not in docstrings
+                    and any("\u4e00" <= ch <= "\u9fff" for ch in node.value)
+                ):
                     offenders.append(f"{path.name}:{node.lineno}")
         self.assertEqual(offenders, [])
 
@@ -226,13 +259,9 @@ class TopicHistoryTest(unittest.TestCase):
             runtime.configure(load(root))
             record_topics([{"topic": "SQLite WAL 写入并发边界", "genre": "排查调试"}])
             runs = root / "runs"
-            self.assertEqual(
-                load_existing_topics(runs), ["SQLite WAL 写入并发边界"]
-            )
+            self.assertEqual(load_existing_topics(runs), ["SQLite WAL 写入并发边界"])
             record_topics([{"topic": "SQLite WAL 写入并发边界", "genre": "排查调试"}])
-            self.assertEqual(
-                load_existing_topics(runs), ["SQLite WAL 写入并发边界"]
-            )
+            self.assertEqual(load_existing_topics(runs), ["SQLite WAL 写入并发边界"])
             history = json.loads(
                 (root / "topic_history.json").read_text(encoding="utf-8")
             )
@@ -245,30 +274,53 @@ class TopicHistoryTest(unittest.TestCase):
             cfg = load(root)
             cfg.raw["topics"]["cooldownDays"] = 30
             runtime.configure(cfg)
-            record_topics([{
-                "topic": "SQLite WAL 写入并发边界",
-                "genre": "排查调试",
-                "sources": ["memory:a"],
-                "sourceHashes": {"memory:a": "hash-a"},
-            }])
-            self.assertFalse(_valid_topic(
-                "SQLite WAL 写入并发边界", ["SQLite WAL 写入并发边界"], [],
-                ["memory:a"], {"memory:a": "hash-a"},
-            ))
-            self.assertTrue(_valid_topic(
-                "SQLite WAL 写入并发边界", ["SQLite WAL 写入并发边界"], [],
-                ["memory:b"], {"memory:b": "hash-b"},
-            ))
-            self.assertTrue(_valid_topic(
-                "SQLite WAL 写入并发边界", ["SQLite WAL 写入并发边界"], [],
-                ["memory:a"], {"memory:a": "hash-changed"},
-            ))
+            record_topics(
+                [
+                    {
+                        "topic": "SQLite WAL 写入并发边界",
+                        "genre": "排查调试",
+                        "sources": ["memory:a"],
+                        "sourceHashes": {"memory:a": "hash-a"},
+                    }
+                ]
+            )
+            self.assertFalse(
+                _valid_topic(
+                    "SQLite WAL 写入并发边界",
+                    ["SQLite WAL 写入并发边界"],
+                    [],
+                    ["memory:a"],
+                    {"memory:a": "hash-a"},
+                )
+            )
+            self.assertTrue(
+                _valid_topic(
+                    "SQLite WAL 写入并发边界",
+                    ["SQLite WAL 写入并发边界"],
+                    [],
+                    ["memory:b"],
+                    {"memory:b": "hash-b"},
+                )
+            )
+            self.assertTrue(
+                _valid_topic(
+                    "SQLite WAL 写入并发边界",
+                    ["SQLite WAL 写入并发边界"],
+                    [],
+                    ["memory:a"],
+                    {"memory:a": "hash-changed"},
+                )
+            )
 
 
 class SourceTest(unittest.TestCase):
     def test_sections_split_by_heading(self):
-        text = ("# 标题\n\n开头。\n\n## 小节一\n\n" + "甲" * 200 +
-                "\n\n## 小节二\n\n" + "乙" * 200)
+        text = (
+            "# 标题\n\n开头。\n\n## 小节一\n\n"
+            + "甲" * 200
+            + "\n\n## 小节二\n\n"
+            + "乙" * 200
+        )
         sections = _sections(text)
         self.assertEqual(len(sections), 2)
         self.assertTrue(sections[0][1].startswith("## 小节一"))
@@ -301,11 +353,18 @@ class SourceTest(unittest.TestCase):
     def test_relevance_drops_off_topic(self):
         topic = "SQLite WAL 模式下的读写并发与忙等"
         items = [
-            {"kind": "memory", "id": "a", "content":
-             "uniapp 页面生命周期与路由守卫。" * 8, "score": 0.9},
-            {"kind": "memory", "id": "b", "content":
-             "SQLite WAL 下写事务串行化，忙等超过 timeout。" * 8,
-             "score": 0.8},
+            {
+                "kind": "memory",
+                "id": "a",
+                "content": "uniapp 页面生命周期与路由守卫。" * 8,
+                "score": 0.9,
+            },
+            {
+                "kind": "memory",
+                "id": "b",
+                "content": "SQLite WAL 下写事务串行化，忙等超过 timeout。" * 8,
+                "score": 0.8,
+            },
         ]
         kept, dropped = filter_items(items, topic, 0.35, 0.25)
         self.assertEqual([i["id"] for i in kept], ["b"])
@@ -331,10 +390,15 @@ class SourceTest(unittest.TestCase):
             _project(root)
             runtime.configure(load(root))
             topic = "SQLite WAL 写入并发边界"
-            items = [{
-                "kind": "note", "path": "n.md", "line": 1, "score": 0.5,
-                "content": "上次 SQLite WAL 写入并发边界测试的结论。" * 12,
-            }]
+            items = [
+                {
+                    "kind": "note",
+                    "path": "n.md",
+                    "line": 1,
+                    "score": 0.5,
+                    "content": "上次 SQLite WAL 写入并发边界测试的结论。" * 12,
+                }
+            ]
             kept, dropped = filter_items(items, topic, 0.35, 0.25)
             self.assertEqual(len(kept), 1)
             self.assertEqual(dropped, [])
@@ -357,18 +421,34 @@ class MaterialBudgetTest(unittest.TestCase):
             root = Path(tmp)
             _project(root)
             cfg = load(root)
-            cfg.raw["material"].update({
-                "maxItems": 2, "maxCharsPerItem": 300, "maxTotalChars": 400,
-            })
+            cfg.raw["material"].update(
+                {
+                    "maxItems": 2,
+                    "maxCharsPerItem": 300,
+                    "maxTotalChars": 400,
+                }
+            )
             runtime.configure(cfg)
-            items = [{
-                "kind": "note", "path": f"n{i}.md", "line": i,
-                "score": 1, "value": 0.5, "content": "正文" * 300,
-            } for i in range(4)]
-            text = render_markdown({
-                "topic": "T", "fetched_at": "now", "endpoint": "x",
-                "items": items, "dropped_count": 0,
-            })
+            items = [
+                {
+                    "kind": "note",
+                    "path": f"n{i}.md",
+                    "line": i,
+                    "score": 1,
+                    "value": 0.5,
+                    "content": "正文" * 300,
+                }
+                for i in range(4)
+            ]
+            text = render_markdown(
+                {
+                    "topic": "T",
+                    "fetched_at": "now",
+                    "endpoint": "x",
+                    "items": items,
+                    "dropped_count": 0,
+                }
+            )
             self.assertEqual(text.count("\n## "), 2)
             self.assertIn("- 条目：2", text)
             body = text.split("\n\n", 1)[1]
@@ -392,8 +472,9 @@ class MarkdownFormatTest(unittest.TestCase):
         self.assertEqual(report["task_items"], 2)
         self.assertEqual(report["images"], 1)
         self.assertEqual(report["rules"], 1)
-        self.assertNotIn("footnote_missing_def",
-                         {w["code"] for w in report["warnings"]})
+        self.assertNotIn(
+            "footnote_missing_def", {w["code"] for w in report["warnings"]}
+        )
 
     def test_emphasis_counts_ignore_code(self):
         report = self._report(
@@ -403,20 +484,17 @@ class MarkdownFormatTest(unittest.TestCase):
         self.assertEqual(report["strong"], 1)
         self.assertEqual(report["emphasis"], 1)
         self.assertEqual(report["strikethrough"], 1)
-        self.assertNotIn("unclosed_emphasis",
-                         {w["code"] for w in report["warnings"]})
+        self.assertNotIn("unclosed_emphasis", {w["code"] for w in report["warnings"]})
 
     def test_unclosed_emphasis_is_flagged(self):
         report = self._report("## 标题\n\n这里有 **未闭合 的加粗。\n")
-        self.assertIn("unclosed_emphasis",
-                      {w["code"] for w in report["warnings"]})
+        self.assertIn("unclosed_emphasis", {w["code"] for w in report["warnings"]})
 
     def test_bold_overuse_is_flagged(self):
         spans = "".join(f"**词{i}**" for i in range(20))
         report = self._report("## 标题\n\n" + "正文" * 500 + spans)
         self.assertEqual(report["strong"], 20)
-        self.assertIn("emphasis_overuse",
-                      {w["code"] for w in report["warnings"]})
+        self.assertIn("emphasis_overuse", {w["code"] for w in report["warnings"]})
 
     def test_malformed_footnotes_are_flagged(self):
         missing = self._report("## 标题\n\n正文[^x]\n")
@@ -429,19 +507,18 @@ class MarkdownFormatTest(unittest.TestCase):
     def test_simple_tree_mermaid_passes_complexity(self):
         report = self._report(
             "```mermaid\ngraph TB\n"
-            "  A[\"编辑器\"] --> W[\"工作流\"]\n"
-            "  W --> B[\"模型\"]\n  W --> U[\"本地 MCP 服务\"]\n"
-            "  W --> M[\"记忆库\"]\n  B --> C[\"上游\"]\n"
-            "  B --> R[\"规则\"]\n  U --> U1[\"SQLite\"]\n"
-            "  U --> U2[\"检索\"]\n  M --> D1[\"记忆体\"]\n"
-            "  M --> D2[\"Extracts\"]\n  C --> O[\"输出\"]\n"
+            '  A["编辑器"] --> W["工作流"]\n'
+            '  W --> B["模型"]\n  W --> U["本地 MCP 服务"]\n'
+            '  W --> M["记忆库"]\n  B --> C["上游"]\n'
+            '  B --> R["规则"]\n  U --> U1["SQLite"]\n'
+            '  U --> U2["检索"]\n  M --> D1["记忆体"]\n'
+            '  M --> D2["Extracts"]\n  C --> O["输出"]\n'
             "```\n"
         )
         metrics = report["mermaid_metrics"][0]
         self.assertEqual(metrics["kind"], "flowchart")
         self.assertGreaterEqual(metrics["nodes"], 11)
-        self.assertNotIn("mermaid_too_complex",
-                         {w["code"] for w in report["warnings"]})
+        self.assertNotIn("mermaid_too_complex", {w["code"] for w in report["warnings"]})
         self.assertEqual(report["diagram_score"], 1.0)
 
     def test_large_simple_tree_not_flagged(self):
@@ -453,13 +530,11 @@ class MarkdownFormatTest(unittest.TestCase):
         lines.append("```")
         report = self._report("\n".join(lines))
         self.assertEqual(report["mermaid_metrics"][0]["nodes"], 22)
-        self.assertNotIn("mermaid_too_complex",
-                         {w["code"] for w in report["warnings"]})
+        self.assertNotIn("mermaid_too_complex", {w["code"] for w in report["warnings"]})
 
     def test_wide_mermaid_is_flagged(self):
         lines = ["```mermaid", "flowchart TD", '  H["hub"]']
         lines += [f'  H --> N{i}["node {i}"]' for i in range(8)]
         lines.append("```")
         report = self._report("\n".join(lines))
-        self.assertIn("mermaid_too_complex",
-                      {w["code"] for w in report["warnings"]})
+        self.assertIn("mermaid_too_complex", {w["code"] for w in report["warnings"]})

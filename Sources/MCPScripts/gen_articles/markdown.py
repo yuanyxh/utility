@@ -39,8 +39,14 @@ FLOW_EDGE = re.compile(
 )
 FLOW_NODE = re.compile(r"^\s*([A-Za-z_][\w-]*)\s*(?:\[|\(|\{)")
 OTHER_TYPES = (
-    "sequenceDiagram", "stateDiagram", "stateDiagram-v2",
-    "classDiagram", "erDiagram", "gantt", "pie", "journey",
+    "sequenceDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "classDiagram",
+    "erDiagram",
+    "gantt",
+    "pie",
+    "journey",
 )
 
 
@@ -50,8 +56,9 @@ def _table_count(text: str) -> int:
         if TABLE_LINE.match(line):
             block.append(line)
             continue
-        if len(block) >= 2 and any(re.match(r"^\s*\|?[\s:|-]+\|?\s*$", l)
-                                   for l in block):
+        if len(block) >= 2 and any(
+            re.match(r"^\s*\|?[\s:|-]+\|?\s*$", l) for l in block
+        ):
             count += 1
         block = []
     return count
@@ -66,7 +73,9 @@ def _flow_graph(lines: list[str]) -> tuple[set[str], list[tuple[str, str]], int]
         if stripped.startswith("subgraph"):
             subgraphs += 1
             continue
-        if re.match(r"^(?:end|classDef|class|style|click|linkStyle|direction)\b", stripped):
+        if re.match(
+            r"^(?:end|classDef|class|style|click|linkStyle|direction)\b", stripped
+        ):
             continue
         match = FLOW_EDGE.match(line)
         if match:
@@ -80,8 +89,9 @@ def _flow_graph(lines: list[str]) -> tuple[set[str], list[tuple[str, str]], int]
     return nodes, edges, subgraphs
 
 
-def _graph_metrics(nodes: set[str], edges: list[tuple[str, str]],
-                   subgraphs: int) -> dict:
+def _graph_metrics(
+    nodes: set[str], edges: list[tuple[str, str]], subgraphs: int
+) -> dict:
     adjacency: dict[str, list[str]] = {}
     for source, target in edges:
         adjacency.setdefault(source, []).append(target)
@@ -104,16 +114,20 @@ def _graph_metrics(nodes: set[str], edges: list[tuple[str, str]],
 
     max_depth = max((depth(n) for n in adjacency), default=0)
     return {
-        "nodes": len(nodes), "edges": len(edges),
-        "max_out_degree": max_out, "branch_nodes": branch,
-        "max_depth": max_depth, "subgraphs": subgraphs,
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "max_out_degree": max_out,
+        "branch_nodes": branch,
+        "max_depth": max_depth,
+        "subgraphs": subgraphs,
     }
 
 
 def _mermaid_metrics(block: str) -> dict:
     block = re.sub(r"(?m)^\s*```(?:mermaid)?\s*$", "", block)
     lines = [
-        line.strip() for line in block.splitlines()
+        line.strip()
+        for line in block.splitlines()
         if line.strip() and not line.strip().startswith("%%")
     ]
     if not lines:
@@ -138,8 +152,12 @@ def _mermaid_metrics(block: str) -> dict:
                 participants.update((em.group(1), em.group(2)))
                 messages += 1
         return {
-            "kind": "sequence", "nodes": len(participants), "edges": messages,
-            "max_out_degree": 0, "branch_nodes": 0, "max_depth": 0,
+            "kind": "sequence",
+            "nodes": len(participants),
+            "edges": messages,
+            "max_out_degree": 0,
+            "branch_nodes": 0,
+            "max_depth": 0,
             "subgraphs": 0,
         }
     nodes, edges, subgraphs = _flow_graph(lines)
@@ -189,7 +207,8 @@ def _mermaid_complexity(metrics: dict) -> tuple[list[str], bool]:
 def validate_mermaid(block: str) -> list[str]:
     block = re.sub(r"(?m)^\s*```(?:mermaid)?\s*$", "", block)
     lines = [
-        line.strip() for line in block.splitlines()
+        line.strip()
+        for line in block.splitlines()
         if line.strip() and not line.strip().startswith("%%")
     ]
     if not lines:
@@ -261,7 +280,9 @@ def _bare_references(text: str) -> list[str]:
     found = []
     for sentence in re.split(pack.sentence_end_lookbehind, prose):
         sentence = sentence.strip()
-        if not sentence or not pack.markdown_pattern("reference_sources", re.I).search(sentence):
+        if not sentence or not pack.markdown_pattern("reference_sources", re.I).search(
+            sentence
+        ):
             continue
         if REFERENCE_LINK.search(sentence) or INLINE_LINK.search(sentence):
             continue
@@ -287,9 +308,7 @@ def format_report(text: str, genre: str | None = None) -> dict:
     body = re.sub(r"(?m)^\[[^\]]+\]:\s+\S+.*$", "", text)
     ref_labels = set(REFERENCE_DEF_LABEL.findall(text))
     shortcut_body = REFERENCE_LINK.sub("", body)
-    shortcut_links = sum(
-        1 for label in ref_labels if f"[{label}]" in shortcut_body
-    )
+    shortcut_links = sum(1 for label in ref_labels if f"[{label}]" in shortcut_body)
     reference_links = len(REFERENCE_LINK.findall(body)) + shortcut_links
     reference_defs = len(REFERENCE_DEF.findall(text))
     inline_links = len(INLINE_LINK.findall(text))
@@ -348,17 +367,23 @@ def format_report(text: str, genre: str | None = None) -> dict:
     if bare_references:
         warnings.append(issue("bare_references", sample=bare_references[:2]))
     if code_total > code_with_lang:
-        warnings.append(issue("code_language_missing", count=code_total - code_with_lang))
+        warnings.append(
+            issue("code_language_missing", count=code_total - code_with_lang)
+        )
     if not quotes and pack.markdown_pattern("blockquote_cue").search(text):
         warnings.append(issue("no_blockquotes"))
     han = len(pack.unit_re.findall(_inline_prose(text)))
     strong_density = round(strong / han * 1000, 1) if han else 0.0
     strong_limit = pack.threshold("strong_warn_per_1k")
     if strong_density > strong_limit:
-        warnings.append(issue(
-            "emphasis_overuse", count=strong,
-            density=strong_density, limit=strong_limit,
-        ))
+        warnings.append(
+            issue(
+                "emphasis_overuse",
+                count=strong,
+                density=strong_density,
+                limit=strong_limit,
+            )
+        )
     if unbalanced:
         warnings.append(issue("unclosed_emphasis", detail=unbalanced))
     missing_defs = sorted(footnote_refs - footnote_defs)

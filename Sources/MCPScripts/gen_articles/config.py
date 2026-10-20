@@ -121,9 +121,7 @@ def load(root: Path) -> Config:
         extracts = str(Path(notes_dir) / "Extracts")
     if not extracts:
         raise ConfigError("extractsDir is required (or set NOTES_DIR)")
-    endpoint = raw.get("memoryEndpoint") or os.environ.get(
-        "MEMORY_SERVER_URL", ""
-    )
+    endpoint = raw.get("memoryEndpoint") or os.environ.get("MEMORY_SERVER_URL", "")
     try:
         pack = LanguagePack(_resolve(root, raw.get("pack", "packs/zh-Hans")))
     except PackError as exc:

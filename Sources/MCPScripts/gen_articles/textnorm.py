@@ -17,7 +17,7 @@ def norm(text: str) -> str:
 
 
 def bigrams(text: str) -> set[str]:
-    return {text[i:i + 2] for i in range(max(0, len(text) - 1))}
+    return {text[i : i + 2] for i in range(max(0, len(text) - 1))}
 
 
 def overlap(left: str, right: str) -> float:

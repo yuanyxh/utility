@@ -58,7 +58,9 @@ class Trace:
                 "soul": _hash(self.config.soul),
                 "anchors": _hash(self.config.anchors),
             },
-            "results": [] if summary is None else [
+            "results": []
+            if summary is None
+            else [
                 {
                     "id": row["id"],
                     "status": row["status"],

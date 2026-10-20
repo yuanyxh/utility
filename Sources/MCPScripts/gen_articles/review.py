@@ -54,13 +54,18 @@ def _review(report: dict) -> tuple[str, bool, list[str]]:
                 actions.append(f"{tr(key)}: {issue['message']}")
         if actions:
             found = True
-            lines.append(tr("genarticles.review.candidate", index=item["index"], title=item["title"]))
+            lines.append(
+                tr(
+                    "genarticles.review.candidate",
+                    index=item["index"],
+                    title=item["title"],
+                )
+            )
             lines += [f"- {action}" for action in actions]
             lines.append("")
     if not found:
         lines.append(tr("genarticles.review.none"))
-    return ("\n".join(lines).strip() + "\n", not found,
-            sorted(set(codes)))
+    return ("\n".join(lines).strip() + "\n", not found, sorted(set(codes)))
 
 
 def write_review(run_dir: Path, report: dict) -> Path:

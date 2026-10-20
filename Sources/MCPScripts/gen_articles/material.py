@@ -24,8 +24,7 @@ def dedupe(items: list[dict]) -> list[dict]:
     return out
 
 
-def _value_score(item: dict,
-                 min_value: float = 0.25) -> tuple[float, list[str], str]:
+def _value_score(item: dict, min_value: float = 0.25) -> tuple[float, list[str], str]:
     """按可复用性给素材打分；返回分数、理由、低价值原因。"""
     pack = runtime.pack()
     text = item.get("content", "")
@@ -45,8 +44,11 @@ def _value_score(item: dict,
     tag_hit = bool(tags & set(pack.words("high_tags")))
     score = min(
         1.0,
-        0.12 * tech + 0.18 * evidence + 0.10 * reasoning
-        + (0.15 if tag_hit else 0) + (0.10 if han >= 80 else 0),
+        0.12 * tech
+        + 0.18 * evidence
+        + 0.10 * reasoning
+        + (0.15 if tag_hit else 0)
+        + (0.10 if han >= 80 else 0),
     )
     if han < 30 and evidence == 0:
         score = min(score, 0.18)
@@ -71,9 +73,7 @@ def _topic_terms(topic: str) -> set[str]:
     for word in sorted(pack.words("generic_topic"), key=len, reverse=True):
         cleaned = cleaned.replace(word, " ")
     terms = set()
-    token_re = re.compile(
-        rf"[A-Za-z][A-Za-z0-9_.-]{{1,}}|{pack.unit_re.pattern}+"
-    )
+    token_re = re.compile(rf"[A-Za-z][A-Za-z0-9_.-]{{1,}}|{pack.unit_re.pattern}+")
     stop = set(pack.words("en_stop"))
     for token in token_re.findall(cleaned):
         if token[0].isascii():
@@ -99,17 +99,18 @@ def topic_relevance(topic: str, content: str) -> tuple[float, int]:
     topic_grams = bigrams(norm(topic))
     if topic_grams:
         matched = len(topic_grams & bigrams(norm(content)))
-        bigram_score = (
-            0.8 * matched / len(topic_grams) + 0.2 * min(matched / 4, 1.0)
-        )
+        bigram_score = 0.8 * matched / len(topic_grams) + 0.2 * min(matched / 4, 1.0)
         if bigram_score > score:
             return round(bigram_score, 3), matched
     return round(score, 3), len(hits)
 
 
-def filter_items(items: list[dict], topic: str | None = None,
-                  min_relevance: float = 0.35,
-                  min_value: float = 0.25) -> tuple[list[dict], list[dict]]:
+def filter_items(
+    items: list[dict],
+    topic: str | None = None,
+    min_relevance: float = 0.35,
+    min_value: float = 0.25,
+) -> tuple[list[dict], list[dict]]:
     kept, dropped = [], []
     for item in items:
         score, reasons, low = _value_score(item, min_value)
@@ -120,20 +121,24 @@ def filter_items(items: list[dict], topic: str | None = None,
         min_hits = 1 if len(_topic_terms(topic or "")) == 1 else 2
         relevant_low = relevance >= 0.45 and hits >= min_hits
         if low and not relevant_low:
-            dropped.append({
-                "kind": item.get("kind"),
-                "id": item.get("id"),
-                "path": item.get("path"),
-                "reason": low,
-            })
+            dropped.append(
+                {
+                    "kind": item.get("kind"),
+                    "id": item.get("id"),
+                    "path": item.get("path"),
+                    "reason": low,
+                }
+            )
             continue
         if topic and (relevance < min_relevance or hits < min_hits):
-            dropped.append({
-                "kind": item.get("kind"),
-                "id": item.get("id"),
-                "path": item.get("path"),
-                "reason": f"weak_relevance:{relevance}",
-            })
+            dropped.append(
+                {
+                    "kind": item.get("kind"),
+                    "id": item.get("id"),
+                    "path": item.get("path"),
+                    "reason": f"weak_relevance:{relevance}",
+                }
+            )
             continue
         item["value"] = round(max(score, relevance * 0.5), 2)
         item["value_reasons"] = reasons
@@ -172,9 +177,7 @@ def project_tokens(markdown: str) -> tuple[str, ...]:
     tags = set()
     for match in re.finditer(r"tags=([\w,\- ]+)", markdown):
         tags.update(t.strip() for t in match.group(1).split(","))
-    return tuple(sorted(
-        t for t in tags if re.fullmatch(r"[A-Za-z][\w.\-]*", t)
-    ))
+    return tuple(sorted(t for t in tags if re.fullmatch(r"[A-Za-z][\w.\-]*", t)))
 
 
 EVIDENCE_LINE = re.compile(
@@ -196,10 +199,9 @@ def _shrink_content(text: str, limit: int) -> str:
     tail_len = max(0, int(limit * 0.2))
     head = text[:head_len]
     tail = text[-tail_len:] if tail_len else ""
-    middle = text[head_len:len(text) - tail_len] if tail_len else text[head_len:]
+    middle = text[head_len : len(text) - tail_len] if tail_len else text[head_len:]
     evidence = [
-        line.strip() for line in middle.splitlines()
-        if EVIDENCE_LINE.search(line)
+        line.strip() for line in middle.splitlines() if EVIDENCE_LINE.search(line)
     ][:5]
     out = head
     if evidence:
@@ -209,7 +211,7 @@ def _shrink_content(text: str, limit: int) -> str:
     out += tail
     if len(out) <= limit:
         return out
-    return out[:max(0, limit - 1)].rstrip() + "…"
+    return out[: max(0, limit - 1)].rstrip() + "…"
 
 
 def render_markdown(material: dict) -> str:
@@ -223,9 +225,7 @@ def render_markdown(material: dict) -> str:
     for item in material["items"][:max_items]:
         if remaining <= 0:
             break
-        content = _shrink_content(
-            item["content"], min(per_item, remaining)
-        )
+        content = _shrink_content(item["content"], min(per_item, remaining))
         if not content:
             break
         rendered += 1
@@ -244,8 +244,7 @@ def render_markdown(material: dict) -> str:
         tr("genarticles.material.fetched", at=material["fetched_at"]),
         tr("genarticles.material.source", endpoint=material["endpoint"]),
         tr("genarticles.material.items", count=rendered),
-        tr("genarticles.material.filtered",
-           count=material.get("dropped_count", 0)),
+        tr("genarticles.material.filtered", count=material.get("dropped_count", 0)),
         "",
         *body,
     ]

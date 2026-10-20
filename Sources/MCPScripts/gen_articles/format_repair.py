@@ -25,8 +25,9 @@ from gen_articles.markdown import format_report
 URL = re.compile(r"https?://[^\s)>\]]+")
 
 
-def build_format_prompt(article: str, issues: list[str],
-                        urls: list[str]) -> tuple[str, str]:
+def build_format_prompt(
+    article: str, issues: list[str], urls: list[str]
+) -> tuple[str, str]:
     if urls:
         link_block = "\n".join(f"- {url}" for url in urls)
     else:
@@ -36,19 +37,23 @@ def build_format_prompt(article: str, issues: list[str],
     )
     return (
         runtime.pack().prompt("gen_articles_format_system"),
-        runtime.pack().prompt("gen_articles_format_user", link_block=link_block,
-                    issue_block=issue_block, article=article),
+        runtime.pack().prompt(
+            "gen_articles_format_user",
+            link_block=link_block,
+            issue_block=issue_block,
+            article=article,
+        ),
     )
 
 
-def format_repair(run_dir: Path, index: int | None = None,
-                  rounds: int = 2, max_tokens: int = 8192) -> list[dict]:
+def format_repair(
+    run_dir: Path, index: int | None = None, rounds: int = 2, max_tokens: int = 8192
+) -> list[dict]:
     meta_path, meta = load_meta(run_dir)
     genre = meta.get("genre")
     material_path = run_dir / "material.md"
     material = (
-        material_path.read_text(encoding="utf-8")
-        if material_path.exists() else ""
+        material_path.read_text(encoding="utf-8") if material_path.exists() else ""
     )
     tokens = project_tokens_from_run(run_dir)
     client = LLMClient()
@@ -76,9 +81,9 @@ def format_repair(run_dir: Path, index: int | None = None,
                 break
             status = "still_fail"
             system, user = build_format_prompt(current, issues, urls)
-            fixed = strip_preamble(chat_with_retry(
-                client, user, system, 0.3, max_tokens, True
-            ))
+            fixed = strip_preamble(
+                chat_with_retry(client, user, system, 0.3, max_tokens, True)
+            )
             current = label_code_blocks(fixed)
             out = candidate_path(run_dir, i, f"fmt{round_no}")
             out.write_text(current, encoding="utf-8")
@@ -90,15 +95,9 @@ def format_repair(run_dir: Path, index: int | None = None,
         lint_improved = (
             before_lint["result"] != "PASS" and after_lint["result"] == "PASS"
         )
-        markdown_improved = (
-            after_fmt["markdown_score"] > before["markdown_score"]
-        )
-        warnings_improved = (
-            len(after_fmt["warnings"]) < len(before["warnings"])
-        )
-        diagrams_kept = (
-            after_fmt["mermaid_count"] >= min(before["mermaid_count"], 3)
-        )
+        markdown_improved = after_fmt["markdown_score"] > before["markdown_score"]
+        warnings_improved = len(after_fmt["warnings"]) < len(before["warnings"])
+        diagrams_kept = after_fmt["mermaid_count"] >= min(before["mermaid_count"], 3)
         improved = (
             out != path
             and after_lint["result"] == "PASS"
@@ -108,22 +107,28 @@ def format_repair(run_dir: Path, index: int | None = None,
         if improved:
             status = "repaired"
             commit_candidate(
-                meta, meta_path, candidate, path=out,
+                meta,
+                meta_path,
+                candidate,
+                path=out,
                 features=article_features(current),
-                source_field="format_from", source_name=path.name,
+                source_field="format_from",
+                source_name=path.name,
             )
-        results.append({
-            "index": i,
-            "status": status,
-            "before": {
-                "markdown": before["markdown_score"],
-                "warnings": before["warnings"],
-            },
-            "after": {
-                "markdown": after_fmt["markdown_score"],
-                "warnings": after_fmt["warnings"],
-                "lint": after_lint["result"],
-            },
-            "path": str(out),
-        })
+        results.append(
+            {
+                "index": i,
+                "status": status,
+                "before": {
+                    "markdown": before["markdown_score"],
+                    "warnings": before["warnings"],
+                },
+                "after": {
+                    "markdown": after_fmt["markdown_score"],
+                    "warnings": after_fmt["warnings"],
+                    "lint": after_lint["result"],
+                },
+                "path": str(out),
+            }
+        )
     return results

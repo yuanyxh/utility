@@ -79,9 +79,14 @@ DEFAULT_RETRY_503_DELAY = 0.5
 class LLMClientError(RuntimeError):
     """Typed sync-call failure. `kind` is the branch surface; consumers must not match `str(exc)`."""
 
-    def __init__(self, message: str, *, kind: str = "error",
-                 finish_reason: str | None = None,
-                 status: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "error",
+        finish_reason: str | None = None,
+        status: int | None = None,
+    ):
         super().__init__(message)
         self.kind = kind
         self.finish_reason = finish_reason
@@ -229,7 +234,9 @@ def _extract_required(data: dict, api_format: str) -> str:
     """Strict extraction for callers that need truncation/empty failures as exceptions."""
     if api_format == API_ANTHROPIC:
         blocks = data.get("content") or []
-        content = blocks[0].get("text") if blocks and isinstance(blocks[0], dict) else None
+        content = (
+            blocks[0].get("text") if blocks and isinstance(blocks[0], dict) else None
+        )
         finish = data.get("stop_reason")
     else:
         choices = data.get("choices") or []
@@ -241,12 +248,14 @@ def _extract_required(data: dict, api_format: str) -> str:
         raise LLMClientError("response content is not text", kind="no_content")
     if not content.strip():
         raise LLMClientError(
-            f"empty content (finish_reason={finish})", kind="empty",
+            f"empty content (finish_reason={finish})",
+            kind="empty",
             finish_reason=finish,
         )
     if finish in ("length", "max_tokens"):
         raise LLMClientError(
-            "truncated content (finish_reason=length)", kind="truncated",
+            "truncated content (finish_reason=length)",
+            kind="truncated",
             finish_reason=finish,
         )
     return content
@@ -331,7 +340,8 @@ def chat(
                 if raise_on_error:
                     detail = resp.text[:500]
                     raise LLMClientError(
-                        f"HTTP {resp.status_code}: {detail}", kind="http",
+                        f"HTTP {resp.status_code}: {detail}",
+                        kind="http",
                         status=resp.status_code,
                     )
                 _log_failure(label, f"HTTP {resp.status_code}", status=resp.status_code)
@@ -344,9 +354,7 @@ def chat(
             raise
         except Exception as e:
             if raise_on_error:
-                raise LLMClientError(
-                    f"{type(e).__name__}: {e}", kind="network"
-                ) from e
+                raise LLMClientError(f"{type(e).__name__}: {e}", kind="network") from e
             _log_failure(label, f"{type(e).__name__}: {e}")
             return None
     return None

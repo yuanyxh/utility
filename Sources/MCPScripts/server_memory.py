@@ -732,7 +732,8 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
             logger.warning(f"Hot search failed: {e}")
     cold = (
         search_cold_layer(query, limit, include_archived=include_archived)
-        if cold_enabled else []
+        if cold_enabled
+        else []
     )
     results.extend(cold)
     results.sort(key=_heat_sort_key, reverse=True)

@@ -12,8 +12,7 @@ from gen_articles.material import dedupe, filter_items, topic_queries
 from gen_articles.memory_client import recall_hot
 
 
-def _hot_items(config: Config, query: str,
-               limit: int) -> tuple[list[dict], str | None]:
+def _hot_items(config: Config, query: str, limit: int) -> tuple[list[dict], str | None]:
     if not config.memory_endpoint:
         return [], "memoryEndpoint is not configured"
     try:
@@ -25,7 +24,8 @@ def _hot_items(config: Config, query: str,
 def _sections(text: str, limit: int = 4000) -> list[tuple[int, str]]:
     lines = text.splitlines()
     starts = [
-        i for i, line in enumerate(lines)
+        i
+        for i, line in enumerate(lines)
         if line.startswith("## ") or line.startswith("### ")
     ]
     if not starts:
@@ -63,13 +63,15 @@ def _extract_items(config: Config, limit: int) -> list[dict]:
         except (OSError, UnicodeDecodeError):
             continue
         for line, section in _sections(text, section_limit):
-            items.append({
-                "kind": "note",
-                "path": str(rel),
-                "line": line,
-                "content": section,
-                "score": 0.5,
-            })
+            items.append(
+                {
+                    "kind": "note",
+                    "path": str(rel),
+                    "line": line,
+                    "content": section,
+                    "score": 0.5,
+                }
+            )
     return items
 
 
@@ -84,7 +86,8 @@ def collect_material(topic: str, config: Config) -> dict:
         error = error or query_error
     items.extend(_extract_items(config, extracts_limit))
     items, dropped = filter_items(
-        dedupe(items), topic,
+        dedupe(items),
+        topic,
         float(config.material.get("minRelevance", 0.35)),
         float(config.material.get("minValue", 0.25)),
     )

@@ -38,20 +38,24 @@ def _opening_score(lint: dict) -> float:
     return round(max(0.0, score), 3)
 
 
-def judge_pair(candidate: str, reference: str, client: LLMClient,
-               candidate_is_a: bool) -> dict:
+def judge_pair(
+    candidate: str, reference: str, client: LLMClient, candidate_is_a: bool
+) -> dict:
     a, b = (candidate, reference) if candidate_is_a else (reference, candidate)
     text = runtime.pack().prompt("gen_articles_judge", a=a[:3000], b=b[:3000])
-    raw = client.chat(text, temperature=0, max_tokens=1024,
-                      disable_thinking=True)
+    raw = client.chat(text, temperature=0, max_tokens=1024, disable_thinking=True)
     data = parse_json(raw) or {}
     winner = str(data.get("winner", "tie")).upper()
-    candidate_won = (
-        (winner == "A" and candidate_is_a) or (winner == "B" and not candidate_is_a)
+    candidate_won = (winner == "A" and candidate_is_a) or (
+        winner == "B" and not candidate_is_a
     )
     score = 1.0 if candidate_won else (0.5 if winner == "TIE" else 0.0)
-    return {"winner": winner, "candidate_score": score,
-            "reason": data.get("reason", ""), "raw": raw[:500]}
+    return {
+        "winner": winner,
+        "candidate_score": score,
+        "reason": data.get("reason", ""),
+        "raw": raw[:500],
+    }
 
 
 def evaluate_run(run_dir: Path, judge: bool = True) -> dict:
@@ -69,8 +73,7 @@ def evaluate_run(run_dir: Path, judge: bool = True) -> dict:
         style = distance(features, profile)
         target_p50 = profile_mean(profile, "sent_p50", 0)
         pacing = (
-            round(min(1.0, features["sent_p50"] / target_p50), 3)
-            if target_p50 else 0.5
+            round(min(1.0, features["sent_p50"] / target_p50), 3) if target_p50 else 0.5
         )
         judgments = []
         if client:
@@ -84,54 +87,67 @@ def evaluate_run(run_dir: Path, judge: bool = True) -> dict:
                         judgment["candidate_is_a"] = candidate_is_a
                         judgments.append(judgment)
                     except Exception as exc:  # noqa: BLE001
-                        judgments.append({"winner": "ERROR", "candidate_score": None,
-                                          "candidate_is_a": candidate_is_a,
-                                          "reason": f"{type(exc).__name__}: {exc}"})
-        valid = [j["candidate_score"] for j in judgments if j["candidate_score"] is not None]
-        results.append({
-            "index": candidate["index"],
-            "path": str(path),
-            "title": candidate["title"],
-            "lint": {
-                "result": lint["result"],
-                "hard_issues": lint["hard_issues"],
-                "warnings": lint["warnings"],
-                "scores": lint["scores"],
-                "colloquial_per_1k": lint["colloquial_per_1k"],
-                "technical_per_1k": lint["technical_per_1k"],
-            },
-            "style": {
-                "distance": style["distance"],
-                "outliers": style["outliers"],
-            },
-            "opening": {
-                "score": _opening_score(lint),
-                "definition": lint.get("opening_definition"),
-                "scope": lint.get("opening_scope"),
-                "causal": lint.get("opening_causal"),
-                "concrete": lint.get("opening_concrete"),
-                "background": lint.get("opening_background"),
-            },
-            "pacing": {
-                "score": pacing,
-                "sent_p50": features["sent_p50"],
-                "target": target_p50,
-            },
-            "generality": {
-                "score": lint["generality_score"],
-                "project_title": lint["project_title"],
-                "project_first": lint["project_first"],
-                "project_token_count": lint["project_token_count"],
-                "transferable": lint["transferable"],
-            },
-            "markdown": format_report(text, meta.get("genre")),
-            "pairwise": {
-                "win_rate": round(sum(valid) / len(valid), 3) if valid else None,
-                "judgments": judgments,
-            },
-        })
-    report = {"run_id": meta["run_id"], "topic": meta["topic"],
-              "genre": meta["genre"], "results": results}
+                        judgments.append(
+                            {
+                                "winner": "ERROR",
+                                "candidate_score": None,
+                                "candidate_is_a": candidate_is_a,
+                                "reason": f"{type(exc).__name__}: {exc}",
+                            }
+                        )
+        valid = [
+            j["candidate_score"] for j in judgments if j["candidate_score"] is not None
+        ]
+        results.append(
+            {
+                "index": candidate["index"],
+                "path": str(path),
+                "title": candidate["title"],
+                "lint": {
+                    "result": lint["result"],
+                    "hard_issues": lint["hard_issues"],
+                    "warnings": lint["warnings"],
+                    "scores": lint["scores"],
+                    "colloquial_per_1k": lint["colloquial_per_1k"],
+                    "technical_per_1k": lint["technical_per_1k"],
+                },
+                "style": {
+                    "distance": style["distance"],
+                    "outliers": style["outliers"],
+                },
+                "opening": {
+                    "score": _opening_score(lint),
+                    "definition": lint.get("opening_definition"),
+                    "scope": lint.get("opening_scope"),
+                    "causal": lint.get("opening_causal"),
+                    "concrete": lint.get("opening_concrete"),
+                    "background": lint.get("opening_background"),
+                },
+                "pacing": {
+                    "score": pacing,
+                    "sent_p50": features["sent_p50"],
+                    "target": target_p50,
+                },
+                "generality": {
+                    "score": lint["generality_score"],
+                    "project_title": lint["project_title"],
+                    "project_first": lint["project_first"],
+                    "project_token_count": lint["project_token_count"],
+                    "transferable": lint["transferable"],
+                },
+                "markdown": format_report(text, meta.get("genre")),
+                "pairwise": {
+                    "win_rate": round(sum(valid) / len(valid), 3) if valid else None,
+                    "judgments": judgments,
+                },
+            }
+        )
+    report = {
+        "run_id": meta["run_id"],
+        "topic": meta["topic"],
+        "genre": meta["genre"],
+        "results": results,
+    }
     (run_dir / "evaluation.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )

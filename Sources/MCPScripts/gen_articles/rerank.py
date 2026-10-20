@@ -16,7 +16,7 @@ def _grams(text: str, n: int = 3) -> set[str]:
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
     unit = runtime.pack().unit_re
     prose = "".join(ch for ch in prose if ch.isalnum() or unit.fullmatch(ch))
-    return {prose[i:i + n] for i in range(max(0, len(prose) - n + 1))}
+    return {prose[i : i + n] for i in range(max(0, len(prose) - n + 1))}
 
 
 def _similarity(a: str, b: str) -> float:
@@ -43,25 +43,32 @@ def rerank(run_dir: Path) -> dict:
         pacing = item.get("pacing", {}).get("score", 0.5)
         generality = item.get("generality", {}).get("score", 0.5)
         markdown = item.get("markdown", {}).get("markdown_score", 0.5)
-        total = (0.20 * lint_score + 0.15 * style_score
-                 + 0.20 * pairwise_score + 0.10 * opening
-                 + 0.10 * pacing + 0.15 * generality
-                 + 0.10 * markdown)
-        rows.append({
-            "index": item["index"],
-            "title": item["title"],
-            "path": item["path"],
-            "lint_ok": lint_ok,
-            "lint_score": round(lint_score, 3),
-            "style_score": round(style_score, 3),
-            "opening": opening,
-            "pacing": pacing,
-            "generality": generality,
-            "markdown": markdown,
-            "pairwise": pairwise,
-            "total": round(total, 3),
-            "hard_issues": item["lint"].get("hard_issues", []),
-        })
+        total = (
+            0.20 * lint_score
+            + 0.15 * style_score
+            + 0.20 * pairwise_score
+            + 0.10 * opening
+            + 0.10 * pacing
+            + 0.15 * generality
+            + 0.10 * markdown
+        )
+        rows.append(
+            {
+                "index": item["index"],
+                "title": item["title"],
+                "path": item["path"],
+                "lint_ok": lint_ok,
+                "lint_score": round(lint_score, 3),
+                "style_score": round(style_score, 3),
+                "opening": opening,
+                "pacing": pacing,
+                "generality": generality,
+                "markdown": markdown,
+                "pairwise": pairwise,
+                "total": round(total, 3),
+                "hard_issues": item["lint"].get("hard_issues", []),
+            }
+        )
     eligible = [r for r in rows if r["lint_ok"]] or rows
     rejected = [r for r in rows if not r["lint_ok"]]
     selected = []
@@ -69,8 +76,10 @@ def rerank(run_dir: Path) -> dict:
     while remaining:
         best = None
         for row in remaining:
-            penalty = max((_similarity(texts[row["index"]], texts[s["index"]])
-                           for s in selected), default=0.0)
+            penalty = max(
+                (_similarity(texts[row["index"]], texts[s["index"]]) for s in selected),
+                default=0.0,
+            )
             row["diversity_penalty"] = round(penalty, 3)
             adjusted = row["total"] - 0.15 * penalty
             if best is None or adjusted > best[0]:
@@ -91,9 +100,12 @@ def rerank(run_dir: Path) -> dict:
     (run_dir / "selection.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    lines = [tr("genarticles.report.header", topic=report["topic"]), "",
-             tr("genarticles.report.table"),
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines = [
+        tr("genarticles.report.header", topic=report["topic"]),
+        "",
+        tr("genarticles.report.table"),
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
     for row in selected:
         lines.append(
             f"| {row['index']} | {row['title']} | {'PASS' if row['lint_ok'] else 'FAIL'} "
@@ -102,14 +114,25 @@ def rerank(run_dir: Path) -> dict:
             f"| {row['total']} | {row['adjusted']} |"
         )
     if result["selected"]:
-        lines += ["", tr("genarticles.report.selected",
-                         index=result["selected"]["index"],
-                         title=result["selected"]["title"])]
+        lines += [
+            "",
+            tr(
+                "genarticles.report.selected",
+                index=result["selected"]["index"],
+                title=result["selected"]["title"],
+            ),
+        ]
     if rejected:
-        lines += ["", tr("genarticles.report.rejected"),
-                  tr("genarticles.report.reject_table"), "|---|---|---|"]
+        lines += [
+            "",
+            tr("genarticles.report.rejected"),
+            tr("genarticles.report.reject_table"),
+            "|---|---|---|",
+        ]
         for row in rejected:
-            reason = "; ".join(i["message"] for i in row["hard_issues"][:2]) or tr("genarticles.report.lint_failed")
+            reason = "; ".join(i["message"] for i in row["hard_issues"][:2]) or tr(
+                "genarticles.report.lint_failed"
+            )
             lines.append(f"| {row['index']} | {row['title']} | {reason} |")
     (run_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return result

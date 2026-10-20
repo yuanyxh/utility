@@ -25,10 +25,11 @@ def _excerpt(text: str, limit: int = 600) -> str:
     return text[:limit]
 
 
-def collect_material(limit_per_query: int = 6,
-                     seeds: list[str] | None = None) -> list[dict]:
+def collect_material(
+    limit_per_query: int = 6, seeds: list[str] | None = None
+) -> list[dict]:
     items, seen = [], set()
-    for query in (seeds or runtime.pack().words("seeds")):
+    for query in seeds or runtime.pack().words("seeds"):
         result = collect_sources(query, runtime.config())
         for item in result["items"]:
             key = hashlib.sha1(item["content"].encode("utf-8")).hexdigest()
@@ -36,16 +37,12 @@ def collect_material(limit_per_query: int = 6,
                 continue
             seen.add(key)
             items.append({**item, "source_id": source_id(item)})
-    source_days = float(
-        runtime.config().material.get("sourceCooldownDays", 14)
-    )
+    source_days = float(runtime.config().material.get("sourceCooldownDays", 14))
     used = set()
     for row in _load_history():
         if _within_cooldown(row, source_days):
             used.update(row.get("sources") or [])
-    items.sort(
-        key=lambda x: (x["source_id"] in used, -x.get("value", 0))
-    )
+    items.sort(key=lambda x: (x["source_id"] in used, -x.get("value", 0)))
     return items
 
 
@@ -82,10 +79,7 @@ def load_existing_topics(runs_root: Path | None = None) -> list[str]:
     history = sorted(
         _load_history(), key=lambda row: row.get("lastSeen", ""), reverse=True
     )
-    topics = [
-        str(row["topic"]) for row in history
-        if _within_cooldown(row, cooldown)
-    ]
+    topics = [str(row["topic"]) for row in history if _within_cooldown(row, cooldown)]
     for path in root.rglob("meta.json"):
         try:
             age_days = (
@@ -103,9 +97,9 @@ def load_existing_topics(runs_root: Path | None = None) -> list[str]:
     return [t for t in topics if not (t in seen or seen.add(t))]
 
 
-def _revisit_allowed(topic: str, sources: list[str],
-                     source_hashes: dict[str, str],
-                     history: list[dict]) -> bool:
+def _revisit_allowed(
+    topic: str, sources: list[str], source_hashes: dict[str, str], history: list[dict]
+) -> bool:
     cooldown = float(runtime.config().topics.get("cooldownDays", 30))
     for row in history:
         if overlap(topic, str(row.get("topic", ""))) <= 0.6:
@@ -154,13 +148,15 @@ def record_topics(topics: list[dict]) -> None:
         }
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     os.replace(tmp, path)
 
 
-def build_topic_prompt(items: list[dict], exclude: list[str],
-                       limit: int) -> tuple[str, str]:
+def build_topic_prompt(
+    items: list[dict], exclude: list[str], limit: int
+) -> tuple[str, str]:
     material = []
     for i, item in enumerate(items, 1):
         material.append(
@@ -173,17 +169,23 @@ def build_topic_prompt(items: list[dict], exclude: list[str],
     )
     return (
         pack.prompt("gen_articles_topics_system"),
-        pack.prompt("gen_articles_topics_user",
-                    material="\n\n".join(material),
-                    exclude_text=exclude_text,
-                    genres=pack.raw["list_separator"].join(pack.words("genres")),
-                    limit=limit),
+        pack.prompt(
+            "gen_articles_topics_user",
+            material="\n\n".join(material),
+            exclude_text=exclude_text,
+            genres=pack.raw["list_separator"].join(pack.words("genres")),
+            limit=limit,
+        ),
     )
 
 
-def _valid_topic(topic: str, exclude: list[str],
-                 accepted: list[str], sources: list[str] | None = None,
-                 source_hashes: dict[str, str] | None = None) -> bool:
+def _valid_topic(
+    topic: str,
+    exclude: list[str],
+    accepted: list[str],
+    sources: list[str] | None = None,
+    source_hashes: dict[str, str] | None = None,
+) -> bool:
     if not 6 <= len(topic) <= 50:
         return False
     pack = runtime.pack()
@@ -198,20 +200,19 @@ def _valid_topic(topic: str, exclude: list[str],
     for old in exclude:
         if overlap(topic, old) <= 0.6:
             continue
-        if not _revisit_allowed(
-            topic, sources or [], source_hashes or {}, history
-        ):
+        if not _revisit_allowed(topic, sources or [], source_hashes or {}, history):
             return False
     return not any(overlap(topic, old) > 0.75 for old in accepted)
 
 
-def _parse_topics(text: str, items: list[dict], exclude: list[str],
-                  limit: int) -> list[dict]:
+def _parse_topics(
+    text: str, items: list[dict], exclude: list[str], limit: int
+) -> list[dict]:
     decoder = json.JSONDecoder()
     payload = None
     for match in re.finditer(r"\[", text):
         try:
-            data, _ = decoder.raw_decode(text[match.start():])
+            data, _ = decoder.raw_decode(text[match.start() :])
         except json.JSONDecodeError:
             continue
         if isinstance(data, list):
@@ -242,79 +243,90 @@ def _parse_topics(text: str, items: list[dict], exclude: list[str],
             topic, exclude, [x["topic"] for x in out], sources, source_hashes
         ):
             continue
-        out.append({
-            "topic": topic,
-            "genre": genre,
-            "reason": str(row.get("reason", "")).strip(),
-            "sources": sources,
-            "sourceHashes": source_hashes,
-        })
+        out.append(
+            {
+                "topic": topic,
+                "genre": genre,
+                "reason": str(row.get("reason", "")).strip(),
+                "sources": sources,
+                "sourceHashes": source_hashes,
+            }
+        )
         if len(out) >= limit:
             break
     return out
 
 
-def _fallback_topics(items: list[dict], exclude: list[str],
-                     limit: int) -> list[dict]:
+def _fallback_topics(items: list[dict], exclude: list[str], limit: int) -> list[dict]:
     out = []
     for item in items:
         text = item["content"]
         heading = re.search(r"^#{1,3}\s+(.+)$", text, re.M)
         pack = runtime.pack()
-        topic = heading.group(1) if heading else re.split(
-            f"{pack.sentence_end}|\\n", text
-        )[0]
-        topic = re.sub(r"^[-*>#\s]+", "", topic).strip()
-        topic = re.sub(r"\s+", " ", topic)[:40].rstrip(
-            pack.raw["topic_trim_chars"]
+        topic = (
+            heading.group(1)
+            if heading
+            else re.split(f"{pack.sentence_end}|\\n", text)[0]
         )
+        topic = re.sub(r"^[-*>#\s]+", "", topic).strip()
+        topic = re.sub(r"\s+", " ", topic)[:40].rstrip(pack.raw["topic_trim_chars"])
         source_id = item["source_id"]
         source_hashes = {
             source_id: hashlib.sha1(item["content"].encode("utf-8")).hexdigest()
         }
         if not _valid_topic(
-            topic, exclude, [x["topic"] for x in out],
-            [source_id], source_hashes,
+            topic,
+            exclude,
+            [x["topic"] for x in out],
+            [source_id],
+            source_hashes,
         ):
             continue
-        out.append({
-            "topic": topic,
-            "genre": classify_topic(topic)["genre"],
-            "reason": tr("genarticles.topics.fallback_reason"),
-            "sources": [source_id],
-            "sourceHashes": source_hashes,
-        })
+        out.append(
+            {
+                "topic": topic,
+                "genre": classify_topic(topic)["genre"],
+                "reason": tr("genarticles.topics.fallback_reason"),
+                "sources": [source_id],
+                "sourceHashes": source_hashes,
+            }
+        )
         if len(out) >= limit:
             break
     return out
 
 
-def discover_topics(limit: int = 3,
-                    client: LLMClient | None = None,
-                    items: list[dict] | None = None,
-                    runs_root: Path | None = None,
-                    max_tokens: int = 1600,
-                    seeds: list[str] | None = None) -> list[dict]:
-    pool = (items if items is not None
-            else collect_material(seeds=seeds))
+def discover_topics(
+    limit: int = 3,
+    client: LLMClient | None = None,
+    items: list[dict] | None = None,
+    runs_root: Path | None = None,
+    max_tokens: int = 1600,
+    seeds: list[str] | None = None,
+) -> list[dict]:
+    pool = items if items is not None else collect_material(seeds=seeds)
     if not pool:
         raise ValueError("no high-value material available")
     exclude = load_existing_topics(runs_root)
     llm = client or LLMClient()
     system, user = build_topic_prompt(pool, exclude, limit)
     try:
-        raw = llm.chat(user, system=system, temperature=0.4,
-                       max_tokens=max_tokens, disable_thinking=True)
+        raw = llm.chat(
+            user,
+            system=system,
+            temperature=0.4,
+            max_tokens=max_tokens,
+            disable_thinking=True,
+        )
     except LLMError:
         raw = ""
     topics = _parse_topics(raw, pool, exclude, limit)
     if len(topics) < limit:
-        topics += _fallback_topics(pool, exclude + [t["topic"] for t in topics],
-                                   limit - len(topics))
-    if not topics:
-        raise ValueError(
-            f"no new topics available ({len(exclude)} already used)"
+        topics += _fallback_topics(
+            pool, exclude + [t["topic"] for t in topics], limit - len(topics)
         )
+    if not topics:
+        raise ValueError(f"no new topics available ({len(exclude)} already used)")
     return topics[:limit]
 
 
@@ -322,14 +334,15 @@ def write_manifest(topics: list[dict], path: Path) -> list[dict]:
     entries = []
     for topic in topics:
         digest = hashlib.sha1(topic["topic"].encode("utf-8")).hexdigest()[:8]
-        entries.append({
-            "id": f"auto_{digest}",
-            "topic": topic["topic"],
-            "genre": topic["genre"],
-            "sources": topic.get("sources", []),
-        })
+        entries.append(
+            {
+                "id": f"auto_{digest}",
+                "topic": topic["topic"],
+                "genre": topic["genre"],
+                "sources": topic.get("sources", []),
+            }
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(entries, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
+    path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
     record_topics(topics)
     return entries

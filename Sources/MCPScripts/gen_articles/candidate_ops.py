@@ -24,9 +24,7 @@ def write_meta(meta_path: Path, meta: dict) -> None:
 
 
 def targets(meta: dict, index: int | None = None) -> list[dict]:
-    return [
-        c for c in meta["candidates"] if index is None or c["index"] == index
-    ]
+    return [c for c in meta["candidates"] if index is None or c["index"] == index]
 
 
 def profile_for(genre: str) -> dict:
@@ -49,8 +47,11 @@ def project_tokens_from_run(run_dir: Path) -> tuple[str, ...]:
 
 def strict_lint(text: str, tokens: tuple[str, ...]) -> dict:
     return lint_text(
-        text, max_inline_code=2, strict_hardcore=True,
-        third_party=True, project_tokens=tokens,
+        text,
+        max_inline_code=2,
+        strict_hardcore=True,
+        third_party=True,
+        project_tokens=tokens,
     )
 
 
@@ -58,9 +59,16 @@ def candidate_path(run_dir: Path, index: int, suffix: str) -> Path:
     return run_dir / "candidates" / f"candidate_{index}_{suffix}.md"
 
 
-def commit_candidate(meta: dict, meta_path: Path, candidate: dict, *,
-                     path: Path, features: dict,
-                     source_field: str, source_name: str) -> None:
+def commit_candidate(
+    meta: dict,
+    meta_path: Path,
+    candidate: dict,
+    *,
+    path: Path,
+    features: dict,
+    source_field: str,
+    source_name: str,
+) -> None:
     candidate["path"] = str(path)
     candidate["title"] = features["title"]
     candidate["han"] = features["han"]

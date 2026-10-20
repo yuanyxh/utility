@@ -20,16 +20,16 @@ from llm_client import (
 
 
 class LLMError(RuntimeError):
-    def __init__(self, message: str, *, kind: str = "error",
-                 finish_reason: str | None = None):
+    def __init__(
+        self, message: str, *, kind: str = "error", finish_reason: str | None = None
+    ):
         super().__init__(message)
         self.kind = kind
         self.finish_reason = finish_reason
 
 
 class LLMClient:
-    def __init__(self, target: LLMTarget | None = None,
-                 timeout: float | None = None):
+    def __init__(self, target: LLMTarget | None = None, timeout: float | None = None):
         self.target = target
         self.timeout = timeout
 
@@ -73,7 +73,8 @@ class LLMClient:
                     time.sleep(1.5)
                     continue
                 raise LLMError(
-                    str(exc), kind=exc.kind,
+                    str(exc),
+                    kind=exc.kind,
                     finish_reason=exc.finish_reason,
                 ) from exc
             if text is None:
@@ -82,16 +83,24 @@ class LLMClient:
         raise LLMError("unreachable")
 
 
-def chat_with_retry(client: LLMClient, user: str, system: str,
-                    temperature: float, max_tokens: int,
-                    disable_thinking: bool) -> str:
+def chat_with_retry(
+    client: LLMClient,
+    user: str,
+    system: str,
+    temperature: float,
+    max_tokens: int,
+    disable_thinking: bool,
+) -> str:
     """Retry only empty/truncated responses, doubling the token budget."""
     tokens = max_tokens
     while True:
         try:
             return client.chat(
-                user, system=system, temperature=temperature,
-                max_tokens=tokens, disable_thinking=disable_thinking,
+                user,
+                system=system,
+                temperature=temperature,
+                max_tokens=tokens,
+                disable_thinking=disable_thinking,
             )
         except LLMError as exc:
             if exc.kind not in ("empty", "truncated") or tokens >= 32768:

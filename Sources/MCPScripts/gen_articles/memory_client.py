@@ -52,12 +52,15 @@ def _clean_memory(text: str) -> str:
 
 def recall_hot(endpoint: str, query: str, limit: int) -> list[dict]:
     client = MinoBrainClient(endpoint)
-    result = client.call_tool("recall", {
-        "query": query,
-        "limit": max(limit * 2, 10),
-        "include_archived": False,
-        "layers": ["hot"],
-    })
+    result = client.call_tool(
+        "recall",
+        {
+            "query": query,
+            "limit": max(limit * 2, 10),
+            "include_archived": False,
+            "layers": ["hot"],
+        },
+    )
     items = from_memory(result.get("results", []))
     return [item for item in items if item.get("layer") in ("", "hot")]
 
@@ -66,13 +69,15 @@ def from_memory(rows: list[dict]) -> list[dict]:
     out = []
     for row in rows:
         meta = row.get("metadata") or {}
-        out.append({
-            "kind": "memory",
-            "id": row.get("id"),
-            "content": _clean_memory(row.get("content", "")),
-            "score": row.get("score", 0),
-            "tags": meta.get("tags", []),
-            "created_at": row.get("created_at", ""),
-            "layer": row.get("layer", ""),
-        })
+        out.append(
+            {
+                "kind": "memory",
+                "id": row.get("id"),
+                "content": _clean_memory(row.get("content", "")),
+                "score": row.get("score", 0),
+                "tags": meta.get("tags", []),
+                "created_at": row.get("created_at", ""),
+                "layer": row.get("layer", ""),
+            }
+        )
     return out

@@ -82,19 +82,25 @@ def _retry_material(item: dict, out_root: Path, run_dir: Path) -> Path | None:
     if not fresh:
         return _resolve_material(item)
     fetched["items"] = fresh
-    parts.append(
-        tr("genarticles.batch.supplement") + "\n\n" + render_markdown(fetched)
-    )
+    parts.append(tr("genarticles.batch.supplement") + "\n\n" + render_markdown(fetched))
     path = run_dir / "retry_material.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n\n".join(parts), encoding="utf-8")
     return path
 
 
-def run_batch(manifest: Path, out_root: Path, rounds: int,
-              judge: bool, max_tokens: int, temperature: float,
-              retries: int = 2, candidates: int = 1,
-              resume: bool = True, max_minutes: float | None = None) -> dict:
+def run_batch(
+    manifest: Path,
+    out_root: Path,
+    rounds: int,
+    judge: bool,
+    max_tokens: int,
+    temperature: float,
+    retries: int = 2,
+    candidates: int = 1,
+    resume: bool = True,
+    max_minutes: float | None = None,
+) -> dict:
     if retries < 1 or candidates < 1:
         raise ValueError("retries and candidates must be greater than 0")
     items = json.loads(manifest.read_text(encoding="utf-8"))
@@ -120,21 +126,24 @@ def run_batch(manifest: Path, out_root: Path, rounds: int,
         if max_minutes is not None and (
             (time.monotonic() - started) / 60 >= max_minutes
         ):
-            results.append({
-                "id": item["id"],
-                "status": "skipped_budget",
-                "attempts": [],
-                "run_dir": "",
-                "selected": {},
-                "review": "",
-            })
+            results.append(
+                {
+                    "id": item["id"],
+                    "status": "skipped_budget",
+                    "attempts": [],
+                    "run_dir": "",
+                    "selected": {},
+                    "review": "",
+                }
+            )
             continue
         attempts = []
         result = None
         review_codes: set[str] = set()
         for attempt in range(1, retries + 1):
             run_dir = (
-                out_root / item["id"] if attempt == 1
+                out_root / item["id"]
+                if attempt == 1
                 else out_root / f"{item['id']}_retry{attempt}"
             )
             strategy = "initial"
@@ -149,17 +158,25 @@ def run_batch(manifest: Path, out_root: Path, rounds: int,
             elif attempt > 1:
                 strategy = "regenerate"
             result = run_pipeline(
-                item["topic"], item.get("genre"), candidates,
-                run_dir, rounds, judge,
-                max_tokens, temperature, material_path=material,
+                item["topic"],
+                item.get("genre"),
+                candidates,
+                run_dir,
+                rounds,
+                judge,
+                max_tokens,
+                temperature,
+                material_path=material,
             )
             review_codes = _review_codes(result)
-            attempts.append({
-                "attempt": attempt,
-                "status": result["status"],
-                "strategy": strategy,
-                "run_dir": result["run_dir"],
-            })
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "status": result["status"],
+                    "strategy": strategy,
+                    "run_dir": result["run_dir"],
+                }
+            )
             entry = {
                 "id": item["id"],
                 "status": result["status"],
@@ -175,12 +192,18 @@ def run_batch(manifest: Path, out_root: Path, rounds: int,
                 break
         results.append(entry)
     queue = [
-        {"id": r["id"], "status": r["status"],
-         "run_dir": r["run_dir"], "review": r["review"]}
-        for r in results if r["status"] != "ok"
+        {
+            "id": r["id"],
+            "status": r["status"],
+            "run_dir": r["run_dir"],
+            "review": r["review"],
+        }
+        for r in results
+        if r["status"] != "ok"
     ]
     summary = {
-        "status": "ok" if all(r["status"] == "ok" for r in results)
+        "status": "ok"
+        if all(r["status"] == "ok" for r in results)
         else "review_required",
         "results": results,
         "review_queue": queue,

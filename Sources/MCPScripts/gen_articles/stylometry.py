@@ -13,6 +13,8 @@ CODE_BLOCK = re.compile(r"```.*?```", re.S)
 COMMAND = re.compile(
     r"(?m)^\s*(?:\$|(?:npm|npx|pnpm|yarn|git|curl|docker|kubectl|python3?|sqlite3|node|go|swift|vim|cat|grep|lsof|ss|netstat|top|ps|kill)\b)[^\n]*"
 )
+
+
 def _pct(values: list[float], q: float) -> float:
     if not values:
         return 0.0
@@ -35,7 +37,8 @@ def article_features(text: str) -> dict:
     prose = _prose(text)
     han = len(unit.findall(prose))
     sentences = [
-        s.strip() for s in re.split(pack.sentence_end_lookbehind, prose)
+        s.strip()
+        for s in re.split(pack.sentence_end_lookbehind, prose)
         if len(unit.findall(s)) > 0
     ]
     sent_lengths = [len(unit.findall(s)) for s in sentences] or [0]
@@ -54,7 +57,9 @@ def article_features(text: str) -> dict:
     code_ratio = code_lines / max(1, code_lines + prose_lines)
 
     headings = re.findall(r"^(#{1,3})\s+(.+)$", text, re.M)
-    title = next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), "")
+    title = next(
+        (line[2:].strip() for line in text.splitlines() if line.startswith("# ")), ""
+    )
     inline = re.findall(r"`([^`\n]+)`", prose)
     colloquial = _count_patterns(prose, pack.words("colloquial"))
     connective = sum(prose.count(w) for w in pack.words("connectives"))
@@ -75,10 +80,16 @@ def article_features(text: str) -> dict:
         "para_mean": round(statistics.mean(paragraphs), 2),
         "para_p90": round(_pct(paragraphs, 0.9), 2),
         "heading_count": len(headings),
-        "half_punct_per_1k": round(len(pack.pattern("half_punct").findall(prose)) / han * 1000, 2) if han else 0.0,
+        "half_punct_per_1k": round(
+            len(pack.pattern("half_punct").findall(prose)) / han * 1000, 2
+        )
+        if han
+        else 0.0,
         "title_len": len(unit.findall(title)),
         "has_commands": bool(COMMAND.search("\n".join(code_blocks))),
-        "has_logs": bool(re.search(r"```(?:text|log)\n.*(?:ERROR|WARN|FATAL|SQLSTATE)", text, re.S)),
+        "has_logs": bool(
+            re.search(r"```(?:text|log)\n.*(?:ERROR|WARN|FATAL|SQLSTATE)", text, re.S)
+        ),
         "has_spec_quote": bool(re.search(r"^>\s+\S", text, re.M)),
         "title": title,
         "tech_per_1k": round(tech / han * 1000, 2) if han else 0.0,

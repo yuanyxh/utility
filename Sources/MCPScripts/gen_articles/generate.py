@@ -57,9 +57,9 @@ def reference_excerpts(genre: str, topic: str, count: int = 2) -> list[dict]:
         ).hexdigest()
     )
     return [
-        {"title": e["title"], "path": e.get("path", ""),
-         "excerpt": e["excerpt"]}
-        for e in items[:count] if e.get("excerpt")
+        {"title": e["title"], "path": e.get("path", ""), "excerpt": e["excerpt"]}
+        for e in items[:count]
+        if e.get("excerpt")
     ]
 
 
@@ -81,8 +81,7 @@ def reference_openings(genre: str, topic: str, count: int = 2) -> list[dict]:
     return out
 
 
-def _topic_prefix_only(topic: str, title: str,
-                       prefix: int = 6, added: int = 6) -> bool:
+def _topic_prefix_only(topic: str, title: str, prefix: int = 6, added: int = 6) -> bool:
     """标题只是主题前缀加少量后缀时，视为主题复述。"""
     common = 0
     for left, right in zip(topic, title):
@@ -92,29 +91,32 @@ def _topic_prefix_only(topic: str, title: str,
     return common >= prefix and len(title) - common < added
 
 
-def _title_needs_fix(topic: str, title: str,
-                     tokens: tuple[str, ...] = ()) -> bool:
+def _title_needs_fix(topic: str, title: str, tokens: tuple[str, ...] = ()) -> bool:
     a, b = topic, title
     if not b or a == b or _topic_prefix_only(a, b):
         return True
     if INTERNAL_ID.search(title):
         return True
-    if any(re.search(rf"(?<![0-9A-Za-z_]){re.escape(t)}(?![0-9A-Za-z_])",
-                     title, re.I) for t in tokens):
+    if any(
+        re.search(rf"(?<![0-9A-Za-z_]){re.escape(t)}(?![0-9A-Za-z_])", title, re.I)
+        for t in tokens
+    ):
         return True
     return overlap(a, b) > 0.8
 
 
-def _anchor_leak_terms(title: str, anchors: str,
-                       allowed: str) -> list[str]:
+def _anchor_leak_terms(title: str, anchors: str, allowed: str) -> list[str]:
     """标题里出现、锚点有、但 plan/material 没有的术语。"""
     pack = runtime.pack()
     leaks = set()
     for size in pack.raw["term_sizes"]:
         for i in range(len(title) - size + 1):
-            term = title[i:i + size]
-            if (all(pack.unit_re.fullmatch(ch) for ch in term)
-                    and term in anchors and term not in allowed):
+            term = title[i : i + size]
+            if (
+                all(pack.unit_re.fullmatch(ch) for ch in term)
+                and term in anchors
+                and term not in allowed
+            ):
                 leaks.add(term)
     for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", title):
         if token in anchors and token not in allowed:
@@ -129,33 +131,51 @@ def _fallback_title(topic: str) -> str:
     return text[:32].rstrip(pack.raw["title_trim_chars"]) or pack.raw["fallback_title"]
 
 
-def build_title_prompt(topic: str, article: str, angle: str | None,
-                       banned: tuple[str, ...] | list[str] = ()) -> tuple[str, str]:
+def build_title_prompt(
+    topic: str,
+    article: str,
+    angle: str | None,
+    banned: tuple[str, ...] | list[str] = (),
+) -> tuple[str, str]:
     ban = (
-        tr("genarticles.prompt.ban",
-           terms=runtime.pack().raw["list_separator"].join(banned)) + "\n"
-        if banned else ""
+        tr(
+            "genarticles.prompt.ban",
+            terms=runtime.pack().raw["list_separator"].join(banned),
+        )
+        + "\n"
+        if banned
+        else ""
     )
     return (
         runtime.pack().prompt("gen_articles_title_system"),
-        runtime.pack().prompt("gen_articles_title_user", topic=topic,
-                    article=article[:1200], ban=ban),
+        runtime.pack().prompt(
+            "gen_articles_title_user", topic=topic, article=article[:1200], ban=ban
+        ),
     )
 
 
-def rewrite_title(client: LLMClient, topic: str, article: str,
-                  angle: str | None, tokens: tuple[str, ...] = (),
-                  banned: tuple[str, ...] | list[str] = ()) -> str | None:
+def rewrite_title(
+    client: LLMClient,
+    topic: str,
+    article: str,
+    angle: str | None,
+    tokens: tuple[str, ...] = (),
+    banned: tuple[str, ...] | list[str] = (),
+) -> str | None:
     system, user = build_title_prompt(topic, article, angle, banned)
     try:
-        raw = client.chat(user, system=system, temperature=0.5,
-                          max_tokens=64, disable_thinking=True)
+        raw = client.chat(
+            user, system=system, temperature=0.5, max_tokens=64, disable_thinking=True
+        )
     except LLMError:
         return None
     title = (
-        raw.strip().splitlines()[0].strip()
+        raw.strip()
+        .splitlines()[0]
+        .strip()
         .strip(runtime.pack().raw["title_quote_chars"])
-        .lstrip("#").strip()
+        .lstrip("#")
+        .strip()
     )
     if not title or _title_needs_fix(topic, title, tokens):
         return None
@@ -164,43 +184,54 @@ def rewrite_title(client: LLMClient, topic: str, article: str,
     return title
 
 
-def build_prompts(topic: str, genre: str, material_md: str,
-                  angle: str | None = None,
-                  opening_mode: str | None = None,
-                  plan_md: str | None = None,
-                  general_topic: str | None = None) -> tuple[str, str]:
+def build_prompts(
+    topic: str,
+    genre: str,
+    material_md: str,
+    angle: str | None = None,
+    opening_mode: str | None = None,
+    plan_md: str | None = None,
+    general_topic: str | None = None,
+) -> tuple[str, str]:
     profile = profile_for(genre)
     sent_p50 = profile_mean(profile, "sent_p50", 0)
     sent_p90 = profile_mean(profile, "sent_p90", 0)
     anchors = reference_excerpts(genre, topic)
     anchor_text = "\n\n".join(
         tr("genarticles.prompt.anchor", index=i + 1, title=a["title"])
-        + "\n" + a["excerpt"]
+        + "\n"
+        + a["excerpt"]
         for i, a in enumerate(anchors)
     )
     openings = reference_openings(genre, topic)
     opening_text = "\n\n".join(
         tr("genarticles.prompt.opening", index=i + 1, title=a["title"])
-        + "\n" + a["opening"]
+        + "\n"
+        + a["opening"]
         for i, a in enumerate(openings)
     )
-    plan_block = (
-        tr("genarticles.prompt.plan_block", plan=plan_md) if plan_md else ""
-    )
+    plan_block = tr("genarticles.prompt.plan_block", plan=plan_md) if plan_md else ""
     system = runtime.pack().prompt(
         "gen_articles_article_system",
-        soul=runtime.soul_text(), genre=genre,
-        sent_p50=sent_p50, sent_p90=sent_p90,
+        soul=runtime.soul_text(),
+        genre=genre,
+        sent_p50=sent_p50,
+        sent_p90=sent_p90,
         sent_min=max(40, int(sent_p50 * 0.85)),
-        anchor_text=anchor_text, opening_text=opening_text,
+        anchor_text=anchor_text,
+        opening_text=opening_text,
         plan_block=plan_block,
     )
     user = runtime.pack().prompt(
         "gen_articles_article_user",
-        general_topic=general_topic or topic, topic=topic, genre=genre,
+        general_topic=general_topic or topic,
+        topic=topic,
+        genre=genre,
         angle=angle or runtime.pack().raw["default_angle"],
         opening_mode=opening_mode or runtime.pack().words("opening_modes")[0],
-        material_md=material_md, sent_p50=sent_p50, sent_p90=sent_p90,
+        material_md=material_md,
+        sent_p50=sent_p50,
+        sent_p90=sent_p90,
     )
     return system, user
 
@@ -217,26 +248,37 @@ def _recover_candidates(run_dir: Path, meta: dict) -> None:
             continue
         article = path.read_text(encoding="utf-8")
         features = article_features(article)
-        meta["candidates"].append({
-            "index": i,
-            "path": str(path),
-            "title": features["title"],
-            "han": features["han"],
-            "angle": runtime.pack().words("angles")[
-                (i - 1) % len(runtime.pack().words("angles"))
-            ],
-        })
+        meta["candidates"].append(
+            {
+                "index": i,
+                "path": str(path),
+                "title": features["title"],
+                "han": features["han"],
+                "angle": runtime.pack().words("angles")[
+                    (i - 1) % len(runtime.pack().words("angles"))
+                ],
+            }
+        )
     meta["candidates"].sort(key=lambda c: c["index"])
 
 
-def generate(topic: str, genre: str | None, candidates: int,
-             out: Path | None, temperature: float, max_tokens: int,
-             index: int | None = None, disable_thinking: bool = True,
-             use_plan: bool = True,
-             material_path: Path | None = None) -> dict:
+def generate(
+    topic: str,
+    genre: str | None,
+    candidates: int,
+    out: Path | None,
+    temperature: float,
+    max_tokens: int,
+    index: int | None = None,
+    disable_thinking: bool = True,
+    use_plan: bool = True,
+    material_path: Path | None = None,
+) -> dict:
     genre = genre or classify_topic(topic)["genre"]
-    run_id = out.name if out else (
-        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_slug(topic)}"
+    run_id = (
+        out.name
+        if out
+        else (f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{_slug(topic)}")
     )
     run_dir = out or (runtime.output_dir() / run_id)
     (run_dir / "candidates").mkdir(parents=True, exist_ok=True)
@@ -272,13 +314,15 @@ def generate(topic: str, genre: str | None, candidates: int,
     if material and "dropped" in material:
         rows = []
         for item in material.get("items", []):
-            rows.append({
-                "decision": "kept",
-                "kind": item.get("kind"),
-                "source": source_id(item),
-                "value": item.get("value"),
-                "relevance": item.get("relevance"),
-            })
+            rows.append(
+                {
+                    "decision": "kept",
+                    "kind": item.get("kind"),
+                    "source": source_id(item),
+                    "value": item.get("value"),
+                    "relevance": item.get("relevance"),
+                }
+            )
         for item in material.get("dropped", []):
             rows.append({"decision": "dropped", **item})
         (run_dir / "material_decisions.jsonl").write_text(
@@ -287,7 +331,8 @@ def generate(topic: str, genre: str | None, candidates: int,
         )
     min_items = (
         int(runtime.config().material.get("minItems", 2))
-        if material and "items" in material else 1
+        if material and "items" in material
+        else 1
     )
     if material_count < min_items and not meta["candidates"]:
         meta["material_error"] = "insufficient material"
@@ -295,11 +340,18 @@ def generate(topic: str, genre: str | None, candidates: int,
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         review = (
-            tr("genarticles.review.header") + "\n\n"
-            + tr("genarticles.review.candidate", index=1,
-                 title=tr("genarticles.review.not_generated")) + "\n- "
-            + tr("genarticles.material_insufficient",
-                 count=material_count, min=min_items) + "\n"
+            tr("genarticles.review.header")
+            + "\n\n"
+            + tr(
+                "genarticles.review.candidate",
+                index=1,
+                title=tr("genarticles.review.not_generated"),
+            )
+            + "\n- "
+            + tr(
+                "genarticles.material_insufficient", count=material_count, min=min_items
+            )
+            + "\n"
         )
         (run_dir / "review.md").write_text(review, encoding="utf-8")
         raise MaterialError(
@@ -322,10 +374,15 @@ def generate(topic: str, genre: str | None, candidates: int,
     general_topic = (plan or {}).get("general_problem") or topic
     profile = profile_for(meta["genre"])
     target_p50 = profile_mean(profile, "sent_p50", 55)
-    indices = [index] if index else [
-        i for i in range(1, candidates + 1)
-        if i not in {c["index"] for c in meta["candidates"]}
-    ]
+    indices = (
+        [index]
+        if index
+        else [
+            i
+            for i in range(1, candidates + 1)
+            if i not in {c["index"] for c in meta["candidates"]}
+        ]
+    )
     for i in indices:
         pack = runtime.pack()
         angles = pack.words("angles")
@@ -333,23 +390,27 @@ def generate(topic: str, genre: str | None, candidates: int,
         angle = angles[(i - 1) % len(angles)]
         opening_mode = modes[(i - 1) % len(modes)]
         system, user = build_prompts(
-            topic, meta["genre"], material_md,
-            angle=angle, opening_mode=opening_mode, plan_md=plan_md,
+            topic,
+            meta["genre"],
+            material_md,
+            angle=angle,
+            opening_mode=opening_mode,
+            plan_md=plan_md,
             general_topic=general_topic,
         )
         (run_dir / f"system_prompt_{i}.txt").write_text(system, encoding="utf-8")
         (run_dir / f"user_prompt_{i}.txt").write_text(user, encoding="utf-8")
-        text = chat_with_retry(client, user, system, temperature, max_tokens,
-                                disable_thinking)
+        text = chat_with_retry(
+            client, user, system, temperature, max_tokens, disable_thinking
+        )
         article = strip_empty_mermaid(strip_preamble(text))
         article = label_code_blocks(article)
         article = merge_short_sentences(article, target_p50)
         article = split_long_paragraphs(article)
         features = article_features(article)
         title_fixed = False
-        anchors = (
-            reference_excerpts(meta["genre"], topic)
-            + reference_openings(meta["genre"], topic)
+        anchors = reference_excerpts(meta["genre"], topic) + reference_openings(
+            meta["genre"], topic
         )
         anchor_text = "\n".join(
             a.get("excerpt") or a.get("opening", "") for a in anchors
@@ -358,11 +419,13 @@ def generate(topic: str, genre: str | None, candidates: int,
         leaks = _anchor_leak_terms(
             features["title"], anchor_text + "\n" + angle, allowed_text
         )
-        if _title_needs_fix(
-            general_topic, features["title"], internal_tokens
-        ) or leaks:
+        if _title_needs_fix(general_topic, features["title"], internal_tokens) or leaks:
             new_title = rewrite_title(
-                client, general_topic, article, angle, internal_tokens,
+                client,
+                general_topic,
+                article,
+                angle,
+                internal_tokens,
                 banned=leaks,
             )
             if not new_title:
@@ -370,21 +433,24 @@ def generate(topic: str, genre: str | None, candidates: int,
             if leaks and any(term in new_title for term in leaks):
                 new_title = _fallback_title(topic)
             if new_title:
-                article = re.sub(r"^#\s+.+$", f"# {new_title}", article,
-                                 count=1, flags=re.M)
+                article = re.sub(
+                    r"^#\s+.+$", f"# {new_title}", article, count=1, flags=re.M
+                )
                 features = article_features(article)
                 title_fixed = True
         path = run_dir / "candidates" / f"candidate_{i}.md"
         path.write_text(article, encoding="utf-8")
         meta["candidates"] = [c for c in meta["candidates"] if c["index"] != i]
-        meta["candidates"].append({
-            "index": i,
-            "path": str(path),
-            "title": features["title"],
-            "han": features["han"],
-            "angle": angle,
-            "title_fixed": title_fixed,
-        })
+        meta["candidates"].append(
+            {
+                "index": i,
+                "path": str(path),
+                "title": features["title"],
+                "han": features["han"],
+                "angle": angle,
+                "title_fixed": title_fixed,
+            }
+        )
         meta["candidates"].sort(key=lambda c: c["index"])
         # 每篇落盘后立即写 meta，超时中断也能续跑
         meta_path.write_text(
