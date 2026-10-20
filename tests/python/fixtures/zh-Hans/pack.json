@@ -1,0 +1,34 @@
+{
+  "id": "zh-Hans",
+  "version": 1,
+  "unit": "han",
+  "sentence_end": "[。！？；]",
+  "sentence_end_lookbehind": "(?<=[。！？；])",
+  "opening_sentence_end": "[。！？]",
+  "paragraph_split": "\\n\\s*\\n",
+  "sentence_join": "，",
+  "assets": {
+    "soul": "SOUL.md",
+    "profiles": "profiles",
+    "anchors": "anchors.json",
+    "prompts": "prompts"
+  },
+  "question_marks": [
+    "？",
+    "?"
+  ],
+  "default_genre": "原理概念",
+  "list_separator": "、",
+  "topic_min_units": 4,
+  "fallback_title": "技术机制分析",
+  "title_trim_chars": "的与和",
+  "topic_trim_chars": "，。：:；;",
+  "default_angle": "技术与机制",
+  "clause_separator": "；",
+  "term_sizes": [
+    3,
+    4
+  ],
+  "sentence_terminal": "。",
+  "title_quote_chars": "\"“”"
+}

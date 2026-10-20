@@ -35,6 +35,7 @@ public struct AppConfig: Codable {
     var prompts: PromptConfig = .init()
     var notifications: NotificationConfig = .init()
     var knowledge: KnowledgeConfig = .init()
+    var genArticles: GenArticlesConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
 
@@ -52,6 +53,7 @@ public struct AppConfig: Codable {
         prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
         knowledge = (try? c.decode(KnowledgeConfig.self, forKey: .knowledge)) ?? .init()
+        genArticles = (try? c.decode(GenArticlesConfig.self, forKey: .genArticles)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
     }
@@ -543,6 +545,23 @@ public struct KnowledgeConfig: Codable {
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+k"
         domains = try c.decodeIfPresent([String].self, forKey: .domains) ?? []
         topics = try c.decodeIfPresent([KnowledgeTopicSeed].self, forKey: .topics) ?? []
+    }
+}
+
+// MARK: - Gen Articles
+
+/// 文章生成只内置代码；配置层固定读取 `<dir>/config.json`。
+public struct GenArticlesConfig: Codable {
+    var enabled: Bool = false
+    /// Empty = ~/Documents/selfdata/notes/Gen_Articles
+    var dir: String = ""
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        dir = try c.decodeIfPresent(String.self, forKey: .dir) ?? ""
     }
 }
 

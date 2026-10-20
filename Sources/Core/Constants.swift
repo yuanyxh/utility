@@ -66,6 +66,7 @@ enum PythonScripts {
     static let astExtractor = "ast_extractor.py"
     static let knowledgeRefill = "knowledge_refill.py"
     static let rssDaily = "rss_daily.py"
+    static let genArticles = "gen_articles_run.py"
 }
 
 // MARK: - Python Subprocess Environment Variable Names

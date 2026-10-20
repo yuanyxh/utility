@@ -57,12 +57,17 @@ passing an empty prompt to the model is worse than failing outright).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from config import data_dir
 from l10n import BASELINE_LANG, resolved_language
 from log_utils import setup_logging
+from prompt_template import (
+    PromptLoadError,
+    PromptTemplate,
+    parse_template,
+    render,
+)
 
 logger = setup_logging("prompt_loader")
 
@@ -70,36 +75,8 @@ logger = setup_logging("prompt_loader")
 #: must guarantee this language is complete.
 FALLBACK_LANG = BASELINE_LANG
 
-# The language is read via `l10n.resolved_language()` ← `config.ui_language()`
-# (`UTILITY_LANG`, injected by Swift from `general.language`), the same resolver the
-# catalog uses.
-
 #: Characters allowed in a feature name (used for filename concatenation, guards against directory traversal)
 _FEATURE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-
-#: front-matter: the file must start with `---` and end with `---`
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
-_KEY_RE = re.compile(r"^([a-zA-Z_]+)\s*:\s*(.*)$")
-_LIST_RE = re.compile(r"^\[(.*)\]$")
-
-#: Placeholders in the body: only the "alphanumeric+underscore" form is recognized, so JSON
-#: `{"action": ...}` is not misdetected
-_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
-
-
-class PromptLoadError(RuntimeError):
-    """Prompt unavailable (built-in default missing, call arguments mismatched with the declaration, etc.)."""
-
-
-@dataclass(frozen=True)
-class PromptTemplate:
-    feature: str
-    lang: str
-    path: str
-    text: str
-    placeholders: tuple[str, ...]
-    json_keys: tuple[str, ...]
-
 
 _cache: dict[str, PromptTemplate] = {}
 
@@ -126,60 +103,6 @@ def current_lang() -> str:
 # ---------------------------------------------------------------------------
 # Parsing and validation
 # ---------------------------------------------------------------------------
-
-
-def _parse_list(raw: str) -> tuple[str, ...]:
-    m = _LIST_RE.match(raw.strip())
-    if not m:
-        return ()
-    items = [item.strip().strip("\"'") for item in m.group(1).split(",")]
-    return tuple(item for item in items if item)
-
-
-def parse_template(raw: str, feature: str, path: Path | str) -> PromptTemplate:
-    """Parse and self-check a template text; any contract violation raises `PromptLoadError`.
-
-    Decoupled from "read a file": `_parse_file` is its file form, while the contract-check script
-    needs to feed text directly——what it asserts is "would a hypothetical bad file be rejected",
-    and it should not have to write a real temp file to disk for that. Both sides share the same
-    parsing function, so the checker asserts exactly the path that really runs at runtime.
-    """
-    path = Path(path)
-    m = _FRONTMATTER_RE.match(raw)
-    if not m:
-        raise PromptLoadError(
-            f"{path}: missing front-matter (--- name/placeholders/json_keys ---)"
-        )
-    meta: dict[str, str] = {}
-    for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        km = _KEY_RE.match(line.strip())
-        if not km:
-            raise PromptLoadError(f"{path}: cannot parse front-matter line {line!r}")
-        meta[km.group(1)] = km.group(2)
-
-    name = meta.get("name", "").strip()
-    if name != feature:
-        raise PromptLoadError(
-            f"{path}: name={name!r} does not match the requested feature={feature!r}"
-        )
-
-    text = raw[m.end() :]
-    declared = _parse_list(meta.get("placeholders", ""))
-    found = tuple(dict.fromkeys(_PLACEHOLDER_RE.findall(text)))
-    if set(declared) != set(found):
-        raise PromptLoadError(
-            f"{path}: placeholders declaration does not match actual (declared {sorted(declared)} / actual {sorted(found)})"
-        )
-    return PromptTemplate(
-        feature=feature,
-        lang=path.parent.name,
-        path=str(path),
-        text=text,
-        placeholders=declared,
-        json_keys=_parse_list(meta.get("json_keys", "")),
-    )
 
 
 def _parse_file(path: Path, feature: str) -> PromptTemplate:
@@ -253,27 +176,6 @@ def template(feature: str) -> PromptTemplate:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
-
-
-def render(tpl: PromptTemplate, variables: dict) -> str:
-    """One-shot replacement of placeholders by name; unregistered `{...}` are kept verbatim."""
-    missing = [p for p in tpl.placeholders if p not in variables]
-    if missing:
-        raise PromptLoadError(
-            f"{tpl.feature}: call missing argument {missing} (declared {list(tpl.placeholders)})——"
-            "a missing argument sends the {placeholder} to the model verbatim"
-        )
-    extra = [k for k in variables if k not in tpl.placeholders]
-    if extra:
-        logger.warning(
-            f"{tpl.feature}: call passes extra argument {extra} (unused by the template, usually left over after renaming a call site)"
-        )
-
-    def _sub(match: re.Match[str]) -> str:
-        name = match.group(1)
-        return str(variables[name]) if name in variables else match.group(0)
-
-    return _PLACEHOLDER_RE.sub(_sub, tpl.text)
 
 
 def prompt(feature: str, **variables) -> str:

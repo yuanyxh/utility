@@ -303,6 +303,7 @@ def search_cold_layer(
 
 _HOT_RESULT_KEYS = (
     "id",
+    "layer",
     "content",
     "score",
     "created_at",
@@ -693,13 +694,19 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
     query = arguments["query"]
     limit = int_arg(arguments, "limit", DEFAULT_RECALL_LIMIT)
     include_archived = arguments.get("include_archived", False)
+    layers = arguments.get("layers")
+    if isinstance(layers, str):
+        layers = [layers]
+    layers = set(layers) if layers else {"hot", "cold"}
+    hot_enabled = "hot" in layers
+    cold_enabled = "cold" in layers
     # Lazy hot-layer init: skipping this step makes the first recall after a restart
     # silently drop the entire hot layer (`if get_hot_memory()` is false so it is skipped and
     # hot_count is 0). Init failure does not terminate — the cold layer and notes do not
     # depend on the hot layer, so recall should degrade rather than fail.
     await ensure_hot_memory()
     results = []
-    if get_hot_memory():
+    if hot_enabled and get_hot_memory():
         try:
             # No rerank passed: MEM0_CONFIG does not configure a reranker, so mem0's
             # internal `if rerank and self.reranker` is always false — passing it is a
@@ -723,7 +730,10 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
                 results.append(_project_hot_result(r))
         except Exception as e:
             logger.warning(f"Hot search failed: {e}")
-    cold = search_cold_layer(query, limit, include_archived=include_archived)
+    cold = (
+        search_cold_layer(query, limit, include_archived=include_archived)
+        if cold_enabled else []
+    )
     results.extend(cold)
     results.sort(key=_heat_sort_key, reverse=True)
     # Per-layer counts must use the same basis as `count` — both taken from the

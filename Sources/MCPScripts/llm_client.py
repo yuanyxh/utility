@@ -76,6 +76,18 @@ DEFAULT_RETRY_503_MAX = 2
 DEFAULT_RETRY_503_DELAY = 0.5
 
 
+class LLMClientError(RuntimeError):
+    """Typed sync-call failure. `kind` is the branch surface; consumers must not match `str(exc)`."""
+
+    def __init__(self, message: str, *, kind: str = "error",
+                 finish_reason: str | None = None,
+                 status: int | None = None):
+        super().__init__(message)
+        self.kind = kind
+        self.finish_reason = finish_reason
+        self.status = status
+
+
 @dataclass(frozen=True)
 class LLMTarget:
     """The target of one LLM call (endpoint/model/key/protocol).
@@ -213,6 +225,33 @@ def _extract_text(data: dict, api_format: str) -> str | None:
     return (choices[0].get("message") or {}).get("content")
 
 
+def _extract_required(data: dict, api_format: str) -> str:
+    """Strict extraction for callers that need truncation/empty failures as exceptions."""
+    if api_format == API_ANTHROPIC:
+        blocks = data.get("content") or []
+        content = blocks[0].get("text") if blocks and isinstance(blocks[0], dict) else None
+        finish = data.get("stop_reason")
+    else:
+        choices = data.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            raise LLMClientError("response has no choices", kind="no_choices")
+        content = (choices[0].get("message") or {}).get("content")
+        finish = choices[0].get("finish_reason")
+    if not isinstance(content, str):
+        raise LLMClientError("response content is not text", kind="no_content")
+    if not content.strip():
+        raise LLMClientError(
+            f"empty content (finish_reason={finish})", kind="empty",
+            finish_reason=finish,
+        )
+    if finish in ("length", "max_tokens"):
+        raise LLMClientError(
+            "truncated content (finish_reason=length)", kind="truncated",
+            finish_reason=finish,
+        )
+    return content
+
+
 def _log_failure(label: str, error: str, **extra) -> None:
     """Unified failure log.
 
@@ -246,11 +285,20 @@ def chat(
     label: str = "llm_chat",
     retry_503: int = 0,
     retry_delay: float = DEFAULT_RETRY_503_DELAY,
+    raise_on_error: bool = False,
 ) -> str | None:
-    """Synchronous LLM call (httpx). Returns None on failure/unconfigured; does not raise."""
+    """Synchronous LLM call (httpx).
+
+    Default: returns None on failure/unconfigured; does not raise.
+    `raise_on_error=True`: raises `LLMClientError` with a stable `kind`
+    (`unconfigured` / `http` / `network` / `no_choices` / `no_content` /
+    `empty` / `truncated`) so callers branch on the type, not the message.
+    """
     tgt = target or default_target()
     if not tgt.ready:
         logger.debug(json.dumps({"msg": "llm_not_configured", "label": label}))
+        if raise_on_error:
+            raise LLMClientError("LLM target is not configured", kind="unconfigured")
         return None
 
     body = _body(
@@ -280,10 +328,25 @@ def chat(
                 time.sleep(retry_delay)
                 continue
             if resp.status_code >= 400:
+                if raise_on_error:
+                    detail = resp.text[:500]
+                    raise LLMClientError(
+                        f"HTTP {resp.status_code}: {detail}", kind="http",
+                        status=resp.status_code,
+                    )
                 _log_failure(label, f"HTTP {resp.status_code}", status=resp.status_code)
                 return None
-            return _extract_text(resp.json(), tgt.api_format)
+            data = resp.json()
+            if raise_on_error:
+                return _extract_required(data, tgt.api_format)
+            return _extract_text(data, tgt.api_format)
+        except LLMClientError:
+            raise
         except Exception as e:
+            if raise_on_error:
+                raise LLMClientError(
+                    f"{type(e).__name__}: {e}", kind="network"
+                ) from e
             _log_failure(label, f"{type(e).__name__}: {e}")
             return None
     return None

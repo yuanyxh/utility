@@ -294,7 +294,7 @@ enum PythonScriptRunner {
     // MARK: - Shell command construction (for TaskScheduler .sh tasks)
 
     /// Single-quote a value for `/bin/bash -c` (embedded single quotes are escaped).
-    private static func shellQuote(_ value: String) -> String {
+    static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 

@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Register the built-in RSS daily task
         updateRSSDailyTask()
 
+        // Register the manual article-generation task
+        updateGenArticlesTask()
+
         KnowledgeService.shared.panel = knowledgePanel
         KnowledgeService.shared.start()
         // 菜单入口走这个引用;漏赋值时 showKnowledgePanel 的 guard 会静默 return(点了没反应、无日志)
@@ -116,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         // RSS daily: re-evaluate the built-in task against the new config
         updateRSSDailyTask()
+
+        // Article generation: manual task bound to Gen_Articles/config.json
+        updateGenArticlesTask()
     }
 
     /// Register/unregister the built-in memory summary task. Idempotent: unregister when disabled; register directly when enabled.
@@ -189,6 +195,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         )
         TaskScheduler.shared.registerInternalTask(task)
         debugLog("[RSS] Daily task registered (\(cron.isEmpty ? "manual" : "cron: \(cron)"))")
+    }
+
+    /// Manual-only article task. Code is bundled; configuration is always
+    /// `<dir>/config.json`, so only the directory is configurable.
+    private func updateGenArticlesTask() {
+        let cfg = ConfigManager.shared.config.genArticles
+        guard cfg.enabled,
+              let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.genArticles)
+        else {
+            TaskScheduler.shared.unregisterInternalTask(named: "gen-articles")
+            debugLog("[GenArticles] Task disabled or script unavailable")
+            return
+        }
+
+        let rawDir = cfg.dir.isEmpty
+            ? "~/Documents/selfdata/notes/Gen_Articles"
+            : cfg.dir
+        let dir = (rawDir as NSString).expandingTildeInPath
+        let configPath = (dir as NSString).appendingPathComponent("config.json")
+        guard FileManager.default.fileExists(atPath: configPath) else {
+            TaskScheduler.shared.unregisterInternalTask(named: "gen-articles")
+            debugLog("[GenArticles] Missing config: \(configPath)")
+            return
+        }
+
+        let mcp = ConfigManager.shared.config.mcp
+        var overrides = PythonScriptRunner.taskEnvironmentOverrides(
+            memoryServerURL: HTTP.localBaseURL(port: mcp?.port ?? 0),
+            excludeTags: mcp?.excludeTags.joined(separator: ",") ?? "",
+        )
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            overrides["UTILITY_VERSION"] = version
+        }
+        let cmd = PythonScriptRunner.shellCommand(
+            script: scriptPath,
+            arguments: ["--dir", PythonScriptRunner.shellQuote(dir)],
+            environmentOverrides: overrides,
+        )
+        let task = TaskConfig(
+            name: "gen-articles",
+            trigger: "",
+            exec: .sh(cmd),
+            enabled: true,
+            mode: .manual,
+        )
+        TaskScheduler.shared.registerInternalTask(task)
+        debugLog("[GenArticles] Manual task registered (dir: \(dir))")
     }
 
     private func registerAllHotkeys() {

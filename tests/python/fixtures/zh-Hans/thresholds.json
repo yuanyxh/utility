@@ -1,0 +1,16 @@
+{
+  "base_call_limit": 10,
+  "base_inline_per_1k": 70.0,
+  "base_hardcore_floor": 25,
+  "strict_call_limit": 6,
+  "strict_inline_per_1k": 50.0,
+  "strict_hardcore_floor": 45,
+  "strict_depth_floor": 2,
+  "colloquial_limit": 5,
+  "colloquial_warn": 3,
+  "min_han": 800,
+  "max_comments": 5,
+  "max_para": 200,
+  "uniform_cv": 0.2,
+  "inline_warn_per_1k": 35.0
+}

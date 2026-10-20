@@ -236,6 +236,12 @@ translation:
   # template file is used). Supports the {source} / {target} placeholders.
   prompt: ''
 
+# Article generation (built-in code; configuration stays in Gen_Articles).
+genArticles:
+  enabled: false
+  # Empty = ~/Documents/selfdata/notes/Gen_Articles; fixed reads <dir>/config.json
+  dir: ''
+
 # ---------- Knowledge panel ----------
 knowledge:
   enabled: true

@@ -36,6 +36,23 @@
 
 ---
 
+## Gen Articles（内置文章生成）
+
+- 代码固定在 `Sources/MCPScripts/gen_articles/`，入口 `gen_articles_run.py`；不再依赖外部 Python 代码。
+- utility 的 `genArticles.enabled` / `genArticles.dir` 只负责注册手动任务；生成参数固定读 `<dir>/config.json`。
+- 任务名 `gen-articles`，`mode: .manual`，菜单点击触发，不参与 cron。
+- 素材只取热层记忆（`memory_client.recall_hot`，Mino Brain `recall layers=["hot"]`）与 `<dir>/config.json` 指定的 `extractsDir`；过滤后不足 `material.minItems` 条直接 `review_required`。
+- 每次批次输出到 `<dir>/<outputDir>/<batch_id>/`，保留 `batch_summary.json`、`review_queue.json`、`run_manifest_*.json`、`events.jsonl`、`material_decisions.jsonl`；批次结束写 `<outputDir>/latest.json` 与 `latest.md`，`--latest` 可查看最近选中文章（旧批次无 latest 时回退扫描 `batch_item.json`）。
+- 选题历史写在 `<dir>/topic_history.json`，记录 topic/sources/sourceHashes/count/lastSeen；`cooldownDays` 控制同主题冷却，`material.sourceCooldownDays` 控制同来源降权，来源内容指纹变化允许同主题重访。
+- 配置示例：`Gen_Articles/config.json`；`gen_articles_run.py --dir` 必填，Python 侧不设个人目录默认值，默认目录只由 Swift `genArticles.dir` 提供。
+- **语言无关引擎 + 语言包**：引擎（`gen_articles/*.py`）不得内嵌中文规则或文案；`config.json.pack` 指向语言包目录，包内含 `pack.json`（句读/资产映射）、`lexicon.json`（正则/词表/AI 模板）、`thresholds.json`（阈值）、`texts.json`（material/review/report 文案）、`prompts/`、`SOUL.md`、`profiles/`、`anchors.json`。
+- `language` 必须与语言包 `id` 一致；语言包缺失或 id 不匹配时预检失败，**不得回退 zh-Hans**。新增语言 = 新增完整语言包。
+- 诊断只发稳定 `{code, message, params}`，消费方按 `code` 分支；禁止匹配文案。`review.json` 同时记录 `clean` 与 `codes`，批处理重试按 code 决策。
+- `material.md` / `review.md` / `report.md` / `latest.md` 跟 `config.json.language`；运行诊断固定英文。生成器文案只读语言包 `texts.json`，不再进入 utility 的 `Sources/Resources/*.json`。
+- 模块边界：`llm.py` 仅做 `llm_client` 适配；`candidate_ops.py` 统一候选 meta 记账；`textops.py` 放纯文本变换；`memory_client.py` 隔离记忆后端；`language_pack.py` 只依赖 `prompt_template.py`，不依赖 utility 的 `prompt_loader/l10n`。
+
+---
+
 ## 设计原则
 
 > 所有代码必须遵循。
