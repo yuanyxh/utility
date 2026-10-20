@@ -41,7 +41,9 @@
 - 代码固定在 `Sources/MCPScripts/gen_articles/`，入口 `gen_articles_run.py`；不再依赖外部 Python 代码。
 - utility 的 `genArticles.enabled` / `genArticles.dir` 只负责注册手动任务；生成参数固定读 `<dir>/config.json`。
 - 任务名 `gen-articles`，`mode: .manual`，菜单点击触发，不参与 cron。
-- 素材只取热层记忆（`memory_client.recall_hot`，Mino Brain `recall layers=["hot"]`）与 `<dir>/config.json` 指定的 `extractsDir`；过滤后不足 `material.minItems` 条直接 `review_required`。
+- 素材只取热层记忆（`memory_client.recall_hot`，Mino Brain `recall layers=["hot"]`）与 `<dir>/config.json` 指定的 `extractsDir`；按 `material.maxItems` / `maxCharsPerItem` / `maxTotalChars` 截断压缩，保留头尾与中段证据行，预算耗尽即停止；过滤后不足 `material.minItems` 条直接 `review_required`，原因看 `material_decisions.jsonl`。
+- 主题相关性先用词命中；中文长主题没有完整词命中时回退字符 bigram，避免抽象标题把来源全部过滤成 0。
+- Markdown/Mermaid 检查在 `markdown.py`：统计脚注、任务列表、图片、粗体/斜体/删除线；Mermaid 的节点数、最长路径、出度、分支、subgraph 阈值由语言包 `thresholds.json` 驱动；格式修复不得通过删图消除警告。
 - 每次批次输出到 `<dir>/<outputDir>/<batch_id>/`，保留 `batch_summary.json`、`review_queue.json`、`run_manifest_*.json`、`events.jsonl`、`material_decisions.jsonl`；批次结束写 `<outputDir>/latest.json` 与 `latest.md`，`--latest` 可查看最近选中文章（旧批次无 latest 时回退扫描 `batch_item.json`）。
 - 选题历史写在 `<dir>/topic_history.json`，记录 topic/sources/sourceHashes/count/lastSeen；`cooldownDays` 控制同主题冷却，`material.sourceCooldownDays` 控制同来源降权，来源内容指纹变化允许同主题重访。
 - 配置示例：`Gen_Articles/config.json`；`gen_articles_run.py --dir` 必填，Python 侧不设个人目录默认值，默认目录只由 Swift `genArticles.dir` 提供。
