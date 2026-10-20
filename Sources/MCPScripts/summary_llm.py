@@ -77,7 +77,7 @@ def _llm_chat(
         max_tokens=max_tokens,
         timeout=timeout if timeout is not None else SUMMARY_LLM_TIMEOUT,
         disable_thinking=disable_thinking,
-        # Reasoning models such as deepseek-v4-flash: on long prompts the thinking
+        # Reasoning models: on long prompts the thinking
         # eats up all of max_tokens, content ends up empty -> JSON parse failure
         # (AGGREGATE_JSON root cause), so disable thinking for aggregate/generate.
         # This is a **private field** of that provider (not an OpenAI protocol fact)

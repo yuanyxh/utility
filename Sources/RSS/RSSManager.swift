@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// RSS manager (GRDB)
-/// Headless design, for CLI and Hermes Agent invocation
+/// Headless design, for CLI and agent invocation
 public final class RSSManager {
     public static let shared = RSSManager()
     private var db: DatabaseQueue {

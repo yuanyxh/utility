@@ -1,6 +1,6 @@
 # 基础输入框组件封装 — 实现计划
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 封装一个自包含的可滚动多行输入框组件（ScrolledInputTextView），内置 NSScrollView + 内部 NSTextView，对外暴露统一的 clear/scroll/setCursor API。配套定义 InputViewStyle 样式结构体及 BorderStyle 类。
 
@@ -39,7 +39,7 @@ public final class BorderStyle {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && rm -rf .build && swift build
+cd "$(git rev-parse --show-toplevel)" && rm -rf .build && swift build
 ```
 
 预期：BUILD SUCCESS
@@ -151,7 +151,7 @@ public struct InputViewStyle {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build
+cd "$(git rev-parse --show-toplevel)" && swift build
 ```
 
 预期：BUILD SUCCESS
@@ -191,7 +191,7 @@ private final class InnerTextView: NSTextView {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build
+cd "$(git rev-parse --show-toplevel)" && swift build
 ```
 
 预期：InnerTextView 编译通过
@@ -365,7 +365,7 @@ public final class ScrolledInputTextView: NSView {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build
+cd "$(git rev-parse --show-toplevel)" && swift build
 ```
 
 预期：BUILD SUCCESS

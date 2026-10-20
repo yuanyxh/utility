@@ -1,6 +1,6 @@
 # Infotainer — 聚合信息服务 Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 实现可配置的信息聚合架构——支持 HTTP API 直调和任意脚本命令两种模式，用户可在 YAML 配置中定义数据源，自动拉取并展示在菜单栏「聚合信息」子菜单中。
 
@@ -46,7 +46,7 @@ infotainers:
   # 模式 A：HTTP 直调
   - name: DeepSeek
     request:
-      url: https://api.deepseek.com/v1/balance
+      url: https://api.example.com/v1/balance
       method: GET
       headers:
         Authorization: "Bearer sk-xxx"
@@ -733,7 +733,7 @@ infotainers: []
   # --- request 模式 ---
   # - name: DeepSeek
   #   request:
-  #     url: https://api.deepseek.com/v1/balance
+  #     url: https://api.example.com/v1/balance
   #     method: GET
   #     headers:
   #       Authorization: "Bearer sk-xxx"
@@ -771,7 +771,7 @@ infotainers: []
 **Step 1: Clean build**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build
 ```
 

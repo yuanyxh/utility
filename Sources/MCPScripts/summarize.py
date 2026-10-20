@@ -1177,7 +1177,7 @@ def _topical_related(g1: dict, g2: dict, kw1: list[str], kw2: list[str]) -> bool
 
     Measured calibration (2026-08-06, real 20 unprocessed memories -> 12 groups -> 4 hit targets):
     - same-family groups (e.g. the summarize.py quality-gate scheme / pendulum / 5bd2e21 /
-      placeholder list, all hitting the Hermes RSS note): keyword sets share >=1 topic word, Jaccard 0.07-0.15;
+      placeholder list, all hitting the same RSS note): keyword sets share >=1 topic word, Jaccard 0.07-0.15;
     - unrelated groups with the same target (e.g. the RSS daily read-marker convention vs the
       summarize family): 0 shared words, Jaccard=0;
     - whole-text SequenceMatcher ratio / char-bigram Jaccard overlap between within-family

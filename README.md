@@ -353,11 +353,11 @@ modelProxy:
   enabled: true
   port: 0
   providers:
-    - name: deepseek
-      url: "https://api.deepseek.com/anthropic"
+    - name: example
+      url: "https://api.example.com/anthropic"
       apiFormat: anthropic
       apiKey: "xxxx-xxxx-xxxx-xxxx"
-      models: [deepseek-flash]
+      models: [your-model]
 ```
 
 Set the agent's base URL to `http://localhost:[PORT]/open/v1`. `/open/v1` is a compatibility alias, `/v1` is the protocol-native entry.
@@ -638,14 +638,14 @@ Config lives in `~/.config/utility/config.yaml`, written with defaults on first 
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `ai.baseURL` | `""` | OpenAI-compatible endpoint host (e.g. `https://api.deepseek.com`) |
+| `ai.baseURL` | `""` | OpenAI-compatible endpoint host (e.g. `https://api.example.com`) |
 | `ai.apiKey` | `""` | API key; translation and the summary pipeline are unavailable without it |
-| `ai.model` | `""` | model name, e.g. `deepseek-v4-flash` |
+| `ai.model` | `""` | model name, e.g. `your-model` |
 | `ai.llmTimeout` | `120` | Python-side single LLM inference timeout, seconds; `0` or negative falls back to the default |
 
 ```yaml
-# DeepSeek
-ai: { baseURL: "https://api.deepseek.com", apiKey: "sk-your-key", model: "deepseek-v4-flash" }
+# Example provider
+ai: { baseURL: "https://api.example.com", apiKey: "sk-your-key", model: "your-model" }
 
 # OpenAI
 ai: { baseURL: "https://api.openai.com", apiKey: "sk-your-key", model: "gpt-4o-mini" }
@@ -717,7 +717,7 @@ xcrun stapler staple Utility-<version>.dmg
 | Proxy unreachable (`ECONNREFUSED`) | Proxy disabled, or wrong base URL | Set `modelProxy.enabled: true`; confirm `ANTHROPIC_BASE_URL` points at the proxy port |
 | OCR selects but returns nothing | Screen Recording not granted | System Settings → Privacy & Security → Screen Recording → enable Utility, restart |
 | Hotkeys do nothing | Accessibility not granted, or the combo is taken | Grant Accessibility, or rebind |
-| Gateway lists no third-party models | The client filters discovery to `claude*` | Type the model directly: `/model mimo-v2.5-pro` |
+| Gateway lists no third-party models | The client filters discovery to `claude*` | Type the model directly: `/model your-model` |
 | Memory service alive but requests time out | A stale process holds the port | Restart from the menu bar; `lsof -nP -iTCP -sTCP:LISTEN \| grep [PORT]` |
 | Upstream 502 out of nowhere | Proxy/upstream compression mismatch | Ensure the venv has Brotli/backports.zstd, restart the proxy |
 

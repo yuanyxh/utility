@@ -1,6 +1,6 @@
 # 三层封装重构方案 — 面向未来扩展
 
-> **For Hermes:** 使用 subagent-driven-development 逐任务实现，每任务 TDD 循环。
+> **For the agent:** 使用 subagent-driven-development 逐任务实现，每任务 TDD 循环。
 
 **目标:** 将 utility 中分散的 HTTP 请求、脚本执行、窗口定位三块逻辑封装为通用工具，消除 consumer 中的手写 URLRequest/Process/定位代码。
 
@@ -123,7 +123,7 @@ let resp = try await HTTP.request(.init(method: .post, url: url, body: jsonData,
 
 **Step 2: Build 验证**
 
-Run: `cd /Users/yuanyxh/Documents/it/project/utility && rm -rf .build && swift build 2>&1`
+Run: `cd "$(git rev-parse --show-toplevel)" && rm -rf .build && swift build 2>&1`
 Expected: Build succeeds.
 
 **不改:** OpenAIClient、AIChatService、Translator、SSEParser、RSSManager
@@ -206,7 +206,7 @@ public enum TaskExecutor {
 
 **Step 3: Build verification**
 
-Run: `cd /Users/yuanyxh/Documents/it/project/utility && rm -rf .build && swift build 2>&1`
+Run: `cd "$(git rev-parse --show-toplevel)" && rm -rf .build && swift build 2>&1`
 Expected: Build succeeds.
 
 **无需改动:** TaskScheduler（fireTask 已委托给 TaskExecutor）、TaskConfig 的 decoding 逻辑。
@@ -350,7 +350,7 @@ window?.setFrameOrigin(origin)
 
 **Step 5: Build verification**
 
-Run: `cd /Users/yuanyxh/Documents/it/project/utility && rm -rf .build && swift build 2>&1`
+Run: `cd "$(git rev-parse --show-toplevel)" && rm -rf .build && swift build 2>&1`
 Expected: Build succeeds.
 
 **验证改动进二进制：** `strings .build/debug/utility | grep "nearMouseQuadrant\|savedOrNearMouse\|screenCenter\|WindowPositioning"`

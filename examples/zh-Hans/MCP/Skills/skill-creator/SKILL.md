@@ -18,7 +18,7 @@ description: 当用户说：创建 skill, 新建 skill, 拉取 skill, 装个 ski
 
 - **无附属资源** → `[notes]/MCP/Skills/autonomous/<name>.md`（单个 .md）
 - **有附属资源** → `[notes]/MCP/Skills/<skill-dir>/SKILL.md`，附属放 `references/`、`scripts/`、`agents/`
-- `[notes]` = config `mcp.knowledgeBasePath`（默认 `~/Documents/selfdata/notes`）
+- `[notes]` = config `mcp.knowledgeBasePath`
 - 注册名取 SKILL.md frontmatter 的 `name`，**与目录名无关**
 
 ## 执行步骤

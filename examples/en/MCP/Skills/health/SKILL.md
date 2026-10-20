@@ -59,37 +59,26 @@ Pick one. Apply only that tier's requirements.
 
 ## Step 1: Collect data
 
-First fetch the collection scripts via tool_resource: `scripts/run-health.ps1` (Windows launcher) and `scripts/collect-data.sh` (Linux/macOS). Then run the collection script in summary mode (the blocks below execute the fetched scripts). Do not interpret yet. On Windows, use the Health-owned launcher so Git for Windows tools are added only to the Bash child process:
+First fetch the collection scripts via `tool_resource`: `scripts/run-health.ps1` (Windows launcher) and `scripts/collect-data.sh` (Linux/macOS). Then write the returned body to a temporary file and run it in summary mode. Do not interpret yet. On Windows, use the Health-owned launcher so Git for Windows tools are added only to the Bash child process:
 
 ```powershell
-$HEALTH_LAUNCHER = @(
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/run-health.ps1",
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/run-health.ps1"
-) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-if (-not $HEALTH_LAUNCHER) {
-  throw "Health launcher not found under the installed skill base; reinstall Waza."
-}
+$SCRIPT = [IO.Path]::ChangeExtension((New-TemporaryFile).FullName, ".ps1")
+# Write the tool_resource body for scripts/run-health.ps1 to $SCRIPT before this step.
 $POWERSHELL = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
-& "$POWERSHELL" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$HEALTH_LAUNCHER" collect
+& "$POWERSHELL" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT" collect
+Remove-Item -LiteralPath $SCRIPT -ErrorAction SilentlyContinue
 ```
 
 `-ExecutionPolicy Bypass` applies only to this PowerShell process; do not change
 the user's machine or account execution policy.
 
-On Linux and macOS, keep the direct Bash flow:
+On Linux and macOS:
 
 ```bash
-HEALTH_SCRIPT=""
-for candidate in \
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/collect-data.sh" \
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/collect-data.sh"; do
-  [ -f "$candidate" ] && HEALTH_SCRIPT="$candidate" && break
-done
-if [ ! -f "${HEALTH_SCRIPT:-}" ]; then
-  echo "health collect-data.sh not found under the installed skill base; reinstall Waza"
-  exit 1
-fi
-BASH_ENV= ENV= /bin/bash -p "$HEALTH_SCRIPT"
+SCRIPT="$(mktemp)"
+# Write the tool_resource body for scripts/collect-data.sh to "$SCRIPT" before this step.
+BASH_ENV= ENV= /bin/bash -p "$SCRIPT"
+rm -f "$SCRIPT"
 ```
 
 Sections may show `(unavailable)` when tools are missing:

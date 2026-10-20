@@ -321,11 +321,11 @@ modelProxy:
   enabled: true
   port: 0
   providers:
-    - name: deepseek
-      url: "https://api.deepseek.com/anthropic"
+    - name: example
+      url: "https://api.example.com/anthropic"
       apiFormat: anthropic
       apiKey: "xxxx-xxxx-xxxx-xxxx"
-      models: [deepseek-flash]
+      models: [your-model]
 ```
 
 将对应 Agent 的 base URL 配置为 `http://localhost:[PORT]/open/v1`。`/open/v1` 是兼容别名，`/v1` 是协议原生入口。
@@ -609,14 +609,14 @@ utility --dir ~/myapp -a claude
 
 | 配置项 | 默认 | 作用 |
 |---|---|---|
-| `ai.baseURL` | `""` | OpenAI 兼容端点 host(如 `https://api.deepseek.com`) |
+| `ai.baseURL` | `""` | OpenAI 兼容端点 host(如 `https://api.example.com`) |
 | `ai.apiKey` | `""` | API 密钥；缺失则翻译与总结管线不可用 |
-| `ai.model` | `""` | 模型名，如 `deepseek-v4-flash` |
+| `ai.model` | `""` | 模型名，如 `your-model` |
 | `ai.llmTimeout` | `120` | Python 侧单次 LLM 推理超时(秒)；`0` 或负值回退默认 |
 
 ```yaml
-# DeepSeek
-ai: { baseURL: "https://api.deepseek.com", apiKey: "sk-your-key", model: "deepseek-v4-flash" }
+# Example provider
+ai: { baseURL: "https://api.example.com", apiKey: "sk-your-key", model: "your-model" }
 
 # OpenAI
 ai: { baseURL: "https://api.openai.com", apiKey: "sk-your-key", model: "gpt-4o-mini" }
@@ -688,7 +688,7 @@ xcrun stapler staple Utility-<version>.dmg
 | 代理不可达(`ECONNREFUSED`) | 代理未启用或 base URL 不对 | 设 `modelProxy.enabled: true`；确认 `ANTHROPIC_BASE_URL` 指向代理端口 |
 | OCR 框选后无返回 | 未授予屏幕录制权限 | 系统设置 → 隐私与安全性 → 屏幕录制 → 启用 Utility 并重启 |
 | 快捷键无反应 | 未授予辅助功能权限，或组合被占用 | 授予辅助功能，或改绑定 |
-| 网关列不出第三方模型 | 客户端把发现结果过滤到 `claude*` | 直接输入模型名：`/model mimo-v2.5-pro` |
+| 网关列不出第三方模型 | 客户端把发现结果过滤到 `claude*` | 直接输入模型名：`/model your-model` |
 | 记忆服务活着但请求超时 | 陈旧进程占着端口 | 菜单栏重启；`lsof -nP -iTCP -sTCP:LISTEN \| grep [PORT]` |
 | 上游 502(来路不明) | 代理与上游压缩编码不匹配 | 确认 venv 装了 Brotli/backports.zstd，重启代理 |
 

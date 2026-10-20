@@ -1,6 +1,6 @@
 # AGENTS.md — Utility Project
 
-> 为 Hermes Agent 提供项目上下文、开发约定、内存数据参考。每次会话自动注入。
+> 为 Agent/CLI 提供项目上下文、开发约定、内存数据参考。每次会话自动注入。
 
 **必须基于事实而不是猜测**
 
@@ -213,7 +213,7 @@
 - **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
   - ⚠️ **只传 `reuseIfHealthy: false` 不够**（2026-09-21 修复）：**复用路径不设置 `process`**（保持 nil），`stopSync()` 的 `guard let proc = process` 因此直接 return，孤儿照常占着端口，新 spawn 仍旧绑定失败（uvicorn 报 `Errno 48` → exit 3），服务静默挂掉且不会自愈。现 `forceRestart()` 在 `process == nil`（即复用场景）时调 `terminatePortOccupant()` 按端口清理监听者。清理用 `/usr/sbin/lsof -ti:<port> -sTCP:LISTEN` —— **`-sTCP:LISTEN` 绝不能省**，不带时 `lsof -ti:<port>` 会连「连接该端口的客户端」一并返回（实测 8613 上返回正在走代理的 Clash Verge），照此 kill 即误杀。清理**只放在 `forceRestart()`，不进 `stopSync()`**——后者被 `stop()` 共用（app 退出 / 配置 disabled 两条路径），放进去会带来跨实例误杀
 - **崩溃判据必须覆盖非零退出码**（2026-09-21 修复）：原先只看 `reason == .uncaughtSignal`，而 Python 未捕获异常、端口绑定失败、外部 kill 都退化为 `.exit`（非零退出码被忽略）→ 被当作正常退出静默置 `.stopped`，永不重试也不通知，「崩溃自动重启」实际只对 SIGKILL/SIGSEGV 生效。现改为 `reason == .uncaughtSignal || terminationStatus != 0`（主动停止仍由 `isStopping` 提前 return，不会误触发重启）
-- server.py 所有配置从环境变量读取（`PythonScriptRunner.baseEnvironment()` 提供公共 AI/路径配置，脚本专属变量经 `environment(overrides:)` 注入——如 MCP_PORT/QDRANT_PATH/FASTEMBED_CACHE_PATH），实时构建，不解析 sys.argv
+- server.py 所有配置从环境变量读取（`PythonScriptRunner.baseEnvironment()` 提供公共 AI/路径配置，脚本专属变量经 `environment(overrides:)` 注入——如 MCP_PORT/QDRANT_PATH/FASTEMBED_CACHE_PATH），实时构建，不解析 sys.argv；`QDRANT_PATH` 必须由 Swift 注入，Python 侧不再提供个人路径默认值
 - 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
 - 工具参数默认值经 `MCP_TOOL_DEFAULTS` 注入（config `mcp.toolDefaults` → env → `tool_defaults.load_defaults()` 合并内置表，**同名覆盖**）。默认值与工具 schema 的 `default` 同源（都取自 `arg_default()`），改了需重启 MCP 服务才生效——脚本专属 env 不走 `config.py`，两侧 env 名由契约脚本交叉断言
 - skill 全文去重（`proxy_skill_dedup.py`，`modelProxy.skillDedupEnabled` → `MODEL_PROXY_SKILL_DEDUP`）：代理转发前把**逐字节相同**的 tool_result 文本第二份起换成 i18n 短提示、保留第一次——本项目 MCP skill 不是 Claude Code 原生 skill，吃不到官方那套去重。插入点在 `record_request_body` 之后、协议转换之前（记录层必须留原样，否则 `tool_output_log` 的度量标尺被自己毁掉）

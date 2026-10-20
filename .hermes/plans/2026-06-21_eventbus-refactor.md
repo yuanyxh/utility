@@ -1,6 +1,6 @@
 # utility EventBus 重构计划
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 引入 EventBus 发布订阅管理器解耦 utility 代码库中的单例交叉引用，遵循最小暴露原则，消除 class A 直接持有 class B 的硬依赖。
 
@@ -133,7 +133,7 @@ public final class EventBus {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build 2>&1 | tail -20
 ```
 
@@ -184,7 +184,7 @@ enum AppEvent: Hashable {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build 2>&1 | tail -20
 ```
 
@@ -337,7 +337,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build 2>&1 | tail -20
 ```
 
@@ -556,7 +556,7 @@ private init() {
 **Step 1: Clean build**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build 2>&1
 ```
 
@@ -573,7 +573,7 @@ Expected: 有输出（确认 EventBus 被链接进二进制）
 **Step 3: 搜索残留的 NotificationManager 直接调用**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 grep -rn "NotificationManager.shared" Sources/ --include="*.swift" | grep -v "Notification/NotificationManager.swift"
 ```
 

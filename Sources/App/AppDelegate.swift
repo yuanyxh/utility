@@ -209,9 +209,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             return
         }
 
-        let rawDir = cfg.dir.isEmpty
-            ? "~/Documents/selfdata/notes/Gen_Articles"
-            : cfg.dir
+        let rawDir = cfg.dir.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawDir.isEmpty else {
+            TaskScheduler.shared.unregisterInternalTask(named: "gen-articles")
+            debugLog("[GenArticles] dir is not configured")
+            return
+        }
         let dir = (rawDir as NSString).expandingTildeInPath
         let configPath = (dir as NSString).appendingPathComponent("config.json")
         guard FileManager.default.fileExists(atPath: configPath) else {

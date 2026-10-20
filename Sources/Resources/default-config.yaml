@@ -33,7 +33,7 @@ ai:
   baseURL: ''
   # API key
   apiKey: ''
-  # Model name, e.g. deepseek-v4-flash / gpt-4o-mini
+  # Model name, e.g. your-model
   model: ''
   # Single-shot LLM inference timeout in seconds; 0 or negative = use the default
   # (Swift `ConfigDefaults.llmTimeout`). Applies to the three LLM call sites on the
@@ -58,12 +58,12 @@ modelProxy:
   # The notice language follows general.language (shared catalog: zh-Hans / en).
   skillDedupEnabled: true
   # Append one line at the end of the response showing what the proxy rewrote this round,
-  # e.g. `mimo-v2.5 | 上下文 12.0 万 | 已执行: Bash 过滤/Skill 短提示`. Added only to final
+  # e.g. `your-model | context 120K | applied: shell filter / skill short notice`. Added only to final
   # text replies, not to tool-call turns.
   responseAnnotationEnabled: true
   # That line also reports the context size and, past this many tokens, suggests starting a
-  # new session (0 = never suggest). 300000 is where the measured reply latency on this
-  # machine starts to climb: below it 1.5-1.8s, 35万+ 2.1s, 40万+ 3.3s.
+  # new session (0 = never suggest). 300000 is an empirical threshold where reply latency
+  # starts to climb; tune it for the actual model and machine.
   contextWarnTokens: 300000
   # Shell tool output slimming: trim head/tail of overlong output (with a self-evident
   # marker) + lossless JSON minify. Only applies to shell-like tools — Read/Edit etc.
@@ -93,19 +93,14 @@ modelProxy:
   # (the upstream model uses its models[0]).
   # apiFormat: anthropic | openai; protocol conversion is applied when the client format differs.
   # apiKey: provider key substituted when forwarding; if empty, the client key is passed through.
-  providers:
-    - name: deepseek
-      url: 'https://api.deepseek.com/anthropic'
-      apiFormat: anthropic
-      apiKey: ''
-      models:
-        - deepseek-v4-flash
-    - name: mimo
-      url: 'https://api.xiaomimimo.com/anthropic'
-      apiFormat: anthropic
-      apiKey: ''
-      models:
-        - mimo-v2.5-pro
+  providers: []
+  # Example:
+  #   - name: example
+  #     url: 'https://api.example.com/anthropic'
+  #     apiFormat: anthropic
+  #     apiKey: ''
+  #     models:
+  #       - your-model
 
   # Client allowlist: which clients get the thinking-disabled speedup for classifier
   # (safety classification) requests. Client identity is not a protocol fact, so it is not
@@ -137,7 +132,7 @@ mcp:
   # Local MCP service port; 0 = auto-detect a free port
   port: 0
 
-  # Data storage paths (empty string = use the defaults ~/.utility/data/ and ~/.utility/notes/)
+  # Data storage paths (empty string = use the defaults ~/.config/utility/data/ and ~/.config/utility/notes/)
   qdrantPath: ''
   knowledgeBasePath: ''
 
@@ -239,7 +234,7 @@ translation:
 # Article generation (built-in code; configuration stays in Gen_Articles).
 genArticles:
   enabled: false
-  # Empty = ~/Documents/selfdata/notes/Gen_Articles; fixed reads <dir>/config.json
+  # Required: directory containing config.json (absolute or ~ path)
   dir: ''
 
 # ---------- Knowledge panel ----------

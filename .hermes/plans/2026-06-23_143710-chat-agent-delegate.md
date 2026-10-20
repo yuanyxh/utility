@@ -1,8 +1,8 @@
 # Chat 面板 Agent 委托 Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Chat 面板支持 `@agentname` 前缀语法，将 prompt 委托给外部 CLI agent（Hermes/Claude Code/Codex/OpenCode），复用其 tools/skills/mcp/记忆。默认无前缀走现有 AIChatService，向后兼容。
+**Goal:** Chat 面板支持 `@agentname` 前缀语法，将 prompt 委托给外部 CLI agent（如 Claude Code/Codex/OpenCode），复用其 tools/skills/mcp/记忆。默认无前缀走现有 AIChatService，向后兼容。
 
 **Architecture:**
 
@@ -270,7 +270,7 @@ agents: []
 **Step 1: Clean build**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility
+cd "$(git rev-parse --show-toplevel)"
 rm -rf .build && swift build
 ```
 

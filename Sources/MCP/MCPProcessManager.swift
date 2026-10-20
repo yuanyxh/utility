@@ -82,7 +82,7 @@ final class MCPProcessManager {
 
         // MCP path config (empty string = use the default path)
         if let mcp = mcpConfig {
-            // Empty string = use the default path ~/.utility/data/qdrant/
+            // Empty string = use the default path ~/.config/utility/data/qdrant/
             let qdrantPath: String = if mcp.qdrantPath.isEmpty {
                 AppPaths.configDir
                     .appendingPathComponent("data/qdrant").path

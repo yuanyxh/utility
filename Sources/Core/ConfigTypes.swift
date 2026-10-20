@@ -66,7 +66,7 @@ public struct MCPConfig: Codable {
     /// Local MCP service port, 0 = auto-detect an available port
     var port: Int = 0
 
-    // Data storage paths (empty string = not configured, derived under ~/.utility/)
+    // Data storage paths (empty string = not configured, derived under ~/.config/utility/)
     var qdrantPath: String = ""
     var knowledgeBasePath: String = ""
 
@@ -199,7 +199,7 @@ public enum ProxyAPIFormat: String, Codable {
     case openai
 }
 
-/// A single upstream provider (deepseek/mimo, etc.). The model name list is what the /model selector
+/// A single upstream provider. The model name list is what the /model selector
 /// offers (an exact match on body.model routes to this provider).
 public struct ProviderConfig: Codable {
     var name: String = ""
@@ -553,7 +553,7 @@ public struct KnowledgeConfig: Codable {
 /// 文章生成只内置代码；配置层固定读取 `<dir>/config.json`。
 public struct GenArticlesConfig: Codable {
     var enabled: Bool = false
-    /// Empty = ~/Documents/selfdata/notes/Gen_Articles
+    /// Required: directory containing config.json (absolute or ~ path)
     var dir: String = ""
 
     public init() {}

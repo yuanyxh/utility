@@ -1,6 +1,6 @@
 # 面板/热键统一管理重构计划
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 用栈结构统一管理所有面板生命周期和键盘事件派发，实现隔离的独立弹出/关闭，支持面板间互调。
 
@@ -91,7 +91,7 @@ protocol PanelProtocol: AnyObject {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 预期: `Build complete!`（仅有协议定义，不会破坏现有代码）
@@ -201,7 +201,7 @@ public final class PanelManager {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 **Step 3: 提交**
@@ -266,7 +266,7 @@ final class KeyDispatcher {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 **Step 3: 提交**
@@ -377,7 +377,7 @@ extension TranslationPanelController: PanelProtocol {
 **Step 5: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 **Step 6: 提交**
@@ -507,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 **Step 3: 提交**
@@ -545,7 +545,7 @@ if let translation = PanelManager.shared.panel(id: "translation") {
 **Step 1: 编译验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 **Step 2: 提交**（如无额外代码变更则跳过）

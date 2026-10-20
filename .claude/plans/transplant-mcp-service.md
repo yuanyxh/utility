@@ -159,8 +159,8 @@ mcp:
   port: 9001
 
   # 数据存储路径
-  qdrantPath: "~/Documents/selfdata/qdrant_data"
-  knowledgeBasePath: "~/Documents/selfdata/notes"
+  qdrantPath: "~/.config/utility/data/qdrant"
+  knowledgeBasePath: "~/.config/utility/notes"
 
   # fastembed 模型缓存
   fastembedCacheDir: "~/.cache/fastembed_cache"
@@ -251,8 +251,8 @@ stopped → initializing → running
               ├─ 重启服务
               ├─ ──────
               ├─ 数据路径…
-              │   ├─ Qdrant: ~/Documents/selfdata/qdrant_data
-              │   ├─ 知识库:   ~/Documents/selfdata/notes
+              │   ├─ Qdrant: ~/.config/utility/data/qdrant
+              │   ├─ 知识库:   ~/.config/utility/notes
               │   └─ 模型缓存: ~/.cache/fastembed_cache
               └─ 更多信息…
 ```
@@ -298,13 +298,13 @@ App 启动
 Utility 启动 `server.py` 时传入环境变量（映射自 config.yaml）：
 
 ```
-QDRANT_PATH=~/Documents/selfdata/qdrant_data
-KNOWLEDGE_BASE_PATH=~/Documents/selfdata/notes
+QDRANT_PATH=~/.config/utility/data/qdrant
+KNOWLEDGE_BASE_PATH=~/.config/utility/notes
 FASTEMBED_CACHE_DIR=~/.cache/fastembed_cache
 EMBEDDER_MODEL=sentence-transformers/all-MiniLM-L6-v2
-DEEPSEEK_API_KEY=sk-xxx
-SUMMARY_MODEL=deepseek-v4-flash
-SUMMARY_API_URL=https://api.deepseek.com
+AI_API_KEY=sk-xxx
+SUMMARY_MODEL=your-model
+SUMMARY_API_URL=https://api.example.com
 SUMMARY_TEMPERATURE=0.1
 MCP_PORT=9001
 ```
@@ -483,7 +483,7 @@ MCP Tool 通过 `dbPath` 参数直接连接项目数据库，不存全局状态�
 ```json
 {
   "query": "date format",
-  "dbPath": "/Users/yuanyxh/proj/.utility/deps.sqlite"
+  "dbPath": "<project>/.utility/deps.sqlite"
 }
 ```
 

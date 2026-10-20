@@ -1,6 +1,6 @@
 # Task Executor + Notification Manager 实现方案
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 为 Utility 菜单栏 app 添加任务调度执行器和统一通知管理，支持 cron 定时触发多种执行类型，任务失败时自动推送异常通知。
 

@@ -50,7 +50,7 @@ enum AppPaths {
 enum UDKey {
     static let translationPanelOrigin = "translation_panel_origin"
     /// 上次自动弹出知识面板的时刻。存 UserDefaults 而非内存：否则 app 重启后判定归零,
-    /// 又要重新等满一个间隔,而这台机器上重载配置与休眠足够频繁,等不满就永远不弹。
+    /// 又要重新等满一个间隔,而重载配置与休眠较频繁时,等不满就永远不弹。
     static let knowledgeLastAutoShow = "knowledge_last_auto_show"
 }
 

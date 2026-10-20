@@ -1,6 +1,6 @@
 # 菜单栏网速监控 实施计划
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For the agent:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** 在 Utility 菜单栏用自定义 NSView 上下两行显示实时网速（上行↑ / 下行↓），不保留图标
 
@@ -146,7 +146,7 @@ final class NetworkSpeedMonitor {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -5
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -5
 ```
 
 Expected: `Build complete!`
@@ -318,7 +318,7 @@ private final class NetworkSpeedView: NSView {
 **Step 2: Build 验证**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && swift build 2>&1 | tail -10
+cd "$(git rev-parse --show-toplevel)" && swift build 2>&1 | tail -10
 ```
 
 Expected: `Build complete!`
@@ -332,7 +332,7 @@ Expected: `Build complete!`
 **Step 1: Clean build**
 
 ```bash
-cd /Users/yuanyxh/Documents/it/project/utility && rm -rf .build && swift build 2>&1 | tail -10
+cd "$(git rev-parse --show-toplevel)" && rm -rf .build && swift build 2>&1 | tail -10
 ```
 
 **Step 2: 检查符号**

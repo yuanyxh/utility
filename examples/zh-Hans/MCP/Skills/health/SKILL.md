@@ -59,36 +59,25 @@ description: 当用户说：检查 claude, 检查 codex, 检查 pi, Codex 配置
 
 ## 步骤 1：采集数据
 
-先通过 tool_resource 获取采集脚本：`scripts/run-health.ps1`（Windows 启动器）与 `scripts/collect-data.sh`（Linux/macOS）。然后在摘要模式下运行采集脚本（下面的代码块执行取回的脚本）。此时不要做解读。在 Windows 上，使用 Health 自有的启动器，以便 Git for Windows 的工具只被加入 Bash 子进程：
+先通过 `tool_resource` 获取采集脚本：`scripts/run-health.ps1`（Windows 启动器）与 `scripts/collect-data.sh`（Linux/macOS）。然后把返回内容写入临时文件，在摘要模式下运行。此时不要做解读。在 Windows 上，使用 Health 自有的启动器，以便 Git for Windows 的工具只被加入 Bash 子进程：
 
 ```powershell
-$HEALTH_LAUNCHER = @(
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/run-health.ps1",
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/run-health.ps1"
-) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-if (-not $HEALTH_LAUNCHER) {
-  throw "Health launcher not found under the installed skill base; reinstall Waza."
-}
+$SCRIPT = [IO.Path]::ChangeExtension((New-TemporaryFile).FullName, ".ps1")
+# 执行前先把 tool_resource 返回的 scripts/run-health.ps1 内容写入 $SCRIPT。
 $POWERSHELL = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
-& "$POWERSHELL" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$HEALTH_LAUNCHER" collect
+& "$POWERSHELL" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT" collect
+Remove-Item -LiteralPath $SCRIPT -ErrorAction SilentlyContinue
 ```
 
 `-ExecutionPolicy Bypass` 仅作用于这个 PowerShell 进程；不要更改用户机器或账户的执行策略。
 
-在 Linux 与 macOS 上，保留直接的 Bash 流程：
+在 Linux 与 macOS 上：
 
 ```bash
-HEALTH_SCRIPT=""
-for candidate in \
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/collect-data.sh" \
-  "/Users/yuanyxh/Documents/selfdata/notes/MCP/Skills/health/scripts/collect-data.sh"; do
-  [ -f "$candidate" ] && HEALTH_SCRIPT="$candidate" && break
-done
-if [ ! -f "${HEALTH_SCRIPT:-}" ]; then
-  echo "health collect-data.sh not found under the installed skill base; reinstall Waza"
-  exit 1
-fi
-BASH_ENV= ENV= /bin/bash -p "$HEALTH_SCRIPT"
+SCRIPT="$(mktemp)"
+# 执行前先把 tool_resource 返回的 scripts/collect-data.sh 内容写入 "$SCRIPT"。
+BASH_ENV= ENV= /bin/bash -p "$SCRIPT"
+rm -f "$SCRIPT"
 ```
 
 当工具缺失时，各节可能显示 `(unavailable)`：

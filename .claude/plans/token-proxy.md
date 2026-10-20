@@ -2,7 +2,7 @@
 
 ## 背景
 
-Claude Code 的 token 消耗完全不可见：sessions/*.jsonl 无 usage 字段，/cost 仅当前会话有效，第三方代理 api.xiaomimimo.com 无仪表盘。需要自建本地 HTTP 代理拦截每次 API 请求的 usage 数据，同时记录丰富的请求上下文作为 prompt 优化数据源。
+Claude Code 的 token 消耗完全不可见：sessions/*.jsonl 无 usage 字段，/cost 仅当前会话有效，第三方代理 api.example.com 无仪表盘。需要自建本地 HTTP 代理拦截每次 API 请求的 usage 数据，同时记录丰富的请求上下文作为 prompt 优化数据源。
 
 ## 架构
 
@@ -10,7 +10,7 @@ Claude Code 的 token 消耗完全不可见：sessions/*.jsonl 无 usage 字段�
 Claude Code
     ↓ ANTHROPIC_BASE_URL=http://localhost:8080/v1
 token_proxy.py (aiohttp, utility 主进程守护)
-    ├── 转发请求 → api.xiaomimimo.com（或配置的 modelProxy.url）
+    ├── 转发请求 → api.example.com（或配置的 modelProxy.url）
     ├── 智能解析 usage 字段（首次用主模型识别路径并缓存，取不到时刷新）
     ├── 记录请求上下文（类型、输入预览、输出预览、有效性）
     ├── 写入 SQLite（队列串行化，不阻塞转发）
@@ -144,8 +144,8 @@ DELETE FROM api_usage WHERE timestamp < datetime('now', '-3 months');
 输出到 `~/.cache/utility/token_proxy.log`，JSON Lines 格式：
 
 ```json
-{"ts": "2026-07-27T10:00:00", "level": "INFO", "msg": "proxy_request", "method": "POST", "path": "/v1/messages", "status": 200, "latency_ms": 1234, "model": "mimo-v2.5-pro", "input_tokens": 5432, "output_tokens": 256}
-{"ts": "2026-07-27T10:00:01", "level": "WARNING", "msg": "usage_parse_fallback", "model": "mimo-v2.5-pro", "reason": "cached_path_returned_none", "refreshed": true}
+{"ts": "2026-07-27T10:00:00", "level": "INFO", "msg": "proxy_request", "method": "POST", "path": "/v1/messages", "status": 200, "latency_ms": 1234, "model": "<model>", "input_tokens": 5432, "output_tokens": 256}
+{"ts": "2026-07-27T10:00:01", "level": "WARNING", "msg": "usage_parse_fallback", "model": "<model>", "reason": "cached_path_returned_none", "refreshed": true}
 {"ts": "2026-07-27T10:00:02", "level": "ERROR", "msg": "proxy_error", "path": "/v1/messages", "status": 502, "error": "upstream_timeout"}
 ```
 
@@ -371,8 +371,8 @@ logger.info(json.dumps({"msg": "proxy_request", "path": "/v1/messages", "status"
 
 迁移完成后，旧位置的日志文件可手动删除：
 ```
-rm ~/Documents/selfdata/notes/logs/server.log*
-rm ~/Documents/selfdata/notes/logs/summarize.log*
+rm ~/.config/utility/notes/logs/server.log*
+rm ~/.config/utility/notes/logs/summarize.log*
 ```
 
 ## 验证方式
@@ -387,5 +387,5 @@ rm ~/Documents/selfdata/notes/logs/summarize.log*
 8. 等待 3 个月后验证过期数据自动清理
 9. 启动 MCP（server.py），确认 `~/.cache/utility/server.log` 有日志输出
 10. 运行 summarize.py，确认 `~/.cache/utility/summarize.log` 有日志输出
-11. 确认旧日志路径 `~/Documents/selfdata/notes/logs/` 不再有新写入
+11. 确认旧日志路径 `~/.config/utility/notes/logs/` 不再有新写入
 12. 确认无进程因 pipe buffer 死锁卡死（无 StreamHandler）

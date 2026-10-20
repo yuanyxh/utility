@@ -21,9 +21,11 @@ COLD_COLLECTION = "knowledge_base"
 
 # Paths and note-scan settings shared by server.py (cold client, lock cleanup)
 # and server_memory.py (hot-layer config, notes search).
-QDRANT_PATH = os.environ.get(
-    "QDRANT_PATH", os.path.expanduser("~/Documents/selfdata/database/qdrant_data")
-)
+QDRANT_PATH = os.environ.get("QDRANT_PATH", "").strip()
+if not QDRANT_PATH:
+    raise RuntimeError(
+        "QDRANT_PATH is required; Swift injects it for app-launched processes"
+    )
 MEM0_QDRANT_PATH = os.path.join(QDRANT_PATH, "mem0")
 
 NOTES_DIR = notes_dir()

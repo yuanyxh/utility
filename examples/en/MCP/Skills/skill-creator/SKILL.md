@@ -18,7 +18,7 @@ Turn an external or self-authored skill into one that is **registrable in this p
 
 - **No affiliated resources** → `[notes]/MCP/Skills/autonomous/<name>.md` (a single .md)
 - **Has affiliated resources** → `[notes]/MCP/Skills/<skill-dir>/SKILL.md`, with affiliated files placed under `references/`, `scripts/`, `agents/`
-- `[notes]` = config `mcp.knowledgeBasePath` (default `~/Documents/selfdata/notes`)
+- `[notes]` = config `mcp.knowledgeBasePath`
 - The registered name is taken from the `name` field of the SKILL.md frontmatter, and is **independent of the directory name**
 
 ## Steps

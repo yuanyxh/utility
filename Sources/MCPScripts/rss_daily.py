@@ -82,7 +82,10 @@ def output_root(cfg: dict) -> Path:
     if configured:
         return Path(configured).expanduser()
     notes = os.environ.get("NOTES_DIR", "").strip()
-    base = Path(notes).expanduser() if notes else Path.home() / "Documents" / "notes"
+    base = (
+        Path(notes).expanduser() if notes
+        else Path.home() / ".config" / "utility" / "notes"
+    )
     return base / "RSS"
 
 
