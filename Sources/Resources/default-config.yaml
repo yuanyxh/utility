@@ -168,14 +168,14 @@ mcp:
   # used by full-text search such as project_search.
   # **Incremental** semantics — same key overrides a built-in, new keys append; write only
   # what you want to add, no need to copy the whole built-in table (it lives in
-  # Sources/MCPScripts/synonyms.py). Restart the MCP service for changes to take effect.
+  # Sources/MCPScripts/utility/core/synonyms.py). Restart the MCP service for changes to take effect.
   synonyms: {}
     # 部署: "deploy release publish"
     # 请求: "request http call"
 
   # Tool argument defaults: tool name -> args name -> value. **Incremental** semantics —
   # same name overrides a built-in; write only what you want to change (the built-in table
-  # is in Sources/MCPScripts/tool_defaults.py). These defaults directly decide how much each
+  # is in Sources/MCPScripts/utility/core/tool_defaults.py). These defaults directly decide how much each
   # tool call returns (token cost). Restart the MCP service for changes to take effect.
   toolDefaults:
     recall:

@@ -83,15 +83,23 @@ SWIFT = os.path.join(SOURCES, "MCP", "TokenProxyManager.swift")
 SCRIPTS = os.path.join(SOURCES, "MCPScripts")
 CONSTANTS = os.path.join(SOURCES, "Core", "Constants.swift")
 MCP_MANAGER = os.path.join(SOURCES, "MCP", "MCPProcessManager.swift")
-CONFIG_PY = os.path.join(SCRIPTS, "config.py")
-SERVER_PY = os.path.join(SCRIPTS, "server.py")
-TOOL_SCHEMA_PY = os.path.join(SCRIPTS, "server_tool_schema.py")
-SYNONYMS_PY = os.path.join(SCRIPTS, "synonyms.py")
-TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "tool_defaults.py")
-OUTPUT_FILTER_PY = os.path.join(SCRIPTS, "proxy_output_filter.py")
-RESPONSE_NOTE_PY = os.path.join(SCRIPTS, "proxy_response_note.py")
-TOOL_TEXT_PY = os.path.join(SCRIPTS, "tool_text.py")
-TOKEN_PROXY_PY = os.path.join(SCRIPTS, "token_proxy.py")
+CONFIG_PY = os.path.join(SCRIPTS, "utility", "core", "config.py")
+SERVER_PY = os.path.join(SCRIPTS, "utility", "services", "mcp", "server.py")
+TOOL_SCHEMA_PY = os.path.join(
+    SCRIPTS, "utility", "services", "mcp", "server_tool_schema.py"
+)
+SYNONYMS_PY = os.path.join(SCRIPTS, "utility", "core", "synonyms.py")
+TOOL_DEFAULTS_PY = os.path.join(SCRIPTS, "utility", "core", "tool_defaults.py")
+OUTPUT_FILTER_PY = os.path.join(
+    SCRIPTS, "utility", "services", "proxy", "proxy_output_filter.py"
+)
+RESPONSE_NOTE_PY = os.path.join(
+    SCRIPTS, "utility", "services", "proxy", "proxy_response_note.py"
+)
+TOOL_TEXT_PY = os.path.join(SCRIPTS, "utility", "core", "tool_text.py")
+TOKEN_PROXY_PY = os.path.join(
+    SCRIPTS, "utility", "services", "proxy", "token_proxy.py"
+)
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
 PROMPT_MANAGER = os.path.join(SOURCES, "Core", "PromptManager.swift")
@@ -1484,12 +1492,12 @@ def main() -> int:
     _reexec_with_venv()
     sys.path.insert(0, SCRIPTS)
     try:
-        from proxy_client import (
+        from utility.services.proxy.proxy_client import (
             ACCEL_CLIENT_KEYS,
             ACCEL_CONTRACT_KEYS,
             CLIENT_TEXT_CONTRACT_KEYS,
         )
-        from proxy_provider import (
+        from utility.services.proxy.proxy_provider import (
             KEY_API_FORMAT,
             KEY_API_KEY,
             KEY_MODELS,
@@ -1498,14 +1506,14 @@ def main() -> int:
         )
 
         # The prompt group's criterion comes from the production parser itself, avoiding "the checker and the runtime parser not being from the same source"
-        from prompt_loader import (
+        from utility.core.prompt_loader import (
             FALLBACK_LANG as PY_FALLBACK_LANG,
             parse_template as parse_prompt_template,
         )
 
         # The parameter-description table is fixed English and lives in tool_text
-        from l10n import BASELINE_LANG as PY_L10N_BASELINE
-        from tool_text import PARAM_DESCRIPTIONS as PY_PARAM_TEXT
+        from utility.core.l10n import BASELINE_LANG as PY_L10N_BASELINE
+        from utility.core.tool_text import PARAM_DESCRIPTIONS as PY_PARAM_TEXT
     except Exception as e:  # an import failure means the Python side is already broken, which likewise must not be silent
         print(
             f"[contract] failed to import the Python contracts: {type(e).__name__}: {e}"

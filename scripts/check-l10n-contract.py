@@ -33,8 +33,8 @@ PY_SOURCES = os.path.join(ROOT, "Sources", "MCPScripts")
 GEN = os.path.join(ROOT, "scripts", "gen-l10n.py")
 L10N_RUNTIME = os.path.join(SWIFT_SOURCES, "Core", "L10n.swift")
 L10N_KEYS = os.path.join(SWIFT_SOURCES, "Core", "L10nKeys.swift")
-PY_RUNTIME = os.path.join(PY_SOURCES, "l10n.py")
-PY_CATALOG = os.path.join(PY_SOURCES, "l10n_catalog.py")
+PY_RUNTIME = os.path.join(PY_SOURCES, "utility", "core", "l10n.py")
+PY_CATALOG = os.path.join(PY_SOURCES, "utility", "core", "l10n_catalog.py")
 
 BASELINE = "zh-Hans"
 LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")

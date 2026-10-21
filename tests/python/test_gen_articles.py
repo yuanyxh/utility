@@ -8,21 +8,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Sources" / "MCPScripts"))
 
-from gen_articles import runtime
-from gen_articles.config import ConfigError, load, validate
-from gen_articles.language_pack import LanguagePack, PackError
-from gen_articles.generate import _material_count
-from gen_articles.production import _scan_latest, _write_latest
-from gen_articles.markdown import format_report
-from gen_articles.material import (
+from utility.articles import runtime
+from utility.articles.config import ConfigError, load, validate
+from utility.articles.language_pack import LanguagePack, PackError
+from utility.articles.generate import _material_count
+from utility.articles.production import _scan_latest, _write_latest
+from utility.articles.markdown import format_report
+from utility.articles.material import (
     _shrink_content,
     filter_items,
     render_markdown,
     topic_relevance,
 )
-from gen_articles.lint import lint_text
-from gen_articles.sources import _extract_items, _sections
-from gen_articles.topics import (
+from utility.articles.lint import lint_text
+from utility.articles.sources import _extract_items, _sections
+from utility.articles.topics import (
     _valid_topic,
     load_existing_topics,
     record_topics,
@@ -95,7 +95,7 @@ class ConfigTest(unittest.TestCase):
             self.assertTrue(text.startswith("# Material: T"))
 
     def test_review_and_report_follow_language(self):
-        from gen_articles.review import _review
+        from utility.articles.review import _review
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -201,7 +201,7 @@ class LanguagePackTest(unittest.TestCase):
                 LanguagePack(root / "packs/zh-Hans")
 
     def test_pack_texts_cover_engine_keys(self):
-        engine = Path(__file__).parents[2] / "Sources/MCPScripts/gen_articles"
+        engine = Path(__file__).parents[2] / "Sources/MCPScripts/utility/articles"
         used = set()
         for path in sorted(engine.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -215,14 +215,14 @@ class LanguagePackTest(unittest.TestCase):
                     and isinstance(node.args[0].value, str)
                 ):
                     used.add(node.args[0].value)
-        from gen_articles.review import REVIEW_ACTIONS
+        from utility.articles.review import REVIEW_ACTIONS
 
         used.update(REVIEW_ACTIONS.values())
         texts = json.loads((FIXTURE_PACK / "texts.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(used - set(texts)), [])
 
     def test_engine_has_no_cjk_string_literals(self):
-        engine = Path(__file__).parents[2] / "Sources/MCPScripts/gen_articles"
+        engine = Path(__file__).parents[2] / "Sources/MCPScripts/utility/articles"
         offenders = []
         for path in sorted(engine.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))

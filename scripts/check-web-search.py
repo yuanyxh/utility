@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks for Sources/MCPScripts/web_search.py.
+"""Checks for Sources/MCPScripts/utility/services/search/web_search.py.
 
 Default is offline: parser fixtures, Markdown conversion, truncation, relevance,
 rate limiting, and the engine circuit breaker. `--live` additionally hits the real
@@ -17,8 +17,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "Sources", "MCPScripts"))
 
-import web_search as w
-
+from utility.services.search import web_search as w
 FAILS: list[str] = []
 
 

@@ -92,12 +92,12 @@ public struct MCPConfig: Codable {
     var excludeTags: [String] = []
 
     /// Retrieval synonym extension table (**incremental**: same name overrides built-in, new name appends).
-    /// The built-in table lives in `Sources/MCPScripts/synonyms.py`; only the user-customized part goes here —
+    /// The built-in table lives in `Sources/MCPScripts/utility/core/synonyms.py`; only the user-customized part goes here —
     /// what users edit should be "add a few words", not maintaining a full copy of the built-in table.
     var synonyms: [String: String] = [:]
 
     /// Tool argument defaults (tool name → args name → default value, **incremental**: same name overrides built-in).
-    /// The built-in table lives in `Sources/MCPScripts/tool_defaults.py`; these defaults directly determine each
+    /// The built-in table lives in `Sources/MCPScripts/utility/core/tool_defaults.py`; these defaults directly determine each
     /// tool call's return volume, i.e. token consumption, hence exposed as configuration rather than a code constant.
     var toolDefaults: [String: [String: Int]] = [:]
 

@@ -26,10 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Sources" / "MCPScr
 from aiohttp import web  # noqa: E402
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
-import proxy_protocol  # noqa: E402
-import proxy_response_note  # noqa: E402
-import proxy_usage  # noqa: E402
-import token_proxy  # noqa: E402
+from utility.services.proxy import (  # noqa: E402
+    proxy_protocol,
+    proxy_response_note,
+    proxy_usage,
+    token_proxy,
+)
 
 
 class _FakeUpstream:

@@ -30,6 +30,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 
 | 模块 | 文档 |
 |---|---|
+| Python 层目录约定 / 入口 shim / import 规则 | `.claude/docs/architecture/python-layout.md` |
 | 面板 / EventBus / 热键 / Stage / OCR / 内存诊断 | `.claude/docs/architecture/panel-ui.md` |
 | 符号提取 Scanner | `.claude/docs/architecture/scanner.md` |
 | PythonScriptRunner / PythonDaemon / 日志 | `.claude/docs/architecture/python-runtime.md` |

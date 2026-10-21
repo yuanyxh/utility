@@ -38,7 +38,7 @@
 
 ## Gen Articles（内置文章生成）
 
-- 代码固定在 `Sources/MCPScripts/gen_articles/`，入口 `gen_articles_run.py`；不再依赖外部 Python 代码。
+- 代码固定在 `Sources/MCPScripts/utility/articles/`，入口 shim `gen_articles_run.py`；不再依赖外部 Python 代码。
 - utility 的 `genArticles.enabled` / `genArticles.dir` 只负责注册手动任务；生成参数固定读 `<dir>/config.json`。
 - 任务名 `gen-articles`，`mode: .manual`，菜单点击触发，不参与 cron。
 - 素材只取热层记忆（`memory_client.recall_hot`，Mino Brain `recall layers=["hot"]`）与 `<dir>/config.json` 指定的 `extractsDir`；按 `material.maxItems` / `maxCharsPerItem` / `maxTotalChars` 截断压缩，保留头尾与中段证据行，预算耗尽即停止；过滤后不足 `material.minItems` 条直接 `review_required`，原因看 `material_decisions.jsonl`。
@@ -207,7 +207,7 @@
 - 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报；LLM 未配置时退出码 1，不写空日报
 
 ### MCP 服务
-- server.py / summarize.py / token_proxy.py 在 `Sources/MCPScripts/` 目录，脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
+- server.py / summarize.py / token_proxy.py 的入口 shim 在 `Sources/MCPScripts/` 根目录，实现在 `utility/services/{mcp,summarize,proxy}/`；脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
 - server.py 只保留入口 / HTTP endpoints / 项目与网页工具；记忆子系统在 `server_memory.py`，工具 schema 在 `server_tool_schema.py`，归档在 `server_archive.py`，技能扫描在 `server_skills.py`，共享常量/状态/工具在 `server_constants.py` / `server_state.py` / `server_utils.py`。`hot_memory` / `qdrant` 一律经 `server_state` 存取，禁止再引入模块级全局
 - `token_proxy.handle_proxy` 只做编排：`_prepare_request` → `_apply_rewrites` → `_forward`，共享字段放在 `_ProxyState`
 - 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
@@ -321,7 +321,7 @@
 **根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（`PythonDaemon`，重构前为 MCPProcessManager 内联逻辑）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
 
 **修复**：
-- `Sources/MCPScripts/server.py` / `summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
+- `Sources/MCPScripts/utility/services/mcp/server.py` / `utility/services/summarize/summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
 - `Sources/MCP/PythonDaemon.swift`：就绪信号检测通过后继续读取 pipe 并丢弃数据（双重保险）
 
 **症状识别**：

@@ -4,7 +4,7 @@
 The JSON files are the only source of truth. This script validates them and writes:
 
 - Sources/Core/L10nKeys.swift        (Swift accessors, all namespaces except PYTHON_NAMESPACES)
-- Sources/MCPScripts/l10n_catalog.py (Python catalog, PYTHON_NAMESPACES only)
+- Sources/MCPScripts/utility/core/l10n_catalog.py (Python catalog, PYTHON_NAMESPACES only)
 
 Run with --check to verify the checked-in files are current (CI / packaging).
 """
@@ -21,7 +21,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(ROOT, "Sources", "Resources")
 SWIFT_OUT = os.path.join(ROOT, "Sources", "Core", "L10nKeys.swift")
-PY_OUT = os.path.join(ROOT, "Sources", "MCPScripts", "l10n_catalog.py")
+PY_OUT = os.path.join(
+    ROOT, "Sources", "MCPScripts", "utility", "core", "l10n_catalog.py"
+)
 
 BASELINE_LANG = "zh-Hans"
 LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")

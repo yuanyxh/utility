@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Sources" / "MCPScripts"))
 
-import rss_render  # noqa: E402
+from utility.services.rss import rss_render  # noqa: E402
 
 
 class NormalizeUrlTests(unittest.TestCase):
