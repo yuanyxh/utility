@@ -81,6 +81,7 @@ def check_symbol_cache_key(tmp: str) -> None:
     print("\nA. Symbol cache key (symbol_embeddings)")
 
     from utility.services.mcp import server_search as S
+
     db = os.path.join(tmp, "symbols.sqlite")
     conn = _new_symbol_db(db)
     _insert(conn, "func alpha()")
@@ -193,6 +194,7 @@ def check_symbol_cache_key(tmp: str) -> None:
 def check_note_cache_freshness(tmp: str) -> None:
     """B. Note cache invalidation decision invariant."""
     from utility.services.mcp import server_search as S
+
     root = os.path.join(tmp, "notes_project")
     deep = os.path.join(root, "deep", "nested")
     os.makedirs(deep, exist_ok=True)

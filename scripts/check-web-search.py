@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "Sources", "MCPScripts"))
 
 from utility.services.search import web_search as w
+
 FAILS: list[str] = []
 
 

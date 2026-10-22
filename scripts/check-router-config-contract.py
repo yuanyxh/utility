@@ -97,9 +97,7 @@ RESPONSE_NOTE_PY = os.path.join(
     SCRIPTS, "utility", "services", "proxy", "proxy_response_note.py"
 )
 TOOL_TEXT_PY = os.path.join(SCRIPTS, "utility", "core", "tool_text.py")
-TOKEN_PROXY_PY = os.path.join(
-    SCRIPTS, "utility", "services", "proxy", "token_proxy.py"
-)
+TOKEN_PROXY_PY = os.path.join(SCRIPTS, "utility", "services", "proxy", "token_proxy.py")
 RESOURCES = os.path.join(SOURCES, "Resources")
 PROMPTS = os.path.join(SCRIPTS, "prompts")
 PROMPT_MANAGER = os.path.join(SOURCES, "Core", "PromptManager.swift")

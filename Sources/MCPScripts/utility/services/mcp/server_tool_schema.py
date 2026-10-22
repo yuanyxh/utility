@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from mcp.types import Tool
 
-from utility.services.mcp.server_search import DEFAULT_PROJECT_SEARCH_LIMIT, DEFAULT_PROJECT_STRUCTURE_LIMIT
+from utility.services.mcp.server_search import (
+    DEFAULT_PROJECT_SEARCH_LIMIT,
+    DEFAULT_PROJECT_STRUCTURE_LIMIT,
+)
 from utility.services.mcp.server_skills import scan_skills
 from utility.core.tool_defaults import arg_default
 from utility.core.tool_text import param_text

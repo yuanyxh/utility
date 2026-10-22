@@ -21,7 +21,10 @@ from utility.core.config import ui_language
 from utility.core.db import conn as dbconn
 from utility.core.log_utils import setup_logging
 from utility.services.proxy.proxy_client import load_client_accel, matches_accel_client
-from utility.services.proxy.proxy_output_filter import OUTPUT_FILTER_ENV_KEY, filter_tool_outputs
+from utility.services.proxy.proxy_output_filter import (
+    OUTPUT_FILTER_ENV_KEY,
+    filter_tool_outputs,
+)
 from utility.services.proxy.proxy_protocol import (
     OpenAIToAnthropicStream,
     ProtocolConverter,
@@ -33,7 +36,11 @@ from utility.services.proxy.proxy_protocol import (
     _inject_system_prompt,
     _is_classifier_candidate,
 )
-from utility.services.proxy.proxy_provider import api_format_of, api_key_of, missing_keys
+from utility.services.proxy.proxy_provider import (
+    api_format_of,
+    api_key_of,
+    missing_keys,
+)
 from utility.services.proxy.proxy_response_note import (
     RESPONSE_NOTE_ENV_KEY,
     NoteBodyBuffer,
