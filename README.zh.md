@@ -302,7 +302,7 @@ flowchart LR
     direction LR
     m1["记忆 · 知识库"] --> m2["产出"] --> m3["沉淀"] --> m4["消费"]
     m4 --> m2
-    m4 -.-> m5["…文章生成 / 经验总结"]
+    m4 -.-> m5["…经验总结"]
   end
   agent --> p1
   agent --> m1

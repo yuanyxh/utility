@@ -334,7 +334,7 @@ flowchart LR
     direction LR
     m1["memory · knowledge base"] --> m2["produce"] --> m3["sediment"] --> m4["consume"]
     m4 --> m2
-    m4 -.-> m5["…article generation / experience summary"]
+    m4 -.-> m5["…experience summary"]
   end
   agent --> p1
   agent --> m1

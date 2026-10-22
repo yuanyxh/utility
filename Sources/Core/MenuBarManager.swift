@@ -379,10 +379,6 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         MCPProcessManager.shared.forceRestart()
     }
 
-    private func taskTitle(_ task: TaskConfig) -> String {
-        task.name == "gen-articles" ? L10n.Menu.genArticles : task.name
-    }
-
     private func refreshTasksItem() {
         let configTasks = ConfigManager.shared.config.tasks
         let internalTasks = TaskScheduler.shared.internalTasks
@@ -391,7 +387,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         for task in configTasks {
             let item = NSMenuItem(
-                title: taskTitle(task),
+                title: task.name,
                 action: task.enabled ? #selector(taskTrigger(_:)) : nil,
                 keyEquivalent: "",
             )
@@ -408,7 +404,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         for task in internalTasks {
             let item = NSMenuItem(
-                title: taskTitle(task),
+                title: task.name,
                 action: task.enabled ? #selector(taskTrigger(_:)) : nil,
                 keyEquivalent: "",
             )
