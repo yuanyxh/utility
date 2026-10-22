@@ -45,27 +45,31 @@ final class KnowledgeStore {
 
     // MARK: - 读
 
-    /// 展示次数未达上限的卡。补货判据必须用它，不能按池总量判断：卡被看过仍是 `pool`，
-    /// 按总量判断会永远「充足」，池子只轮转不换血（实测两天反复看到同 8 张）。
-    func freshCount(kind: String, maxShown: Int) -> Int {
+    /// 从未展示过的卡。补货判据必须用它：旧卡即使允许复习，也不能掩盖需要补新卡的事实。
+    func unseenCount(kind: String) -> Int {
         guard let queue else { return 0 }
         do {
             return try queue.read { db in
                 try Int.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = 'pool' AND shown_count < ?",
-                    arguments: [kind, maxShown],
+                    sql: "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = 'pool' AND shown_count = 0",
+                    arguments: [kind],
                 ) ?? 0
             }
         } catch {
-            debugLog("[Knowledge] freshCount(\(kind)) 失败: \(error)")
+            debugLog("[Knowledge] unseenCount(\(kind)) 失败: \(error)")
             return 0
         }
     }
 
     /// 取一张池中卡片并累加 `shown_count`：读与写放**同一个写事务**，免得跨进程时自锁。
-    /// 没有 `shown` 状态是刻意的 —— 自动关闭的卡只排到轮转尾部，下次还会出现而非被静默烧掉。
-    func nextCard(kind: String, excludingTopic: Int64? = nil) -> KnowledgeCard? {
+    /// 默认只取从未展示的卡；`showReviewed` 为 true 时才回退到旧卡。
+    func nextCard(
+        kind: String,
+        excludingTopic: Int64? = nil,
+        showReviewed: Bool = false,
+        maxShown: Int = 2,
+    ) -> KnowledgeCard? {
         guard let queue else { return nil }
         do {
             return try queue.write { db -> KnowledgeCard? in
@@ -78,9 +82,13 @@ final class KnowledgeStore {
                     sql += " AND (topic_id IS NULL OR topic_id != ?)"
                     args.append(excludingTopic)
                 }
-                // 没显示过的优先 → 显示过的按最久远优先 → 再按生成顺序 FIFO
-                // （主线卡片按 1→2→3 生成，FIFO 才读得出先后）
-                sql += " ORDER BY (last_shown_at IS NOT NULL) ASC, last_shown_at ASC, id ASC LIMIT 1"
+                if showReviewed {
+                    sql += " AND shown_count < ?"
+                    args.append(max(1, maxShown))
+                    sql += " ORDER BY (shown_count > 0) ASC, last_shown_at ASC, id ASC LIMIT 1"
+                } else {
+                    sql += " AND shown_count = 0 ORDER BY id ASC LIMIT 1"
+                }
 
                 guard let row = try Row.fetchOne(db, sql: sql, arguments: StatementArguments(args)) else {
                     return nil
@@ -118,27 +126,6 @@ final class KnowledgeStore {
             return true
         } catch {
             debugLog("[Knowledge] markStatus(\(cardID) -> \(status)) 失败: \(error)")
-            return false
-        }
-    }
-
-    /// 「设为主题」：幂等写入 `topics`（唯一索引在 `lower(name)` 上），并把该卡标为 promoted。
-    @discardableResult
-    func promoteToTopic(card: KnowledgeCard) -> Bool {
-        guard let queue else { return false }
-        let now = Self.iso8601()
-        do {
-            try queue.write { db in
-                try db.execute(sql: """
-                INSERT OR IGNORE INTO topics (name, kind, status, position, created_at, updated_at)
-                VALUES (?, ?, 'active', (SELECT COALESCE(MAX(position), -1) + 1 FROM topics), ?, ?)
-                """, arguments: [card.title, card.topicKind.isEmpty ? "principle" : card.topicKind, now, now])
-                try db.execute(sql: "UPDATE cards SET status = 'promoted' WHERE id = ?",
-                               arguments: [card.id])
-            }
-            return true
-        } catch {
-            debugLog("[Knowledge] promoteToTopic(\(card.id)) 失败: \(error)")
             return false
         }
     }

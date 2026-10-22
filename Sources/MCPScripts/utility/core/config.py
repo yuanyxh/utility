@@ -179,29 +179,14 @@ def note_extensions(default: tuple[str, ...] = ()) -> tuple[str, ...]:
     return tuple(out) or tuple(default)
 
 
-def knowledge_domains() -> list:
-    """碎片领域池种子（JSON 数组）。"""
-    return _json_list(get("KNOWLEDGE_DOMAINS", ""))
-
-
 def knowledge_topics() -> list[dict]:
     """主题种子（JSON 数组，元素 {name, kind}）。"""
     return [t for t in _json_list(get("KNOWLEDGE_TOPICS", "")) if isinstance(t, dict)]
 
 
-def knowledge_topic_target(default: int = 3) -> int:
+def knowledge_topic_target(default: int = 5) -> int:
     return _int(get("KNOWLEDGE_TOPIC_TARGET", ""), default)
-
-
-def knowledge_fragment_target(default: int = 5) -> int:
-    return _int(get("KNOWLEDGE_FRAGMENT_TARGET", ""), default)
 
 
 def knowledge_max_fail_streak(default: int = 3) -> int:
     return _int(get("KNOWLEDGE_MAX_FAIL_STREAK", ""), default)
-
-
-def knowledge_max_shown(default: int = 2) -> int:
-    """一张卡展示多少次后不再算「新鲜」；非正值回退默认（0 = 未配置）。"""
-    value = _int(get("KNOWLEDGE_MAX_SHOWN", ""), default)
-    return value if value > 0 else default

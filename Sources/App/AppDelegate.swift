@@ -206,7 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         hotkeyManager.register(hotkey: config.knowledge.hotkey, id: "know") { [weak self] in
             guard let self else { return }
-            EventBus.shared.publish(PanelEvent.requestShow, payload: knowledgePanel)
+            let event = knowledgePanel.isPanelVisible ? PanelEvent.requestClose : PanelEvent.requestShow
+            EventBus.shared.publish(event, payload: knowledgePanel)
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in

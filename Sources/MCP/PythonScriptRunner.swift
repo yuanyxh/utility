@@ -177,9 +177,6 @@ enum PythonScriptRunner {
     static func knowledgeEnvironment() -> [String: String] {
         var env: [String: String] = [:]
         let knowledge = ConfigManager.shared.config.knowledge
-        if let json = encodeJSON(knowledge.domains) {
-            env[EnvKeys.knowledgeDomains] = json
-        }
         if !knowledge.topics.isEmpty {
             let seeds = knowledge.topics.map { ["name": $0.name, "kind": $0.kind] }
             if let json = encodeJSON(seeds) {
@@ -187,9 +184,7 @@ enum PythonScriptRunner {
             }
         }
         env[EnvKeys.knowledgeTopicTarget] = String(knowledge.poolTargetTopic)
-        env[EnvKeys.knowledgeFragmentTarget] = String(knowledge.poolTargetFragment)
         env[EnvKeys.knowledgeMaxFailStreak] = String(knowledge.maxFailStreak)
-        env[EnvKeys.knowledgeMaxShown] = String(knowledge.maxShownPerCard)
         return env
     }
 

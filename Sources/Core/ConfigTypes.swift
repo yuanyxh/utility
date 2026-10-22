@@ -501,7 +501,7 @@ public struct TranslationConfig: Codable {
 
 // MARK: - Knowledge
 
-/// 主题种子。`kind` 取 `principle` / `trend`，与 `fragments.kind` 同域。
+/// 主题种子。`kind` 取 `principle` / `trend`。
 public struct KnowledgeTopicSeed: Codable {
     var name: String = ""
     var kind: String = "principle"
@@ -520,12 +520,14 @@ public struct KnowledgeConfig: Codable {
     var autoShowEnabled: Bool = true
     var autoShowIntervalMinutes: Int = 120
     var autoCloseSeconds: Int = 25
-    var poolTargetTopic: Int = 3
-    var poolTargetFragment: Int = 5
+    var poolTargetTopic: Int = 5
     var maxFailStreak: Int = 3
     var maxShownPerCard: Int = 2
     var hotkey: String = "option+k"
-    var domains: [String] = []
+    var saveLikedMarkdown: Bool = true
+    /// Empty = `<mcp.knowledgeBasePath>/知识卡片` (or the default notes dir).
+    var likedSaveDir: String = ""
+    var showReviewedCards: Bool = false
     var topics: [KnowledgeTopicSeed] = []
 
     public init() {}
@@ -536,12 +538,13 @@ public struct KnowledgeConfig: Codable {
         autoShowEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoShowEnabled) ?? true
         autoShowIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .autoShowIntervalMinutes) ?? 120
         autoCloseSeconds = try c.decodeIfPresent(Int.self, forKey: .autoCloseSeconds) ?? 25
-        poolTargetTopic = try c.decodeIfPresent(Int.self, forKey: .poolTargetTopic) ?? 3
-        poolTargetFragment = try c.decodeIfPresent(Int.self, forKey: .poolTargetFragment) ?? 5
+        poolTargetTopic = try c.decodeIfPresent(Int.self, forKey: .poolTargetTopic) ?? 5
         maxFailStreak = try c.decodeIfPresent(Int.self, forKey: .maxFailStreak) ?? 3
         maxShownPerCard = try c.decodeIfPresent(Int.self, forKey: .maxShownPerCard) ?? 2
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+k"
-        domains = try c.decodeIfPresent([String].self, forKey: .domains) ?? []
+        saveLikedMarkdown = try c.decodeIfPresent(Bool.self, forKey: .saveLikedMarkdown) ?? true
+        likedSaveDir = try c.decodeIfPresent(String.self, forKey: .likedSaveDir) ?? ""
+        showReviewedCards = try c.decodeIfPresent(Bool.self, forKey: .showReviewedCards) ?? false
         topics = try c.decodeIfPresent([KnowledgeTopicSeed].self, forKey: .topics) ?? []
     }
 }

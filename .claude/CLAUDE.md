@@ -94,7 +94,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 
 ### 知识面板
 - 补货**不能走 TaskScheduler**（sub-daily cron 会静默退化成每天一次），用 `KnowledgeService` 自建 Timer
-- 补货判据必须是**新鲜卡**（Python `fresh_count` / Swift `freshCount`），两侧同源 `knowledge.maxShownPerCard`；按池总量判断会让补货在 while 入口空转
+- 补货判据必须是**未读卡**（`shown_count = 0`，Python `unseen_count` / Swift `unseenCount`）；旧卡只在 `knowledge.showReviewedCards = true` 时回退，且受 `maxShownPerCard` 限制
+- 点赞只标记并停留当前卡，不禁跳下一张；`saveLikedMarkdown` 为真时同步保存 Markdown
 - `runCaptureOutput` 必须显式传 `environment:`，否则 GUI 进程没有 `AI_API_KEY`
 - 知识库 schema 唯一所有者是 `knowledge_pool.py`，Swift 只做裸 SQL、绝不建表；两侧都要 WAL + busy timeout
 - Markdown 必须逐 run 把 intent 翻成字体/段落样式；表格或解析失败降级纯文本

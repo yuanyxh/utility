@@ -254,7 +254,7 @@ tasks:
 
 ### Knowledge panel
 
-Cards are generated in the background from web sources and shown on a timer. The point is to widen what you run into, not to quiz you on what you already know. Two tabs share one pool: **Topics** (a main line of concepts pushed in order) and **Snippets** (short, unordered cards from a rotating list of domains).
+Cards are generated in the background from web sources and shown on a timer. The point is to widen what you run into, not to quiz you on what you already know. The panel follows one topic line, pushing concepts in order; it only shows cards you have never seen unless reviewed cards are enabled.
 
 Every card is fetched, written and then self-checked against its sources before it enters the pool, so opening the panel is instant.
 
@@ -262,10 +262,9 @@ Every card is fetched, written and then self-checked against its sources before 
 
 | Action | Effect |
 |---|---|
-| `option+k` | open the panel |
+| `option+k` | show or hide the panel |
 | Known / Dislike | drop the card and move to the next one |
-| Like | mark the card and move on |
-| Make topic | add the card's concept as a new topic line |
+| Like | mark the card, stay on it, and optionally save it as Markdown |
 | Copy | copy the card as Markdown, sources included |
 
 **Settings**
@@ -277,11 +276,13 @@ Every card is fetched, written and then self-checked against its sources before 
 | `knowledge.autoShowEnabled` | `true` | auto-pop the panel on a timer |
 | `knowledge.autoShowIntervalMinutes` | `120` | how often it pops |
 | `knowledge.autoCloseSeconds` | `25` | auto-close after this many seconds once the panel loses focus; `0` = never |
-| `knowledge.poolTargetTopic` / `poolTargetFragment` | `3` / `5` | refill only when fresh cards (shown fewer than `maxShownPerCard` times) drop below this |
-| `knowledge.maxShownPerCard` | `2` | a card stops counting as "fresh" after this many displays |
+| `knowledge.poolTargetTopic` | `5` | refill until this many unseen cards exist |
+| `knowledge.maxShownPerCard` | `2` | review cap per card when reviewed cards are enabled |
 | `knowledge.maxFailStreak` | `3` | a topic with N dry runs in a row is marked done |
-| `knowledge.hotkey` | `option+k` | opens the panel |
-| `knowledge.domains` | built-in list | snippet sources, rotated through |
+| `knowledge.hotkey` | `option+k` | shows or hides the panel |
+| `knowledge.saveLikedMarkdown` | `true` | save the current card when Like is clicked |
+| `knowledge.likedSaveDir` | empty | Markdown output directory; empty = `<mcp.knowledgeBasePath>/知识卡片` |
+| `knowledge.showReviewedCards` | `false` | allow old cards after unseen cards run out |
 | `knowledge.topics` | built-in list | topic lines (`kind`: `principle` or `trend`) |
 
 ### Network monitor

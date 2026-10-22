@@ -1,5 +1,9 @@
 import Cocoa
 
+extension Notification.Name {
+    static let knowledgeNeedsRefill = Notification.Name("knowledgeNeedsRefill")
+}
+
 /// 知识面板的调度：后台补货 + 定时自动弹。
 /// **必须自建 Timer**：TaskScheduler 的 `handleMissed()` 以「今天 00:00 后第一个 cron 点」为基准，
 /// 任何 sub-daily 的 cron 都会静默退化成每天一次。两个 timer 的间隔都只是节拍:补货看池容量、自动弹出看上次弹出时刻。
@@ -22,13 +26,6 @@ final class KnowledgeService: NSObject {
     /// 自动弹出的 timer 只当**唤醒节拍**:真正的开关是「距上次弹出是否已过 autoShowIntervalMinutes」。
     /// 拿间隔本身当节拍会退化成「连续运行时长」,被重载/重启/休眠反复归零(实测一天 12 次 rearm,60 分钟从未凑齐)
     private static let autoShowBeatSeconds: TimeInterval = 60
-    /// 一张卡展示满这么多次后不再算「新鲜」。必须与 Python 补货侧同源（`KNOWLEDGE_MAX_SHOWN`）；
-    /// 两侧判据不一致时 Swift 认为池空、Python 认为池满，补货会在 while 入口直接 break。
-    private var maxShownPerCard: Int {
-        let value = ConfigManager.shared.config.knowledge.maxShownPerCard
-        return value > 0 ? value : 2
-    }
-
     var isRefillRunning: Bool {
         refillLock.lock()
         defer { refillLock.unlock() }
@@ -41,19 +38,12 @@ final class KnowledgeService: NSObject {
         let summary = lastSummary
         let at = lastRefillAt
         refillLock.unlock()
-        let topics = KnowledgeStore.shared.freshCount(
-            kind: KnowledgePanelController.kindTopic, maxShown: maxShownPerCard,
-        )
-        let fragments = KnowledgeStore.shared.freshCount(
-            kind: KnowledgePanelController.kindFragment, maxShown: maxShownPerCard,
-        )
+        let topics = KnowledgeStore.shared.unseenCount(kind: KnowledgePanelController.kindTopic)
         let stamp = at.map { Self.timeFormatter.string(from: $0) } ?? "-"
         return summary.isEmpty
-            ? L10n.Knowledge.statusNew(
-                topics: topics, fragments: fragments, stamp: stamp,
-            )
+            ? L10n.Knowledge.statusNew(topics: topics, stamp: stamp)
             : L10n.Knowledge.statusNewSummary(
-                topics: topics, fragments: fragments, stamp: stamp, summary: summary,
+                topics: topics, stamp: stamp, summary: summary,
             )
     }
 
@@ -75,12 +65,17 @@ final class KnowledgeService: NSObject {
 
     deinit {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - 生命周期
 
     func start() {
         installWakeObserver()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onNeedsRefill),
+            name: .knowledgeNeedsRefill, object: nil,
+        )
         rearm()
         // 首启时池是空的,但立刻起子进程会和 app 启动抢资源,延后一轮唤醒再补
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
@@ -151,6 +146,11 @@ final class KnowledgeService: NSObject {
 
     // MARK: - 补货
 
+    @objc private func onNeedsRefill() {
+        guard ConfigManager.shared.config.knowledge.enabled else { return }
+        launchRefill()
+    }
+
     @objc private func refillTick() {
         let knowledge = ConfigManager.shared.config.knowledge
         guard knowledge.enabled else { return }
@@ -163,16 +163,9 @@ final class KnowledgeService: NSObject {
             return
         }
 
-        let topics = KnowledgeStore.shared.freshCount(
-            kind: KnowledgePanelController.kindTopic, maxShown: maxShownPerCard,
-        )
-        let fragments = KnowledgeStore.shared.freshCount(
-            kind: KnowledgePanelController.kindFragment, maxShown: maxShownPerCard,
-        )
-        guard topics < knowledge.poolTargetTopic || fragments < knowledge.poolTargetFragment else {
-            // 「内容一直重复」的第一嫌疑就是这里 —— 没有这条时,日志里连「跳过过」都看不到
-            debugLog("[Knowledge] 补货节拍跳过: 新鲜卡充足 topics=\(topics)/\(knowledge.poolTargetTopic)"
-                + " fragments=\(fragments)/\(knowledge.poolTargetFragment)")
+        let topics = KnowledgeStore.shared.unseenCount(kind: KnowledgePanelController.kindTopic)
+        guard topics < knowledge.poolTargetTopic else {
+            debugLog("[Knowledge] 补货节拍跳过: 未读卡充足 unseen=\(topics)/\(knowledge.poolTargetTopic)")
             return
         }
         launchRefill()

@@ -93,14 +93,9 @@ enum EnvKeys {
     /// Knowledge panel seeds (JSON arrays) and pool budgets (numbers), from `knowledge.*`.
     /// Consumed by `knowledge_refill.py`; when the seeds are missing the Python side reads empty lists
     /// and the pool stays empty without a single error.
-    static let knowledgeDomains = "KNOWLEDGE_DOMAINS"
     static let knowledgeTopics = "KNOWLEDGE_TOPICS"
     static let knowledgeTopicTarget = "KNOWLEDGE_TOPIC_TARGET"
-    static let knowledgeFragmentTarget = "KNOWLEDGE_FRAGMENT_TARGET"
     static let knowledgeMaxFailStreak = "KNOWLEDGE_MAX_FAIL_STREAK"
-    /// 一张卡展示多少次后不再算「新鲜」。Swift 显示侧与 Python 补货侧必须同值，
-    /// 否则「Swift 认为池空、Python 认为池满」会让补货静默变成空转。
-    static let knowledgeMaxShown = "KNOWLEDGE_MAX_SHOWN"
 
     /// Note scanning rules (JSON arrays), from `mcp.noteExcludeDirs` / `mcp.noteExtensions`.
     /// Both the MCP service and the scheduled summary read them, so they need two injection points.

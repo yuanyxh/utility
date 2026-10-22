@@ -25,10 +25,8 @@ ST_POOL = "pool"
 ST_KNOWN = "known"  # 已知 → 移除
 ST_LIKED = "liked"
 ST_DISLIKED = "disliked"
-ST_PROMOTED = "promoted"  # 已「设为主题」
 
 KIND_TOPIC = "topic"
-KIND_FRAGMENT = "fragment"
 
 
 def db_path() -> str:
@@ -72,18 +70,6 @@ def init_db() -> str:
             );
             CREATE UNIQUE INDEX IF NOT EXISTS uq_concepts_topic_seq ON concepts(topic_id, seq);
 
-            CREATE TABLE IF NOT EXISTS fragments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                domain TEXT NOT NULL,
-                kind TEXT NOT NULL DEFAULT 'principle',
-                use_count INTEGER NOT NULL DEFAULT 0,
-                last_used_at TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_fragments_domain ON fragments(domain);
-            CREATE INDEX IF NOT EXISTS idx_fragments_pick ON fragments(enabled, last_used_at);
-
             CREATE TABLE IF NOT EXISTS cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
@@ -126,26 +112,29 @@ def pool_count(kind: str) -> int:
     return row[0] if row else 0
 
 
-def fresh_count(kind: str, max_shown: int) -> int:
-    """展示次数未达上限的池中卡数量，与 Swift `KnowledgeStore.freshCount` 同口径。
+def unseen_count(kind: str) -> int:
+    """从未展示过的池中卡数量，与 Swift `KnowledgeStore.unseenCount` 同口径。
 
-    补货判据必须用它而不是 `pool_count`：卡被看过仍是 `pool`，按总量判断会永远「充足」，
-    补货每轮都在循环入口 break、一次 LLM 都不调（实测 13:51 后连续 9 轮 made=0），
-    池子只轮转不换血，面板反复显示同一批旧卡。
+    补货判据只能用「未展示」：旧卡即使允许复习，也不能掩盖需要补新卡的事实。
     """
     with dbconn(db_path()) as conn:
         row = conn.execute(
-            "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = ? AND shown_count < ?",
-            (kind, ST_POOL, max_shown),
+            "SELECT COUNT(*) FROM cards WHERE kind = ? AND status = ? AND shown_count = 0",
+            (kind, ST_POOL),
         ).fetchone()
     return row[0] if row else 0
 
 
-def next_card(kind: str, excluding_topic: int | None = None) -> dict | None:
+def next_card(
+    kind: str,
+    excluding_topic: int | None = None,
+    show_reviewed: bool = False,
+    max_shown: int = 2,
+) -> dict | None:
     """取一张池中卡片并累加 shown_count。读与写在同一事务内，避免自锁。
 
-    排序：没显示过的优先 → 显示过的按最久远优先 → 再按生成顺序 FIFO
-    （主线卡片按 1→2→3 生成，FIFO 才能让读者按顺序读到）。
+    默认只取从未展示的卡；`show_reviewed=True` 时才回退到旧卡，且旧卡仍按
+    最久远优先。复习上限由 `max_shown` 控制。
     """
     sql = (
         "SELECT id, kind, title, subtitle, theme, topic_kind, body, evidence,"
@@ -156,9 +145,12 @@ def next_card(kind: str, excluding_topic: int | None = None) -> dict | None:
     if excluding_topic is not None:
         sql += " AND (topic_id IS NULL OR topic_id != ?)"
         args.append(excluding_topic)
-    sql += (
-        " ORDER BY (last_shown_at IS NOT NULL) ASC, last_shown_at ASC, id ASC LIMIT 1"
-    )
+    if show_reviewed:
+        sql += " AND shown_count < ?"
+        args.append(max(1, max_shown))
+        sql += " ORDER BY (shown_count > 0) ASC, last_shown_at ASC, id ASC LIMIT 1"
+    else:
+        sql += " AND shown_count = 0 ORDER BY id ASC LIMIT 1"
     with dbconn(db_path()) as conn:
         row = conn.execute(sql, args).fetchone()
         if row is None:
@@ -211,20 +203,6 @@ def insert_card(
 def mark_status(card_id: int, status: str) -> None:
     with dbconn(db_path()) as conn:
         conn.execute("UPDATE cards SET status = ? WHERE id = ?", (status, card_id))
-
-
-def promote_to_topic(card: dict) -> None:
-    """「设为主题」：幂等写入 topics（按 lower(name) 去重），并把卡片标为 promoted。"""
-    now = _now()
-    with dbconn(db_path()) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO topics (name, kind, status, position, created_at, updated_at)"
-            " VALUES (?, ?, 'active', (SELECT COALESCE(MAX(position), -1) + 1 FROM topics), ?, ?)",
-            (card["title"], card.get("topic_kind") or "principle", now, now),
-        )
-        conn.execute(
-            "UPDATE cards SET status = ? WHERE id = ?", (ST_PROMOTED, card["id"])
-        )
 
 
 # ---------- 主题 ----------
@@ -370,62 +348,15 @@ def mark_topic_done(topic_id: int) -> None:
         )
 
 
-# ---------- 碎片领域池 ----------
-
-
-def pick_fragment_domain() -> dict | None:
-    """轮转抽取：没用过的优先 → 用得最久远的其次 → 其余随机。"""
-    with dbconn(db_path()) as conn:
-        row = conn.execute(
-            "SELECT id, domain, kind FROM fragments WHERE enabled = 1"
-            " ORDER BY (last_used_at IS NOT NULL) ASC, last_used_at ASC, RANDOM() LIMIT 1"
-        ).fetchone()
-    if row is None:
-        return None
-    return {"id": row[0], "domain": row[1], "kind": row[2]}
-
-
-def bump_fragment_used(domain_id: int) -> None:
-    with dbconn(db_path()) as conn:
-        conn.execute(
-            "UPDATE fragments SET use_count = use_count + 1, last_used_at = ? WHERE id = ?",
-            (_now(), domain_id),
-        )
-
-
-def recent_titles(kind: str, theme: str, limit: int = 12) -> list[str]:
-    """同一 theme 下最近生成过的卡片标题——碎片没有 concepts 表，靠它去重。"""
-    with dbconn(db_path()) as conn:
-        rows = conn.execute(
-            "SELECT title FROM cards WHERE kind = ? AND theme = ? ORDER BY id DESC LIMIT ?",
-            (kind, theme, limit),
-        ).fetchall()
-    return [r[0] for r in rows]
-
-
 # ---------- 种子 ----------
 
 
-def seed_from_config() -> tuple[int, int]:
-    """把配置里的 domains / topics 种子写入 DB（幂等，已存在则跳过）。返回新增数。"""
+def seed_from_config() -> int:
+    """把配置里的 topics 种子写入 DB（幂等，已存在则跳过）。返回新增数。"""
     now = _now()
-    added_domains = added_topics = 0
-    domains = config.knowledge_domains()
+    added_topics = 0
     topics = config.knowledge_topics()
     with dbconn(db_path()) as conn:
-        for d in domains:
-            name = (
-                d
-                if isinstance(d, str)
-                else str(d.get("name", "") if isinstance(d, dict) else d)
-            )
-            if not name:
-                continue
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO fragments (domain, kind, created_at) VALUES (?, ?, ?)",
-                (name, "principle", now),
-            )
-            added_domains += cur.rowcount if cur.rowcount > 0 else 0
         pos = conn.execute("SELECT COALESCE(MAX(position), -1) FROM topics").fetchone()[
             0
         ]
@@ -443,4 +374,4 @@ def seed_from_config() -> tuple[int, int]:
                 (name, t.get("kind", "principle"), pos, now, now),
             )
             added_topics += cur.rowcount if cur.rowcount > 0 else 0
-    return added_domains, added_topics
+    return added_topics

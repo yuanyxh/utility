@@ -16,29 +16,86 @@ private final class BorderBoxView: NSView {
     }
 }
 
+/// 自绘强调按钮：背景由 layer/draw 自己控制，不随窗口 key 状态被系统压暗。
+private final class KnowledgeActionButton: NSButton {
+    var fillColor: NSColor = .systemRed {
+        didSet { needsDisplay = true }
+    }
+
+    var pressedColor: NSColor = .systemRed.withAlphaComponent(0.72)
+    var textColor: NSColor = .white {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBordered = false
+        bezelStyle = .regularSquare
+        focusRingType = .none
+        wantsLayer = true
+    }
+
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override var isHighlighted: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    private var titleFont: NSFont {
+        .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = (title as NSString).size(withAttributes: [.font: titleFont])
+        return NSSize(width: max(36, size.width + 16), height: max(22, size.height + 6))
+    }
+
+    override func draw(_: NSRect) {
+        let path = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+            xRadius: 5,
+            yRadius: 5,
+        )
+        let color = isEnabled ? (isHighlighted ? pressedColor : fillColor) : fillColor.withAlphaComponent(0.35)
+        color.setFill()
+        path.fill()
+
+        let labelColor = isEnabled ? textColor : textColor.withAlphaComponent(0.65)
+        let attrs: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: labelColor]
+        let size = (title as NSString).size(withAttributes: attrs)
+        let point = NSPoint(
+            x: bounds.midX - size.width / 2,
+            y: bounds.midY - size.height / 2,
+        )
+        (title as NSString).draw(at: point, withAttributes: attrs)
+    }
+
+    func setStyledTitle(_ text: String) {
+        title = text
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+}
+
 /// 知识面板：一张卡 + 一排按钮。零引用 PanelManager，只经 EventBus 收发 show/close。
 public final class KnowledgePanelController: NSWindowController {
     static let kindTopic = "topic"
-    static let kindFragment = "fragment"
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let segmented = NSSegmentedControl()
     private let topicView = KnowledgeMarkdownView()
-    private let fragmentView = KnowledgeMarkdownView()
     private let emptyLabel = NSTextField(labelWithString: "")
     private let container = BorderBoxView()
 
     private let knownButton = NSButton()
-    private let dislikeButton = NSButton()
+    private let dislikeButton = KnowledgeActionButton()
     private let likeButton = NSButton()
-    private let promoteButton = NSButton()
     private let copyButton = NSButton()
     private let closeButton = NSButton()
 
-    /// 两个标签页各自记住当前卡：来回切不丢,也不重复取卡（取卡会累加 shown_count）。
-    private var currentCards: [String: KnowledgeCard] = [:]
-    private var currentKind = KnowledgePanelController.kindTopic
+    private var currentCard: KnowledgeCard?
     private var autoCloseTimer: Timer?
     /// 只有定时弹出的这一张参与自动关闭:聚焦期间停表,失焦后从 0 重新计时。
     private var autoCloseEligible = false
@@ -120,13 +177,6 @@ public final class KnowledgePanelController: NSWindowController {
         titleStack.alignment = .leading
         titleStack.spacing = 1
 
-        segmented.segmentCount = 2
-        segmented.segmentStyle = .rounded
-        segmented.trackingMode = .selectOne
-        segmented.selectedSegment = 0
-        segmented.target = self
-        segmented.action = #selector(tabChanged)
-
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         // 压缩阻力必须设在 **label 自身**:NSStackView 不会把它传播给 arranged subviews,
@@ -135,9 +185,7 @@ public final class KnowledgePanelController: NSWindowController {
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
-        segmented.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let headerRow = NSStackView(views: [titleStack, headerSpacer, segmented])
+        let headerRow = NSStackView(views: [titleStack, headerSpacer])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
         headerRow.translatesAutoresizingMaskIntoConstraints = false
@@ -146,10 +194,7 @@ public final class KnowledgePanelController: NSWindowController {
         container.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(container)
         topicView.translatesAutoresizingMaskIntoConstraints = false
-        fragmentView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(topicView)
-        container.addSubview(fragmentView)
-        fragmentView.isHidden = true
 
         emptyLabel.alignment = .center
         emptyLabel.textColor = .secondaryLabelColor
@@ -158,19 +203,20 @@ public final class KnowledgePanelController: NSWindowController {
         container.addSubview(emptyLabel)
 
         configure(knownButton, L10n.Knowledge.known, #selector(onKnown))
-        configure(dislikeButton, L10n.Knowledge.dislike, #selector(onDislike))
-        // 踩是破坏性操作:红色突出,并排在赞之后,避免误点
-        dislikeButton.bezelColor = .systemRed
         configure(likeButton, L10n.Knowledge.like, #selector(onLike))
-        configure(promoteButton, L10n.Knowledge.promote, #selector(onPromote))
         configure(copyButton, L10n.Knowledge.copy, #selector(onCopy))
         configure(closeButton, L10n.Knowledge.close, #selector(onClose))
+        // 踩是破坏性操作:自绘红色背景,失焦时也不会被系统压暗;排在赞之后,避免误点
+        dislikeButton.target = self
+        dislikeButton.action = #selector(onDislike)
+        dislikeButton.controlSize = .small
+        dislikeButton.setStyledTitle(L10n.Knowledge.dislike)
 
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttonRow = NSStackView(views: [
             buttonSpacer, knownButton, likeButton, dislikeButton,
-            promoteButton, copyButton, closeButton,
+            copyButton, closeButton,
         ])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 6
@@ -197,10 +243,6 @@ public final class KnowledgePanelController: NSWindowController {
             topicView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             topicView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             topicView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            fragmentView.topAnchor.constraint(equalTo: container.topAnchor),
-            fragmentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            fragmentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            fragmentView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
@@ -223,43 +265,51 @@ public final class KnowledgePanelController: NSWindowController {
 
     // MARK: - 取卡与渲染
 
-    /// 当前标签页有没有卡 —— service 据此决定要不要立刻补货。
+    /// 当前有没有卡 —— service 据此决定要不要立刻补货。
     var hasCard: Bool {
-        currentCards[currentKind] != nil
-    }
-
-    private var currentView: KnowledgeMarkdownView {
-        currentKind == Self.kindTopic ? topicView : fragmentView
+        currentCard != nil
     }
 
     /// 主题的「踩」跳主题：排除当前主题后重取,避免在同一个主题里原地打转。
     private func advance(excludingCurrentTopic: Bool = false) {
-        let card: KnowledgeCard? = if excludingCurrentTopic, let cur = currentCards[currentKind], let topicID = cur.topicID {
-            KnowledgeStore.shared.nextCard(kind: currentKind, excludingTopic: topicID)
+        let knowledge = ConfigManager.shared.config.knowledge
+        let card: KnowledgeCard? = if excludingCurrentTopic, let topicID = currentCard?.topicID {
+            KnowledgeStore.shared.nextCard(
+                kind: Self.kindTopic,
+                excludingTopic: topicID,
+                showReviewed: knowledge.showReviewedCards,
+                maxShown: knowledge.maxShownPerCard,
+            )
         } else {
-            KnowledgeStore.shared.nextCard(kind: currentKind)
+            KnowledgeStore.shared.nextCard(
+                kind: Self.kindTopic,
+                showReviewed: knowledge.showReviewedCards,
+                maxShown: knowledge.maxShownPerCard,
+            )
         }
         show(card: card)
     }
 
     private func show(card: KnowledgeCard?) {
         guard let card else {
-            currentCards[currentKind] = nil
+            currentCard = nil
             topicView.render("")
-            fragmentView.render("")
             emptyLabel.stringValue = L10n.Knowledge.empty
             emptyLabel.isHidden = false
             titleLabel.stringValue = L10n.Knowledge.title
             subtitleLabel.stringValue = ""
+            resetActionButtons()
             updateButtonState()
-            debugLog("[Knowledge] 面板空态: 池中没有 kind=\(currentKind) 的卡片")
+            debugLog("[Knowledge] 面板空态: 池中没有未读卡")
+            NotificationCenter.default.post(name: .knowledgeNeedsRefill, object: nil)
             return
         }
-        currentCards[currentKind] = card
+        currentCard = card
         emptyLabel.isHidden = true
-        currentView.render(renderText(card))
+        topicView.render(renderText(card))
         titleLabel.stringValue = card.title
         subtitleLabel.stringValue = subtitle(for: card)
+        resetActionButtons()
         updateButtonState()
     }
 
@@ -295,61 +345,102 @@ public final class KnowledgePanelController: NSWindowController {
         return text
     }
 
+    private func resetActionButtons() {
+        likeButton.title = L10n.Knowledge.like
+        likeButton.isEnabled = true
+        dislikeButton.setStyledTitle(L10n.Knowledge.dislike)
+    }
+
     private func updateButtonState() {
-        let has = currentCards[currentKind] != nil
-        for button in [knownButton, dislikeButton, likeButton, promoteButton, copyButton] {
+        let has = currentCard != nil
+        for button in [knownButton, dislikeButton, likeButton, copyButton] {
             button.isEnabled = has
         }
     }
 
     // MARK: - 按钮
 
-    @objc private func tabChanged() {
-        let kind = segmented.selectedSegment == 0 ? Self.kindTopic : Self.kindFragment
-        guard kind != currentKind else { return }
-        currentKind = kind
-        topicView.isHidden = kind != Self.kindTopic
-        fragmentView.isHidden = kind == Self.kindTopic
-        if currentCards[kind] == nil {
-            advance()
-        } else {
-            show(card: currentCards[kind])
-        }
-    }
-
     @objc private func onKnown() {
         mark("known")
     }
 
     @objc private func onLike() {
-        mark("liked")
+        guard let card = currentCard else { return }
+        disarmAutoClose()
+        let knowledge = ConfigManager.shared.config.knowledge
+        if knowledge.saveLikedMarkdown, !saveLikedCard(card, config: knowledge) {
+            likeButton.title = L10n.Knowledge.saveFailed
+            return
+        }
+        KnowledgeStore.shared.markStatus(cardID: card.id, status: "liked")
+        likeButton.title = knowledge.saveLikedMarkdown
+            ? L10n.Knowledge.likedSaved
+            : L10n.Knowledge.liked
+        likeButton.isEnabled = false
+        debugLog("[Knowledge] 点赞: card=\(card.id) saved=\(knowledge.saveLikedMarkdown)")
     }
 
     @objc private func onDislike() {
-        // 主题的「踩」= 跳到下一个主题,碎片没有主线可跳,只记偏好
-        mark("disliked", skipTopic: currentKind == Self.kindTopic)
-    }
-
-    @objc private func onPromote() {
-        disarmAutoClose()
-        if let card = currentCards[currentKind] {
-            KnowledgeStore.shared.promoteToTopic(card: card)
-            debugLog("[Knowledge] 设为主题: card=\(card.id) title=\(card.title)")
-        }
-        advance()
+        mark("disliked", skipTopic: true)
     }
 
     private func mark(_ status: String, skipTopic: Bool = false) {
         disarmAutoClose()
-        if let card = currentCards[currentKind] {
+        if let card = currentCard {
             KnowledgeStore.shared.markStatus(cardID: card.id, status: status)
-            debugLog("[Knowledge] 按钮 \(status): card=\(card.id) kind=\(currentKind)")
+            debugLog("[Knowledge] 按钮 \(status): card=\(card.id)")
         }
         advance(excludingCurrentTopic: skipTopic)
     }
 
+    private func saveLikedCard(_ card: KnowledgeCard, config: KnowledgeConfig) -> Bool {
+        let raw = config.likedSaveDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dir: String
+        if raw.isEmpty {
+            guard let notes = PythonScriptRunner.resolvedNotesDir() else {
+                debugLog("[Knowledge] 保存点赞卡失败: notes 根目录未配置")
+                return false
+            }
+            dir = URL(fileURLWithPath: notes, isDirectory: true)
+                .appendingPathComponent("知识卡片", isDirectory: true).path
+        } else {
+            dir = (raw as NSString).expandingTildeInPath
+        }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let slug = card.title
+            .components(separatedBy: CharacterSet(charactersIn: "/\\?%*|\"<>:"))
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(60)
+        let filename = "\(stamp)_\(slug.isEmpty ? "card-\(card.id)" : slug).md"
+        let url = URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent(filename)
+        guard !FileManager.default.fileExists(atPath: url.path) else { return true }
+        var text = "---\ntitle: \"\(card.title)\"\ntheme: \"\(card.theme)\"\n"
+        text += "kind: \"\(card.topicKind)\"\ncard_id: \(card.id)\nliked_at: \(stamp)\n"
+        text += "---\n\n# \(card.title)\n\n\(card.body)\n"
+        if !card.evidenceURLs.isEmpty {
+            text += "\n## \(L10n.Knowledge.sources)\n\n"
+            text += card.evidenceURLs.prefix(8)
+                .map { "- [\($0)](\($0))" }
+                .joined(separator: "\n")
+            text += "\n"
+        }
+        do {
+            try FileManager.default.createDirectory(
+                atPath: dir, withIntermediateDirectories: true,
+            )
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            debugLog("[Knowledge] 已保存点赞卡: \(url.path)")
+            return true
+        } catch {
+            debugLog("[Knowledge] 保存点赞卡失败: \(error)")
+            return false
+        }
+    }
+
     @objc private func onCopy() {
-        guard let card = currentCards[currentKind] else { return }
+        guard let card = currentCard else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(cardText(card), forType: .string)
@@ -417,16 +508,13 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     private func refreshTitles() {
-        segmented.setLabel(L10n.Knowledge.tabTopic, forSegment: 0)
-        segmented.setLabel(L10n.Knowledge.tabFragment, forSegment: 1)
         knownButton.title = L10n.Knowledge.known
-        dislikeButton.title = L10n.Knowledge.dislike
+        dislikeButton.setStyledTitle(L10n.Knowledge.dislike)
         likeButton.title = L10n.Knowledge.like
-        promoteButton.title = L10n.Knowledge.promote
         copyButton.title = L10n.Knowledge.copy
         closeButton.title = L10n.Knowledge.close
         emptyLabel.stringValue = L10n.Knowledge.empty
-        if let card = currentCards[currentKind] {
+        if let card = currentCard {
             titleLabel.stringValue = card.title
             subtitleLabel.stringValue = subtitle(for: card)
         } else {
@@ -449,8 +537,7 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     /// 立即取下一张（菜单项「立即补货」后刷新用）。
-    func reloadCurrent(kind: String? = nil) {
-        if let kind { currentKind = kind }
+    func reloadCurrent() {
         advance()
     }
 }
@@ -482,7 +569,7 @@ extension KnowledgePanelController: PanelProtocol {
         if !isPanelVisible { positionWindow() }
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        if currentCards[currentKind] == nil { advance() }
+        if currentCard == nil { advance() }
     }
 
     func closePanel() {

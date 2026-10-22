@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""知识面板的共用引擎：展开概念 → 检索依据 → 生成卡片。
-
-主题化与碎片共用这里的 `advance()` —— 差别只在调用方传进来的 theme 与 done_text
-（主题化 = 主题名 + 该主题已推概念；碎片 = 领域名 + 该领域近期标题）。
-"""
+"""知识面板的引擎：展开概念 → 检索依据 → 生成卡片。"""
 
 import html as htmlmod
 import re
@@ -20,12 +16,9 @@ logger = setup_logging("knowledge_refill")
 
 # 预算常量（调优值，不进配置面）。一次逻辑调用内置「解析失败降级重试一次」，
 # 故一轮 HTTP 次数上界 = MAX_LLM_CALLS_PER_RUN * 2。
-# 取 10 是为了装下「碎片 1 张 + 主题 1 张」：单张卡走完 expand + card 要 2 次。
+# 单张卡走完 expand + card 要 2 次，一轮最多补 3 张，保证未读池能跟上阅读速度。
 MAX_LLM_CALLS_PER_RUN = 10
-# **每类各自**的上限。原先是两类共享一个总数、且碎片先跑 —— 碎片池长期不满时（用户
-# 不断消费）它每轮都把额度吃光、或把 budget 压到 <3，主题的 while 条件几乎从不成立，
-# 于是主题池永远是空的（生产库实测 5 轮 0 张主题卡）。
-CARDS_PER_KIND_PER_RUN = 1
+CARDS_PER_TOPIC_PER_RUN = 3
 
 # 依据充分性判据
 MIN_EVIDENCE_CHARS = 800

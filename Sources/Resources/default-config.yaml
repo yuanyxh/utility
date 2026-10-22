@@ -238,20 +238,13 @@ knowledge:
   autoShowEnabled: true
   autoShowIntervalMinutes: 120  # auto-pop the panel every N minutes
   autoCloseSeconds: 25          # auto-close after N seconds once the panel loses focus; 0 = never
-  poolTargetTopic: 3            # refill only when fresh cards (shown < 2) drop below this
-  poolTargetFragment: 5
+  poolTargetTopic: 5            # refill until this many unseen (shown_count = 0) cards exist
   maxFailStreak: 3              # N dry runs in a row marks a topic done
-  maxShownPerCard: 2            # a card counts as "fresh" until shown this many times
+  maxShownPerCard: 2            # review cap when showReviewedCards is enabled
   hotkey: option+k
-  # Fragment sources: one card per domain, rotating through this list.
-  domains:
-    - 计算机组成原理
-    - 操作系统
-    - 计算机网络
-    - 编译原理
-    - 设计模式
-    - 分布式系统
-    - 数据库系统
+  saveLikedMarkdown: true       # save the current card when Like is clicked
+  likedSaveDir: ''              # empty = <mcp.knowledgeBasePath>/知识卡片 (or default notes dir)
+  showReviewedCards: false      # false = only unseen cards; true = fall back to old cards
   # Topic lines: concepts are pushed in order. kind: principle | trend
   topics:
     - name: TCP/IP 协议栈
