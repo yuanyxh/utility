@@ -4,12 +4,13 @@
 import html as htmlmod
 import re
 import time
+import urllib.parse
 
 from utility.llm import client as llm_client
 from utility.core import prompt_loader
 from utility.core.l10n import t
 from utility.core.log_utils import setup_logging
-from utility.services.search.web_search import fetch, wiki
+from utility.services.search.web_search import fetch, is_engine_page, wiki
 from utility.services.search.web_search import search as web_search_query
 
 logger = setup_logging("knowledge_refill")
@@ -120,6 +121,14 @@ def _strip_html(raw: str) -> str:
     return re.sub(r"\s+", " ", htmlmod.unescape(h)).strip()
 
 
+def _usable_source(url: str) -> bool:
+    """Reject non-http and search-engine result pages before they become sources."""
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    return not is_engine_page(url)
+
+
 def _page_text(url: str, concept: str) -> str:
     """抓页面正文，并以 concept 出现处为中心截取——整页里大半是导航与推荐位。"""
     try:
@@ -150,7 +159,8 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     has_wiki = len(wiki_text) >= MIN_WIKI_CHARS
     if has_wiki:
         parts.append(wiki_text[:6000])
-        urls.append(hit.get("url", ""))
+        if _usable_source(hit.get("url", "")):
+            urls.append(hit["url"])
 
     hits: list[dict] = []
     if time.monotonic() < deadline:
@@ -171,6 +181,8 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
         if time.monotonic() >= deadline:
             break
         url = r.get("url", "")
+        if not _usable_source(url):
+            url = ""
         body = ""
         if url and fetched < PAGE_FETCH_LIMIT:
             body = _page_text(url, concept)
@@ -221,7 +233,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
         text = text[:MAX_EVIDENCE_CHARS] + t("mcp.knowledge.evidence_truncated")
 
     seen, uniq = set(), []
-    for u in urls:
+    for u in (item for item in urls if _usable_source(item)):
         if u and u not in seen:
             seen.add(u)
             uniq.append(u)

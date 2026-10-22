@@ -98,8 +98,9 @@ final class KnowledgeStore {
                     arguments: [Self.iso8601(), row["id"] as Int64],
                 )
                 let urlsJSON: String = row["evidence_urls"] ?? "[]"
-                let urls = (try? JSONSerialization.jsonObject(with: Data(urlsJSON.utf8)))
+                let rawURLs = (try? JSONSerialization.jsonObject(with: Data(urlsJSON.utf8)))
                     as? [String] ?? []
+                let urls = rawURLs.compactMap(Self.normalizedEvidenceURL)
                 return KnowledgeCard(
                     id: row["id"], kind: row["kind"], title: row["title"],
                     subtitle: row["subtitle"] ?? "", theme: row["theme"] ?? "",
@@ -111,6 +112,28 @@ final class KnowledgeStore {
             debugLog("[Knowledge] nextCard(\(kind)) 失败: \(error)")
             return nil
         }
+    }
+
+    /// 旧卡可能存着搜索引擎结果页；展示前统一过滤并规范化，避免出现不可点击的长链接。
+    private static func normalizedEvidenceURL(_ raw: String) -> String? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: text),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased()
+        else { return nil }
+        let path = url.path.lowercased()
+        let enginePages: [(String, String)] = [
+            ("www.sogou.com", "/sogou"), ("www.sogou.com", "/web"),
+            ("www.baidu.com", "/s"), ("www.so.com", "/s"), ("ai.so.com", "/search"),
+            ("www.bing.com", "/search"), ("cn.bing.com", "/search"),
+            ("html.duckduckgo.com", "/html/"), ("search.brave.com", "/search"),
+            ("old-search.marginalia.nu", "/search"),
+        ]
+        if enginePages.contains(where: { host == $0.0 && path.hasPrefix($0.1) }) {
+            return nil
+        }
+        return url.absoluteString
     }
 
     // MARK: - 写

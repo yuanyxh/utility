@@ -46,6 +46,12 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "param.fetch_top": "Read the top N result pages as Markdown; default 1, max 3",
     "param.max_chars": "Max Markdown chars per page; default 6000",
     "param.engines": "Optional comma-separated engines; default is a language-aware cascade",
+    "param.read_url": "Absolute http/https URL to read",
+    "param.read_max_chars": "Max Markdown chars to return; 0 = unlimited (default)",
+    "param.read_use_proxy": (
+        "Allow third-party readers (defuddle.md, r.jina.ai) when local extraction "
+        "fails or is a login shell; only for public, non-sensitive URLs"
+    ),
 }
 
 

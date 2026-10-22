@@ -18,6 +18,7 @@
 - `cards` 无 `shown` 状态：只有 `shown_count`。默认只取 `shown_count = 0` 的未读卡；自动关闭（用户没操作）的卡计入已展示，不再回到默认轮转
 - `showReviewedCards = false` 时旧卡完全不出现；置为 true 才回退到 `shown_count < maxShownPerCard` 的旧卡，且未读卡仍优先
 - 点赞只标记 `liked` 并停留当前卡，不调用 `advance()`；`saveLikedMarkdown` 为真时同步写出 Markdown 到 `likedSaveDir`；该值为空时从 notes 根派生 `<notes>/知识卡片`，禁止硬编码个人路径
+- 来源 URL 不得是搜索引擎结果页：`gather_evidence._usable_source()` 过滤非 http(s) 与 `is_engine_page()`；Swift `KnowledgeStore` 解码时再过滤一次（旧卡兜底），展示用 `- <url>` autolink，避免 `[url](url)` 在 URL 含空格时退化成字面括号
 - `option+k` 是纯显隐切换：可见时发 `requestClose`，不可见时发 `requestShow`；`showPanel` 只在 `currentCard == nil` 时取卡，已有卡原样显示（不再有「已消费」标记），池中无卡才会显示空态并触发补池
 - `concepts` 只增不减（「展开过就算推过」）：严格单调前进、不可能死循环、崩溃自愈；代价是卡片生成失败会吃掉一个概念
 - `fail_streak` 计入**卡片失败与自检未过**（需求字面只要求「展开失败或依据不足」，此处刻意取超集）：只算两项时，一个「每次都能展开但每次都幻觉」的主题会永不 done，无限烧 LLM 调用

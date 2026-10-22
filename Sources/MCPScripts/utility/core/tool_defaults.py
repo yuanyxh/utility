@@ -34,6 +34,7 @@ TOOL_ARG_DEFAULTS: dict[str, dict[str, int]] = {
     "project_structure": {"limit": 15},
     "project_notes": {"limit": 5},
     "websearch_engine": {"limit": 5, "fetch_top": 1, "max_chars": 6000},
+    "read_url": {"max_chars": 0},
 }
 
 _defaults: dict[str, dict[str, int]] | None = None

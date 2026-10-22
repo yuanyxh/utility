@@ -17,6 +17,8 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "Sources", "MCPScripts"))
 
+from utility.services.fetch import http as h
+from utility.services.read import read_service as r
 from utility.services.search import web_search as w
 
 FAILS: list[str] = []
@@ -260,14 +262,14 @@ def selftest() -> None:
             and handlers[0].proxies.get("https") == "http://127.0.0.1:7897",
             str(handlers[0].proxies if handlers else None),
         )
-        original_map = w._proxy_map
-        w._proxy_map = lambda: {"https": "http://user:pass@127.0.0.1:7897"}
+        original_map = h._proxy_map
+        h._proxy_map = lambda: {"https": "http://user:pass@127.0.0.1:7897"}
         check(
             "proxy: credentials masked",
             "user:pass" not in str(w.proxy_status()),
             str(w.proxy_status()),
         )
-        w._proxy_map = original_map
+        h._proxy_map = original_map
     finally:
         if old_proxy is None:
             os.environ.pop("HTTPS_PROXY", None)
@@ -339,6 +341,72 @@ def selftest() -> None:
     finally:
         w.search_report = original_report
 
+    print("\n[layers] read_url")
+    check(
+        "read: invalid url",
+        r.read_url("not-a-url").get("error_code") == "invalid_url",
+    )
+    check(
+        "read: pdf rejected",
+        r.read_url("https://x.test/paper.pdf").get("error_code")
+        == "unsupported_format",
+    )
+    check(
+        "read: feishu rejected",
+        r.read_url("https://acme.feishu.cn/docx/abc").get("error_code")
+        == "unsupported_site",
+    )
+
+    original_local, original_proxy = r._fetch_local, r._fetch_proxy
+    captured: list[str] = []
+    article = "# Title\n\n" + "\n".join(f"line {i}" for i in range(20))
+    try:
+
+        def fake_local(url):
+            captured.append(url)
+            return "https://x.test/final", article
+
+        r._fetch_local = fake_local
+        r._fetch_proxy = lambda url, base: (_ for _ in ()).throw(
+            AssertionError("proxy must not be called")
+        )
+        ok = r.read_url("https://github.com/o/r/blob/main/README.md")
+        check(
+            "read: github blob -> raw",
+            captured
+            and captured[0] == "https://raw.githubusercontent.com/o/r/main/README.md",
+            str(captured[:1]),
+        )
+        check("read: local success", ok.get("ok") is True and ok.get("tier") == "local")
+
+        r._fetch_local = lambda url: (url, "Sign in to continue")
+        blocked = r.read_url("https://x.test/private")
+        check(
+            "read: login shell fails without proxy",
+            blocked.get("ok") is False
+            and blocked.get("error_code") == "all_tiers_failed"
+            and any(a.get("status") == "shell" for a in blocked.get("attempts", [])),
+            str(blocked)[:200],
+        )
+
+        r._fetch_proxy = lambda url, base: (url, article)
+        proxied = r.read_url("https://x.test/private", use_proxy=True)
+        check(
+            "read: proxy fallback",
+            proxied.get("ok") is True and proxied.get("tier") == "defuddle",
+            str(proxied)[:160],
+        )
+
+        r._fetch_local = lambda url: (url, "short")
+        thin = r.read_url("https://x.test/short")
+        check(
+            "read: thin content warns",
+            thin.get("ok") is True and bool(thin.get("warnings")),
+            str(thin)[:160],
+        )
+    finally:
+        r._fetch_local, r._fetch_proxy = original_local, original_proxy
+
 
 def live() -> None:
     print("\n[web_search] live checks")
@@ -376,6 +444,44 @@ def live() -> None:
 
     junk = w.search("zzzz-no-such-query-12345", min_results=1)
     check("live: gibberish query filtered", junk == [], f"{len(junk)} results")
+
+    print("\n[read_url] live checks")
+    live_reads = (
+        ("wikipedia", "https://en.wikipedia.org/wiki/Representational_state_transfer"),
+        ("mdn", "https://developer.mozilla.org/en-US/docs/Web/HTTP"),
+        (
+            "github raw",
+            "https://raw.githubusercontent.com/python/cpython/main/README.rst",
+        ),
+        ("example thin", "https://example.com/"),
+    )
+    for name, url in live_reads:
+        payload = r.read_url(url, max_chars=4000)
+        if not payload.get("ok"):
+            # Public sites intermittently rate-limit the second request in a
+            # suite; one delayed retry separates that from a broken reader.
+            time.sleep(3.0)
+            payload = r.read_url(url, max_chars=4000)
+        check(
+            f"live read: {name}",
+            payload.get("ok") is True and len(payload.get("markdown", "")) > 100,
+            str(payload)[:200],
+        )
+    missing = r.read_url("https://httpbin.org/status/404")
+    check(
+        "live read: 404 is perceivable",
+        missing.get("ok") is False
+        and missing.get("error_code") == "all_tiers_failed"
+        and bool(missing.get("attempts")),
+        str(missing)[:200],
+    )
+    social = r.read_url("https://x.com/python")
+    check(
+        "live read: social login shell rejected",
+        social.get("ok") is False
+        and any(a.get("status") == "shell" for a in social.get("attempts", [])),
+        str(social)[:200],
+    )
 
     print(f"  engine status: {w.engine_status()}")
 

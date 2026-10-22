@@ -16,7 +16,10 @@ Sources/MCPScripts/
     scanner/    ast_extractor.py + ast-js/
     services/
       mcp/      server* web_search 之外的 MCP 工具实现
-      search/   web_search.py
+      search/   engines.py（引擎搜索层）+ web_search.py（兼容 facade）
+      fetch/    http.py（抓取层：UA/代理/限流/重试）
+      markdown/ html.py（转换层：纯 HTML→Markdown）
+      read/     read_service.py（内置 read_url 编排）
       proxy/    token_proxy + proxy_*
       rss/      rss_daily rss_article rss_render clash_proxy
       knowledge/ knowledge_engine knowledge_pool knowledge_refill

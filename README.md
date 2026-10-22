@@ -445,6 +445,8 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `project_exports` | a file's or directory's public interface |
 | `project_notes` | search project-local notes |
 | `tool_resource` | read a skill's companion resources |
+| `websearch_engine` | multi-engine search with optional page Markdown |
+| `read_url` | fetch a URL as Markdown; local-only unless `use_proxy=true` |
 | (dynamic) | each skill under `MCP/Skills` registers as a tool |
 
 **Notes directory**
@@ -527,7 +529,7 @@ Intermediate extraction products of the daily summary, grouped into topic direct
 | `examples/zh-Hans/MCP/` | Chinese |
 | `examples/en/MCP/` | English |
 
-Each set contains `System_Prompts.md` and 7 skills (`check` / `health` / `hunt` / `read` / `skill-creator` / `think` / `ui`). Web search is a built-in `websearch_engine` tool and needs no skill. To use one, copy it into the notes directory's `MCP/`:
+Each set contains `System_Prompts.md` and 6 skills (`check` / `health` / `hunt` / `skill-creator` / `think` / `ui`). Web search and URL reading are built-in tools (`websearch_engine` / `read_url`) and need no skill. To use one, copy it into the notes directory's `MCP/`:
 
 ```bash
 cp -R examples/en/MCP/* ~/.config/utility/notes/MCP/

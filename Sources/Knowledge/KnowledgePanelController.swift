@@ -330,7 +330,7 @@ public final class KnowledgePanelController: NSWindowController {
         if !card.evidenceURLs.isEmpty {
             text += "\n\n---\n\n**\(L10n.Knowledge.sources)**\n\n"
             text += card.evidenceURLs.prefix(8)
-                .map { "- [\($0)](\($0))" }
+                .map { "- <\($0)>" }
                 .joined(separator: "\n")
         }
         return text
@@ -422,7 +422,7 @@ public final class KnowledgePanelController: NSWindowController {
         if !card.evidenceURLs.isEmpty {
             text += "\n## \(L10n.Knowledge.sources)\n\n"
             text += card.evidenceURLs.prefix(8)
-                .map { "- [\($0)](\($0))" }
+                .map { "- <\($0)>" }
                 .joined(separator: "\n")
             text += "\n"
         }

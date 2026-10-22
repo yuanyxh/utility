@@ -56,6 +56,7 @@ from utility.services.mcp.server_embed import (
 )
 from utility.services.mcp.server_tool_schema import (
     DEFAULT_PROJECT_NOTES_LIMIT,
+    DEFAULT_READ_MAX_CHARS,
     DEFAULT_WEBSEARCH_FETCH_TOP,
     DEFAULT_WEBSEARCH_LIMIT,
     DEFAULT_WEBSEARCH_MAX_CHARS,
@@ -98,6 +99,7 @@ from utility.services.mcp.server_skills import (
     normalize_name,
     scan_skills,
 )
+from utility.services.read.read_service import normalize_max_chars, read_url
 from utility.services.search import web_search
 from utility.core.log_utils import setup_logging
 
@@ -394,6 +396,17 @@ async def _handle_websearch_engine(arguments: dict) -> list[TextContent]:
     result = await asyncio.to_thread(
         web_search.websearch, query, limit, fetch_top, max_chars, engines
     )
+    return [TextContent(type="text", text=dumps(result))]
+
+
+@_register("read_url")
+async def _handle_read_url(arguments: dict) -> list[TextContent]:
+    url = str(arguments.get("url", "")).strip()
+    max_chars = normalize_max_chars(
+        int_arg(arguments, "max_chars", DEFAULT_READ_MAX_CHARS)
+    )
+    use_proxy = arguments.get("use_proxy", False) is True
+    result = await asyncio.to_thread(read_url, url, max_chars, use_proxy)
     return [TextContent(type="text", text=dumps(result))]
 
 

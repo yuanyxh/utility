@@ -188,6 +188,8 @@ mcp:
       limit: 5
       fetch_top: 1
       max_chars: 6000
+    read_url:
+      max_chars: 0              # 0 = unlimited; positive = explicit cap
 
   # Process supervision
   maxRestarts: 3

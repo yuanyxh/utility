@@ -35,6 +35,7 @@ DEFAULT_WEBSEARCH_FETCH_TOP = max(
 DEFAULT_WEBSEARCH_MAX_CHARS = max(
     1000, min(arg_default("websearch_engine", "max_chars"), 10000)
 )
+DEFAULT_READ_MAX_CHARS = max(0, arg_default("read_url", "max_chars"))
 
 #: Fixed English tool descriptions; parameter guidance lives in `tool_text.PARAM_DESCRIPTIONS`.
 TOOL_DESCRIPTIONS: dict[str, str] = {
@@ -50,6 +51,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "tool_resource": "Load a file under references or a script under scripts when instructed.",
     "set_memory_processed": "Set or reset the processed bit of memories. Idempotent.",
     "websearch_engine": "Trigger: user says web search/search online/look up/latest info. Returns result links and, when fetch_top>0, Markdown text of top pages.",
+    "read_url": "Trigger: user says read this link, check this URL, fetch this page, 看这个链接/读一下/抓取网页. when a link needs to be read, returns the page as Markdown.",
 }
 
 
@@ -346,6 +348,30 @@ def build_tools() -> list[Tool]:
                     },
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="read_url",
+            description=TOOL_DESCRIPTIONS["read_url"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": param_text("param.read_url"),
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "default": DEFAULT_READ_MAX_CHARS,
+                        "description": param_text("param.read_max_chars"),
+                    },
+                    "use_proxy": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": param_text("param.read_use_proxy"),
+                    },
+                },
+                "required": ["url"],
             },
         ),
     ]
