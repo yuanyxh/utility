@@ -207,13 +207,29 @@ final class FileWatcher {
             let ext = (relPath as NSString).pathExtension.lowercased()
             let parentDir = (relPath as NSString).deletingLastPathComponent
 
-            // File deleted → remove from DB
+            // File or directory deleted → remove its rows, and for a directory every
+            // descendant row too. FSEvents can report a removed tree as a single
+            // directory event, so an exact-path DELETE would leave children behind.
             if !FileManager.default.fileExists(atPath: fullPath) {
+                let subtreePrefix = relPath + "/"
                 do {
                     try db.dbQueue.write { db in
-                        try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [relPath])
-                        try db.execute(sql: "DELETE FROM files WHERE path = ?", arguments: [relPath])
-                        try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [relPath])
+                        try db.execute(
+                            sql: "DELETE FROM symbols WHERE file_path = ? OR instr(file_path, ?) = 1",
+                            arguments: [relPath, subtreePrefix],
+                        )
+                        try db.execute(
+                            sql: "DELETE FROM files WHERE path = ? OR instr(path, ?) = 1",
+                            arguments: [relPath, subtreePrefix],
+                        )
+                        try db.execute(
+                            sql: "DELETE FROM failed_files WHERE path = ? OR instr(path, ?) = 1",
+                            arguments: [relPath, subtreePrefix],
+                        )
+                        try db.execute(
+                            sql: "DELETE FROM directories WHERE path = ? OR instr(path, ?) = 1",
+                            arguments: [relPath, subtreePrefix],
+                        )
                     }
                     updateDirFileCount(db: db, dirPath: parentDir)
                     updated += 1
