@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from utility.core.config import notes_dir
 from utility.core.log_utils import setup_logging
@@ -98,6 +99,19 @@ FINISH_REASON_MAP: dict[str, str] = {
 #: Anthropic enum value, otherwise the client rejects the entire response for an
 #: illegal stop_reason.
 FALLBACK_STOP_REASON = "end_turn"
+
+#: Anthropic `stop_reason` → OpenAI `finish_reason` (the reverse direction). Lossy by
+#: protocol design: `end_turn` and `stop_sequence` both become `stop`.
+STOP_REASON_MAP_REVERSE: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "tool_use": "tool_calls",
+    "max_tokens": "length",
+    "content_filter": "content_filter",
+    "error": "stop",
+}
+
+FALLBACK_FINISH_REASON = "stop"
 
 
 def _tool_choice_anthropic_to_openai(choice):
@@ -377,6 +391,57 @@ class ProtocolConverter:
             },
         }
 
+    @staticmethod
+    def response_anthropic_to_openai(resp: dict) -> dict:
+        """Anthropic Messages non-streaming response → OpenAI Chat Completions response."""
+        content = resp.get("content") or []
+        texts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        tool_calls = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(
+                                block.get("input") or {}, ensure_ascii=False
+                            ),
+                        },
+                    }
+                )
+        message: dict = {"role": "assistant", "content": "".join(texts)}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        usage = resp.get("usage") or {}
+        prompt = usage.get("input_tokens", 0)
+        completion = usage.get("output_tokens", 0)
+        return {
+            "id": resp.get("id", "chatcmpl_proxy"),
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": resp.get("model", ""),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": STOP_REASON_MAP_REVERSE.get(
+                        resp.get("stop_reason"), FALLBACK_FINISH_REASON
+                    ),
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion,
+            },
+        }
+
 
 class OpenAIToAnthropicStream:
     """openai SSE streaming response → anthropic SSE events (incremental conversion).
@@ -542,6 +607,137 @@ class OpenAIToAnthropicStream:
         )
         events.append(_sse_event("message_stop", {"type": "message_stop"}))
         return events
+
+
+class AnthropicToOpenAIStream:
+    """anthropic SSE streaming response → openai SSE chunks (incremental conversion).
+
+    Text deltas map straight to `choices[0].delta.content`; tool_use blocks map to
+    `tool_calls` entries (the anthropic block index is rewritten to a dense tool index);
+    thinking deltas have no OpenAI equivalent and are dropped. `message_delta` carries
+    the finish reason and output tokens, so the terminal chunk plus a usage-only chunk
+    are emitted from `finish()`, followed by `[DONE]`.
+    """
+
+    def __init__(self) -> None:
+        self.created = int(time.time())
+        self.model = ""
+        self.sent_role = False
+        self.finish_reason: str | None = None
+        self.usage: dict[str, int] = {}
+        self.tool_index: dict[int, int] = {}
+        self.next_tool = 0
+
+    def _chunk(self, delta: dict, finish_reason: str | None) -> str:
+        payload = {
+            "id": "chatcmpl_proxy",
+            "object": "chat.completion.chunk",
+            "created": self.created,
+            "model": self.model,
+            "choices": [
+                {"index": 0, "delta": delta, "finish_reason": finish_reason}
+            ],
+        }
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def feed(self, event: dict) -> list[str]:
+        out: list[str] = []
+        etype = event.get("type")
+        if etype == "message_start":
+            message = event.get("message") or {}
+            self.model = message.get("model", "")
+            usage = message.get("usage") or {}
+            if "input_tokens" in usage:
+                self.usage["input_tokens"] = usage.get("input_tokens", 0)
+            out.append(self._chunk({"role": "assistant"}, None))
+            self.sent_role = True
+        elif etype == "content_block_start":
+            block = event.get("content_block") or {}
+            if block.get("type") == "tool_use":
+                block_index = event.get("index", 0)
+                tool_index = self.next_tool
+                self.next_tool += 1
+                self.tool_index[block_index] = tool_index
+                out.append(
+                    self._chunk(
+                        {
+                            "tool_calls": [
+                                {
+                                    "index": tool_index,
+                                    "id": block.get("id", ""),
+                                    "type": "function",
+                                    "function": {
+                                        "name": block.get("name", ""),
+                                        "arguments": "",
+                                    },
+                                }
+                            ]
+                        },
+                        None,
+                    )
+                )
+        elif etype == "content_block_delta":
+            delta = event.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "text_delta":
+                out.append(self._chunk({"content": delta.get("text", "")}, None))
+            elif dtype == "input_json_delta":
+                tool_index = self.tool_index.get(event.get("index", 0))
+                if tool_index is not None:
+                    out.append(
+                        self._chunk(
+                            {
+                                "tool_calls": [
+                                    {
+                                        "index": tool_index,
+                                        "function": {
+                                            "arguments": delta.get("partial_json", "")
+                                        },
+                                    }
+                                ]
+                            },
+                            None,
+                        )
+                    )
+        elif etype == "message_delta":
+            stop_reason = (event.get("delta") or {}).get("stop_reason")
+            self.finish_reason = STOP_REASON_MAP_REVERSE.get(
+                stop_reason, FALLBACK_FINISH_REASON
+            )
+            usage = event.get("usage") or {}
+            if "output_tokens" in usage:
+                self.usage["output_tokens"] = usage.get("output_tokens", 0)
+        return out
+
+    def finish(self) -> list[str]:
+        out: list[str] = []
+        if not self.sent_role:
+            out.append(self._chunk({"role": "assistant"}, None))
+        out.append(self._chunk({}, self.finish_reason or FALLBACK_FINISH_REASON))
+        if self.usage:
+            prompt = self.usage.get("input_tokens", 0)
+            completion = self.usage.get("output_tokens", 0)
+            out.append(
+                "data: "
+                + json.dumps(
+                    {
+                        "id": "chatcmpl_proxy",
+                        "object": "chat.completion.chunk",
+                        "created": self.created,
+                        "model": self.model,
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": prompt,
+                            "completion_tokens": completion,
+                            "total_tokens": prompt + completion,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+        out.append("data: [DONE]\n\n")
+        return out
 
 
 def _detect_api_format(body: dict) -> str:

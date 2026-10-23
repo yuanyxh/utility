@@ -26,6 +26,7 @@ from utility.services.proxy.proxy_output_filter import (
     filter_tool_outputs,
 )
 from utility.services.proxy.proxy_protocol import (
+    AnthropicToOpenAIStream,
     OpenAIToAnthropicStream,
     ProtocolConverter,
     _detect_api_format,
@@ -234,14 +235,34 @@ OPENAI_PATH_PREFIXES: tuple[str, ...] = ("v1/chat/completions", "v1/completions"
 def _upstream_path(request_path: str) -> str:
     """Client request path → upstream relative path (the part after provider.url).
 
-    `/open/v1/messages` → `v1/messages`; `/v1/messages` → `v1/messages`.
-    `/open` is the legacy compatibility entry (users who configured
-    `ANTHROPIC_BASE_URL=.../open/v1`), `/v1` is the protocol-native entry; the two are
-    normalized here and the subsequent logic faces only one form.
+    `/open/v1/messages` → `v1/messages`; `/v1/messages` → `v1/messages`;
+    `/raw/v1/messages` → `v1/messages`. `/open` is the legacy compatibility entry (users
+    who configured `ANTHROPIC_BASE_URL=.../open/v1`), `/v1` is the protocol-native entry,
+    `/raw` is the transparent entry (no content rewrites); all three are normalized here
+    and the subsequent logic faces only one form.
     """
-    if request_path.startswith("/open/"):
-        return request_path[len("/open/") :]
+    for entry in ("/open/", "/raw/"):
+        if request_path.startswith(entry):
+            return request_path[len(entry) :]
     return request_path.lstrip("/")
+
+
+#: Client entry path → provider entry path, keyed by the provider's protocol. Only
+#: unambiguous pairs are mapped; `v1/messages/count_tokens` has no OpenAI equivalent and
+#: is forwarded unchanged (the upstream decides).
+PROVIDER_PATH_MAP: dict[tuple[str, str], str] = {
+    ("v1/messages", "openai"): "v1/chat/completions",
+    ("v1/chat/completions", "anthropic"): "v1/messages",
+    ("v1/completions", "anthropic"): "v1/messages",
+}
+
+#: Anthropic API requires this header; clients of the other protocol do not send it.
+DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _provider_path(path: str, provider_format: str) -> str:
+    """Map the client endpoint path to the provider's protocol endpoint."""
+    return PROVIDER_PATH_MAP.get((path, provider_format), path)
 
 
 def _api_format_from_path(upstream_path: str) -> str | None:
@@ -269,6 +290,8 @@ class _ProxyState:
     record_request_body: dict
     note_parts: list[str]
     upstream: str
+    #: Transparent entry (`/raw/*`): skip every content rewrite, recording still applies.
+    raw: bool
 
 
 async def handle_proxy(request: web.Request) -> web.StreamResponse:
@@ -279,7 +302,8 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
             status=503,
         )
 
-    # Upstream relative path: the /open compatibility entry and the /v1 native entry are normalized here
+    # Entry path is also the rewrite switch: /raw is transparent, /open and /v1 keep rewrites
+    raw = request.path.startswith("/raw/")
     path = _upstream_path(request.path)
 
     # Gateway model discovery: GET /v1/models (or /open/v1/models) → return all provider
@@ -287,12 +311,14 @@ async def handle_proxy(request: web.Request) -> web.StreamResponse:
     # protocol, see _models_schema_for.
     if request.method == "GET" and path == "v1/models":
         return await _handle_models(request)
-    state = await _prepare_request(request, path)
+    state = await _prepare_request(request, path, raw=raw)
     _apply_rewrites(state)
     return await _forward(state)
 
 
-async def _prepare_request(request: web.Request, path: str) -> _ProxyState:
+async def _prepare_request(
+    request: web.Request, path: str, *, raw: bool = False
+) -> _ProxyState:
     """Read the body, resolve the protocol/provider, inject rules, and capture the record copy."""
     # Read the request body
     body_bytes = await request.read()
@@ -331,9 +357,11 @@ async def _prepare_request(request: web.Request, path: str) -> _ProxyState:
     provider_format = api_format_of(provider)
     body_bytes = json.dumps(request_body).encode()
 
-    # Build the upstream URL (the two entry forms are already normalized in path)
-    # e.g. /v1/messages or /open/v1/messages → path="v1/messages" → provider.url/v1/messages
-    upstream = f"{provider['url']}/{path}"
+    # Build the upstream URL. The entry forms are already normalized in `path`; when the
+    # provider's protocol differs, the endpoint path must follow the provider (a converted
+    # body sent to the client protocol's path hits a non-existent endpoint upstream).
+    # e.g. client anthropic "v1/messages" + openai provider → provider.url/v1/chat/completions
+    upstream = f"{provider['url']}/{_provider_path(path, provider_format)}"
     if request.query_string:
         upstream += f"?{request.query_string}"
 
@@ -389,9 +417,11 @@ async def _prepare_request(request: web.Request, path: str) -> _ProxyState:
         )
 
     # System prompt injection: read the rules from System_Prompts.md and inject them into every real user input
-    injected, rule_injected = _inject_system_prompt(request_body)
-    if injected is not None:
-        body_bytes = injected
+    rule_injected = 0
+    if not raw:
+        injected, rule_injected = _inject_system_prompt(request_body)
+        if injected is not None:
+            body_bytes = injected
 
     # First-request log: output the full body after injection, to verify the system prompt takes effect
     global _logged_first_body
@@ -440,6 +470,7 @@ async def _prepare_request(request: web.Request, path: str) -> _ProxyState:
         record_request_body=record_request_body,
         note_parts=note_parts,
         upstream=upstream,
+        raw=raw,
     )
 
 
@@ -449,7 +480,7 @@ def _apply_rewrites(state: _ProxyState) -> None:
     # criterion is byte-identical content; the proxy cannot see the skill list). Must be
     # after record — the record layer must keep the original, otherwise the measurement
     # yardstick destroys itself.
-    if SKILL_DEDUP_ENABLED:
+    if SKILL_DEDUP_ENABLED and not state.raw:
         deduped = dedup_tool_results(
             state.request_body, state.api_format, ui_language()
         )
@@ -469,11 +500,15 @@ def _apply_rewrites(state: _ProxyState) -> None:
     # Tool-output slimming: over-long head/tail trim + lossless JSON minify, only for
     # shell-like tools (Read etc. are file contents the model explicitly asked for;
     # truncating is corruption). Likewise must be after record.
-    filtered = filter_tool_outputs(
-        state.request_body,
-        state.api_format,
-        OUTPUT_FILTER_JSON,
-        ui_language(),
+    filtered = (
+        {}
+        if state.raw
+        else filter_tool_outputs(
+            state.request_body,
+            state.api_format,
+            OUTPUT_FILTER_JSON,
+            ui_language(),
+        )
     )
     if filtered:
         if filtered.get("saved_bytes"):
@@ -488,7 +523,7 @@ def _apply_rewrites(state: _ProxyState) -> None:
     # Strip the note lines the model echoed back from earlier turns: the note is injected into
     # the assistant's text block, so it enters the history and the model reproduces that line
     # on its own. Removing it here keeps it out of the upstream context.
-    if RESPONSE_NOTE_ENABLED:
+    if RESPONSE_NOTE_ENABLED and not state.raw:
         stripped = strip_notes_from_messages(state.request_body.get("messages") or [])
         if stripped:
             state.body_bytes = json.dumps(state.request_body).encode()
@@ -556,6 +591,12 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
         if k.lower() not in skip_headers:
             headers[k] = v
     headers["Accept-Encoding"] = UPSTREAM_ACCEPT_ENCODING
+    # OpenAI-protocol clients do not send anthropic-version; the converted request still
+    # needs it, otherwise an anthropic provider rejects the call.
+    if state.provider_format == "anthropic" and not any(
+        k.lower() == "anthropic-version" for k in headers
+    ):
+        headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
     api_key = api_key_of(state.provider)
     if api_key:
         headers.pop("x-api-key", None)
@@ -658,14 +699,17 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                     # large since_last_chunk_ms, the latter near 0.
                     last_chunk_at = time.monotonic()
 
-                    # Upstream openai → client anthropic: the response needs conversion (Claude Code scenario)
-                    convert_resp = (
-                        state.provider_format == "openai"
-                        and state.api_format == "anthropic"
-                    )
-                    converter = (
-                        OpenAIToAnthropicStream() if (convert_resp and is_sse) else None
-                    )
+                    # The response must be converted whenever the provider protocol differs
+                    # from the client's: openai → anthropic (Claude Code scenario) or the
+                    # reverse (an OpenAI-protocol client reaching an anthropic provider).
+                    convert_resp = state.provider_format != state.api_format
+                    converter = None
+                    if convert_resp and is_sse:
+                        converter = (
+                            OpenAIToAnthropicStream()
+                            if state.provider_format == "openai"
+                            else AnthropicToOpenAIStream()
+                        )
 
                     try:
                         if converter is not None:
@@ -717,6 +761,10 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                                     ProtocolConverter.response_openai_to_anthropic(
                                         resp_json
                                     )
+                                    if state.provider_format == "openai"
+                                    else ProtocolConverter.response_anthropic_to_openai(
+                                        resp_json
+                                    )
                                 )
                                 payload = json.dumps(converted).encode()
                             except Exception as e:  # noqa: BLE001
@@ -730,7 +778,7 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                             # stays a pure pass-through — no parsing means zero overhead and
                             # no new failure path.
                             note_sink = None
-                            if RESPONSE_NOTE_ENABLED:
+                            if RESPONSE_NOTE_ENABLED and not state.raw:
                                 if is_sse:
                                     note_sink = SSENoteInjector(
                                         state.note_parts, ui_language()
@@ -833,9 +881,10 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                     # Extract usage / output preview / tool name
                     sse_bytes = bytes(collected_body) if collected_body else b""
                     if converter is not None:
-                        # the converter has already normalized usage (including input/output tokens)
+                        # The converter normalizes usage to input_tokens/output_tokens; the
+                        # converted stream is in the client's protocol.
                         usage_data = dict(converter.usage)
-                        out_format = "anthropic"
+                        out_format = state.api_format
                     elif convert_resp and not is_sse:
                         converted_usage = {}
                         try:
@@ -849,11 +898,25 @@ async def _forward(state: _ProxyState) -> web.StreamResponse:
                             )
                         except (json.JSONDecodeError, UnicodeDecodeError):
                             pass
-                        usage_data = {
-                            "input_tokens": converted_usage.get("input_tokens", 0),
-                            "output_tokens": converted_usage.get("output_tokens", 0),
-                        }
-                        out_format = "anthropic"
+                        if state.api_format == "openai":
+                            usage_data = {
+                                "input_tokens": converted_usage.get(
+                                    "prompt_tokens", 0
+                                ),
+                                "output_tokens": converted_usage.get(
+                                    "completion_tokens", 0
+                                ),
+                            }
+                        else:
+                            usage_data = {
+                                "input_tokens": converted_usage.get(
+                                    "input_tokens", 0
+                                ),
+                                "output_tokens": converted_usage.get(
+                                    "output_tokens", 0
+                                ),
+                            }
+                        out_format = state.api_format
                     else:
                         usage_data = (
                             _extract_usage_from_sse(
@@ -1291,12 +1354,14 @@ def create_app() -> web.Application:
     app.router.add_route("*", "/health", handle_health)
     app.router.add_route("GET", "/usage/summary", handle_usage_summary)
     app.router.add_route("GET", "/usage/layers", handle_usage_layers)
-    # Two entries coexist: `/v1/*` is the protocol-native entry (the client need not configure
+    # Three entries coexist: `/v1/*` is the protocol-native entry (the client need not configure
     # base_url to an unconventional prefix), `/open/*` is the legacy compatibility alias (users
-    # who already configured ANTHROPIC_BASE_URL=.../open/v1 are unaffected). Registered after
-    # /usage/* and /health so they are not shadowed; the two routes share the same handler and
+    # who already configured ANTHROPIC_BASE_URL=.../open/v1 are unaffected), `/raw/*` is the
+    # transparent entry (same routing, no content rewrites — for clean agent sessions). Registered
+    # after /usage/* and /health so they are not shadowed; all routes share the same handler and
     # the path is normalized in _upstream_path.
     app.router.add_route("*", "/open/{path:.*}", handle_proxy)
+    app.router.add_route("*", "/raw/{path:.*}", handle_proxy)
     app.router.add_route("*", "/v1/{path:.*}", handle_proxy)
     return app
 

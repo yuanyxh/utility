@@ -179,6 +179,7 @@ class ConversionTests(ProxyTestBase):
             },
         )
         self.assertEqual(resp.status, 200)
+        self.assertEqual(self.upstream.requests[0]["path"], "/v1/chat/completions")
         upstream_body = self.upstream.requests[0]["body"]
         self.assertEqual(upstream_body["model"], "test-model")
         self.assertNotIn("system", upstream_body)
@@ -319,6 +320,141 @@ class InjectionPositionTests(unittest.TestCase):
         )
         self.assertIn("RULE-BODY", blocks[1]["text"])
         self.assertEqual(blocks[2]["text"], "user follow-up")
+
+
+class EntryPathTests(unittest.TestCase):
+    def test_entry_paths_are_normalized(self) -> None:
+        for entry in ("/open", "/raw", ""):
+            self.assertEqual(
+                token_proxy._upstream_path(f"{entry}/v1/messages"), "v1/messages"
+            )
+
+
+class RawEntryTests(ProxyTestBase):
+    """`/raw/*` is the transparent entry: same routing, no rule injection."""
+
+    provider_format = "anthropic"
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write("RAW-TEST-RULE")
+            self.prompt_path = fh.name
+        self._original_prompt_path = proxy_protocol.SYSTEM_PROMPTS_FILE
+        proxy_protocol.SYSTEM_PROMPTS_FILE = self.prompt_path
+        proxy_protocol._sys_prompt_content = None
+        proxy_protocol._sys_prompt_mtime = 0
+
+    async def asyncTearDown(self) -> None:
+        proxy_protocol.SYSTEM_PROMPTS_FILE = self._original_prompt_path
+        proxy_protocol._sys_prompt_content = None
+        proxy_protocol._sys_prompt_mtime = 0
+        os.unlink(self.prompt_path)
+        await super().asyncTearDown()
+
+    async def test_raw_entry_skips_rule_injection(self) -> None:
+        reply = {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "test-model",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 2, "output_tokens": 1},
+        }
+        self.upstream.enqueue_json(reply)
+        self.upstream.enqueue_json(reply)
+        body = {
+            "model": "test-model",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        await self.proxy.post("/v1/messages", json=body)
+        await self.proxy.post("/raw/v1/messages", json=body)
+
+        normal, raw = self.upstream.requests
+        self.assertEqual(normal["path"], "/v1/messages")
+        self.assertEqual(raw["path"], "/v1/messages")
+        self.assertIn("RAW-TEST-RULE", json.dumps(normal["body"]))
+        self.assertNotIn("RAW-TEST-RULE", json.dumps(raw["body"]))
+        self.assertEqual(raw["body"]["messages"][0]["content"], "hello")
+
+
+class ReverseConversionTests(ProxyTestBase):
+    """OpenAI client → anthropic provider: path, header and response must all convert."""
+
+    provider_format = "anthropic"
+
+    ANTHROPIC_SSE = (
+        'event: message_start\ndata: {"type":"message_start","message":{"model":"upstream-model","usage":{"input_tokens":5,"output_tokens":0}}}\n\n'
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n'
+        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n'
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    )
+
+    async def test_openai_entry_is_converted_for_anthropic_upstream(self) -> None:
+        self.upstream.enqueue_json(
+            {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "test-model",
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 4, "output_tokens": 1},
+            }
+        )
+        resp = await self.proxy.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "max_tokens": 16,
+                "messages": [
+                    {"role": "system", "content": "SYS"},
+                    {"role": "user", "content": "hello"},
+                ],
+            },
+        )
+        self.assertEqual(resp.status, 200)
+        upstream = self.upstream.requests[0]
+        self.assertEqual(upstream["path"], "/v1/messages")
+        system = upstream["body"]["system"]
+        system_text = (
+            system
+            if isinstance(system, str)
+            else "".join(block.get("text", "") for block in system)
+        )
+        self.assertEqual(system_text.strip(), "SYS")
+        self.assertNotIn("choices", upstream["body"])
+        header_names = {k.lower() for k in upstream["headers"]}
+        self.assertIn("anthropic-version", header_names)
+
+        data = await resp.json()
+        self.assertEqual(data["object"], "chat.completion")
+        self.assertEqual(data["choices"][0]["message"]["content"], "hi")
+        self.assertEqual(data["choices"][0]["finish_reason"], "stop")
+        self.assertEqual(data["usage"]["prompt_tokens"], 4)
+        self.assertEqual(data["usage"]["completion_tokens"], 1)
+
+    async def test_openai_stream_is_converted_from_anthropic_sse(self) -> None:
+        self.upstream.enqueue_sse(self.ANTHROPIC_SSE)
+        resp = await self.proxy.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "max_tokens": 16,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        text = await resp.text()
+        self.assertIn('"object": "chat.completion.chunk"', text)
+        self.assertIn('"content": "hello"', text)
+        self.assertIn('"finish_reason": "stop"', text)
+        self.assertTrue(text.rstrip().endswith("data: [DONE]"))
 
 
 if __name__ == "__main__":

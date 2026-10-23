@@ -361,7 +361,7 @@ modelProxy:
       models: [your-model]
 ```
 
-Set the agent's base URL to `http://localhost:[PORT]/open/v1`. `/open/v1` is a compatibility alias, `/v1` is the protocol-native entry.
+Set the agent's base URL to `http://localhost:[PORT]/open/v1`. `/open/v1` is a compatibility alias, `/v1` is the protocol-native entry. `/raw/v1` is the transparent entry: same provider routing, but no rule injection, skill dedup, output trimming or response annotation — use it for one session when you need an unmodified agent run. It is opt-in per session via the base URL and does not affect other sessions.
 
 **Routing**
 

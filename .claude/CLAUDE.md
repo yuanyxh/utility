@@ -72,8 +72,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 含 tool_result 的消息必须插到**最后一个 tool_result 之后**，禁止 `insert(0)`
 - 响应注记会被模型复述，请求侧必须剥离 assistant 消息里的注记行
 - 协议判据优先取入口路径，路径不表明协议时才回退请求体启发式
-- `finish_reason → stop_reason` 映射是单一常量 `FINISH_REASON_MAP`，转换层兜底、记录层保留原样
-- 转发入口 `/v1/*` 与 `/open/*` 共用同一 handler，路径在 `_upstream_path` 归一
+- `finish_reason → stop_reason` 映射是单一常量 `FINISH_REASON_MAP`，转换层兜底、记录层保留原样；反向映射用 `STOP_REASON_MAP_REVERSE`
+- **上游端点路径必须按 provider 协议映射**（`PROVIDER_PATH_MAP` / `_provider_path`），不能直接拿客户端入口路径拼 URL——否则转换后的 body 打到对方协议不存在的端点上，上游 404；anthropic provider 缺 `anthropic-version` 时补默认值
+- 转发入口 `/v1/*`、`/open/*`、`/raw/*` 共用同一 handler，路径在 `_upstream_path` 归一；`/raw` 是透明入口，跳过全部内容改写（规则注入/去重/瘦身/注记），其余能力照常
 
 ### LLM 调用与提示词
 - Python 侧唯一 LLM 出口是 `llm_client.py`；配置唯一来源 `config.py`，该模块不读 env、不持默认值
