@@ -33,6 +33,13 @@ from utility.core.config import (
     summary_exclude_tags,
 )
 from utility.core.l10n import all_templates, t
+from utility.core.memory_lifecycle import (
+    COLD_SOURCE_MEMORY_IDS_FIELD,
+    PROCESSED_CONSUMED_MASK,
+    PROCESSED_FIELD,
+    STATUS_ACTIVE,
+    STATUS_FIELD,
+)
 from utility.core.log_utils import (
     setup_logging as _log_setup,
 )
@@ -171,9 +178,6 @@ _QUALITY_CN_STATE_VERBS = (
 
 _QUALITY_QUOTE_PAIRS = [("“", "”"), ("「", "」"), ("『", "』"), ("'", "'"), ('"', '"')]
 
-PROCESSED_FIELD = "processed"
-
-PROCESSED_BIT_SUMMARIZED = 1
 
 UTILITY_DATA_DIR = Path(data_dir())
 
@@ -264,6 +268,7 @@ def write_to_cold_layer(
     category: str,
     tags: list | None = None,
     confidence: float = 1.0,
+    source_memory_ids: list | None = None,
 ):
     if _cold_already_synced(content, source_file):
         return
@@ -277,6 +282,7 @@ def write_to_cold_layer(
                 "category": category,
                 "tags": tags or [],
                 "confidence": confidence,
+                COLD_SOURCE_MEMORY_IDS_FIELD: source_memory_ids or [],
             },
         )
         if resp.status_code != 200:
@@ -418,12 +424,19 @@ def fetch_memories(today: date) -> list | None:
 
 
 def _filter_processed(memories: list[dict]) -> list[dict]:
-    """Skip memories already processed successfully (metadata.processed bit0=1), to avoid reprocessing."""
+    """Skip summarized (bit0) and retired (bit1) memories, plus non-active lifecycle states.
+
+    bit1 is the belt-and-braces signal: even a consumer that only reads processed will
+    not re-digest content a newer revision replaced.
+    """
     kept = []
     for m in memories:
         # metadata may be explicitly null (key present, value None); `.get("metadata", {})` would return None and raise AttributeError
-        flags = int((m.get("metadata") or {}).get(PROCESSED_FIELD, 0) or 0)
-        if flags & PROCESSED_BIT_SUMMARIZED:
+        meta = m.get("metadata") or {}
+        flags = int(meta.get(PROCESSED_FIELD, 0) or 0)
+        if flags & PROCESSED_CONSUMED_MASK:
+            continue
+        if str(meta.get(STATUS_FIELD) or STATUS_ACTIVE) != STATUS_ACTIVE:
             continue
         kept.append(m)
     return kept
@@ -1743,7 +1756,10 @@ def _sanitize_new_dir(dir_name: str) -> str:
 
 
 def _write_articles_v2(
-    results: list[dict], today_str: str, all_tags: list[str]
+    results: list[dict],
+    today_str: str,
+    all_tags: list[str],
+    source_memory_ids: list | None = None,
 ) -> dict[str, str]:
     """Phase 2 write: merge/fallback_merge write directly to the judged target; new goes
     through resolve_target_file's fallback to prevent collisions.
@@ -1801,6 +1817,7 @@ def _write_articles_v2(
                 category=filepath.parent.name or "Extracts",
                 tags=all_tags,
                 confidence=1.0,
+                source_memory_ids=source_memory_ids,
             )
         except Exception as e:
             write_error_log(
@@ -1889,7 +1906,9 @@ def main():
         return
 
     all_tags = _collect_tags(recent_memories)
-    updated_files = _write_articles_v2(writes, today_str, all_tags)
+    updated_files = _write_articles_v2(
+        writes, today_str, all_tags, source_memory_ids=consumed_ids
+    )
 
     # Mark as processed only when something was written: set bit0 on successfully consumed
     # memories to avoid reprocessing next round. Without any write (this round everything was

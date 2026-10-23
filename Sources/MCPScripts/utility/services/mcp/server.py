@@ -75,6 +75,7 @@ from utility.services.mcp.server_memory import (
     HANDLERS as MEMORY_HANDLERS,
     contradiction_check_cold,
     ensure_hot_memory,
+    set_memory_status,
     set_processed_bit,
     spawn_contradiction_check,
 )
@@ -82,6 +83,7 @@ from utility.services.mcp.server_state import get_hot_memory, get_qdrant, set_qd
 from utility.services.mcp.server_utils import dumps, int_arg
 from utility.services.mcp.server_constants import (
     COLD_COLLECTION,
+    COLD_SOURCE_MEMORY_IDS_FIELD,
     DEFAULT_HEAT_SCORE,
     DEFAULT_USER_ID,
     ERR_BIT_VALUE_NOT_INT,
@@ -91,6 +93,10 @@ from utility.services.mcp.server_constants import (
     MEM0_QDRANT_PATH,
     QDRANT_PATH,
     PROCESSED_MAX_BIT,
+    STATUS_ACTIVE,
+    STATUS_DELETED,
+    STATUS_HIDDEN,
+    STATUS_SUPERSEDED,
     err_bit_out_of_range,
 )
 from utility.services.mcp.server_skills import (
@@ -499,6 +505,9 @@ async def main():
                         "tags": body.get("tags", []),
                         "user_id": DEFAULT_USER_ID,
                         "confidence": body.get("confidence", 1.0),
+                        COLD_SOURCE_MEMORY_IDS_FIELD: body.get(
+                            COLD_SOURCE_MEMORY_IDS_FIELD, []
+                        ),
                     },
                 )
             ],
@@ -531,6 +540,13 @@ async def main():
             m
             for m in data
             if datetime.fromisoformat(m.get("created_at", "")).timestamp() >= since_ts
+        ]
+        # Superseded/deleted memories must not reach the summarizer, or it will
+        # sediment facts that a newer revision already replaced.
+        data = [
+            m
+            for m in data
+            if (m.get("metadata") or {}).get("status") not in STATUS_HIDDEN
         ]
         data = sorted(
             data,
@@ -580,6 +596,34 @@ async def main():
             }
         )
 
+    async def api_memories_status(request):
+        """Set memory lifecycle status (active/superseded/deleted); maintenance entry point."""
+        if not await ensure_hot_memory():
+            return JSONResponse({"error": ERR_HOT_LAYER_NOT_READY}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        memory_ids = body.get("memory_ids", [])
+        status = body.get("status", "")
+        if not memory_ids:
+            return JSONResponse({"error": ERR_MEMORY_IDS_EMPTY}, status_code=400)
+        if status not in (STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_DELETED):
+            return JSONResponse(
+                {"error": "status must be active, superseded or deleted"},
+                status_code=400,
+            )
+        try:
+            result = await asyncio.to_thread(
+                set_memory_status,
+                memory_ids,
+                status,
+                body.get("superseded_by", ""),
+            )
+            return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def api_project_search(request):
         body = await request.json()
         try:
@@ -625,6 +669,11 @@ async def main():
             Route(
                 "/api/memories/processed",
                 endpoint=api_memories_processed,
+                methods=["POST"],
+            ),
+            Route(
+                "/api/memories/status",
+                endpoint=api_memories_status,
                 methods=["POST"],
             ),
             Route("/api/project/search", endpoint=api_project_search, methods=["POST"]),

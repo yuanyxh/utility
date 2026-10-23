@@ -17,10 +17,13 @@ from utility.services.mcp.server_constants import (
     ARCHIVE_DAYS,
     ARCHIVE_INTERVAL_HOURS,
     COLD_COLLECTION,
+    COLD_STALE_FIELD,
     DEFAULT_HEAT_SCORE,
     DEFAULT_USER_ID,
     HEAT_DECAY_PER_DAY,
     HOT_RETENTION_DAYS,
+    STATUS_HIDDEN,
+    SUPERSEDED_RETENTION_DAYS,
 )
 
 logger = setup_logging("server")
@@ -31,9 +34,7 @@ def run_archive_sync_impl(hot_memory, qdrant) -> tuple[int, int, int]:
     deleted_hot, archived_count, decayed_count = 0, 0, 0
     if hot_memory:
         try:
-            hot_cutoff = (
-                datetime.now() - timedelta(days=HOT_RETENTION_DAYS)
-            ).isoformat()
+            now = datetime.now()
             vs = hot_memory.vector_store
             qfilter = vs._create_filter({"user_id": DEFAULT_USER_ID})
             scroll_result = vs.client.scroll(
@@ -51,6 +52,17 @@ def run_archive_sync_impl(hot_memory, qdrant) -> tuple[int, int, int]:
             for point in points:
                 payload = point.payload or {}
                 created = payload.get("created_at", "")
+                # Retired entries (superseded/deleted) leave sooner than active ones;
+                # legacy entries without a status keep the full retention window.
+                status = payload.get("status") or (payload.get("metadata") or {}).get(
+                    "status"
+                )
+                retention = (
+                    SUPERSEDED_RETENTION_DAYS
+                    if status in STATUS_HIDDEN
+                    else HOT_RETENTION_DAYS
+                )
+                hot_cutoff = (now - timedelta(days=retention)).isoformat()
                 if created and created < hot_cutoff:
                     try:
                         vs.client.delete(
@@ -80,10 +92,11 @@ def run_archive_sync_impl(hot_memory, qdrant) -> tuple[int, int, int]:
                     payload = point.payload or {}
                     last_access = payload.get("last_accessed_at", "")
                     heat_score = payload.get("heat_score", DEFAULT_HEAT_SCORE)
-                    if (
-                        last_access
-                        and last_access < cutoff
-                        and not payload.get("archived")
+                    stale_and_old = payload.get(COLD_STALE_FIELD) and (
+                        not last_access or last_access < cutoff
+                    )
+                    if not payload.get("archived") and (
+                        (last_access and last_access < cutoff) or stale_and_old
                     ):
                         try:
                             qdrant.set_payload(

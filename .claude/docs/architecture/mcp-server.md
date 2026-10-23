@@ -31,4 +31,14 @@
   - **`project_search` / `project_structure` 原先没有 limit 参数**：内部分别硬编码 `[:15]`/`[:10]`/全量 与 `MAX_ITEMS=200`，本次新增 `limit` 形参接入配置面。**`project_search` 的 exact 分支此前返回全量 `all_found`**（可达数百条），是输出膨胀的主因
   - **整数参数一律经 `_int_arg`**：客户端显式传 `null` 时 `arguments.get` 返回 None，直接切片 `all_found[:None]` 是**不截断**——静默把 token 治理关掉
 - **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `UTILITY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
+### 记忆生命周期（2026-10-23）
+
+- `status` 是生命周期的唯一来源：`active` / `superseded` / `deleted`，缺省视为 `active`；`disputed` 仍只表达事实矛盾，不复用为生命周期
+- 覆盖必须「add 成功后再 update 旧条 metadata」，禁止先 delete；**禁止原地 update 记忆正文**（若将来必须原地更新，`processed` 置 0 且 `revision+1`，否则摘要流程会跳过演进后的内容）
+- `processed`：bit0=已摘要、bit1=已作废；覆盖时只置 bit1 并保留 bit0，消费方用 `processed & (bit0|bit1)` 跳过
+- 写入前对 active 热层做判重：≥0.97 幂等返回已有 id；0.90–0.97 正常落库并在返回里给出 `similar`
+- `recall` / `catch_up` / `/api/memories/recent` 默认过滤非 active，`include_superseded` 才返回历史版本；`/api/memories/status` 是手工纠错入口
+- 冷层摘要 payload 写 `source_memory_ids`；覆盖时对应点标 `stale`，检索默认过滤
+- 超期清理：`superseded`/`deleted` 30 天，`active` 180 天
+
 - `pyproject.toml` 未知，依赖见 `requirements.txt`

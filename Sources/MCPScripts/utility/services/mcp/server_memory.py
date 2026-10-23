@@ -9,6 +9,7 @@ calls are exported without the leading underscore.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import sys
 import time
@@ -17,18 +18,24 @@ from datetime import datetime, timedelta
 from utility.llm import client as llm_client
 from utility.core import prompt_loader
 from mem0 import Memory
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 from mcp.types import TextContent
 
 from utility.core.log_utils import setup_logging
 from utility.services.mcp.server_constants import (
     AI_API_KEY,
     COLD_COLLECTION,
+    COLD_SOURCE_MEMORY_IDS_FIELD,
+    COLD_STALE_FIELD,
     CONTRADICTION_SIMILARITY_THRESHOLD,
     CONTRADICTION_TOP_K,
+    DEDUPE_EXACT_SIMILARITY,
+    DEDUPE_NOTICE_SIMILARITY,
+    DEDUPE_TOP_K,
     DEFAULT_HEAT_SCORE,
     DEFAULT_TIMEOUT,
     DEFAULT_USER_ID,
+    DELETED_AT_FIELD,
     ERR_HOT_LAYER_NOT_READY,
     ERR_MEMORY_IDS_EMPTY,
     ERR_VALUE_INVALID,
@@ -44,9 +51,18 @@ from utility.services.mcp.server_constants import (
     NOTES_DIR,
     PROCESSED_FIELD,
     PROCESSED_MAX_BIT,
+    PROCESSED_RETIRED_MASK,
+    REVISION_FIELD,
+    STATUS_ACTIVE,
+    STATUS_DELETED,
+    STATUS_FIELD,
+    STATUS_SUPERSEDED,
     SUMMARY_LLM_API_URL,
     SUMMARY_LLM_MODEL,
     SUMMARY_LLM_TEMPERATURE,
+    SUPERSEDED_AT_FIELD,
+    SUPERSEDED_BY_FIELD,
+    SUPERSES_FIELD,
     err_bit_out_of_range,
 )
 from utility.services.mcp.server_embed import (
@@ -224,13 +240,16 @@ def search_cold_layer(
     if get_qdrant() and qvec is not None:
         try:
             vec = qvec.tolist()
-            qfilter = None
+            # Stale = the summary was derived from a memory that has since been
+            # superseded; it must not be served even when archived entries are wanted.
+            must_not = [
+                FieldCondition(key=COLD_STALE_FIELD, match=MatchValue(value=True))
+            ]
             if not include_archived:
-                qfilter = Filter(
-                    must_not=[
-                        FieldCondition(key="archived", match=MatchValue(value=True))
-                    ]
+                must_not.append(
+                    FieldCondition(key="archived", match=MatchValue(value=True))
                 )
+            qfilter = Filter(must_not=must_not)
             resp = get_qdrant().query_points(
                 collection_name=COLD_COLLECTION,
                 query=vec,
@@ -321,6 +340,10 @@ _HOT_META_KEYS = (
     "disputed",
     "disputed_by",
     "dispute_reason",
+    STATUS_FIELD,
+    SUPERSEDED_BY_FIELD,
+    SUPERSEDED_AT_FIELD,
+    REVISION_FIELD,
 )
 
 
@@ -387,8 +410,195 @@ def _build_metadata(src: dict, now_iso: str) -> dict:
         "last_accessed_at": now_iso,
         "access_count": 0,
         "archived": False,
-        # Processed bitmask: bit0=1 means successfully processed by the summarization script (remaining bits reserved)
-        "processed": 0,
+        STATUS_FIELD: STATUS_ACTIVE,
+        SUPERSEDED_BY_FIELD: "",
+        REVISION_FIELD: 1,
+        # Processed bitmask: bit0=summarized, bit1=retired (see server_constants)
+        PROCESSED_FIELD: 0,
+    }
+
+
+def _memory_status(meta: dict | None) -> str:
+    """Lifecycle status; legacy entries without the field count as active."""
+    return str((meta or {}).get(STATUS_FIELD) or STATUS_ACTIVE)
+
+
+def _active_similar(content: str) -> list[dict]:
+    """Active hot memories closest to `content`. Search failure never blocks a write.
+
+    mem0's final score is a hybrid (semantic + BM25) divided by 2, so identical text
+    lands near 0.55. Dedupe thresholds must therefore read semantic_score from
+    score_details, with the stored content hash as the deterministic exact match.
+    """
+    if not get_hot_memory():
+        return []
+    try:
+        raw = get_hot_memory().search(
+            content,
+            top_k=DEDUPE_TOP_K,
+            threshold=0.0,
+            filters={"user_id": DEFAULT_USER_ID},
+            explain=True,
+        )
+    except Exception as e:
+        logger.warning(f"Hot dedupe search failed: {e}")
+        return []
+    rows = raw if isinstance(raw, list) else raw.get("results", [])
+    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+    similar = []
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        if _memory_status(r.get("metadata")) != STATUS_ACTIVE:
+            continue
+        details = r.get("score_details") or {}
+        score = details.get("semantic_score")
+        if score is None:
+            score = r.get("score") or 0
+        if r.get("hash") == content_hash:
+            score = 1.0
+        similar.append(
+            {
+                "id": r["id"],
+                "content": str(r.get("memory") or r.get("content") or "")[:120],
+                "score": round(float(score), 3),
+            }
+        )
+    return similar
+
+
+def _update_metadata(memory_id: str, meta: dict) -> bool:
+    """Metadata-only update; mem0 skips re-embedding when data is None."""
+    if not get_hot_memory():
+        return False
+    try:
+        get_hot_memory().update(memory_id, metadata=meta)
+        return True
+    except Exception as e:
+        logger.warning(f"Metadata update failed for {memory_id}: {e}")
+        return False
+
+
+def _mark_superseded(
+    old_ids: list[str], new_id: str, now_iso: str
+) -> tuple[list, list]:
+    """Soft-retire old memories: keep content and bit0, set status plus the retired bit."""
+    done, failed = [], []
+    for sid in old_ids:
+        try:
+            old = get_hot_memory().get(sid)
+        except Exception:
+            old = None
+        if not old:
+            failed.append(sid)
+            continue
+        meta = dict(old.get("metadata") or {})
+        meta[STATUS_FIELD] = STATUS_SUPERSEDED
+        meta[SUPERSEDED_BY_FIELD] = new_id
+        meta[SUPERSEDED_AT_FIELD] = now_iso
+        meta[PROCESSED_FIELD] = (
+            int(meta.get(PROCESSED_FIELD, 0) or 0) | PROCESSED_RETIRED_MASK
+        )
+        if _update_metadata(sid, meta):
+            done.append(sid)
+        else:
+            failed.append(sid)
+    return done, failed
+
+
+def _mark_cold_stale(memory_ids: list[str]) -> int:
+    """Flag cold summaries derived from these hot memories (best effort)."""
+    if not memory_ids or not get_qdrant():
+        return 0
+    try:
+        selector = Filter(
+            must=[
+                FieldCondition(
+                    key=COLD_SOURCE_MEMORY_IDS_FIELD,
+                    match=MatchAny(any=sorted(set(memory_ids))),
+                )
+            ]
+        )
+        points, _ = get_qdrant().scroll(
+            collection_name=COLD_COLLECTION,
+            scroll_filter=selector,
+            limit=1000,
+            with_payload=False,
+            with_vectors=False,
+        )
+        ids = [p.id for p in points]
+        if ids:
+            get_qdrant().set_payload(
+                collection_name=COLD_COLLECTION,
+                payload={COLD_STALE_FIELD: True},
+                points=ids,
+            )
+        return len(ids)
+    except Exception as e:
+        logger.warning(f"Cold stale marking failed: {e}")
+        return 0
+
+
+def _write_memory(item: dict, now_iso: str) -> dict:
+    """Dedupe, persist one memory, then soft-supersede the ids it replaces."""
+    content = item["content"]
+    similar = _active_similar(content)
+    top = similar[0] if similar else None
+    supersedes = [str(s) for s in (item.get("supersedes") or []) if s]
+
+    # Idempotent write: the same fact is already active, so return its id instead of
+    # creating a near-duplicate. Explicit supersede targets are still retired.
+    if top and top["score"] >= DEDUPE_EXACT_SIMILARITY:
+        # Rewriting the same fact with supersedes pointing at itself must not
+        # self-retire the only active copy.
+        targets = [sid for sid in supersedes if sid != top["id"]]
+        superseded, failed = _mark_superseded(targets, top["id"], now_iso)
+        _mark_cold_stale(superseded)
+        return {
+            "success": True,
+            "memory_id": top["id"],
+            "layer": "hot",
+            "deduped": True,
+            "superseded": superseded,
+            "warnings": [f"supersede target not found: {sid}" for sid in failed],
+            "similar": [s for s in similar if s["score"] >= DEDUPE_NOTICE_SIMILARITY],
+        }
+
+    metadata = _build_metadata(item, now_iso)
+    revision = 1
+    for sid in supersedes:
+        try:
+            old = get_hot_memory().get(sid) or {}
+        except Exception:
+            old = {}
+        old_rev = int((old.get("metadata") or {}).get(REVISION_FIELD, 1) or 1)
+        revision = max(revision, old_rev + 1)
+    metadata[SUPERSES_FIELD] = supersedes
+    metadata[REVISION_FIELD] = revision
+
+    result = get_hot_memory().add(
+        content, user_id=DEFAULT_USER_ID, metadata=metadata, infer=False
+    )
+    rows = result.get("results", [])
+    memory_id = rows[0].get("id") if rows else None
+    if not memory_id:
+        return {
+            "success": False,
+            "memory_id": None,
+            "layer": "hot",
+            "error": "Content could not be stored.",
+        }
+    superseded, failed = _mark_superseded(supersedes, memory_id, now_iso)
+    if superseded:
+        _mark_cold_stale(superseded)
+    return {
+        "success": True,
+        "memory_id": memory_id,
+        "layer": "hot",
+        "deduped": False,
+        "superseded": superseded,
+        "warnings": [f"supersede target not found: {sid}" for sid in failed],
+        "similar": [s for s in similar if s["score"] >= DEDUPE_NOTICE_SIMILARITY],
     }
 
 
@@ -416,6 +626,11 @@ async def _check_contradiction(content: str, similar_items: list[dict]) -> dict 
 
 
 def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
+    """Flag a memory as disputed with a metadata-only update.
+
+    The previous rebuild (delete + add) changed the id, breaking superseded_by links
+    and every external reference; the rebuild now stays only as a fallback.
+    """
     if not get_hot_memory():
         return False
     try:
@@ -424,12 +639,15 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
             return False
         old_content = old.get("memory", "")
         old_meta = dict(old.get("metadata", {}) or {})
-        old_meta.setdefault(
-            "processed", 0
-        )  # carry over the processed bit so delete+add rebuild does not lose it
+        old_meta.setdefault(PROCESSED_FIELD, 0)
         old_meta["disputed"] = True
         old_meta["disputed_by"] = disputed_by
         old_meta["dispute_reason"] = reason
+        if _update_metadata(memory_id, old_meta):
+            return True
+        logger.warning(
+            f"[dispute] in-place update failed for {memory_id}, rebuilding (id will change)"
+        )
         get_hot_memory().delete(memory_id)
         try:
             get_hot_memory().add(
@@ -443,7 +661,7 @@ def _mark_hot_disputed(memory_id: str, disputed_by: str, reason: str) -> bool:
                 f"[dispute] metadata rebuild failed, falling back to rebuild without it: {e}"
             )
             fallback_meta = {
-                "processed": old_meta.get("processed", 0),
+                PROCESSED_FIELD: old_meta.get(PROCESSED_FIELD, 0),
                 "disputed": True,
                 "disputed_by": disputed_by,
                 "dispute_reason": reason,
@@ -487,6 +705,57 @@ def set_processed_bit(memory_id: str, bit: int, value: int) -> bool:
         return False
 
 
+def set_memory_status(
+    memory_ids: list[str], status: str, superseded_by: str = ""
+) -> dict:
+    """Set lifecycle status in place. Retiring keeps bit0 and adds the retired bit.
+
+    Restoring to active clears only the retired bit, so an explicit re-activation does
+    not cause the summarizer to re-consume content it already digested.
+    """
+    if status not in (STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_DELETED):
+        raise ValueError(f"invalid status: {status}")
+    if not get_hot_memory():
+        raise RuntimeError(ERR_HOT_LAYER_NOT_READY)
+    now_iso = datetime.now().isoformat()
+    updated, failed, retired = 0, [], []
+    for mid in memory_ids:
+        try:
+            old = get_hot_memory().get(mid)
+        except Exception:
+            old = None
+        if not old:
+            failed.append(mid)
+            continue
+        meta = dict(old.get("metadata") or {})
+        meta[STATUS_FIELD] = status
+        flags = int(meta.get(PROCESSED_FIELD, 0) or 0)
+        if status == STATUS_ACTIVE:
+            meta[PROCESSED_FIELD] = flags & ~PROCESSED_RETIRED_MASK
+            meta[SUPERSEDED_BY_FIELD] = ""
+            meta[SUPERSEDED_AT_FIELD] = ""
+        else:
+            meta[PROCESSED_FIELD] = flags | PROCESSED_RETIRED_MASK
+            if status == STATUS_SUPERSEDED:
+                meta[SUPERSEDED_BY_FIELD] = superseded_by
+                meta[SUPERSEDED_AT_FIELD] = now_iso
+            else:
+                meta[DELETED_AT_FIELD] = now_iso
+            retired.append(mid)
+        if _update_metadata(mid, meta):
+            updated += 1
+        else:
+            failed.append(mid)
+    cold_stale = _mark_cold_stale(retired) if retired else 0
+    return {
+        "status": status,
+        "updated": updated,
+        "failed": len(failed),
+        "failed_ids": failed,
+        "cold_stale": cold_stale,
+    }
+
+
 _pending_contradictions: set[asyncio.Task] = set()
 
 _MAX_CONTRADICTION_TASKS = 5
@@ -516,6 +785,9 @@ async def _contradiction_check_hot(content: str, memory_id: str) -> None:
             if isinstance(r, dict)
             and r.get("score", 0) >= CONTRADICTION_SIMILARITY_THRESHOLD
             and r.get("id") != memory_id
+            # Superseded versions are history, not competing facts: comparing against
+            # them turns an ordinary update into a false "contradiction".
+            and _memory_status(r.get("metadata")) == STATUS_ACTIVE
         ]
         if high_sim:
             result = await _check_contradiction(content, high_sim)
@@ -599,34 +871,13 @@ async def _handle_remember(arguments: dict) -> list[TextContent]:
                 ),
             )
         ]
-    content = arguments["content"]
     now_iso = datetime.now().isoformat()
-    metadata = _build_metadata(arguments, now_iso)
-    for sid in arguments.get("supersedes", []):
-        try:
-            get_hot_memory().delete(sid)
-        except Exception:
-            pass
-    result = get_hot_memory().add(
-        content, user_id=DEFAULT_USER_ID, metadata=metadata, infer=False
-    )
-    results = result.get("results", [])
-    memory_id = results[0].get("id") if results else None
-    if memory_id:
-        spawn_contradiction_check(_contradiction_check_hot(content, memory_id))
-    return [
-        TextContent(
-            type="text",
-            text=dumps(
-                {
-                    "success": memory_id is not None,
-                    "memory_id": memory_id,
-                    "layer": "hot",
-                    "error": None if memory_id else "Content could not be stored.",
-                }
-            ),
+    result = _write_memory(arguments, now_iso)
+    if result.get("memory_id") and not result.get("deduped"):
+        spawn_contradiction_check(
+            _contradiction_check_hot(arguments["content"], result["memory_id"])
         )
-    ]
+    return [TextContent(type="text", text=dumps(result))]
 
 
 @_register("remember_batch")
@@ -651,29 +902,15 @@ async def _handle_remember_batch(arguments: dict) -> list[TextContent]:
     results = []
     now_iso = datetime.now().isoformat()
     for mem in memories:
-        content = mem["content"]
-        metadata = _build_metadata(mem, now_iso)
-        for sid in mem.get("supersedes", []):
-            try:
-                get_hot_memory().delete(sid)
-            except Exception:
-                pass
         try:
-            result = get_hot_memory().add(
-                content, user_id=DEFAULT_USER_ID, metadata=metadata, infer=False
-            )
-            results_list = result.get("results", [])
-            memory_id = results_list[0].get("id") if results_list else None
-            item_result = {
-                "success": memory_id is not None,
-                "memory_id": memory_id,
-                "layer": "hot",
-            }
-            results.append(item_result)
-            if memory_id:
-                spawn_contradiction_check(_contradiction_check_hot(content, memory_id))
+            item_result = _write_memory(mem, now_iso)
         except Exception as e:
-            results.append({"success": False, "error": str(e)})
+            item_result = {"success": False, "error": str(e)}
+        results.append(item_result)
+        if item_result.get("memory_id") and not item_result.get("deduped"):
+            spawn_contradiction_check(
+                _contradiction_check_hot(mem["content"], item_result["memory_id"])
+            )
     return [
         TextContent(
             type="text",
@@ -694,6 +931,7 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
     query = arguments["query"]
     limit = int_arg(arguments, "limit", DEFAULT_RECALL_LIMIT)
     include_archived = arguments.get("include_archived", False)
+    include_superseded = bool(arguments.get("include_superseded", False))
     layers = arguments.get("layers")
     if isinstance(layers, str):
         layers = [layers]
@@ -711,10 +949,13 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
             # No rerank passed: MEM0_CONFIG does not configure a reranker, so mem0's
             # internal `if rerank and self.reranker` is always false — passing it is a
             # no-op that only adds confusion.
+            # Over-fetch: lifecycle filtering happens in Python so legacy entries
+            # without a status field still count as active. A plain top_k would
+            # silently shrink the hot-layer result count after the first supersede.
             hot_raw = get_hot_memory().search(
                 query,
                 filters={"user_id": DEFAULT_USER_ID},
-                top_k=limit,
+                top_k=max(limit * 3, limit + 5),
                 threshold=0.0,
             )
             hot = hot_raw if isinstance(hot_raw, list) else hot_raw.get("results", [])
@@ -723,6 +964,11 @@ async def _handle_recall(arguments: dict) -> list[TextContent]:
                     continue
                 meta = r.get("metadata") or {}
                 if not include_archived and meta.get("archived"):
+                    continue
+                status = _memory_status(meta)
+                if status == STATUS_DELETED:
+                    continue
+                if status == STATUS_SUPERSEDED and not include_superseded:
                     continue
                 r["layer"] = "hot"
                 r["content"] = r.get("memory", r.get("content", ""))
@@ -773,6 +1019,7 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
             )
         ]
     since_days = arguments.get("since_days", 3)
+    include_superseded = bool(arguments.get("include_superseded", False))
     try:
         data = get_hot_memory().get_all(
             filters={"user_id": DEFAULT_USER_ID}, top_k=5000
@@ -787,6 +1034,10 @@ async def _handle_catch_up(arguments: dict) -> list[TextContent]:
         m
         for m in data
         if datetime.fromisoformat(m.get("created_at", "")).timestamp() >= since_ts
+        and _memory_status(m.get("metadata")) != STATUS_DELETED
+        and (
+            include_superseded or _memory_status(m.get("metadata")) != STATUS_SUPERSEDED
+        )
     ]
     data = sorted(
         data,
@@ -811,13 +1062,24 @@ async def _handle_forget(arguments: dict) -> list[TextContent]:
     if layer in ("hot", "all") and memory_id:
         if await ensure_hot_memory():
             try:
-                get_hot_memory().delete(memory_id)
+                old = get_hot_memory().get(memory_id)
+                meta = dict((old or {}).get("metadata") or {})
+                meta[STATUS_FIELD] = STATUS_DELETED
+                meta[DELETED_AT_FIELD] = datetime.now().isoformat()
+                meta[PROCESSED_FIELD] = (
+                    int(meta.get(PROCESSED_FIELD, 0) or 0) | PROCESSED_RETIRED_MASK
+                )
+                _update_metadata(memory_id, meta)
             except Exception:
                 pass
     if layer in ("cold", "all") and point_id and get_qdrant():
+        # Soft-retire: cold points have no trash, archived keeps them out of search
+        # while preserving the ability to audit what was removed.
         try:
-            get_qdrant().delete(
-                collection_name=COLD_COLLECTION, points_selector=[point_id]
+            get_qdrant().set_payload(
+                collection_name=COLD_COLLECTION,
+                payload={"archived": True, COLD_STALE_FIELD: True},
+                points=[point_id],
             )
         except Exception:
             pass

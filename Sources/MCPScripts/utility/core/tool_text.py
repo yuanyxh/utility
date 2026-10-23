@@ -25,7 +25,11 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "param.point_id": "Optional point ID",
     "param.layer": "Layer to delete from; default hot",
     "param.layers": "Layers to search: hot, cold, or both; default both",
-    "param.bit": "Bit index; 0 = summarized",
+    "param.include_superseded": (
+        "Include memories retired by a newer revision (history); deleted memories "
+        "are never returned"
+    ),
+    "param.bit": "Bit index; 0 = summarized, 1 = retired",
     "param.bit_value": "1 = set, 0 = reset",
     "param.db_path": "Required. Absolute path to .utility/deps.sqlite",
     "param.search_keyword": (

@@ -39,7 +39,7 @@ DEFAULT_READ_MAX_CHARS = max(0, arg_default("read_url", "max_chars"))
 
 #: Fixed English tool descriptions; parameter guidance lives in `tool_text.PARAM_DESCRIPTIONS`.
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "remember": "Trigger: user says remember/record, a bug is fixed, an insight is learned, or an architecture design changes. Writes one fact to shared memory.",
+    "remember": "Trigger: user says remember/record, a bug is fixed, an insight is learned, or an architecture design changes. Writes one fact to shared memory. Pass supersedes with the id of the memory this fact replaces; the old entry is retired, not deleted.",
     "remember_batch": "Batch version of remember; prefer it for multiple facts to cut calls.",
     "recall": "Trigger: user says look up/search/find that earlier one, or refers to history or existing information. Searches shared memory, knowledge base, and notes.",
     "catch_up": "Trigger: user says just now/last time/previously/recently, or asks what was done, the progress, or what remains unresolved. Do not substitute git log.",
@@ -133,6 +133,11 @@ def build_tools() -> list[Tool]:
                         "description": param_text("param.max_results"),
                     },
                     "include_archived": {"type": "boolean", "default": False},
+                    "include_superseded": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": param_text("param.include_superseded"),
+                    },
                     "layers": {
                         "type": "array",
                         "items": {"type": "string", "enum": ["hot", "cold"]},
@@ -151,6 +156,11 @@ def build_tools() -> list[Tool]:
                     "since_days": {
                         "type": "number",
                         "description": param_text("param.since_days"),
+                    },
+                    "include_superseded": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": param_text("param.include_superseded"),
                     },
                 },
             },
