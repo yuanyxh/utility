@@ -120,7 +120,7 @@
 - ⚠️ **bash 3.2 会把紧跟 `$VAR` 的全角字符并入变量名**（`$VERSION（` → `VERSION<乱码>: unbound variable`，`set -u` 下直接退出）：变量后接中文/全角标点必须写 `${VAR}`
 
 ### Verification
-每次改动按顺序跑，全绿才算完成：
+交付前必须实跑（行为约束见 `.claude/rules/verification-before-completion.md`）：
 ```bash
 swift build
 python3 scripts/gen-l10n.py --check
