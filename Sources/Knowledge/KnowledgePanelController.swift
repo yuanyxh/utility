@@ -588,22 +588,36 @@ public final class KnowledgePanelController: NSWindowController {
         kind == "trend" ? L10n.Knowledge.kindTrend : L10n.Knowledge.kindPrinciple
     }
 
+    /// Prefer the page title; fall back to a readable host so raw URLs never show.
+    private func sourceLabel(_ item: KnowledgeEvidence) -> String {
+        if !item.title.isEmpty { return item.title }
+        let host = URL(string: item.url)?.host ?? item.url
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    private func markdownLink(_ item: KnowledgeEvidence) -> String {
+        let label = sourceLabel(item)
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+        let url = item.url.replacingOccurrences(of: ")", with: "%29")
+        return "- [\(label)](\(url))"
+    }
+
     private func renderText(_ card: KnowledgeCard) -> String {
         var text = card.body
-        if !card.evidenceURLs.isEmpty {
+        if !card.evidence.isEmpty {
             text += "\n\n---\n\n**\(L10n.Knowledge.sources)**\n\n"
-            text += card.evidenceURLs.prefix(8)
-                .map { "- <\($0)>" }
-                .joined(separator: "\n")
+            text += card.evidence.prefix(8).map(markdownLink).joined(separator: "\n")
         }
         return text
     }
 
     private func cardText(_ card: KnowledgeCard) -> String {
         var text = card.title + "\n\n" + card.body
-        if !card.evidenceURLs.isEmpty {
+        if !card.evidence.isEmpty {
             text += "\n\n---\n" + L10n.Knowledge.sources + ":\n"
-            text += card.evidenceURLs.map { "- \($0)" }.joined(separator: "\n")
+            text += card.evidence.map { "- \(sourceLabel($0)): \($0.url)" }
+                .joined(separator: "\n")
         }
         return text
     }
@@ -687,11 +701,9 @@ public final class KnowledgePanelController: NSWindowController {
         var text = "---\ntitle: \"\(card.title)\"\ntheme: \"\(card.theme)\"\n"
         text += "kind: \"\(card.topicKind)\"\ncard_id: \(card.id)\nliked_at: \(stamp)\n"
         text += "---\n\n# \(card.title)\n\n\(card.body)\n"
-        if !card.evidenceURLs.isEmpty {
+        if !card.evidence.isEmpty {
             text += "\n## \(L10n.Knowledge.sources)\n\n"
-            text += card.evidenceURLs.prefix(8)
-                .map { "- <\($0)>" }
-                .joined(separator: "\n")
+            text += card.evidence.prefix(8).map(markdownLink).joined(separator: "\n")
             text += "\n"
         }
         do {

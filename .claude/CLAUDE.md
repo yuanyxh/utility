@@ -102,7 +102,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 点赞只标记并停留当前卡，不禁跳下一张；`saveLikedMarkdown` 为真时同步保存 Markdown
 - `runCaptureOutput` 必须显式传 `environment:`，否则 GUI 进程没有 `AI_API_KEY`
 - 知识库 schema 唯一所有者是 `knowledge_pool.py`，Swift 只做裸 SQL、绝不建表；两侧都要 WAL + busy timeout
-- Markdown 必须逐 run 把 intent 翻成字体/段落样式；表格或解析失败降级纯文本
+- Markdown 用 WKWebView + 内嵌 `marked.umd.js`（GFM）渲染；选中/复制/链接由 WebKit 提供，资源缺失时降级纯文本
 - 自检证据必须给全文，**禁止截断**（截断会批量制造假阳性）
 - 卡片失败源几乎全是上游 LLM 超时：`disable_thinking=True`
 

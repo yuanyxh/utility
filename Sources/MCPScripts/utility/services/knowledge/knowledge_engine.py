@@ -172,7 +172,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     摘要那点文本撑不起一张卡片，模型只能靠编。
     """
     deadline = time.monotonic() + EVIDENCE_WALL_CLOCK
-    urls: list[str] = []
+    sources: list[dict] = []
     parts: list[str] = []
 
     hit = wiki(concept)
@@ -181,7 +181,9 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     if has_wiki:
         parts.append(wiki_text[:6000])
         if _usable_source(hit.get("url", "")):
-            urls.append(hit["url"])
+            sources.append(
+                {"url": hit["url"], "title": (hit.get("title") or "").strip()}
+            )
 
     hits: list[dict] = []
     if time.monotonic() < deadline:
@@ -221,7 +223,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
         if block.strip():
             parts.append(block)
         if url:
-            urls.append(url)
+            sources.append({"url": url, "title": (r.get("title") or "").strip()})
 
     text = "\n\n---\n".join(parts)
     # 依据不足是**正常结果**（概念名常是模型自己组织的说法,搜不到是常态）,但它是
@@ -254,10 +256,11 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
         text = text[:MAX_EVIDENCE_CHARS] + t("mcp.knowledge.evidence_truncated")
 
     seen, uniq = set(), []
-    for u in (item for item in urls if _usable_source(item)):
-        if u and u not in seen:
-            seen.add(u)
-            uniq.append(u)
+    for item in sources:
+        url = item["url"]
+        if url and url not in seen and _usable_source(url):
+            seen.add(url)
+            uniq.append(item)
     return {"text": text, "urls": uniq}
 
 

@@ -8,7 +8,12 @@
 - **补货与显示分离**：`knowledge_refill.py` 后台按间隔补货入池，面板弹出直接从池读（秒开）。生成一张卡要 1~2 分钟（3 次 LLM 调用 + 检索），不能放在弹窗路径上
 - ⚠️ **补货不能走 TaskScheduler**：`handleMissed()` 以「今天 00:00 后第一个 cron 点」为基准，`lastFire >= todayPoint` 即跳过 → 任何 sub-daily 的 cron 都静默退化成每天一次（`*/30 * * * *` 实测一天只跑一次，无任何报错）。改用 `KnowledgeService` 自建 Timer：「间隔」只是唤醒节拍，真正的开关是池容量
 - ⚠️ **`runCaptureOutput` 默认不传 environment**：子进程继承 Utility.app（launchd 启动的 GUI 进程）环境，没有 `AI_API_KEY` / `UTILITY_DATA_DIR` → Python 侧 `default_target().ready == false`，静默返回 None、一张卡都出不来。已加可选参数 `environment:`，`KnowledgeService` 显式传 `PythonScriptRunner.environment(overrides: [:])`
-- ⚠️ **Markdown 渲染**：`AttributedString(markdown:)` 只给语义属性（`presentationIntent` / `inlinePresentationIntent`），**不带任何字体** —— 直接塞进 NSTextView 是「标题与正文一样大、加粗不变粗、列表没有项目符号」，静默且只在弹面板时看得见。`KnowledgeMarkdownView` 逐 run 把 intent 翻成字体/段落样式；命中表格（GFM 表格它不解析）或解析失败则整体降级纯文本
+- **Markdown 渲染 = WKWebView + 内嵌 marked.js**（`Sources/Resources/markdown/marked.umd.js`，v18.1.1，MIT）：GFM 表格/删除线/自动链接开箱可用，选中/复制/右键菜单由 WebKit 提供，链接点击经 `WKNavigationDelegate` 交给系统浏览器。资源被 `.process` 扁平化到 bundle 根，加载时同时尝试 `markdown/` 子目录与根目录；缺失则页面用 `textContent` 降级纯文本。**旧的 `AttributedString` 逐 run 字体映射已移除**——它不解析 GFM 表格，且 260 行映射表是纯手工维护成本
+- ⚠️ **CJK 强调需扩展**（2026-10-24 实测）：CommonMark 的强调定界符是标点敏感的，`**邻居发现协议（NDP）**对自身` 这类「闭合 `**` 紧跟全角括号」默认不解析、原样输出星号。页面加载时注册 marked inline 扩展 `cjkStrong` / `cjkDel` 放宽闭合条件；围栏代码与行内代码不受影响（code token 先于 inline tokenizer）
+- **样式覆盖全部节点**：`::selection` 自定义高亮（亮/暗两套）、`body/a/li/td` 统一 `overflow-wrap: anywhere` 防长 URL 裁切、`pre` 用 `pre-wrap` 换行、滚动条隐藏但可滚
+- ⚠️ **WKWebView 必须关掉底色**：默认会画一张不透明白卡，和毛玻璃面板强烈割裂。`underPageBackgroundColor = .clear` 不够，必须 `setValue(false, forKey: "drawsBackground")`；注意 `responds(to: "setDrawsBackground:")` 返回 false 但 KVC 实际可用，不能用它做保护（2026-10-24 实测：窗口角落 alpha 从 1 变 0）
+- **来源显示标题**：`evidence_urls` 存 `[{"url","title"}]`，标题取自维基/搜索结果；Swift 解码兼容旧的纯字符串数组，缺标题时回退域名。历史卡已于 2026-10-24 回填（206/344 成功，其余 403/超时保留空标题）
+- **代码块与表格边界**：透明背景上纯灰 `rgba(127,127,127,…)` 看不出边界，必须用 `rgba(60,60,67,…)`（浅色）/ `rgba(235,235,245,…)`（深色）并带 1px 边框
   - 新 SDK 的 `intent.components` 元素是 `IntentType` 包装，真正的枚举在 `.kind` 上（当成 `Kind` 直接用会编译失败）
 - **数据层**：`knowledge_pool.py` 是 schema 唯一所有者（`init_db()` 幂等迁移 + WAL）；Swift `KnowledgeStore` 只做裸 SQL、绝不建表、每个方法容忍缺表。跨进程同时打开同一文件 → **两侧都要 WAL + busy timeout**（只设一侧会回落 delete 模式互相阻塞），`nextCard` 的「读 + UPDATE shown_count」放同一写事务
 - **卡片失败源几乎全是上游 LLM 超时/断连**，不是内容判据：`knowledge_card` 原带 thinking 生成 8k（单次 60~180s，`ReadTimeout` / `RemoteProtocolError: incomplete chunked read`）→ 现三处全部 `disable_thinking=True`，card 收窄到 4096

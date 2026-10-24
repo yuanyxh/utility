@@ -2,6 +2,11 @@ import Foundation
 import GRDB
 
 /// 一张待展示的知识卡片。**不注册 TableRecord** —— 表由 Python 侧拥有，再声明一份映射必然漂移。
+struct KnowledgeEvidence {
+    let url: String
+    let title: String
+}
+
 struct KnowledgeCard {
     let id: Int64
     let kind: String
@@ -10,7 +15,7 @@ struct KnowledgeCard {
     let theme: String
     let topicKind: String
     let body: String
-    let evidenceURLs: [String]
+    let evidence: [KnowledgeEvidence]
     let topicID: Int64?
 }
 
@@ -163,15 +168,36 @@ final class KnowledgeStore {
     }
 
     private static func card(from row: Row) -> KnowledgeCard {
-        let urlsJSON: String = row["evidence_urls"] ?? "[]"
-        let rawURLs = (try? JSONSerialization.jsonObject(with: Data(urlsJSON.utf8)))
-            as? [String] ?? []
+        let raw: String = row["evidence_urls"] ?? "[]"
         return KnowledgeCard(
             id: row["id"], kind: row["kind"], title: row["title"],
             subtitle: row["subtitle"] ?? "", theme: row["theme"] ?? "",
             topicKind: row["topic_kind"] ?? "", body: row["body"] ?? "",
-            evidenceURLs: rawURLs.compactMap(normalizedEvidenceURL), topicID: row["topic_id"],
+            evidence: evidenceList(raw), topicID: row["topic_id"],
         )
+    }
+
+    /// Accept both shapes: legacy `["url"]` and the current `[{"url","title"}]`.
+    private static func evidenceList(_ raw: String) -> [KnowledgeEvidence] {
+        guard let data = raw.data(using: .utf8),
+              let items = try? JSONSerialization.jsonObject(with: data) as? [Any]
+        else { return [] }
+        return items.compactMap { item in
+            if let url = item as? String {
+                return normalizedEvidenceURL(url).map {
+                    KnowledgeEvidence(url: $0, title: "")
+                }
+            }
+            if let dict = item as? [String: Any],
+               let url = dict["url"] as? String,
+               let normalized = normalizedEvidenceURL(url)
+            {
+                return KnowledgeEvidence(
+                    url: normalized, title: dict["title"] as? String ?? "",
+                )
+            }
+            return nil
+        }
     }
 
     /// 旧卡可能存着搜索引擎结果页；展示前统一过滤并规范化，避免出现不可点击的长链接。
