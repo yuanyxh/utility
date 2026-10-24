@@ -180,7 +180,7 @@ def note_extensions(default: tuple[str, ...] = ()) -> tuple[str, ...]:
 
 
 def knowledge_topics() -> list[dict]:
-    """主题种子（JSON 数组，元素 {name, kind}）。"""
+    """主题种子（JSON 数组，元素 {name, kind, scope, exclude}）。"""
     return [t for t in _json_list(get("KNOWLEDGE_TOPICS", "")) if isinstance(t, dict)]
 
 

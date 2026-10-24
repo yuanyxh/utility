@@ -248,11 +248,18 @@ knowledge:
   likedSaveDir: ''              # empty = <mcp.knowledgeBasePath>/知识卡片 (or default notes dir)
   showReviewedCards: false      # false = only unseen cards; true = fall back to old cards
   # Topic lines: concepts are pushed in order. kind: principle | trend
+  # scope / exclude are the hard boundaries of concept selection. Keep scope to the
+  # topic's textbook table of contents; list products, vendor solutions and industry
+  # trends under exclude. Empty scope = the topic's own textbook TOC.
   topics:
     - name: TCP/IP 协议栈
       kind: principle
+      scope: 分层模型、寻址、路由、传输、应用层协议的机制与设计原理
+      exclude: 厂商设备与产品、云原生与容器基础设施、网络运维体系、行业趋势与近五年新词
     - name: 编译原理
       kind: principle
+      scope: 词法分析、语法分析、中间表示、优化、代码生成、运行时等编译阶段的机制与原理
+      exclude: 具体编译器产品与 IDE、工程构建工具、行业趋势与近五年新词
 
 stage:
   moveOnDragOut: true

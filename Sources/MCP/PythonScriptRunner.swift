@@ -178,7 +178,12 @@ enum PythonScriptRunner {
         var env: [String: String] = [:]
         let knowledge = ConfigManager.shared.config.knowledge
         if !knowledge.topics.isEmpty {
-            let seeds = knowledge.topics.map { ["name": $0.name, "kind": $0.kind] }
+            let seeds = knowledge.topics.map {
+                [
+                    "name": $0.name, "kind": $0.kind,
+                    "scope": $0.scope, "exclude": $0.exclude,
+                ]
+            }
             if let json = encodeJSON(seeds) {
                 env[EnvKeys.knowledgeTopics] = json
             }

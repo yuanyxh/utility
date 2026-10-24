@@ -43,6 +43,11 @@ CARD_FAIL = "card_fail"
 # 计入主题的 fail_streak —— 那是一次网络抖动就永久烧掉一个主题（实测踩到：调用失败直接
 # 把两个主题标成 done）。内容失败（CARD_FAIL）仍然计入。
 CARD_UNAVAILABLE = "card_unavailable"
+# 选题闸门拒绝：概念越出 scope 或属于产品/趋势词。**不计 fail_streak**——
+# 这是闸门在正常工作，不是管线失败；概念落 rejected 后不再被重问。
+SCOPE_REJECTED = "scope_rejected"
+# 闸门调用本身失败（上游不可用），与 CARD_UNAVAILABLE 同语义。
+GATE_UNAVAILABLE = "gate_unavailable"
 
 # 概念在「失败」时落库的 status（防止下一轮把同一个概念重问一遍）。
 # OK/EXHAUSTED 由调用方处理（前者写 done、后者不写 concept 行）。
@@ -240,8 +245,18 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     return {"text": text, "urls": uniq}
 
 
-def advance(theme: str, done_text: str, kind: str, *, topic_kind: str = "") -> dict:
-    """跑完三步：展开概念 → 检索依据 → 生成卡片。返回 {code, concept, why_now, body, evidence, urls, calls}。
+def advance(
+    theme: str,
+    done_text: str,
+    *,
+    scope: str = "",
+    exclude: str = "",
+    disliked: str = "",
+) -> dict:
+    """跑完四步：展开概念 → 选题闸门 → 检索依据 → 生成卡片。
+
+    `scope` / `exclude` 是主题的硬边界，同时喂给 expand、gate、card 三个提示词；
+    `disliked` 是用户踩过的方向，作为负反馈喂给 expand 与 gate。
 
     **幻觉自检已移除**：它是输入最大的一步(卡片全文 + ≤12000 字证据),上游对长输入处理
     约 25 秒后直接断连(`RemoteProtocolError: peer closed connection`),几乎必挂;而缩短
@@ -251,7 +266,12 @@ def advance(theme: str, done_text: str, kind: str, *, topic_kind: str = "") -> d
     calls = 0
 
     p = prompt_loader.prompt(
-        "knowledge_expand", theme=theme, done=done_text or t("mcp.knowledge.no_content")
+        "knowledge_expand",
+        theme=theme,
+        done=done_text or t("mcp.knowledge.no_content"),
+        scope=scope,
+        exclude=exclude,
+        disliked=disliked,
     )
     d = _llm_json(p, max_tokens=512, disable_thinking=True, feature="knowledge_expand")
     calls += 1
@@ -266,6 +286,30 @@ def advance(theme: str, done_text: str, kind: str, *, topic_kind: str = "") -> d
         logger.warning("expand 既未标 exhausted 也没给出 concept: %r", d)
         return _res(EXPAND_FAIL, calls=calls)
 
+    # 独立一次判断，而不是让 expand 自评：生成与审核分开，才不会被「自然引出」的
+    # 叙事自我说服。低 token + 零温度，单次成本可忽略。
+    gate = _llm_json(
+        prompt_loader.prompt(
+            "knowledge_gate",
+            theme=theme,
+            scope=scope,
+            exclude=exclude,
+            concept=concept,
+            why_now=why_now,
+            disliked=disliked,
+        ),
+        max_tokens=256,
+        temperature=0,
+        disable_thinking=True,
+        feature="knowledge_gate",
+    )
+    calls += 1
+    if gate is None:
+        return _res(GATE_UNAVAILABLE, concept=concept, why_now=why_now, calls=calls)
+    if gate.get("accept") is not True:
+        logger.info("选题越界: %s / %s (%s)", theme, concept, gate.get("reason", ""))
+        return _res(SCOPE_REJECTED, concept=concept, why_now=why_now, calls=calls)
+
     ev = gather_evidence(concept, theme)
     if ev is None:
         return _res(BASIS_SHORT, concept=concept, why_now=why_now, calls=calls)
@@ -273,7 +317,11 @@ def advance(theme: str, done_text: str, kind: str, *, topic_kind: str = "") -> d
     # 关思考 + 收窄 max_tokens:带 thinking 生成 8k 时单次实测 60~180s,上游 ReadTimeout /
     # 断连是这条管线唯一的失败源(内容判据本身没问题)。卡片正文约 2k token,4096 足够。
     p = prompt_loader.prompt(
-        "knowledge_card", theme=theme, concept=concept, evidence=ev["text"]
+        "knowledge_card",
+        theme=theme,
+        concept=concept,
+        evidence=ev["text"],
+        scope=scope,
     )
     d = _llm_json(
         p,

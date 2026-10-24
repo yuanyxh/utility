@@ -20,9 +20,8 @@ from utility.core.db import conn as dbconn
 
 WAL = "WAL"
 
-# 卡片状态。`pool` 在池中待显示；其余四种都表示「已出池」，区别只在去向。
+# 卡片状态。`pool` 在池中待显示；其余两种都表示「已出池」，区别只在去向。
 ST_POOL = "pool"
-ST_KNOWN = "known"  # 已知 → 移除
 ST_LIKED = "liked"
 ST_DISLIKED = "disliked"
 
@@ -51,6 +50,8 @@ def init_db() -> str:
                 kind TEXT NOT NULL DEFAULT 'principle',
                 status TEXT NOT NULL DEFAULT 'active',
                 position INTEGER NOT NULL DEFAULT 0,
+                scope TEXT NOT NULL DEFAULT '',
+                exclude TEXT NOT NULL DEFAULT '',
                 fail_streak INTEGER NOT NULL DEFAULT 0,
                 last_advanced_at TEXT,
                 created_at TEXT NOT NULL,
@@ -91,6 +92,15 @@ def init_db() -> str:
             CREATE INDEX IF NOT EXISTS idx_cards_pool
                 ON cards(kind, last_shown_at) WHERE status = 'pool';
         """)
+        conn.commit()
+        # 旧库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段。
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(topics)")}
+        for col, ddl in (
+            ("scope", "ALTER TABLE topics ADD COLUMN scope TEXT NOT NULL DEFAULT ''"),
+            ("exclude", "ALTER TABLE topics ADD COLUMN exclude TEXT NOT NULL DEFAULT ''"),
+        ):
+            if col not in cols:
+                conn.execute(ddl)
         conn.commit()
         # 两侧（Python 子进程与 Swift 面板）同时打开同一个文件，WAL + busy timeout 都必须有，
         # 只设一侧会回落到 delete 模式并互相阻塞。
@@ -205,18 +215,36 @@ def mark_status(card_id: int, status: str) -> None:
         conn.execute("UPDATE cards SET status = ? WHERE id = ?", (status, card_id))
 
 
+def disliked_titles(topic_id: int, limit: int = 5) -> list[str]:
+    """用户踩过的卡片标题（新→旧），作为生成侧的负反馈。"""
+    with dbconn(db_path()) as conn:
+        rows = conn.execute(
+            "SELECT title FROM cards WHERE topic_id = ? AND status = ?"
+            " ORDER BY id DESC LIMIT ?",
+            (topic_id, ST_DISLIKED, limit),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
 # ---------- 主题 ----------
 
 
 def next_topic() -> dict | None:
     with dbconn(db_path()) as conn:
         row = conn.execute(
-            "SELECT id, name, kind, fail_streak FROM topics WHERE status = 'active'"
-            " ORDER BY position ASC, id ASC LIMIT 1"
+            "SELECT id, name, kind, fail_streak, scope, exclude FROM topics"
+            " WHERE status = 'active' ORDER BY position ASC, id ASC LIMIT 1"
         ).fetchone()
     if row is None:
         return None
-    return {"id": row[0], "name": row[1], "kind": row[2], "fail_streak": row[3]}
+    return {
+        "id": row[0],
+        "name": row[1],
+        "kind": row[2],
+        "fail_streak": row[3],
+        "scope": row[4],
+        "exclude": row[5],
+    }
 
 
 def next_concept_seq(topic_id: int) -> int:
@@ -367,11 +395,22 @@ def seed_from_config() -> int:
             if not name:
                 continue
             pos += 1
+            scope = str(t.get("scope", "")).strip()
+            exclude = str(t.get("exclude", "")).strip()
             # 唯一索引在 lower(name) 上，INSERT OR IGNORE 对已存在主题幂等
             cur = conn.execute(
-                "INSERT OR IGNORE INTO topics (name, kind, status, position, created_at, updated_at)"
-                " VALUES (?, ?, 'active', ?, ?, ?)",
-                (name, t.get("kind", "principle"), pos, now, now),
+                "INSERT OR IGNORE INTO topics"
+                " (name, kind, status, position, scope, exclude, created_at, updated_at)"
+                " VALUES (?, ?, 'active', ?, ?, ?, ?, ?)",
+                (name, t.get("kind", "principle"), pos, scope, exclude, now, now),
             )
             added_topics += cur.rowcount if cur.rowcount > 0 else 0
+            # 已存在的主题也要同步 scope：配置是种子主题边界的唯一来源，
+            # 否则给老主题补 scope 永远不生效。
+            if cur.rowcount == 0 and ("scope" in t or "exclude" in t):
+                conn.execute(
+                    "UPDATE topics SET scope = ?, exclude = ?, updated_at = ?"
+                    " WHERE lower(name) = lower(?)",
+                    (scope, exclude, now, name),
+                )
     return added_topics

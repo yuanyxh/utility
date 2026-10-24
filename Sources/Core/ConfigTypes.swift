@@ -505,12 +505,18 @@ public struct TranslationConfig: Codable {
 public struct KnowledgeTopicSeed: Codable {
     var name: String = ""
     var kind: String = "principle"
+    /// 选题硬边界。为空时以该主题的教科书目录为准。
+    var scope: String = ""
+    /// 明确不覆盖的内容：产品、厂商方案、行业趋势等。
+    var exclude: String = ""
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "principle"
+        scope = try c.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        exclude = try c.decodeIfPresent(String.self, forKey: .exclude) ?? ""
     }
 }
 

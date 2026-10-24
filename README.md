@@ -256,15 +256,15 @@ tasks:
 
 Cards are generated in the background from web sources and shown on a timer. The point is to widen what you run into, not to quiz you on what you already know. The panel follows one topic line, pushing concepts in order; it only shows cards you have never seen unless reviewed cards are enabled.
 
-Every card is fetched, written and then self-checked against its sources before it enters the pool, so opening the panel is instant.
+Each candidate concept passes a scope gate before sources are fetched and the card is written; cards enter the pool in the background, so opening the panel is instant. Cards change on the timer only — the buttons below never advance to another card.
 
 **Actions**
 
 | Action | Effect |
 |---|---|
 | `option+k` | show or hide the panel |
-| Known / Dislike | drop the card and move to the next one |
-| Like | mark the card, stay on it, and optionally save it as Markdown |
+| Like | mark the card and stay on it; optionally save it as Markdown |
+| Dislike | mark the card as disliked and stay on it; the direction feeds back into future concept selection |
 | Copy | copy the card as Markdown, sources included |
 
 **Settings**
@@ -283,7 +283,7 @@ Every card is fetched, written and then self-checked against its sources before 
 | `knowledge.saveLikedMarkdown` | `true` | save the current card when Like is clicked |
 | `knowledge.likedSaveDir` | empty | Markdown output directory; empty = `<mcp.knowledgeBasePath>/知识卡片` |
 | `knowledge.showReviewedCards` | `false` | allow old cards after unseen cards run out |
-| `knowledge.topics` | built-in list | topic lines (`kind`: `principle` or `trend`) |
+| `knowledge.topics` | built-in list | topic lines (`kind`: `principle` or `trend`; `scope` / `exclude` are the hard boundaries of concept selection) |
 
 ### Network monitor
 

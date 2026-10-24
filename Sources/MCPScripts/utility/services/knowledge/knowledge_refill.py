@@ -36,8 +36,13 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
         done = "\n".join(
             f"{c['seq'] + 1}. {c['name']}" for c in pool.concepts_of(topic["id"])
         )
+        disliked = "\n".join(f"- {t}" for t in pool.disliked_titles(topic["id"]))
         r = engine.advance(
-            topic["name"], done, pool.KIND_TOPIC, topic_kind=topic["kind"]
+            topic["name"],
+            done,
+            scope=topic.get("scope", ""),
+            exclude=topic.get("exclude", ""),
+            disliked=disliked,
         )
         budget -= r["calls"]
         code = r["code"]
@@ -60,12 +65,28 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
         elif code == engine.EXHAUSTED:
             pool.mark_topic_done(topic["id"])
             logger.info("主题已讲完,标记 done: %s", topic["name"])
-        elif code in (engine.EXPAND_FAIL, engine.CARD_UNAVAILABLE):
-            # 这两种都是**上游不可用**(LLM 返回空/断连/超时,llm_client.log 可证),不是内容问题:
+        elif code in (
+            engine.EXPAND_FAIL,
+            engine.CARD_UNAVAILABLE,
+            engine.GATE_UNAVAILABLE,
+        ):
+            # 这几种都是**上游不可用**(LLM 返回空/断连/超时,llm_client.log 可证),不是内容问题:
             # 既不计入 fail_streak、也不在本轮继续硬撞 —— 否则一次网络抖动就能把主题永久标成
             # done(实测踩到:调用失败直接把两个主题烧成 done)。
             logger.warning("上游不可用,本轮停止主题补货: %s (%s)", topic["name"], code)
             break
+        elif code == engine.SCOPE_REJECTED:
+            # 闸门拒绝是正常结果：落 rejected 防止下轮重问，不烧 fail_streak，
+            # 继续在同一主题里找下一个候选（预算每轮有限，不会无限重试）。
+            if r["concept"]:
+                pool.insert_concept(
+                    topic["id"],
+                    r["concept"],
+                    r["why_now"],
+                    pool.next_concept_seq(topic["id"]),
+                    "rejected",
+                )
+            logger.info("选题越界,继续下一个: %s / %s", topic["name"], r["concept"])
         else:
             # 概念已消费(哪怕卡片没生成)也要落一行,否则下一轮会把同一个概念重问一遍,
             # 而 expand 拿到的 {done} 会原地打转。落库的 status 区分失败原因。

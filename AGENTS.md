@@ -146,7 +146,10 @@
 - ⚠️ **跨进程 WAL**：Python 子进程与 Swift 面板同时打开同一个文件，两侧都要 WAL + busy timeout（只设一侧会回落 delete 模式互相阻塞）；「读 + UPDATE」放同一事务，失败必须 `debugLog`
 - 卡片生成的失败源**几乎全是上游 LLM 超时/断连**，不是内容判据：`knowledge_card` 曾带 thinking 生成 8k，单次 60~180s；现关思考 + `max_tokens=4096`
 - `knowledge_engine._llm_json` 把「调用没返回内容」与「返回了但解析不出」分成两条日志 —— 混在一起会让上游超时看起来像提示词问题
-- **自检的证据必须给全文,不能截断**：实测把 10469 字截到 6000 字,模型立刻把后半段的真实内容逐条判成「卡片自行添加」,同一张卡从 `ok` 翻成 `not ok` —— 截断在这里是批量制造假阳性
+- ⚠️ **主题必须带 `scope` / `exclude`**：只给主题名时「下一个自然概念」会无限外溢（实测 TCP/IP 协议栈从 SDN 滑到 AI 驱动、服务网格、eBPF、容器网络）。两者同时喂 `knowledge_expand` / `knowledge_gate` / `knowledge_card`；`seed_from_config()` 对已存在主题也同步 scope
+- **选题闸门是独立的一次 LLM 判断**（`knowledge_gate`，零温度 256 token），不让 expand 自评。拒绝的概念落 `rejected` 且不计 `fail_streak`；上游不可用（含 `gate_unavailable`）同样不计
+- **赞与踩都只标记并停留当前卡**，不调用 `advance()`；换卡只由定时自动弹出与补货后的 `reloadCurrent()` 触发。面板没有「已知」按钮。踩过的标题经 `disliked_titles()` 作为 `{disliked}` 负反馈喂给 expand（不要选相邻话题）与 gate（第 5 条判据）
+- **自检的证据必须给全文,不能截断**（自检步骤后因长输入必断连已移除，重建时必须遵守）：实测把 10469 字截到 6000 字,模型立刻把后半段的真实内容逐条判成「卡片自行添加」,同一张卡从 `ok` 翻成 `not ok` —— 截断在这里是批量制造假阳性
 - **系统休眠不执行**：`willSleep` 置 `suspended` 并停掉两个 timer；已在跑的补货子进程由 `runCaptureOutput` 的 `shouldCancel` 闭包中止（否则它被冻结后一直挂着,唤醒时立刻撞上 wall-clock 超时）。`didWake` 清标志 + `rearm()` + 立刻补一轮
 - 菜单栏「任务」里有一条知识补货（显示未读卡数量 / 上次结果 / 运行中打勾），但它**不注册进 TaskScheduler** —— 只借子菜单做入口，起进程仍走 `KnowledgeService` 的闸门（交给 `TaskExecutor` 会多出一个不受防重保护的补货进程）
 - **补货判据是「未读卡」而非池总量**：`unseenCount(kind:)` 只数 `shown_count = 0` 的池中卡。旧卡复习由 `showReviewedCards` 控制，默认关闭；按池总量判断会让补货永远「充足」

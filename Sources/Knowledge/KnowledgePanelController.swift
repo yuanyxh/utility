@@ -89,7 +89,6 @@ public final class KnowledgePanelController: NSWindowController {
     private let emptyLabel = NSTextField(labelWithString: "")
     private let container = BorderBoxView()
 
-    private let knownButton = NSButton()
     private let dislikeButton = KnowledgeActionButton()
     private let likeButton = NSButton()
     private let copyButton = NSButton()
@@ -202,7 +201,6 @@ public final class KnowledgePanelController: NSWindowController {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(emptyLabel)
 
-        configure(knownButton, L10n.Knowledge.known, #selector(onKnown))
         configure(likeButton, L10n.Knowledge.like, #selector(onLike))
         configure(copyButton, L10n.Knowledge.copy, #selector(onCopy))
         configure(closeButton, L10n.Knowledge.close, #selector(onClose))
@@ -215,7 +213,7 @@ public final class KnowledgePanelController: NSWindowController {
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttonRow = NSStackView(views: [
-            buttonSpacer, knownButton, likeButton, dislikeButton,
+            buttonSpacer, likeButton, dislikeButton,
             copyButton, closeButton,
         ])
         buttonRow.orientation = .horizontal
@@ -270,24 +268,17 @@ public final class KnowledgePanelController: NSWindowController {
         currentCard != nil
     }
 
-    /// 主题的「踩」跳主题：排除当前主题后重取,避免在同一个主题里原地打转。
-    private func advance(excludingCurrentTopic: Bool = false) {
+    /// 取下一张卡。换卡只由定时自动弹出（showAuto）与「已知」触发；
+    /// 赞/踩只标记并停留当前卡，不操作卡片显示。
+    private func advance() {
         let knowledge = ConfigManager.shared.config.knowledge
-        let card: KnowledgeCard? = if excludingCurrentTopic, let topicID = currentCard?.topicID {
-            KnowledgeStore.shared.nextCard(
-                kind: Self.kindTopic,
-                excludingTopic: topicID,
-                showReviewed: knowledge.showReviewedCards,
-                maxShown: knowledge.maxShownPerCard,
-            )
-        } else {
-            KnowledgeStore.shared.nextCard(
+        show(
+            card: KnowledgeStore.shared.nextCard(
                 kind: Self.kindTopic,
                 showReviewed: knowledge.showReviewedCards,
                 maxShown: knowledge.maxShownPerCard,
             )
-        }
-        show(card: card)
+        )
     }
 
     private func show(card: KnowledgeCard?) {
@@ -353,16 +344,12 @@ public final class KnowledgePanelController: NSWindowController {
 
     private func updateButtonState() {
         let has = currentCard != nil
-        for button in [knownButton, dislikeButton, likeButton, copyButton] {
+        for button in [dislikeButton, likeButton, copyButton] {
             button.isEnabled = has
         }
     }
 
     // MARK: - 按钮
-
-    @objc private func onKnown() {
-        mark("known")
-    }
 
     @objc private func onLike() {
         guard let card = currentCard else { return }
@@ -381,16 +368,12 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     @objc private func onDislike() {
-        mark("disliked", skipTopic: true)
-    }
-
-    private func mark(_ status: String, skipTopic: Bool = false) {
+        guard let card = currentCard else { return }
         disarmAutoClose()
-        if let card = currentCard {
-            KnowledgeStore.shared.markStatus(cardID: card.id, status: status)
-            debugLog("[Knowledge] 按钮 \(status): card=\(card.id)")
-        }
-        advance(excludingCurrentTopic: skipTopic)
+        KnowledgeStore.shared.markStatus(cardID: card.id, status: "disliked")
+        dislikeButton.setStyledTitle(L10n.Knowledge.disliked)
+        dislikeButton.isEnabled = false
+        debugLog("[Knowledge] 按钮 disliked: card=\(card.id)")
     }
 
     private func saveLikedCard(_ card: KnowledgeCard, config: KnowledgeConfig) -> Bool {
@@ -508,7 +491,6 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     private func refreshTitles() {
-        knownButton.title = L10n.Knowledge.known
         dislikeButton.setStyledTitle(L10n.Knowledge.dislike)
         likeButton.title = L10n.Knowledge.like
         copyButton.title = L10n.Knowledge.copy
