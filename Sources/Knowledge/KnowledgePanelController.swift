@@ -432,7 +432,9 @@ public final class KnowledgePanelController: NSWindowController {
         ])
 
         refreshTitles()
-        show(card: nil)
+        // Plain empty-state render: `show(card: nil)` would clear the persisted
+        // rotation card and post a refill request during app launch.
+        renderDisplayed()
     }
 
     private func setupList() {
@@ -482,9 +484,11 @@ public final class KnowledgePanelController: NSWindowController {
         if let id = stored?.int64Value,
            let card = KnowledgeStore.shared.card(id: id, kind: Self.kindTopic)
         {
+            debugLog("[Knowledge] restored current card: id=\(id)")
             show(card: card)
             return
         }
+        debugLog("[Knowledge] restore failed, advancing: stored=\(stored?.int64Value ?? -1)")
         advance()
     }
 
@@ -506,10 +510,10 @@ public final class KnowledgePanelController: NSWindowController {
     private func show(card: KnowledgeCard?) {
         previewCard = nil
         currentCard = card
+        // Keep the persisted id on an empty pool: the card may come back after a
+        // refill, and clearing it here made every restart advance one card.
         if let card {
             UserDefaults.standard.set(card.id, forKey: UDKey.knowledgeCurrentCard)
-        } else {
-            UserDefaults.standard.removeObject(forKey: UDKey.knowledgeCurrentCard)
         }
         if card == nil {
             debugLog("[Knowledge] 面板空态: 池中没有未读卡")
@@ -569,6 +573,8 @@ public final class KnowledgePanelController: NSWindowController {
                   id: summaries[row].id, kind: Self.kindTopic,
               )
         else { return }
+        // Pure preview: `currentCard` and the persisted rotation id stay untouched,
+        // so the next card is still exactly the one after the current card.
         previewCard = card
         tabBar.setSelected(0)
         activeTab = 0
