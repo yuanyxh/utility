@@ -26,6 +26,15 @@ struct PythonImportResolver: LanguageImportResolver {
         if let path = findModule(candidate, context: context) {
             return ImportResolution(toPath: path, isExternal: false, resolver: "python-module")
         }
+        // `from . import name` may reference an attribute defined in the package.
+        if dots == 1, !module.contains("/") {
+            let packageInit = ImportPath.join(base, "__init__.py")
+            if context.filePaths.contains(packageInit) {
+                return ImportResolution(
+                    toPath: packageInit, isExternal: false, resolver: "python-module",
+                )
+            }
+        }
         return ImportResolution(toPath: nil, isExternal: false, resolver: "python-module")
     }
 

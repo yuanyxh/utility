@@ -73,7 +73,8 @@ enum ImportPath {
     }
 
     static func join(_ base: String, _ relative: String) -> String {
-        base.isEmpty ? relative : base + "/" + relative
+        if relative.isEmpty { return base }
+        return base.isEmpty ? relative : base + "/" + relative
     }
 
     static func hasExtension(_ path: String) -> Bool {
@@ -102,6 +103,7 @@ enum ResolutionContextBuilder {
         if pythonRoots.count == 1, filePaths.contains(where: { $0.hasPrefix("src/") }) {
             pythonRoots.append("src")
         }
+        pythonRoots.append(contentsOf: packageRoots(in: filePaths))
 
         var javaRoots = rootCandidates(javaRootCandidates, in: filePaths)
         if javaRoots.isEmpty { javaRoots.append("") }
@@ -112,6 +114,23 @@ enum ResolutionContextBuilder {
             javaRoots: unique(javaRoots),
             swiftModules: swiftModules(projectPath: projectPath, filePaths: filePaths),
         )
+    }
+
+    /// Derive import roots from `__init__.py` chains so projects without a manifest still resolve.
+    private static func packageRoots(in filePaths: Set<String>) -> [String] {
+        var roots: Set<String> = []
+        for initFile in filePaths where initFile == "__init__.py" || initFile.hasSuffix("/__init__.py") {
+            var packageDir = (initFile as NSString).deletingLastPathComponent
+            while !packageDir.isEmpty {
+                let parent = (packageDir as NSString).deletingLastPathComponent
+                let parentInit = parent.isEmpty ? "__init__.py" : parent + "/__init__.py"
+                guard filePaths.contains(parentInit) else { break }
+                packageDir = parent
+            }
+            let root = packageDir.isEmpty ? "" : (packageDir as NSString).deletingLastPathComponent
+            roots.insert(root == "." ? "" : root)
+        }
+        return roots.sorted()
     }
 
     /// Find source roots at any depth: `module/src/main/java` is as valid as `src/main/java`.

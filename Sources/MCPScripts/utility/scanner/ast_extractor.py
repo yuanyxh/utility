@@ -295,11 +295,26 @@ def _py_imports(tree) -> list[dict]:
                     {"raw_target": alias.name, "kind": "static", "line": node.lineno}
                 )
         elif isinstance(node, ast.ImportFrom):
-            module = "." * (node.level or 0) + (node.module or "")
-            if module:
+            prefix = "." * (node.level or 0)
+            if node.module:
                 imports.append(
-                    {"raw_target": module, "kind": "static", "line": node.lineno}
+                    {
+                        "raw_target": prefix + node.module,
+                        "kind": "static",
+                        "line": node.lineno,
+                    }
                 )
+            elif node.level:
+                # `from . import util` imports the submodule, not the package.
+                for alias in node.names:
+                    if alias.name != "*":
+                        imports.append(
+                            {
+                                "raw_target": prefix + alias.name,
+                                "kind": "static",
+                                "line": node.lineno,
+                            }
+                        )
     return imports
 
 

@@ -1322,6 +1322,19 @@ def _dependency_group(rows: list[sqlite3.Row], limit: int) -> dict:
     return {"resolved": resolved, "external": external, "unresolved": unresolved}
 
 
+def _dependency_counts(conn: sqlite3.Connection, where: str, args: tuple) -> dict:
+    rows = conn.execute(
+        "SELECT CASE WHEN to_path IS NOT NULL THEN 'resolved' "
+        "WHEN is_external THEN 'external' ELSE 'unresolved' END AS grp, "
+        f"COUNT(*) AS n FROM imports WHERE {where} GROUP BY grp",
+        args,
+    ).fetchall()
+    counts = {"resolved": 0, "external": 0, "unresolved": 0}
+    for row in rows:
+        counts[row["grp"]] = row["n"]
+    return counts
+
+
 def _empty_dependency_groups() -> dict:
     return {
         "resolved": [],
@@ -1395,26 +1408,30 @@ def tool_project_dependencies(
         )
         out_rows = []
         in_rows = []
+        out_counts = {"resolved": 0, "external": 0, "unresolved": 0}
+        in_counts = {"resolved": 0, "external": 0, "unresolved": 0}
         if direction in ("outgoing", "both"):
             out_rows = conn.execute(
                 f"{select} WHERE {out_where} ORDER BY from_path, line, raw_target LIMIT ?",
                 (*out_args, limit + 1),
             ).fetchall()
+            out_counts = _dependency_counts(conn, out_where, out_args)
         if direction in ("incoming", "both"):
             in_rows = conn.execute(
                 f"{select} WHERE {in_where} ORDER BY from_path, line, raw_target LIMIT ?",
                 (*in_args, limit + 1),
             ).fetchall()
+            in_counts = _dependency_counts(conn, in_where, in_args)
 
     outgoing = _dependency_group(out_rows, limit)
     incoming = _dependency_group(in_rows, limit)
     counts = {
-        "outgoingResolved": len(outgoing["resolved"]),
-        "outgoingExternal": len(outgoing["external"]),
-        "outgoingUnresolved": len(outgoing["unresolved"]),
-        "incomingResolved": len(incoming["resolved"]),
-        "incomingExternal": len(incoming["external"]),
-        "incomingUnresolved": len(incoming["unresolved"]),
+        "outgoingResolved": out_counts["resolved"],
+        "outgoingExternal": out_counts["external"],
+        "outgoingUnresolved": out_counts["unresolved"],
+        "incomingResolved": in_counts["resolved"],
+        "incomingExternal": in_counts["external"],
+        "incomingUnresolved": in_counts["unresolved"],
     }
     return {
         "path": path,

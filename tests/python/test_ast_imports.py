@@ -22,6 +22,18 @@ class AstImportsTest(unittest.TestCase):
         self.assertTrue(all(item["kind"] == "static" for item in result["imports"]))
         self.assertEqual([item["line"] for item in result["imports"]], [1, 2, 3, 4])
 
+    def test_python_from_dot_import_names(self):
+        result = _extract_one(
+            "from . import util, other\nfrom . import *\n",
+            "app/main.py",
+            "py",
+        )
+        self.assertNotIn("error", result)
+        self.assertEqual(
+            [item["raw_target"] for item in result["imports"]],
+            [".util", ".other"],
+        )
+
     def test_python_symbols_still_returned(self):
         result = _extract_one("import os\n\ndef f():\n    pass\n", "a.py", "py")
         self.assertEqual([s["name"] for s in result["symbols"]], ["f"])

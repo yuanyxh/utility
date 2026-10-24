@@ -27,8 +27,9 @@ struct JSImportResolver: LanguageImportResolver {
         for ext in resolutionExtensions {
             if context.filePaths.contains(candidate + ext) { return candidate + ext }
         }
+        let indexPrefix = candidate.isEmpty ? "" : candidate + "/"
         for ext in resolutionExtensions {
-            let index = candidate + "/index" + ext
+            let index = indexPrefix + "index" + ext
             if context.filePaths.contains(index) { return index }
         }
         return nil

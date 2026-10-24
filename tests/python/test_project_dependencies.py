@@ -110,6 +110,7 @@ class ProjectDependenciesTest(unittest.TestCase):
     def test_limit_and_truncated(self):
         result = tool_project_dependencies(self.db, "app/util.py", "incoming", limit=1)
         self.assertEqual(len(result["incoming"]["resolved"]), 1)
+        self.assertEqual(result["counts"]["incomingResolved"], 2)
         self.assertTrue(result["truncated"])
 
     def test_missing_imports_table_degrades(self):

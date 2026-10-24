@@ -24,10 +24,13 @@ struct JavaImportResolver: LanguageImportResolver {
             }
         }
 
-        let first = segments.first ?? raw
-        let inProject = context.javaRoots.contains { root in
-            let prefix = ImportPath.join(root, first)
-            return context.filePaths.contains(where: { $0.hasPrefix(prefix + "/") })
+        // Only the exact package directory counts as project-internal; a shared
+        // top-level prefix (`com`, `org`) is not enough.
+        let packageSegments = isWildcard ? segments : Array(segments.dropLast())
+        let packageDir = packageSegments.joined(separator: "/")
+        let inProject = !packageSegments.isEmpty && context.javaRoots.contains { root in
+            let dir = ImportPath.join(root, packageDir)
+            return context.filePaths.contains(where: { $0.hasPrefix(dir + "/") })
         }
         return ImportResolution(
             toPath: nil,
