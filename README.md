@@ -279,6 +279,7 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 | `knowledge.poolTargetTopic` | `5` | refill until this many unseen cards exist |
 | `knowledge.maxShownPerCard` | `2` | review cap per card when reviewed cards are enabled |
 | `knowledge.maxFailStreak` | `3` | a topic with N dry runs in a row is marked done |
+| `knowledge.retentionDays` | `365` | prune cards older than N days on refill; liked cards are kept; `0` = keep forever |
 | `knowledge.hotkey` | `option+k` | shows or hides the panel |
 | `knowledge.saveLikedMarkdown` | `true` | save the current card when Like is clicked |
 | `knowledge.likedSaveDir` | empty | Markdown output directory; empty = `<mcp.knowledgeBasePath>/知识卡片` |

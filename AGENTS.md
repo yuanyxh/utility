@@ -124,6 +124,11 @@
 - 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换
 - Python 侧走同一目录生成的 `l10n_catalog.py` + `l10n.py`；`refreshAllTitles()` 模式刷新运行时语言
 
+### 代码内文本语言
+- 非用户可感知文本一律英文：注释、docstring、日志、内部错误消息、调试输出、测试名与断言消息
+- 用户可感知文本按既有约定：UI 文案走 `Resources/<lang>.json`，提示词放 `prompts/<lang>/`，配置注释与 README 保持现有语言
+- 新增内容不因周围历史中文注释而改用中文；历史中文注释不强制批量翻译，只在修改到的代码块内对齐
+
 ### 并发
 - `Task?.cancel()` + `guard isCancelled` 模式
 - 翻译用序列计数器（`translationSeq`）拒绝 stale 回调

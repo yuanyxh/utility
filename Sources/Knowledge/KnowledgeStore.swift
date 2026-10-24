@@ -14,6 +14,15 @@ struct KnowledgeCard {
     let topicID: Int64?
 }
 
+/// Lightweight row for the list tab: never loads `body` / `evidence` (a few KB per card).
+struct KnowledgeCardSummary {
+    let id: Int64
+    let title: String
+    let theme: String
+    let status: String
+    let createdAt: String
+}
+
 /// 知识面板的数据访问：**绝不建表、绝不迁移**，每个方法容忍缺表（Swift 可能先于 Python 打开）。
 /// 失败一律 `debugLog` 后返回空/false —— 「按钮点了没反应且毫无线索」是最难查的一类问题。
 final class KnowledgeStore {
@@ -97,21 +106,72 @@ final class KnowledgeStore {
                     sql: "UPDATE cards SET shown_count = shown_count + 1, last_shown_at = ? WHERE id = ?",
                     arguments: [Self.iso8601(), row["id"] as Int64],
                 )
-                let urlsJSON: String = row["evidence_urls"] ?? "[]"
-                let rawURLs = (try? JSONSerialization.jsonObject(with: Data(urlsJSON.utf8)))
-                    as? [String] ?? []
-                let urls = rawURLs.compactMap(Self.normalizedEvidenceURL)
-                return KnowledgeCard(
-                    id: row["id"], kind: row["kind"], title: row["title"],
-                    subtitle: row["subtitle"] ?? "", theme: row["theme"] ?? "",
-                    topicKind: row["topic_kind"] ?? "", body: row["body"] ?? "",
-                    evidenceURLs: urls, topicID: row["topic_id"],
-                )
+                return Self.card(from: row)
             }
         } catch {
             debugLog("[Knowledge] nextCard(\(kind)) 失败: \(error)")
             return nil
         }
+    }
+
+    /// Read-only fetch for the list preview: **does not touch `shown_count`**, so the
+    /// rotation position stays exactly where it was.
+    func card(id: Int64, kind: String) -> KnowledgeCard? {
+        guard let queue else { return nil }
+        do {
+            return try queue.read { db in
+                guard let row = try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT id, kind, title, subtitle, theme, topic_kind, body, evidence_urls, topic_id
+                    FROM cards WHERE id = ? AND kind = ? AND status IN ('pool', 'liked')
+                    """,
+                    arguments: [id, kind],
+                ) else { return nil }
+                return Self.card(from: row)
+            }
+        } catch {
+            debugLog("[Knowledge] card(\(id)) 失败: \(error)")
+            return nil
+        }
+    }
+
+    /// Newest first; `removed` / `disliked` are not part of the normal library.
+    func listCards(kind: String, limit: Int = 1000) -> [KnowledgeCardSummary] {
+        guard let queue else { return [] }
+        do {
+            return try queue.read { db in
+                try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT id, title, theme, status, created_at FROM cards
+                    WHERE kind = ? AND status IN ('pool', 'liked')
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    arguments: [kind, max(1, limit)],
+                ).map {
+                    KnowledgeCardSummary(
+                        id: $0["id"], title: $0["title"], theme: $0["theme"] ?? "",
+                        status: $0["status"], createdAt: $0["created_at"] ?? "",
+                    )
+                }
+            }
+        } catch {
+            debugLog("[Knowledge] listCards(\(kind)) 失败: \(error)")
+            return []
+        }
+    }
+
+    private static func card(from row: Row) -> KnowledgeCard {
+        let urlsJSON: String = row["evidence_urls"] ?? "[]"
+        let rawURLs = (try? JSONSerialization.jsonObject(with: Data(urlsJSON.utf8)))
+            as? [String] ?? []
+        return KnowledgeCard(
+            id: row["id"], kind: row["kind"], title: row["title"],
+            subtitle: row["subtitle"] ?? "", theme: row["theme"] ?? "",
+            topicKind: row["topic_kind"] ?? "", body: row["body"] ?? "",
+            evidenceURLs: rawURLs.compactMap(normalizedEvidenceURL), topicID: row["topic_id"],
+        )
     }
 
     /// 旧卡可能存着搜索引擎结果页；展示前统一过滤并规范化，避免出现不可点击的长链接。

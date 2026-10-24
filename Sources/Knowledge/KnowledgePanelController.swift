@@ -1,6 +1,150 @@
 import Cocoa
 
 /// 圆角描边容器：卡片的视觉边界。
+/// Capsule tab bar that mimics the system rounded segmented control but lets us
+/// darken the inactive label — the system control renders it too faint on the blur.
+private final class KnowledgeTabBar: NSView {
+    var onSelect: ((Int) -> Void)?
+
+    private let cardButton = KnowledgeTabButton()
+    private let listButton = KnowledgeTabButton()
+    private let trackRadius: CGFloat = 6
+    private var titles = ["", ""]
+    private var selectedIndex = 0 {
+        didSet {
+            cardButton.textColor = selectedIndex == 0
+                ? .labelColor : NSColor.labelColor.withAlphaComponent(0.65)
+            listButton.textColor = selectedIndex == 1
+                ? .labelColor : NSColor.labelColor.withAlphaComponent(0.65)
+            needsDisplay = true
+        }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        cardButton.target = self
+        cardButton.action = #selector(tapCard)
+        listButton.target = self
+        listButton.action = #selector(tapList)
+        addSubview(cardButton)
+        addSubview(listButton)
+        NSLayoutConstraint.activate([
+            cardButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            cardButton.topAnchor.constraint(equalTo: topAnchor),
+            cardButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            cardButton.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
+            listButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            listButton.topAnchor.constraint(equalTo: topAnchor),
+            listButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            listButton.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
+        ])
+        cardButton.textColor = .labelColor
+        listButton.textColor = NSColor.labelColor.withAlphaComponent(0.65)
+    }
+
+    required init?(coder _: NSCoder) { nil }
+
+    func setTitles(_ card: String, _ list: String) {
+        titles = [card, list]
+        cardButton.setTitleText(card)
+        listButton.setTitleText(list)
+    }
+
+    func setSelected(_ index: Int) {
+        selectedIndex = index
+    }
+
+    @objc private func tapCard() { onSelect?(0) }
+    @objc private func tapList() { onSelect?(1) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.labelColor.withAlphaComponent(0.08).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: trackRadius, yRadius: trackRadius).fill()
+
+        let half = bounds.width / 2
+        let inset: CGFloat = 2
+        let x = selectedIndex == 0 ? inset : half + inset / 2
+        let pill = NSRect(
+            x: x, y: inset, width: half - inset * 1.5, height: bounds.height - inset * 2,
+        )
+        NSColor.labelColor.withAlphaComponent(0.18).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 5, yRadius: 5).fill()
+    }
+}
+
+private final class KnowledgeTabButton: NSButton {
+    var textColor: NSColor = .labelColor {
+        didSet { applyTitle() }
+    }
+
+    private var titleText = ""
+
+    init() {
+        super.init(frame: .zero)
+        isBordered = false
+        bezelStyle = .inline
+        alignment = .center
+        setButtonType(.momentaryChange)
+        translatesAutoresizingMaskIntoConstraints = false
+        applyTitle()
+    }
+
+    required init?(coder _: NSCoder) { nil }
+
+    func setTitleText(_ text: String) {
+        titleText = text
+        applyTitle()
+    }
+
+    private func applyTitle() {
+        attributedTitle = NSAttributedString(
+            string: titleText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: textColor,
+            ],
+        )
+    }
+}
+
+private final class KnowledgeListCell: NSTableCellView {
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let metaLabel = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        metaLabel.font = .systemFont(ofSize: 11)
+        metaLabel.textColor = .secondaryLabelColor
+        metaLabel.lineBreakMode = .byTruncatingTail
+        for label in [titleLabel, metaLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+        }
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            metaLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            metaLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            metaLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+        ])
+    }
+
+    required init?(coder _: NSCoder) { nil }
+
+    func configure(_ summary: KnowledgeCardSummary) {
+        titleLabel.stringValue = summary.title
+        var parts = [summary.theme]
+        if summary.status == "liked" { parts.append(L10n.Knowledge.liked) }
+        if summary.createdAt.count >= 10 { parts.append(String(summary.createdAt.prefix(10))) }
+        metaLabel.stringValue = parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
 private final class BorderBoxView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -88,6 +232,14 @@ public final class KnowledgePanelController: NSWindowController {
     private let topicView = KnowledgeMarkdownView()
     private let emptyLabel = NSTextField(labelWithString: "")
     private let container = BorderBoxView()
+    private let tabBar = KnowledgeTabBar()
+    private var activeTab = 0
+    private let listScroll = NSScrollView()
+    private let listTable = NSTableView()
+    private let listEmptyLabel = NSTextField(labelWithString: "")
+    private var summaries: [KnowledgeCardSummary] = []
+    /// Temporary card opened from the list; never advances `shown_count`.
+    private var previewCard: KnowledgeCard?
 
     private let dislikeButton = KnowledgeActionButton()
     private let likeButton = NSButton()
@@ -190,6 +342,18 @@ public final class KnowledgePanelController: NSWindowController {
         headerRow.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(headerRow)
 
+        tabBar.onSelect = { [weak self] index in self?.selectTab(index) }
+        let tabSpacer = NSView()
+        tabSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let tabRow = NSStackView(views: [tabBar, tabSpacer])
+        tabRow.orientation = .horizontal
+        tabRow.alignment = .centerY
+        tabRow.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(tabRow)
+        tabBar.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        tabBar.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        setupList()
+
         container.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(container)
         topicView.translatesAutoresizingMaskIntoConstraints = false
@@ -200,6 +364,14 @@ public final class KnowledgePanelController: NSWindowController {
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(emptyLabel)
+
+        listScroll.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(listScroll)
+        listEmptyLabel.alignment = .center
+        listEmptyLabel.textColor = .secondaryLabelColor
+        listEmptyLabel.font = .systemFont(ofSize: 12)
+        listEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(listEmptyLabel)
 
         configure(likeButton, L10n.Knowledge.like, #selector(onLike))
         configure(copyButton, L10n.Knowledge.copy, #selector(onCopy))
@@ -232,7 +404,11 @@ public final class KnowledgePanelController: NSWindowController {
             headerRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
             headerRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
 
-            container.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 10),
+            tabRow.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 8),
+            tabRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
+            tabRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
+
+            container.topAnchor.constraint(equalTo: tabRow.bottomAnchor, constant: 8),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
             container.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
             container.bottomAnchor.constraint(equalTo: buttonRow.topAnchor, constant: -10),
@@ -243,6 +419,12 @@ public final class KnowledgePanelController: NSWindowController {
             topicView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            listScroll.topAnchor.constraint(equalTo: container.topAnchor),
+            listScroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            listScroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            listScroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            listEmptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            listEmptyLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
             buttonRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padding),
             buttonRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padding),
@@ -251,6 +433,29 @@ public final class KnowledgePanelController: NSWindowController {
 
         refreshTitles()
         show(card: nil)
+    }
+
+    private func setupList() {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("card"))
+        column.resizingMask = .autoresizingMask
+        listTable.addTableColumn(column)
+        listTable.headerView = nil
+        listTable.autoresizingMask = [.width]
+        listTable.frame = NSRect(x: 0, y: 0, width: 320, height: 0)
+        listTable.rowHeight = 44
+        listTable.intercellSpacing = NSSize(width: 0, height: 2)
+        listTable.backgroundColor = .clear
+        listTable.selectionHighlightStyle = .regular
+        listTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        listTable.dataSource = self
+        listTable.delegate = self
+        listTable.target = self
+        listTable.doubleAction = #selector(onListDoubleClick)
+        listScroll.documentView = listTable
+        // Same as the markdown view: wheel/trackpad scrolling works without a scroller.
+        listScroll.hasVerticalScroller = false
+        listScroll.drawsBackground = false
+        listScroll.borderType = .noBorder
     }
 
     private func configure(_ button: NSButton, _ title: String, _ action: Selector) {
@@ -270,6 +475,19 @@ public final class KnowledgePanelController: NSWindowController {
 
     /// 取下一张卡。换卡只由定时自动弹出（showAuto）与「已知」触发；
     /// 赞/踩只标记并停留当前卡，不操作卡片显示。
+    /// Restart must not consume a card: reopen the last one without touching `shown_count`.
+    /// Only the auto-show timer advances on its own schedule.
+    private func restoreOrAdvance() {
+        let stored = UserDefaults.standard.object(forKey: UDKey.knowledgeCurrentCard) as? NSNumber
+        if let id = stored?.int64Value,
+           let card = KnowledgeStore.shared.card(id: id, kind: Self.kindTopic)
+        {
+            show(card: card)
+            return
+        }
+        advance()
+    }
+
     private func advance() {
         let knowledge = ConfigManager.shared.config.knowledge
         show(
@@ -281,27 +499,81 @@ public final class KnowledgePanelController: NSWindowController {
         )
     }
 
+    private var displayedCard: KnowledgeCard? {
+        previewCard ?? currentCard
+    }
+
     private func show(card: KnowledgeCard?) {
-        guard let card else {
-            currentCard = nil
+        previewCard = nil
+        currentCard = card
+        if let card {
+            UserDefaults.standard.set(card.id, forKey: UDKey.knowledgeCurrentCard)
+        } else {
+            UserDefaults.standard.removeObject(forKey: UDKey.knowledgeCurrentCard)
+        }
+        if card == nil {
+            debugLog("[Knowledge] 面板空态: 池中没有未读卡")
+            NotificationCenter.default.post(name: .knowledgeNeedsRefill, object: nil)
+        }
+        renderDisplayed()
+    }
+
+    private func renderDisplayed() {
+        guard let card = displayedCard else {
             topicView.render("")
             emptyLabel.stringValue = L10n.Knowledge.empty
-            emptyLabel.isHidden = false
             titleLabel.stringValue = L10n.Knowledge.title
             subtitleLabel.stringValue = ""
             resetActionButtons()
             updateButtonState()
-            debugLog("[Knowledge] 面板空态: 池中没有未读卡")
-            NotificationCenter.default.post(name: .knowledgeNeedsRefill, object: nil)
+            updateTabVisibility()
             return
         }
-        currentCard = card
-        emptyLabel.isHidden = true
         topicView.render(renderText(card))
         titleLabel.stringValue = card.title
         subtitleLabel.stringValue = subtitle(for: card)
         resetActionButtons()
         updateButtonState()
+        updateTabVisibility()
+    }
+
+    private func updateTabVisibility() {
+        let listMode = activeTab == 1
+        listScroll.isHidden = !listMode
+        topicView.isHidden = listMode || displayedCard == nil
+        emptyLabel.isHidden = listMode || displayedCard != nil
+        listEmptyLabel.isHidden = !listMode || !summaries.isEmpty
+    }
+
+    private func selectTab(_ index: Int) {
+        guard activeTab != index else { return }
+        activeTab = index
+        tabBar.setSelected(index)
+        if index == 1 {
+            reloadList()
+        }
+        updateTabVisibility()
+        updateButtonState()
+    }
+
+    private func reloadList() {
+        summaries = KnowledgeStore.shared.listCards(kind: Self.kindTopic)
+        listTable.reloadData()
+    }
+
+    /// Preview only: read without touching `shown_count`, so the rotation keeps its place.
+    @objc private func onListDoubleClick() {
+        let row = listTable.clickedRow
+        guard row >= 0, row < summaries.count,
+              let card = KnowledgeStore.shared.card(
+                  id: summaries[row].id, kind: Self.kindTopic,
+              )
+        else { return }
+        previewCard = card
+        tabBar.setSelected(0)
+        activeTab = 0
+        renderDisplayed()
+        debugLog("[Knowledge] 列表预览: card=\(card.id)")
     }
 
     private func subtitle(for card: KnowledgeCard) -> String {
@@ -343,7 +615,7 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     private func updateButtonState() {
-        let has = currentCard != nil
+        let has = displayedCard != nil && activeTab == 0
         for button in [dislikeButton, likeButton, copyButton] {
             button.isEnabled = has
         }
@@ -352,7 +624,7 @@ public final class KnowledgePanelController: NSWindowController {
     // MARK: - 按钮
 
     @objc private func onLike() {
-        guard let card = currentCard else { return }
+        guard let card = displayedCard else { return }
         disarmAutoClose()
         let knowledge = ConfigManager.shared.config.knowledge
         if knowledge.saveLikedMarkdown, !saveLikedCard(card, config: knowledge) {
@@ -368,7 +640,7 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     @objc private func onDislike() {
-        guard let card = currentCard else { return }
+        guard let card = displayedCard else { return }
         disarmAutoClose()
         KnowledgeStore.shared.markStatus(cardID: card.id, status: "disliked")
         dislikeButton.setStyledTitle(L10n.Knowledge.disliked)
@@ -376,27 +648,40 @@ public final class KnowledgePanelController: NSWindowController {
         debugLog("[Knowledge] 按钮 disliked: card=\(card.id)")
     }
 
+    /// Filesystem-safe component: path separators and reserved characters become `-`.
+    private static func pathSlug(_ text: String) -> String {
+        String(
+            text.components(separatedBy: CharacterSet(charactersIn: "/\\?%*|\"<>:"))
+                .joined(separator: "-")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(60)
+        )
+    }
+
     private func saveLikedCard(_ card: KnowledgeCard, config: KnowledgeConfig) -> Bool {
         let raw = config.likedSaveDir.trimmingCharacters(in: .whitespacesAndNewlines)
-        let dir: String
+        let baseDir: String
         if raw.isEmpty {
             guard let notes = PythonScriptRunner.resolvedNotesDir() else {
                 debugLog("[Knowledge] 保存点赞卡失败: notes 根目录未配置")
                 return false
             }
-            dir = URL(fileURLWithPath: notes, isDirectory: true)
+            baseDir = URL(fileURLWithPath: notes, isDirectory: true)
                 .appendingPathComponent("知识卡片", isDirectory: true).path
         } else {
-            dir = (raw as NSString).expandingTildeInPath
+            baseDir = (raw as NSString).expandingTildeInPath
         }
+        // One directory per theme: a flat card directory grows without bound.
+        let themeSlug = Self.pathSlug(card.theme)
+        let dir = themeSlug.isEmpty
+            ? baseDir
+            : URL(fileURLWithPath: baseDir, isDirectory: true)
+                .appendingPathComponent(themeSlug, isDirectory: true).path
         let stamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
-        let slug = card.title
-            .components(separatedBy: CharacterSet(charactersIn: "/\\?%*|\"<>:"))
-            .joined(separator: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .prefix(60)
-        let filename = "\(stamp)_\(slug.isEmpty ? "card-\(card.id)" : slug).md"
+        let titleSlug = Self.pathSlug(card.title)
+        let filename = String(format: "%04lld-", card.id)
+            + (titleSlug.isEmpty ? "card" : titleSlug) + ".md"
         let url = URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent(filename)
         guard !FileManager.default.fileExists(atPath: url.path) else { return true }
         var text = "---\ntitle: \"\(card.title)\"\ntheme: \"\(card.theme)\"\n"
@@ -423,7 +708,7 @@ public final class KnowledgePanelController: NSWindowController {
     }
 
     @objc private func onCopy() {
-        guard let card = currentCard else { return }
+        guard let card = displayedCard else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(cardText(card), forType: .string)
@@ -496,7 +781,9 @@ public final class KnowledgePanelController: NSWindowController {
         copyButton.title = L10n.Knowledge.copy
         closeButton.title = L10n.Knowledge.close
         emptyLabel.stringValue = L10n.Knowledge.empty
-        if let card = currentCard {
+        listEmptyLabel.stringValue = L10n.Knowledge.listEmpty
+        tabBar.setTitles(L10n.Knowledge.tabCard, L10n.Knowledge.tabList)
+        if let card = displayedCard {
             titleLabel.stringValue = card.title
             subtitleLabel.stringValue = subtitle(for: card)
         } else {
@@ -512,6 +799,7 @@ public final class KnowledgePanelController: NSWindowController {
     /// 自动关闭完全靠 armAutoClose 的 timer；用户点进面板(窗口 becomeKey)时停表,失焦后重起。
     func showAuto() {
         autoCloseEligible = true
+        selectTab(0)
         positionWindow()
         window?.orderFront(nil)
         advance()
@@ -521,6 +809,30 @@ public final class KnowledgePanelController: NSWindowController {
     /// 立即取下一张（菜单项「立即补货」后刷新用）。
     func reloadCurrent() {
         advance()
+        if activeTab == 1 {
+            reloadList()
+            updateTabVisibility()
+        }
+    }
+}
+
+// MARK: - List tab
+
+extension KnowledgePanelController: NSTableViewDataSource, NSTableViewDelegate {
+    public func numberOfRows(in _: NSTableView) -> Int {
+        summaries.count
+    }
+
+    public func tableView(
+        _ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int,
+    ) -> NSView? {
+        guard row < summaries.count else { return nil }
+        let id = NSUserInterfaceItemIdentifier("KnowledgeListCell")
+        let cell = tableView.makeView(withIdentifier: id, owner: self)
+            as? KnowledgeListCell ?? KnowledgeListCell()
+        cell.identifier = id
+        cell.configure(summaries[row])
+        return cell
     }
 }
 
@@ -551,13 +863,21 @@ extension KnowledgePanelController: PanelProtocol {
         if !isPanelVisible { positionWindow() }
         window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        if currentCard == nil { advance() }
+        if currentCard == nil { restoreOrAdvance() }
+        if activeTab == 1 {
+            reloadList()
+            updateTabVisibility()
+        }
     }
 
     func closePanel() {
         autoCloseEligible = false
         disarmAutoClose()
         window?.orderOut(nil)
+        previewCard = nil
+        if activeTab == 0 {
+            renderDisplayed()
+        }
     }
 
     func handleKeyEvent(_ event: NSEvent) -> Bool {

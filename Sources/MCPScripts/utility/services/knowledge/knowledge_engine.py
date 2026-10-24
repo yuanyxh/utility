@@ -82,41 +82,57 @@ def _llm_json(
     temperature: float | None = None,
     disable_thinking: bool = False,
     feature: str | None = None,
+    allow_partial: bool = True,
 ) -> dict | None:
-    """think 开启输出 JSON；解析失败自动降级 disable_thinking 重试一次。
+    """Ask the model for JSON; retry once with thinking disabled on failure.
 
-    与 `summarize._llm_json` 同一范式，但不跨模块 import —— 那是另一条管线，
-    共用会让两条链的失败语义纠缠在一起。
+    `allow_partial=False` is for body output: a card recovered from a truncated
+    payload is a half card and must be dropped.
     """
     for attempt in range(2):
-        raw = llm_client.chat(
-            prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            disable_thinking=(disable_thinking or attempt > 0),
-            label=feature or "knowledge",
-        )
+        try:
+            raw = llm_client.chat(
+                prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                disable_thinking=(disable_thinking or attempt > 0),
+                label=feature or "knowledge",
+                raise_on_error=True,
+            )
+        except llm_client.LLMClientError as e:
+            # A truncated response still carries usable leading fields
+            # (expand's concept, gate's accept).
+            raw = e.content if e.kind == "truncated" else None
+            if raw:
+                logger.warning(
+                    "%s: output truncated (finish_reason=%s), recovering fields",
+                    feature,
+                    e.finish_reason,
+                )
+            else:
+                logger.warning("%s: call failed kind=%s (%s)", feature, e.kind, e)
         if raw:
-            parsed = llm_client.parse_json(raw)
-            if parsed:
+            parsed, repaired = llm_client.parse_json_partial(raw)
+            if parsed and (allow_partial or not repaired):
                 if feature and prompt_loader.missing_json_keys(feature, parsed):
-                    logger.warning("%s: 模型输出缺少模板声明的键", feature)
+                    logger.warning(
+                        "%s: model output is missing template-declared keys", feature
+                    )
                 return parsed
-            logger.warning(
-                "%s: 返回内容解析不出 JSON(第 %d 次): %r",
-                feature,
-                attempt + 1,
-                raw[:200],
-            )
+            if repaired:
+                logger.warning("%s: partial output discarded", feature)
+            else:
+                logger.warning(
+                    "%s: unparseable JSON (attempt %d): %r",
+                    feature,
+                    attempt + 1,
+                    raw[:200],
+                )
         else:
-            # 「没拿到内容」与「拿到了但解析不出」是两种故障:混成一条 warning 会让超时/断连
-            # 看起来像提示词问题 —— 真实成因只留在 llm_client.log 里,极易误判
-            logger.warning(
-                "%s: 调用未返回内容(第 %d 次),详见 llm_client.log", feature, attempt + 1
-            )
+            logger.warning("%s: empty response (attempt %d)", feature, attempt + 1)
         if attempt == 0:
-            logger.warning("%s: 降级 disable_thinking 重试一次", feature)
-    logger.error("%s: 两次都未解析出 JSON", feature)
+            logger.warning("%s: retrying once with thinking disabled", feature)
+    logger.error("%s: no parseable JSON after two attempts", feature)
     return None
 
 
@@ -273,7 +289,7 @@ def advance(
         exclude=exclude,
         disliked=disliked,
     )
-    d = _llm_json(p, max_tokens=512, disable_thinking=True, feature="knowledge_expand")
+    d = _llm_json(p, max_tokens=768, disable_thinking=True, feature="knowledge_expand")
     calls += 1
     if d is None:
         return _res(EXPAND_FAIL, calls=calls)
@@ -298,7 +314,7 @@ def advance(
             why_now=why_now,
             disliked=disliked,
         ),
-        max_tokens=256,
+        max_tokens=512,
         temperature=0,
         disable_thinking=True,
         feature="knowledge_gate",
@@ -314,21 +330,24 @@ def advance(
     if ev is None:
         return _res(BASIS_SHORT, concept=concept, why_now=why_now, calls=calls)
 
-    # 关思考 + 收窄 max_tokens:带 thinking 生成 8k 时单次实测 60~180s,上游 ReadTimeout /
-    # 断连是这条管线唯一的失败源(内容判据本身没问题)。卡片正文约 2k token,4096 足够。
+    # Thinking off: an 8k completion took 60-180s in practice, and upstream
+    # ReadTimeout / disconnects were the main failure source. The prompt caps the
+    # body at 1500 words, so 6144 tokens leaves headroom; a truncated card is retried.
     p = prompt_loader.prompt(
         "knowledge_card",
         theme=theme,
         concept=concept,
         evidence=ev["text"],
         scope=scope,
+        exclude=exclude,
     )
     d = _llm_json(
         p,
-        max_tokens=4096,
+        max_tokens=6144,
         temperature=0.7,
         disable_thinking=True,
         feature="knowledge_card",
+        allow_partial=False,
     )
     calls += 1
     if d is None:

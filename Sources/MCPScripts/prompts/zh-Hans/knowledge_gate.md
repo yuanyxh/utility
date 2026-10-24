@@ -20,7 +20,7 @@ json_keys: [accept, reason]
 4. 是该主题的核心概念,不是为了「接龙」而找的相邻话题
 5. 不是「用户明确不感兴趣的方向」的延伸(该列表为空时此条自动满足)
 
-任何一条不满足就 accept=false,并在 reason 里写明违反了哪一条。
+任何一条不满足就 accept=false,并在 reason 里写明违反了哪一条(不超过 30 字)。
 只输出 JSON:
 
 {"accept": true, "reason": ""}

@@ -39,4 +39,4 @@ When the core concepts inside the scope are done, return exhausted:
 
 Output JSON only:
 
-{"concept": "concept name", "why_now": "one line: why learn it now", "exhausted": false}
+{"concept": "concept name", "why_now": "one line (40 words max): why learn it now", "exhausted": false}

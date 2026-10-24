@@ -52,6 +52,8 @@ enum UDKey {
     /// 上次自动弹出知识面板的时刻。存 UserDefaults 而非内存：否则 app 重启后判定归零,
     /// 又要重新等满一个间隔,而重载配置与休眠较频繁时,等不满就永远不弹。
     static let knowledgeLastAutoShow = "knowledge_last_auto_show"
+    /// Card currently on screen. Persisted so a restart reopens the same card instead of advancing.
+    static let knowledgeCurrentCard = "knowledge_current_card"
 }
 
 // MARK: - Python Script Names
@@ -96,6 +98,7 @@ enum EnvKeys {
     static let knowledgeTopics = "KNOWLEDGE_TOPICS"
     static let knowledgeTopicTarget = "KNOWLEDGE_TOPIC_TARGET"
     static let knowledgeMaxFailStreak = "KNOWLEDGE_MAX_FAIL_STREAK"
+    static let knowledgeRetentionDays = "KNOWLEDGE_RETENTION_DAYS"
 
     /// Note scanning rules (JSON arrays), from `mcp.noteExcludeDirs` / `mcp.noteExtensions`.
     /// Both the MCP service and the scheduled summary read them, so they need two injection points.

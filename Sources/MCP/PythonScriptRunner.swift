@@ -190,6 +190,7 @@ enum PythonScriptRunner {
         }
         env[EnvKeys.knowledgeTopicTarget] = String(knowledge.poolTargetTopic)
         env[EnvKeys.knowledgeMaxFailStreak] = String(knowledge.maxFailStreak)
+        env[EnvKeys.knowledgeRetentionDays] = String(knowledge.retentionDays)
         return env
     }
 

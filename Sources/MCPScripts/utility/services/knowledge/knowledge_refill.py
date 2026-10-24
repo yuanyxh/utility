@@ -118,10 +118,12 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
 def main() -> int:
     path = pool.init_db()
     added_topics = pool.seed_from_config()
+    pruned = pool.prune_expired(config.knowledge_retention_days())
     logger.info(
-        "补货开始: db=%s 新增种子 topics=%d",
+        "refill start: db=%s new_topics=%d pruned=%d",
         path,
         added_topics,
+        pruned,
     )
 
     budget = engine.MAX_LLM_CALLS_PER_RUN
@@ -129,6 +131,7 @@ def main() -> int:
 
     summary = {
         "made": made,
+        "pruned": pruned,
         "calls_used": engine.MAX_LLM_CALLS_PER_RUN - budget,
         "unseen_topic": pool.unseen_count(pool.KIND_TOPIC),
         "pool_topic": pool.pool_count(pool.KIND_TOPIC),

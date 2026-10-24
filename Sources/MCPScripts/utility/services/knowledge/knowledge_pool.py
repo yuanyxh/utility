@@ -12,7 +12,7 @@ DB 位置 = `config.data_dir()/knowledge.sqlite`（即 `~/.config/utility/`）�
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from utility.core import config
@@ -213,6 +213,21 @@ def insert_card(
 def mark_status(card_id: int, status: str) -> None:
     with dbconn(db_path()) as conn:
         conn.execute("UPDATE cards SET status = ? WHERE id = ?", (status, card_id))
+
+
+def prune_expired(days: int) -> int:
+    """Delete cards older than `days`; liked cards are user favourites and kept. days <= 0 disables pruning."""
+    if days <= 0:
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(
+        timespec="seconds"
+    )
+    with dbconn(db_path()) as conn:
+        cur = conn.execute(
+            "DELETE FROM cards WHERE created_at <> '' AND created_at < ? AND status != ?",
+            (cutoff, ST_LIKED),
+        )
+        return cur.rowcount
 
 
 def disliked_titles(topic_id: int, limit: int = 5) -> list[str]:

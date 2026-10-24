@@ -190,3 +190,7 @@ def knowledge_topic_target(default: int = 5) -> int:
 
 def knowledge_max_fail_streak(default: int = 3) -> int:
     return _int(get("KNOWLEDGE_MAX_FAIL_STREAK", ""), default)
+
+
+def knowledge_retention_days(default: int = 365) -> int:
+    return _int(get("KNOWLEDGE_RETENTION_DAYS", ""), default)

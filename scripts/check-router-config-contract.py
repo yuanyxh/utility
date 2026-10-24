@@ -128,7 +128,7 @@ PROMPT_FEATURES = {
     # Python side (knowledge panel refill pipeline)
     "knowledge_expand": ("theme", "done", "scope", "exclude", "disliked"),
     "knowledge_gate": ("theme", "scope", "exclude", "concept", "why_now", "disliked"),
-    "knowledge_card": ("theme", "concept", "evidence", "scope"),
+    "knowledge_card": ("theme", "concept", "evidence", "scope", "exclude"),
 }
 #: Baseline language: every feature must have it (it is the fallback target of any language, and missing it is universal breakage)
 PROMPT_BASELINE_LANG = "zh-Hans"

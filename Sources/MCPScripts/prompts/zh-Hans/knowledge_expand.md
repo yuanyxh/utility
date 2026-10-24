@@ -37,4 +37,4 @@ json_keys: [concept, why_now, exhausted]
 
 只输出 JSON:
 
-{"concept": "概念名", "why_now": "一句话:为什么现在该学它", "exhausted": false}
+{"concept": "概念名", "why_now": "一句话(不超过 40 字):为什么现在该学它", "exhausted": false}

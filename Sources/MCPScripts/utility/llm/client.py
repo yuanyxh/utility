@@ -86,11 +86,14 @@ class LLMClientError(RuntimeError):
         kind: str = "error",
         finish_reason: str | None = None,
         status: int | None = None,
+        content: str | None = None,
     ):
         super().__init__(message)
         self.kind = kind
         self.finish_reason = finish_reason
         self.status = status
+        # Truncated output still carries usable leading fields.
+        self.content = content
 
 
 @dataclass(frozen=True)
@@ -257,6 +260,7 @@ def _extract_required(data: dict, api_format: str) -> str:
             "truncated content (finish_reason=length)",
             kind="truncated",
             finish_reason=finish,
+            content=content,
         )
     return content
 
@@ -442,38 +446,124 @@ def _prefer_first_nonempty(pairs):
 
 
 def parse_json(raw: str | None) -> dict | None:
-    """Extract a JSON object from LLM output. Best-effort: fenced code blocks / surrounding chatter / trailing commas / unescaped quotes."""
+    """Extract a JSON object from LLM output. Best-effort: fenced blocks / chatter /
+    trailing commas / unescaped quotes / truncated tail."""
+    return parse_json_partial(raw)[0]
+
+
+def parse_json_partial(raw: str | None) -> tuple[dict | None, bool]:
+    """Like `parse_json`, but also reports whether the value was **recovered from a
+    truncated payload**. Callers that cannot accept a half-written field must check
+    the flag (a cut-off `card` body is not a card)."""
     if not raw:
-        return None
+        return None, False
+    text = _extract_json_text(raw)
+    parsed = _loads_llm_json(text)
+    if parsed is not None:
+        return parsed, False
+    closed = _close_truncated(text)
+    if closed:
+        parsed = _loads_llm_json(closed)
+        if parsed is not None:
+            return parsed, True
+    # Last resort: flat `"key": value` pairs. Covers output cut inside a value
+    # where appending closers cannot produce valid JSON.
+    fields = _flat_fields(raw)
+    return (fields, True) if fields else (None, False)
+
+
+def _extract_json_text(raw: str) -> str:
     raw = raw.strip()
     m = re.search(r"```json\s*\n(.+?)\n\s*```", raw, re.DOTALL)
     if not m:
         m = re.search(r"```\s*\n(.+?)\n\s*```", raw, re.DOTALL)
     if not m:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
-    json_str = m.group(1) if m and m.lastindex else (m.group(0) if m else raw)
-    start, end = json_str.find("{"), json_str.rfind("}")
+    text = m.group(1) if m and m.lastindex else (m.group(0) if m else raw)
+    start, end = text.find("{"), text.rfind("}")
     if start != -1 and end != -1:
-        json_str = json_str[start : end + 1]
-    try:
-        return json.loads(
-            json_str, strict=False, object_pairs_hook=_prefer_first_nonempty
-        )
-    except json.decoder.JSONDecodeError:
-        fixed = re.sub(r",\s*([}\]])", r"\1", json_str)
+        text = text[start : end + 1]
+    return text
+
+
+def _loads_llm_json(text: str) -> dict | None:
+    fixed = re.sub(r",\s*([}\]])", r"\1", text)
+    # When the LLM copies source text it may bring literal ASCII double quotes
+    # into a string value unescaped -> escape and retry
+    candidates = (text, fixed, _escape_inline_quotes(fixed))
+    for cand in candidates:
         try:
-            return json.loads(
-                fixed, strict=False, object_pairs_hook=_prefer_first_nonempty
+            value = json.loads(
+                cand, strict=False, object_pairs_hook=_prefer_first_nonempty
             )
         except json.decoder.JSONDecodeError:
-            # When the LLM copies source text it may bring literal ASCII double quotes into a string value unescaped -> escape and retry
-            quoted = _escape_inline_quotes(fixed)
+            continue
+        return value if isinstance(value, dict) else None
+    return None
+
+
+def _close_truncated(text: str) -> str | None:
+    """Close an output cut mid-flight: terminate the open string, drop a dangling
+    `key:` / comma, then append the missing brackets."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    s = text[start:].rstrip()
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]" and stack:
+            stack.pop()
+    if in_str:
+        if esc:
+            s += "\\"
+        s += '"'
+    s = s.rstrip()
+    while s and s[-1] in ":,":
+        s = s[:-1].rstrip()
+    for ch in reversed(stack):
+        s += "}" if ch == "{" else "]"
+    return s
+
+
+_FIELD_RE = re.compile(
+    r'"([A-Za-z_][\w-]*)"\s*:\s*("(?:[^"\\]|\\.)*"?|true|false|null|-?\d+(?:\.\d+)?)',
+    re.DOTALL,
+)
+
+
+def _flat_fields(raw: str) -> dict:
+    """Extract top-level scalar fields from a broken payload, keeping the first
+    occurrence. Values cut mid-string are returned as-is (no closing quote)."""
+    out: dict = {}
+    for key, token in _FIELD_RE.findall(raw):
+        if token.startswith('"'):
+            inner = token[1:-1] if token.endswith('"') and len(token) > 1 else token[1:]
             try:
-                return json.loads(
-                    quoted, strict=False, object_pairs_hook=_prefer_first_nonempty
-                )
+                value = json.loads('"' + inner + '"')
             except json.decoder.JSONDecodeError:
-                return None
+                value = inner
+        elif token == "true":
+            value = True
+        elif token == "false":
+            value = False
+        elif token == "null":
+            value = None
+        else:
+            value = float(token) if "." in token else int(token)
+        out.setdefault(key, value)
+    return out
 
 
 def _escape_inline_quotes(s: str) -> str:

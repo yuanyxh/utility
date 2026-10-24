@@ -245,6 +245,7 @@ knowledge:
   poolTargetTopic: 5            # refill until this many unseen (shown_count = 0) cards exist
   maxFailStreak: 3              # N dry runs in a row marks a topic done
   maxShownPerCard: 2            # review cap when showReviewedCards is enabled
+  retentionDays: 365            # prune cards older than N days on refill; liked cards are kept; 0 = keep forever
   hotkey: option+k
   saveLikedMarkdown: true       # save the current card when Like is clicked
   likedSaveDir: ''              # empty = <mcp.knowledgeBasePath>/知识卡片 (or default notes dir)

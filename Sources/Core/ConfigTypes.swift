@@ -529,6 +529,8 @@ public struct KnowledgeConfig: Codable {
     var poolTargetTopic: Int = 5
     var maxFailStreak: Int = 3
     var maxShownPerCard: Int = 2
+    /// Cards older than this are pruned on refill; liked cards are kept. 0 = keep forever.
+    var retentionDays: Int = 365
     var hotkey: String = "option+k"
     var saveLikedMarkdown: Bool = true
     /// Empty = `<mcp.knowledgeBasePath>/知识卡片` (or the default notes dir).
@@ -547,6 +549,7 @@ public struct KnowledgeConfig: Codable {
         poolTargetTopic = try c.decodeIfPresent(Int.self, forKey: .poolTargetTopic) ?? 5
         maxFailStreak = try c.decodeIfPresent(Int.self, forKey: .maxFailStreak) ?? 3
         maxShownPerCard = try c.decodeIfPresent(Int.self, forKey: .maxShownPerCard) ?? 2
+        retentionDays = try c.decodeIfPresent(Int.self, forKey: .retentionDays) ?? 365
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+k"
         saveLikedMarkdown = try c.decodeIfPresent(Bool.self, forKey: .saveLikedMarkdown) ?? true
         likedSaveDir = try c.decodeIfPresent(String.self, forKey: .likedSaveDir) ?? ""

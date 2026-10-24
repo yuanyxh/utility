@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Sources" / "MCPScripts"))
 
+from utility.core.db import conn as dbconn
 from utility.services.knowledge import knowledge_pool as pool
 
 
@@ -55,6 +56,48 @@ class KnowledgePoolRotationTest(unittest.TestCase):
         with patch.dict(os.environ, {"KNOWLEDGE_TOPICS": topics}, clear=False):
             self.assertEqual(pool.seed_from_config(), 1)
             self.assertEqual(pool.seed_from_config(), 0)
+
+    def test_seed_resyncs_scope_of_existing_topic(self):
+        old = '[{"name":"TCP/IP","kind":"principle","scope":"old","exclude":"old"}]'
+        new = '[{"name":"TCP/IP","kind":"principle","scope":"new","exclude":"new"}]'
+        with patch.dict(os.environ, {"KNOWLEDGE_TOPICS": old}, clear=False):
+            pool.seed_from_config()
+        with patch.dict(os.environ, {"KNOWLEDGE_TOPICS": new}, clear=False):
+            self.assertEqual(pool.seed_from_config(), 0)
+        topic = pool.next_topic()
+        self.assertEqual((topic["scope"], topic["exclude"]), ("new", "new"))
+
+    def test_prune_expired_keeps_liked_and_recent(self):
+        old_id = self._card("old")
+        liked_id = self._card("old-liked")
+        self._card("new")
+        with dbconn(pool.db_path()) as conn:
+            conn.execute(
+                "UPDATE cards SET created_at = '2024-01-01T00:00:00+00:00' WHERE id = ?",
+                (old_id,),
+            )
+            conn.execute(
+                "UPDATE cards SET created_at = '2024-01-01T00:00:00+00:00',"
+                " status = 'liked' WHERE id = ?",
+                (liked_id,),
+            )
+        self.assertEqual(pool.prune_expired(365), 1)
+        with dbconn(pool.db_path()) as conn:
+            titles = [r[0] for r in conn.execute("SELECT title FROM cards ORDER BY id")]
+        self.assertEqual(titles, ["old-liked", "new"])
+        self.assertEqual(pool.prune_expired(0), 0)
+
+    def test_disliked_titles_feed_newest_first(self):
+        topics = '[{"name":"TCP/IP","kind":"principle"}]'
+        with patch.dict(os.environ, {"KNOWLEDGE_TOPICS": topics}, clear=False):
+            pool.seed_from_config()
+        topic_id = pool.next_topic()["id"]
+        for title in ("first", "second"):
+            card_id = pool.insert_card(
+                kind=pool.KIND_TOPIC, title=title, body="body", topic_id=topic_id
+            )
+            pool.mark_status(card_id, "disliked")
+        self.assertEqual(pool.disliked_titles(topic_id), ["second", "first"])
 
 
 if __name__ == "__main__":

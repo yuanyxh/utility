@@ -20,7 +20,7 @@ All five must hold:
 4. It is a core concept of the topic, not an adjacent topic chosen just to keep the chain going
 5. It is not an extension of a direction the user explicitly disliked (this holds automatically when the list is empty)
 
-If any one fails, set accept=false and state in `reason` which one it violates.
+If any one fails, set accept=false and state in `reason` which one it violates (30 words max).
 Output JSON only:
 
 {"accept": true, "reason": ""}
