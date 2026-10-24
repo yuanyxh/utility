@@ -413,6 +413,7 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `project_search` | 代码库多层级检索 |
 | `project_structure` | 项目目录结构 |
 | `project_exports` | 文件或目录的公共接口 |
+| `project_dependencies` | 文件的一跳 import 与 importers |
 | `project_notes` | 项目本地笔记检索 |
 | `tool_resource` | 读取 skill 附属资源 |
 | (动态) | `MCP/Skills` 下每个 skill 注册为一个工具 |

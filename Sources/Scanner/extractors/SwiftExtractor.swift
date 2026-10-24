@@ -175,4 +175,8 @@ struct SwiftExtractor: SymbolExtractor {
         }
         return result.trimmingCharacters(in: .whitespaces)
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.swift(content, filePath: filePath)
+    }
 }

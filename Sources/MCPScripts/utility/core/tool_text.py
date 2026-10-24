@@ -39,6 +39,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "param.symbol_kind": "Optional. Restrict to a symbol kind (class/fun/val/...)",
     "param.subpath": "Optional subpath; returns its next level",
     "param.file_or_dir": "File or directory path",
+    "param.dependency_direction": (
+        "outgoing (what this path imports), incoming (what imports it), or both; "
+        "default outgoing"
+    ),
     "param.notes_keyword": "Search keyword; natural language is supported",
     "param.project_dir": "Absolute path to the project directory",
     "param.parent_name": "Registered tool name, e.g. check/write/think",

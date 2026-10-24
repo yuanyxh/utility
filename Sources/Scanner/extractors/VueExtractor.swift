@@ -15,4 +15,8 @@ struct VueExtractor: SymbolExtractor {
     func extract(from content: String, filePath: String) -> [SymbolRecord] {
         ASTExtractorRunner.extract(from: content, filePath: filePath, ext: "vue") ?? []
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.vue(content, filePath: filePath)
+    }
 }

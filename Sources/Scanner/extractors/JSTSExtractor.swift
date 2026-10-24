@@ -148,4 +148,8 @@ struct JSTSExtractor: SymbolExtractor {
         }
         return r.trimmingCharacters(in: .whitespaces)
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.js(content, filePath: filePath)
+    }
 }

@@ -248,4 +248,8 @@ struct KotlinExtractor: SymbolExtractor {
         }
         return sig
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.kotlin(content, filePath: filePath)
+    }
 }

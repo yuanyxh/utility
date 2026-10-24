@@ -394,6 +394,72 @@ function extractSymbols(node, _state = {}) {
   return symbols;
 }
 
+/**
+ * Walk the AST and collect file-level import specifiers.
+ */
+function extractImports(node, imports = []) {
+  if (!node || typeof node !== "object") return imports;
+
+  const push = (raw, kind, loc) => {
+    if (typeof raw === "string" && raw.length > 0) {
+      imports.push({ raw_target: raw, kind, line: loc?.start?.line ?? null });
+    }
+  };
+
+  switch (node.type) {
+    case "ImportDeclaration":
+      push(node.source?.value, "static", node.loc);
+      break;
+    case "ExportNamedDeclaration":
+    case "ExportAllDeclaration":
+      if (node.source?.value) push(node.source.value, "export_from", node.loc);
+      break;
+    case "TSImportEqualsDeclaration":
+      if (node.moduleReference?.type === "TSExternalModuleReference") {
+        push(node.moduleReference.expression?.value, "static", node.loc);
+      }
+      break;
+    case "CallExpression": {
+      const callee = node.callee;
+      const arg = node.arguments?.[0];
+      if (
+        callee?.type === "Identifier" &&
+        callee.name === "require" &&
+        arg &&
+        typeof arg.value === "string"
+      ) {
+        push(arg.value, "require", node.loc);
+      } else if (callee?.type === "Import" && arg && typeof arg.value === "string") {
+        push(arg.value, "dynamic", node.loc);
+      }
+      break;
+    }
+  }
+
+  for (const key of Object.keys(node)) {
+    if (key === "leadingComments" || key === "trailingComments" || key === "innerComments") continue;
+    const val = node[key];
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        if (item && typeof item.type === "string") extractImports(item, imports);
+      }
+    } else if (val && typeof val.type === "string") {
+      extractImports(val, imports);
+    }
+  }
+  return imports;
+}
+
+function dedupeImports(imports) {
+  const seen = new Set();
+  return imports.filter((imp) => {
+    const key = `${imp.raw_target}\u0000${imp.kind}\u0000${imp.line ?? 0}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ── Main ──
 
 const ext = process.argv[2] || "js";
@@ -428,7 +494,8 @@ process.stdin.on("end", () => {
     });
 
     const symbols = extractSymbols(ast);
-    console.log(JSON.stringify({ symbols }));
+    const imports = dedupeImports(extractImports(ast)).slice(0, 2000);
+    console.log(JSON.stringify({ symbols, imports }));
   } catch (err) {
     // babel parse error
     console.log(JSON.stringify({ error: err.message }));

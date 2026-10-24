@@ -7,6 +7,15 @@ protocol SymbolExtractor {
 
     /// Extract symbols from file content at the given path.
     func extract(from content: String, filePath: String) -> [SymbolRecord]
+
+    /// Extract file-level imports. Default is empty so new extractors only opt in when ready.
+    func imports(from content: String, filePath: String) -> [ImportRecord]
+}
+
+extension SymbolExtractor {
+    func imports(from _: String, filePath _: String) -> [ImportRecord] {
+        []
+    }
 }
 
 // MARK: - Regex match helper

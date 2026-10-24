@@ -202,45 +202,40 @@ final class FileWatcher {
         var updated = 0
         var failed = 0
 
-        for relPath in paths.sorted() {
+        let deleted = paths.filter {
+            !FileManager.default.fileExists(
+                atPath: (projectPath as NSString).appendingPathComponent($0),
+            )
+        }
+        let existing = paths.subtracting(deleted)
+
+        // Phase 1: deletions first, so the resolution context below sees the final file set.
+        for relPath in deleted.sorted() {
+            let parentDir = (relPath as NSString).deletingLastPathComponent
+            do {
+                try db.deletePathSubtree(relPath)
+                updateDirFileCount(db: db, dirPath: parentDir)
+                updated += 1
+            } catch {
+                debugLog("[Watcher] Delete failed: \(relPath): \(error.localizedDescription)")
+                failed += 1
+            }
+        }
+
+        // Phase 2: resolve imports against the post-deletion file set plus pending creations.
+        var filePaths = (try? db.allFilePaths()) ?? []
+        filePaths.formUnion(existing)
+        let context = ResolutionContextBuilder.make(
+            projectPath: projectPath,
+            filePaths: filePaths,
+            manifestDirs: (try? db.manifestDirectories()) ?? [],
+        )
+
+        for relPath in existing.sorted() {
             let fullPath = (projectPath as NSString).appendingPathComponent(relPath)
             let ext = (relPath as NSString).pathExtension.lowercased()
             let parentDir = (relPath as NSString).deletingLastPathComponent
 
-            // File or directory deleted → remove its rows, and for a directory every
-            // descendant row too. FSEvents can report a removed tree as a single
-            // directory event, so an exact-path DELETE would leave children behind.
-            if !FileManager.default.fileExists(atPath: fullPath) {
-                let subtreePrefix = relPath + "/"
-                do {
-                    try db.dbQueue.write { db in
-                        try db.execute(
-                            sql: "DELETE FROM symbols WHERE file_path = ? OR instr(file_path, ?) = 1",
-                            arguments: [relPath, subtreePrefix],
-                        )
-                        try db.execute(
-                            sql: "DELETE FROM files WHERE path = ? OR instr(path, ?) = 1",
-                            arguments: [relPath, subtreePrefix],
-                        )
-                        try db.execute(
-                            sql: "DELETE FROM failed_files WHERE path = ? OR instr(path, ?) = 1",
-                            arguments: [relPath, subtreePrefix],
-                        )
-                        try db.execute(
-                            sql: "DELETE FROM directories WHERE path = ? OR instr(path, ?) = 1",
-                            arguments: [relPath, subtreePrefix],
-                        )
-                    }
-                    updateDirFileCount(db: db, dirPath: parentDir)
-                    updated += 1
-                } catch {
-                    debugLog("[Watcher] Delete failed: \(relPath): \(error.localizedDescription)")
-                    failed += 1
-                }
-                continue
-            }
-
-            // Read & re-extract
             guard let content = try? String(contentsOfFile: fullPath, encoding: .utf8),
                   scanner.extractor(for: ext) != nil || ASTExtractorRunner.isSupported(ext)
             else {
@@ -249,59 +244,46 @@ final class FileWatcher {
 
             let extractor = scanner.extractor(for: ext)
             var symbols: [SymbolRecord] = []
+            var imports: [ImportRecord] = []
             let prevFails = (try? db.failedFileCount(path: relPath)) ?? 0
             var extractionError: String?
+            var astSucceeded = false
 
-            // Priority 1: AST pipeline
             if ASTExtractorRunner.isSupported(ext), prevFails < 3 {
-                if let astSymbols = ASTExtractorRunner.extract(from: content, filePath: relPath, ext: ext) {
-                    symbols = astSymbols
+                if let result = ASTExtractorRunner.extractFileWithImports(
+                    from: content, filePath: relPath, ext: ext,
+                ) {
+                    symbols = result.symbols
+                    imports = result.imports
+                    astSucceeded = true
                 } else {
                     extractionError = "AST extraction failed"
                 }
             }
 
-            // Priority 2: regex fallback
             if symbols.isEmpty, let extractor {
                 symbols = extractor.extract(from: content, filePath: relPath)
-                if !symbols.isEmpty {
-                    extractionError = nil
-                }
+                if !symbols.isEmpty { extractionError = nil }
+            }
+            if !astSucceeded, let extractor {
+                imports = extractor.imports(from: content, filePath: relPath)
             }
 
+            let fileRec = FileRecord(
+                path: relPath,
+                dirPath: parentDir,
+                name: (relPath as NSString).lastPathComponent,
+                ext: ext,
+                symCount: symbols.count,
+            )
             do {
-                try db.dbQueue.write { db in
-                    try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [relPath])
-                }
-
-                if !symbols.isEmpty {
-                    try db.insertSymbols(symbols)
-                }
-
-                let fileRec = FileRecord(
-                    path: relPath,
-                    dirPath: parentDir,
-                    name: (relPath as NSString).lastPathComponent,
-                    ext: ext,
-                    symCount: symbols.count,
+                try db.replaceFileExtraction(
+                    file: fileRec,
+                    symbols: symbols,
+                    imports: ImportResolverRegistry.resolveAll(imports, context: context),
+                    astFailed: extractionError != nil,
+                    error: extractionError,
                 )
-                try db.insertFile(fileRec)
-
-                if let err = extractionError {
-                    try db.dbQueue.write { db in
-                        try db.execute(sql: """
-                          INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
-                          VALUES (?, 1, ?, datetime('now'))
-                          ON CONFLICT(path) DO UPDATE SET
-                            fail_count = fail_count + 1,
-                            last_error = ?,
-                            last_failed_at = datetime('now')
-                        """, arguments: [relPath, err, err])
-                    }
-                } else {
-                    try db.clearFailedFile(path: relPath)
-                }
-
                 updateDirFileCount(db: db, dirPath: parentDir)
                 updated += 1
             } catch {

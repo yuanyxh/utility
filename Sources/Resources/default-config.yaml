@@ -184,6 +184,8 @@ mcp:
       limit: 15
     project_structure:
       limit: 15
+    project_dependencies:
+      limit: 30
     websearch_engine:
       limit: 5
       fetch_top: 1

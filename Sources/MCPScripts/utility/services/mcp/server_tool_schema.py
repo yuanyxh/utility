@@ -10,6 +10,8 @@ from __future__ import annotations
 from mcp.types import Tool
 
 from utility.services.mcp.server_search import (
+    DEFAULT_PROJECT_DEPENDENCIES_DIRECTION,
+    DEFAULT_PROJECT_DEPENDENCIES_LIMIT,
     DEFAULT_PROJECT_SEARCH_LIMIT,
     DEFAULT_PROJECT_STRUCTURE_LIMIT,
 )
@@ -44,9 +46,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "recall": "Trigger: user says look up/search/find that earlier one, or refers to history or existing information. Searches shared memory, knowledge base, and notes.",
     "catch_up": "Trigger: user says just now/last time/previously/recently, or asks what was done, the progress, or what remains unresolved. Do not substitute git log.",
     "forget": "Trigger: user asks to delete a memory, or a memory is wrong/outdated. Deletes it permanently.",
-    "project_search": "Prefer over reading whole files to locate symbols, files, and packages. Searches the project dependency graph.",
+    "project_search": "Prefer over reading whole files to locate symbols, files, and packages. Searches the project dependency graph. For file imports and importers, use project_dependencies.",
     "project_structure": "Prefer over ls/find traversal to understand the project layout.",
-    "project_exports": "Prefer over reading a whole file to get its public interface.",
+    "project_exports": "Prefer over reading a whole file to get its public interface. For file imports and importers, use project_dependencies.",
+    "project_dependencies": "Trigger: user asks what depends on a file, what a change will affect, or before deleting/moving/renaming a file or changing a public signature. Returns outgoing imports and incoming importers (1 hop).",
     "project_notes": "Like recall, but searches local project notes only.",
     "tool_resource": "Load a file under references or a script under scripts when instructed.",
     "set_memory_processed": "Set or reset the processed bit of memories. Idempotent.",
@@ -281,6 +284,35 @@ def build_tools() -> list[Tool]:
                     "path": {
                         "type": "string",
                         "description": param_text("param.file_or_dir"),
+                    },
+                },
+                "required": ["dbPath", "path"],
+            },
+        ),
+        Tool(
+            name="project_dependencies",
+            description=TOOL_DESCRIPTIONS["project_dependencies"],
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dbPath": {
+                        "type": "string",
+                        "description": param_text("param.db_path"),
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": param_text("param.file_or_dir"),
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["outgoing", "incoming", "both"],
+                        "default": DEFAULT_PROJECT_DEPENDENCIES_DIRECTION,
+                        "description": param_text("param.dependency_direction"),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": DEFAULT_PROJECT_DEPENDENCIES_LIMIT,
+                        "description": param_text("param.max_results"),
                     },
                 },
                 "required": ["dbPath", "path"],

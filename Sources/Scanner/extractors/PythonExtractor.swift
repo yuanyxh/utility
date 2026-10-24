@@ -243,4 +243,8 @@ struct PythonExtractor: SymbolExtractor {
         }
         return TripleResult(quote: String(quote), closed: false)
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.python(content, filePath: filePath)
+    }
 }

@@ -177,17 +177,17 @@ final class ProjectScanner {
         }
 
         // Batch AST extraction (single subprocess call for all files)
-        let batchASTResults = ASTExtractorRunner.extractBatch(astBatchInputs)
+        let batchASTResults = ASTExtractorRunner.extractBatchWithImports(astBatchInputs)
 
         let extractLock = NSLock()
-        var results: [Int: (file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)] = [:]
+        var results: [Int: (file: FileRecord, symbols: [SymbolRecord], imports: [ImportRecord], astFailed: Bool)] = [:]
 
         if totalFiles > 0 {
             DispatchQueue.concurrentPerform(iterations: totalFiles) { i in
                 let (fileRec, maybeContent) = fileResults[i]
                 guard let content = maybeContent else {
                     extractLock.lock()
-                    results[i] = (fileRec, [], false)
+                    results[i] = (fileRec, [], [], false)
                     extractLock.unlock()
                     return
                 }
@@ -195,21 +195,26 @@ final class ProjectScanner {
                 let ext = fileRec.ext
                 let regexExtractor = extractors[ext]
                 var symbols: [SymbolRecord] = []
+                var imports: [ImportRecord] = []
                 var astFailed = false
+                var astSucceeded = false
 
-                // Priority 1: AST pipeline (batch results)
+                // Priority 1: AST pipeline (batch results). Key presence means the
+                // parser succeeded even when the file only contains imports.
                 if ASTExtractorRunner.isSupported(ext) {
                     let prevFails = failedCounts[fileRec.path] ?? 3
                     if prevFails < 3 {
-                        if let batchSymbols = batchASTResults[fileRec.path] {
-                            symbols = batchSymbols
+                        if let ast = batchASTResults[fileRec.path] {
+                            symbols = ast.symbols
+                            imports = ast.imports
+                            astSucceeded = true
                         } else {
                             astFailed = true
                         }
                     }
                 }
 
-                // Priority 2: regex fallback
+                // Priority 2: regex fallback for symbols
                 if symbols.isEmpty, let regexExtractor {
                     symbols = regexExtractor.extract(from: content, filePath: fileRec.path)
                     if !symbols.isEmpty {
@@ -217,8 +222,13 @@ final class ProjectScanner {
                     }
                 }
 
+                // Imports fall back to regex only when the AST pipeline did not run.
+                if !astSucceeded, let regexExtractor {
+                    imports = regexExtractor.imports(from: content, filePath: fileRec.path)
+                }
+
                 extractLock.lock()
-                results[i] = (fileRec.withSymCount(symbols.count), symbols, astFailed)
+                results[i] = (fileRec.withSymCount(symbols.count), symbols, imports, astFailed)
                 extractLock.unlock()
             }
         }
@@ -229,10 +239,23 @@ final class ProjectScanner {
 
         // ── phase 3: atomic replacement ──
         // Clearing, writing, and FTS rebuild are done in the same transaction; readers never see an empty DB or a half-finished one.
+        let context = ResolutionContextBuilder.make(
+            projectPath: projectPath,
+            filePaths: Set(fileResults.map(\.0.path)),
+            manifestDirs: manifestDirs,
+        )
+        let resolvedImports = ImportResolverRegistry.resolveAll(
+            results.values.flatMap(\.imports), context: context,
+        )
         try db.replaceScanResults(
             directories: Array(dirMap.values),
-            files: (0 ..< totalFiles).compactMap { results[$0] },
+            files: (0 ..< totalFiles).compactMap { i in
+                results[i].map {
+                    (file: $0.file, symbols: $0.symbols, astFailed: $0.astFailed)
+                }
+            },
             packages: packages,
+            imports: resolvedImports,
         )
 
         symCount = results.values.reduce(0) { $0 + $1.symbols.count }

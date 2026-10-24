@@ -209,4 +209,8 @@ struct JavaExtractor: SymbolExtractor {
         }
         return sig
     }
+
+    func imports(from content: String, filePath: String) -> [ImportRecord] {
+        ImportRegex.java(content, filePath: filePath)
+    }
 }

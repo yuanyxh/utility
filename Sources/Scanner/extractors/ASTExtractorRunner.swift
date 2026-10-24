@@ -26,11 +26,8 @@ enum ASTExtractorRunner {
         }
     }
 
-    /// Extract symbols from multiple files in a single subprocess call (--batch mode).
-    ///
-    /// - Returns: Dictionary mapping filePath → symbols array if successful, or nil on overall failure.
-    ///            Individual file errors are silently dropped (caller falls back to regex).
-    static func extractBatch(_ files: [BatchInput]) -> [String: [SymbolRecord]] {
+    /// Extract symbols and imports from multiple files in a single subprocess call (--batch mode).
+    static func extractBatchWithImports(_ files: [BatchInput]) -> [String: ASTFileResult] {
         guard !files.isEmpty else { return [:] }
         guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
             debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
@@ -59,11 +56,15 @@ enum ASTExtractorRunner {
         }
     }
 
-    /// Run AST extraction for a file.
-    ///
-    /// - Returns: `[SymbolRecord]` on success, `nil` on any failure
-    ///   (script not found, parse error, timeout — caller should fall back to regex).
-    static func extract(from content: String, filePath: String, ext: String) -> [SymbolRecord]? {
+    /// Symbol-only wrapper kept for existing callers.
+    static func extractBatch(_ files: [BatchInput]) -> [String: [SymbolRecord]] {
+        extractBatchWithImports(files).mapValues(\.symbols)
+    }
+
+    /// Run AST extraction for one file, returning symbols and imports.
+    static func extractFileWithImports(
+        from content: String, filePath: String, ext: String
+    ) -> ASTFileResult? {
         guard isSupported(ext) else { return nil }
         guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
             debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
@@ -84,48 +85,67 @@ enum ASTExtractorRunner {
         }
     }
 
+    /// Symbol-only wrapper kept for existing callers.
+    static func extract(from content: String, filePath: String, ext: String) -> [SymbolRecord]? {
+        extractFileWithImports(from: content, filePath: filePath, ext: ext)?.symbols
+    }
+
     // MARK: - JSON parsing
 
-    /// Parse batch output: JSON dictionary { filePath → { symbols } }.
-    private static func parseBatch(_ data: Data, fallbackFilePath _: String?) -> [String: [SymbolRecord]] {
+    /// Parse batch output: JSON dictionary { filePath → { symbols, imports } }.
+    private static func parseBatch(_ data: Data, fallbackFilePath _: String?) -> [String: ASTFileResult] {
         guard !data.isEmpty,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return [:]
         }
 
-        // Parse per-file results
-        var results: [String: [SymbolRecord]] = [:]
+        var results: [String: ASTFileResult] = [:]
         for (filePath, value) in json {
             guard let entry = value as? [String: Any] else { continue }
-            if let symbolsJSON = entry["symbols"] as? [[String: Any]] {
-                let symbols = symbolsJSON.compactMap { dict -> SymbolRecord? in
-                    parseSymbol(dict, defaultFilePath: filePath)
-                }
-                results[filePath] = symbols
-            }
-            // Error results are silently skipped (caller falls back to regex)
+            let hasSymbols = entry["symbols"] != nil
+            let hasImports = entry["imports"] != nil
+            guard hasSymbols || hasImports else { continue } // errors are silently skipped
+            results[filePath] = ASTFileResult(
+                symbols: parseSymbols(entry["symbols"], filePath: filePath),
+                imports: parseImports(entry["imports"], fromPath: filePath),
+            )
         }
         return results
     }
 
-    /// Parse single-file output: JSON { error? / symbols }.
-    private static func parseSingle(_ data: Data, fallbackFilePath: String) -> [SymbolRecord]? {
+    /// Parse single-file output: JSON { error? / symbols / imports }.
+    private static func parseSingle(_ data: Data, fallbackFilePath: String) -> ASTFileResult? {
         guard !data.isEmpty,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }
+        if json["error"] != nil { return nil }
+        guard json["symbols"] != nil || json["imports"] != nil else { return nil }
+        return ASTFileResult(
+            symbols: parseSymbols(json["symbols"], filePath: fallbackFilePath),
+            imports: parseImports(json["imports"], fromPath: fallbackFilePath),
+        )
+    }
 
-        // Check for error response
-        if json["error"] != nil {
-            return nil
-        }
+    private static func parseSymbols(_ value: Any?, filePath: String) -> [SymbolRecord] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.compactMap { parseSymbol($0, defaultFilePath: filePath) }
+    }
 
-        guard let symbolsJSON = json["symbols"] as? [[String: Any]] else { return nil }
-
-        return symbolsJSON.compactMap { dict -> SymbolRecord? in
-            parseSymbol(dict, defaultFilePath: fallbackFilePath)
+    private static func parseImports(_ value: Any?, fromPath: String) -> [ImportRecord] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.compactMap { dict -> ImportRecord? in
+            guard let raw = dict["raw_target"] as? String, !raw.isEmpty else { return nil }
+            let kind = ImportKind(rawValue: dict["kind"] as? String ?? "") ?? .staticImport
+            return ImportRecord(
+                fromPath: fromPath,
+                rawTarget: raw,
+                kind: kind,
+                line: dict["line"] as? Int,
+                confidence: 1.0,
+            )
         }
     }
 

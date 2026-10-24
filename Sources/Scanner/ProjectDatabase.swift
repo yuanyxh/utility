@@ -91,6 +91,29 @@ final class ProjectDatabase {
             }
         }
 
+        migrator.registerMigration("v4") { db in
+            try db.create(table: "imports") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("from_path", .text).notNull()
+                t.column("raw_target", .text).notNull()
+                t.column("to_path", .text)
+                t.column("is_external", .boolean).notNull().defaults(to: false)
+                t.column("kind", .text).notNull()
+                t.column("line", .integer)
+                t.column("confidence", .double).notNull().defaults(to: 1.0)
+                t.column("resolver", .text)
+            }
+            try db.create(index: "idx_imports_from", on: "imports", columns: ["from_path"])
+            try db.create(index: "idx_imports_to", on: "imports", columns: ["to_path"])
+            try db.create(index: "idx_imports_raw", on: "imports", columns: ["raw_target"])
+            // NULLs compare unequal in SQLite UNIQUE indexes; COALESCE keeps rescans idempotent.
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_dedup
+                ON imports(from_path, raw_target, kind,
+                           COALESCE(to_path, ''), COALESCE(line, 0))
+            """)
+        }
+
         return migrator
     }
 
@@ -157,6 +180,96 @@ final class ProjectDatabase {
         }
     }
 
+    // MARK: - Resolution helpers
+
+    func allFilePaths() throws -> Set<String> {
+        let paths = try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT path FROM files")
+        }
+        return Set(paths)
+    }
+
+    /// Directories that contain any package manifest (`package.json`, `pyproject.toml`, ...).
+    /// Used as Python module-root hints during incremental scans.
+    func manifestDirectories() throws -> Set<String> {
+        let dirs = try dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT path FROM directories WHERE has_package_manifest = 1",
+            )
+        }
+        return Set(dirs)
+    }
+
+    // MARK: - Single-file writes
+
+    /// Replace one file's symbols, imports, file row and AST failure state in one transaction.
+    func replaceFileExtraction(
+        file: FileRecord,
+        symbols: [SymbolRecord],
+        imports: [ImportRecord],
+        astFailed: Bool,
+        error: String? = nil,
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM symbols WHERE file_path = ?", arguments: [file.path])
+            try db.execute(sql: "DELETE FROM imports WHERE from_path = ?", arguments: [file.path])
+            for symbol in symbols {
+                try symbol.insert(db, onConflict: .ignore)
+            }
+            for imp in imports {
+                try imp.insert(db, onConflict: .ignore)
+            }
+            try file.insert(db, onConflict: .replace)
+            if astFailed {
+                let message = error ?? "AST extraction failed"
+                try db.execute(sql: """
+                    INSERT INTO failed_files (path, fail_count, last_error, last_failed_at)
+                    VALUES (?, 1, ?, datetime('now'))
+                    ON CONFLICT(path) DO UPDATE SET
+                        fail_count = fail_count + 1,
+                        last_error = ?,
+                        last_failed_at = datetime('now')
+                """, arguments: [file.path, message, message])
+            } else {
+                try db.execute(sql: "DELETE FROM failed_files WHERE path = ?", arguments: [file.path])
+            }
+        }
+    }
+
+    /// Delete a file or directory subtree. Outgoing imports are removed; incoming
+    /// imports keep their raw target but lose the now-stale resolved path.
+    func deletePathSubtree(_ path: String) throws {
+        let prefix = path + "/"
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM symbols WHERE file_path = ? OR instr(file_path, ?) = 1",
+                arguments: [path, prefix],
+            )
+            try db.execute(
+                sql: "DELETE FROM imports WHERE from_path = ? OR instr(from_path, ?) = 1",
+                arguments: [path, prefix],
+            )
+            try db.execute(sql: """
+                UPDATE imports
+                SET to_path = NULL, is_external = 0, resolver = 'stale'
+                WHERE to_path = ? OR instr(to_path, ?) = 1
+            """, arguments: [path, prefix])
+            try db.execute(
+                sql: "DELETE FROM files WHERE path = ? OR instr(path, ?) = 1",
+                arguments: [path, prefix],
+            )
+            try db.execute(
+                sql: "DELETE FROM failed_files WHERE path = ? OR instr(path, ?) = 1",
+                arguments: [path, prefix],
+            )
+            try db.execute(
+                sql: "DELETE FROM directories WHERE path = ? OR instr(path, ?) = 1",
+                arguments: [path, prefix],
+            )
+        }
+    }
+
     // MARK: - Batch writes
 
     /// Atomically replace all scan results: "clear -> write -> rebuild FTS" done within a single transaction.
@@ -177,12 +290,14 @@ final class ProjectDatabase {
         directories: [DirectoryRecord],
         files: [(file: FileRecord, symbols: [SymbolRecord], astFailed: Bool)],
         packages: [PackageRecord],
+        imports: [ImportRecord] = [],
     ) throws {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM directories")
             try db.execute(sql: "DELETE FROM files")
             try db.execute(sql: "DELETE FROM symbols")
             try db.execute(sql: "DELETE FROM packages")
+            try db.execute(sql: "DELETE FROM imports")
 
             for dir in directories {
                 try dir.insert(db, onConflict: .replace)
@@ -210,6 +325,10 @@ final class ProjectDatabase {
 
             for pkg in packages {
                 try pkg.insert(db, onConflict: .replace)
+            }
+
+            for imp in imports {
+                try imp.insert(db, onConflict: .ignore)
             }
 
             // FTS must be rebuilt within the same transaction: symbols_fts is an external content table, and after the

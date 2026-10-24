@@ -443,6 +443,7 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `project_search` | multi-layer codebase search |
 | `project_structure` | project directory structure |
 | `project_exports` | a file's or directory's public interface |
+| `project_dependencies` | one-hop file imports and importers |
 | `project_notes` | search project-local notes |
 | `tool_resource` | read a skill's companion resources |
 | `websearch_engine` | multi-engine search with optional page Markdown |
@@ -598,6 +599,8 @@ The front-matter's `name` must match the filename; `placeholders` and the body's
 ### 5. Project index and Agent parasitic mode
 
 The data behind the `project_*` tools comes from `ProjectScanner` (full scan) + `FileWatcher` (incremental), which write to `.utility/deps.sqlite` under the project root. Multi-language extractors register by extension (Swift / JS-TS / Python / Vue / Java / Kotlin); extraction precedence is AST script → regex fallback. Symbols carry `start_line`/`end_line`.
+
+File-level imports live in the `imports` table. Extractors emit raw specifiers; resolvers map them to project-relative `to_path` when the target file exists, and mark bare packages as external. Unresolved targets keep their raw specifier instead of inventing an edge. Adding a language means implementing a `SymbolExtractor` with `imports(...)` plus a `LanguageImportResolver`.
 
 | Command | Purpose |
 |---|---|

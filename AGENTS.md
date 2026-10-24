@@ -93,10 +93,11 @@
 | `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
 | `ASTExtractorRunner` | AST 批量提取调度（`ast_extractor.py --batch` + 单文件兜底，经 `PythonScriptRunner.runCaptureOutput` 边读边存防 pipe 阻塞） |
-| `ProjectScanner` | 多语言符号提取器注册 → 批量 AST → 并发正则 → 批量 SQLite ↔ FTS5 索引 |
-| `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 |
+| `ProjectScanner` | 多语言符号 + import 提取器注册 → 批量 AST → 并发正则 → 顺序解析依赖边 → 批量 SQLite ↔ FTS5 |
+| `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 + `imports(...)` 兜底 |
+| `ImportResolverRegistry` | 按扩展名把 raw import 解析为项目相对 `to_path`；未命中不造边 |
 | `ManifestParser` | Package.swift / package.json / pyproject.toml 依赖解析 |
-| `FileWatcher` | FSEvents 文件监控 + 3s 防抖增量更新 |
+| `FileWatcher` | FSEvents 文件监控 + 3s 防抖增量更新（symbols/files/imports 同一事务） |
 | `NotificationManager` | 本地通知 |
 | `Translator` | OpenAI 兼容 API 翻译 |
 | `OCRService` | Vision 帧捕获 + 文本识别 |
@@ -219,7 +220,12 @@
   - 纯 ratio 阈值不可分：真重复（0.55-0.75）与正常段（README 模板 0.7-1.0）区间重叠 → 覆盖率 + LLM 语义双判定
 
 ### 项目扫描
-- 新增语言支持：实现 `SymbolExtractor` 协议 + 在 `ProjectScanner.init()` 中注册
+- 新增语言支持：实现 `SymbolExtractor` 协议（含 `imports(from:filePath:)`）+ 一个 `LanguageImportResolver`，在 `ProjectScanner.init()` 与 `ImportResolverRegistry` 注册；AST 语种再加 parser 分支
+- **`imports` 表是文件级依赖边**：`from_path / raw_target / to_path / is_external / kind / line / confidence / resolver`。提取器只产出 raw，`ResolutionContextBuilder` + `ImportResolverRegistry` 统一解析；解析不到时 `to_path=NULL`，绝不猜路径
+- **AST 成功按结果 key 是否存在判断**，不能用 `symbols.isEmpty`：只有 import、没有符号的文件（如 `__init__.py`）不能被误判为 AST 失败
+- 全量 `replaceScanResults` 与增量 `replaceFileExtraction` 都把 symbols/files/imports/failed_files 放在同一事务；删除子树时出边删除、入边保留 raw 并置 `resolver='stale'`
+- **新增语言只改两处**：提取器（`imports`）+ 解析器（`LanguageImportResolver`）；DB、FileWatcher、MCP 查询不用动
+- MCP `project_dependencies` 只做 1 跳：`outgoing` / `incoming` / `both`，缺 `imports` 表返回 `degraded` 而不是报错
 - **提取流水线（三项优化）**：
   1. **A — 批量 AST**：扫描前统一调用 `ast_extractor.py --batch`，单次 subprocess 处理所有 AST 文件（Python ast + @babel/parser），避免逐文件启动子进程
   2. **C — 并发提取**：`DispatchQueue.concurrentPerform` 并行执行正则提取，NSLock 保护结果收集

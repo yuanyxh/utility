@@ -9,8 +9,8 @@ Usage (batch):
   echo '[{"content": "...", "file_path": "a.vue", "ext": "vue"}, ...]' \\
     | python3 ast_extractor.py --batch
 
-Output (single):  JSON {"symbols": [...]} or {"error": "..."}
-Output (batch):   JSON {"file_path": {"symbols": [...]}, "file_path": {"error": "..."}}
+Output (single):  JSON {"symbols": [...], "imports": [...]} or {"error": "..."}
+Output (batch):   JSON {"file_path": {"symbols": [...], "imports": [...]}, "file_path": {"error": "..."}}
 """
 
 from __future__ import annotations
@@ -139,8 +139,8 @@ def _py_decorator_name(decorator) -> str | None:
     return None
 
 
-def _extract_python(content: str, file_path: str) -> list[dict]:
-    """Extract symbols from Python code using ast module."""
+def _extract_python(content: str, file_path: str) -> tuple[list[dict], list[dict]]:
+    """Extract symbols and file imports from Python code using ast module."""
     try:
         tree = ast.parse(content, filename=file_path)
     except SyntaxError as e:
@@ -278,7 +278,29 @@ def _extract_python(content: str, file_path: str) -> list[dict]:
             pass
 
     _walk(tree)
-    return symbols
+    try:
+        imports = _py_imports(tree)
+    except Exception:
+        imports = []
+    return symbols, imports
+
+
+def _py_imports(tree) -> list[dict]:
+    """Collect `import` / `from ... import` statements; relative levels keep their dots."""
+    imports: list[dict] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.append(
+                    {"raw_target": alias.name, "kind": "static", "line": node.lineno}
+                )
+        elif isinstance(node, ast.ImportFrom):
+            module = "." * (node.level or 0) + (node.module or "")
+            if module:
+                imports.append(
+                    {"raw_target": module, "kind": "static", "line": node.lineno}
+                )
+    return imports
 
 
 # ── Error propagation ──
@@ -373,51 +395,52 @@ def _call_node_parser(content: str, ext: str) -> list[dict] | dict:
     return result
 
 
-def _extract_vue(content: str, file_path: str) -> list[dict]:
-    """Extract script block from Vue SFC, then parse as JS/TS."""
-    # Match <script> with optional lang="ts" attribute
-    m = re.search(
-        r"<script\b([^>]*)>(.*?)</script>",
-        content,
-        re.DOTALL,
-    )
-    if not m:
-        return []
+def _extract_vue(content: str, file_path: str) -> tuple[list[dict], list[dict]]:
+    """Extract the first script block as symbols, and imports from every script block."""
+    matches = list(re.finditer(r"<script\b([^>]*)>(.*?)</script>", content, re.DOTALL))
+    if not matches:
+        return [], []
 
-    attrs = m.group(1)
-    raw = m.group(2)
-    script_content = raw.strip()
-    if not script_content:
-        return []
+    symbols: list[dict] = []
+    imports: list[dict] = []
+    first = matches[0]
+    for idx, m in enumerate(matches):
+        attrs = m.group(1)
+        raw = m.group(2)
+        script_content = raw.strip()
+        if not script_content:
+            continue
 
-    # Line-number offset: parse-result lines are relative to the stripped
-    # script block and must be shifted back to the original file.
-    # content[:m.start(2)].count("\n") = total newlines before the `>` of `<script>`;
-    # lead_newlines = newlines in the script block's leading whitespace (stripped away);
-    # their sum is the addend from parse line → file line.
-    lead_newlines = raw[: len(raw) - len(raw.lstrip())].count("\n")
-    offset = content[: m.start(2)].count("\n") + lead_newlines
-    script_tag_line = content[: m.start()].count("\n") + 1
+        # Shift parser-relative lines back to the original file: newlines before
+        # the block content plus the block's stripped leading whitespace.
+        lead_newlines = raw[: len(raw) - len(raw.lstrip())].count("\n")
+        offset = content[: m.start(2)].count("\n") + lead_newlines
 
-    # Detect lang
-    is_ts = bool(re.search(r'lang\s*=\s*["\']ts["\']', attrs))
+        is_ts = bool(re.search(r'lang\s*=\s*["\']ts["\']', attrs))
+        ext = "tsx" if is_ts else "jsx"
+        result = _call_node_parser(script_content, ext)
+        _raise_if_error(result)
+        if not isinstance(result, dict):
+            continue
 
-    # Effective extension for the parser
-    ext = "tsx" if is_ts else "jsx"
-    result = _call_node_parser(script_content, ext)
-    _raise_if_error(result)
+        if idx == first and not symbols:
+            symbols = result.get("symbols", [])
+            for s in symbols:
+                if "start_line" in s:
+                    s["start_line"] += offset
+                if "end_line" in s:
+                    s["end_line"] += offset
 
-    symbols = result.get("symbols", []) if isinstance(result, dict) else []
-    for s in symbols:
-        if "start_line" in s:
-            s["start_line"] += offset
-        if "end_line" in s:
-            s["end_line"] += offset
+        for imp in result.get("imports", []):
+            if "line" in imp and imp["line"] is not None:
+                imp["line"] += offset
+            imports.append(imp)
 
     # Add component name from filename if not already extracted
     base = Path(file_path).stem
     already = {s.get("name") for s in symbols}
     if base not in already and not base.startswith("index"):
+        script_tag_line = content[: first.start()].count("\n") + 1
         symbols.append(
             {
                 "name": base,
@@ -427,34 +450,34 @@ def _extract_vue(content: str, file_path: str) -> list[dict]:
             }
         )
 
-    return symbols
+    return symbols, imports
 
 
-def _extract_js_ts(content: str, ext: str) -> list[dict]:
-    """Extract symbols from JS/TS/JSX/TSX via Node.js parser."""
+def _extract_js_ts(content: str, ext: str) -> tuple[list[dict], list[dict]]:
+    """Extract symbols and imports from JS/TS/JSX/TSX via the Node parser."""
     result = _call_node_parser(content, ext)
     _raise_if_error(result)
-    return result.get("symbols", []) if isinstance(result, dict) else []
+    if not isinstance(result, dict):
+        return [], []
+    return result.get("symbols", []), result.get("imports", [])
 
 
 # ── Batch mode ──
 
 
 def _extract_one(content: str, file_path: str, ext: str) -> dict:
-    """Dispatch a single file to the correct extractor, return {'symbols': [...]} or {'error': '...'}."""
+    """Dispatch one file; returns {'symbols': [...], 'imports': [...]} or {'error': '...'}."""
     try:
         if ext == "py":
-            symbols = _extract_python(content, file_path)
-        elif ext in ("vue",):
-            symbols = _extract_vue(content, file_path)
+            symbols, imports = _extract_python(content, file_path)
+        elif ext == "vue":
+            symbols, imports = _extract_vue(content, file_path)
         elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
-            effective_ext = ext
-            if ext in ("mjs", "cjs"):
-                effective_ext = "js"
-            symbols = _extract_js_ts(content, effective_ext)
+            effective_ext = "js" if ext in ("mjs", "cjs") else ext
+            symbols, imports = _extract_js_ts(content, effective_ext)
         else:
             return {"error": f"unsupported extension: {ext}"}
-        return {"symbols": symbols}
+        return {"symbols": symbols, "imports": imports[:2000]}
     except _ASTError as e:
         return {"error": str(e)}
     except Exception as e:
