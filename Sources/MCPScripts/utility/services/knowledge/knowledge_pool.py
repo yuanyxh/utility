@@ -38,7 +38,7 @@ def _now() -> str:
 
 
 def init_db() -> str:
-    """建表 + 幂等迁移 + 开 WAL。可重复调用。"""
+    """Create tables, run idempotent migrations, enable WAL. Safe to call repeatedly."""
     path = db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path, timeout=5.0)
@@ -231,7 +231,7 @@ def prune_expired(days: int) -> int:
 
 
 def disliked_titles(topic_id: int, limit: int = 5) -> list[str]:
-    """用户踩过的卡片标题（新→旧），作为生成侧的负反馈。"""
+    """Disliked card titles (newest first) used as negative feedback on the generation side."""
     with dbconn(db_path()) as conn:
         rows = conn.execute(
             "SELECT title FROM cards WHERE topic_id = ? AND status = ?"
@@ -353,7 +353,7 @@ def commit_card(
 
 
 def bump_topic_fail(topic_id: int, max_streak: int) -> int:
-    """连续无产出 +1；达到阈值即标记 done。返回新的 streak。"""
+    """Add one to the no-output streak; mark done at the threshold. Returns the new streak."""
     now = _now()
     with dbconn(db_path()) as conn:
         conn.execute(
@@ -395,7 +395,7 @@ def mark_topic_done(topic_id: int) -> None:
 
 
 def seed_from_config() -> int:
-    """把配置里的 topics 种子写入 DB（幂等，已存在则跳过）。返回新增数。"""
+    """Write configured topic seeds into the DB (idempotent, existing rows skipped). Returns the added count."""
     now = _now()
     added_topics = 0
     topics = config.knowledge_topics()

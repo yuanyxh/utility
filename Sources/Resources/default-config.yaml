@@ -297,7 +297,8 @@ rss:
     fetchTimeout: 20
     llmTimeout: 120
     # Optional: switch a Clash proxy group while fetching, then restore it.
+    # group/target are your own Clash group names; leave empty to disable the switch.
     clash:
       enabled: false
-      group: "🐟 漏网之鱼"
-      target: "🚀 节点选择"
+      group: ""
+      target: ""

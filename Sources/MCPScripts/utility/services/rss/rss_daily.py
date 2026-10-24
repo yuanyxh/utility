@@ -21,6 +21,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from utility.core import l10n
 from utility.llm import client as llm_client
 from utility.services.rss import rss_article
 from utility.services.rss import rss_render
@@ -40,7 +41,7 @@ DEFAULT_CONFIG = {
     "maxDigestLinks": 10,
     "fetchTimeout": 20,
     "llmTimeout": 120,
-    "clash": {"enabled": False, "group": "🐟 漏网之鱼", "target": "🚀 节点选择"},
+    "clash": {"enabled": False, "group": "", "target": ""},
 }
 
 
@@ -300,14 +301,14 @@ def run(dry_run: bool, day: str) -> int:
     seen: set[str] = set()
     for item in items:
         if not item["link"]:
-            filtered.append(_filtered(item, "无链接"))
+            filtered.append(_filtered(item, l10n.t("rss.filter_no_link")))
             continue
         key = rss_render.normalize_url(item["link"])
         if key in history:
-            filtered.append(_filtered(item, "历史已收录"))
+            filtered.append(_filtered(item, l10n.t("rss.filter_historical")))
             continue
         if key in seen:
-            filtered.append(_filtered(item, "重复条目"))
+            filtered.append(_filtered(item, l10n.t("rss.filter_duplicate")))
             continue
         seen.add(key)
         candidates.append(item)
@@ -325,7 +326,9 @@ def run(dry_run: bool, day: str) -> int:
         if decision["keep"]:
             selected.append({"item": item, "kind": decision["kind"]})
         else:
-            filtered.append(_filtered(item, decision["reason"] or "无长期价值"))
+            filtered.append(
+                _filtered(item, decision["reason"] or l10n.t("rss.filter_no_long_term_value"))
+            )
 
     if dry_run:
         digest_count = sum(1 for entry in selected if entry["kind"] == "digest")
@@ -339,13 +342,18 @@ def run(dry_run: bool, day: str) -> int:
 
     switcher = None
     if cfg["clash"]["enabled"]:
-        switcher = ClashSwitcher(
-            cfg["clash"]["group"],
-            cfg["clash"]["target"],
-            state_file=_db_path().parent / "clash_switch.json",
-        )
-        switcher.recover()
-        switcher.switch()
+        group = str(cfg["clash"].get("group") or "").strip()
+        target = str(cfg["clash"].get("target") or "").strip()
+        if group and target:
+            switcher = ClashSwitcher(
+                group,
+                target,
+                state_file=_db_path().parent / "clash_switch.json",
+            )
+            switcher.recover()
+            switcher.switch()
+        else:
+            logger.warning("clash enabled but group/target is empty, skip proxy switch")
     try:
         expanded = _expand_digests(selected, history, seen, filtered, cfg)
         bodies = rss_article.fetch_many(
@@ -358,7 +366,7 @@ def run(dry_run: bool, day: str) -> int:
         for entry in expanded:
             text = bodies.get(entry["item"]["link"])
             if not text or len(text) < 50:
-                filtered.append(_filtered(entry["item"], "内容无法获取"))
+                filtered.append(_filtered(entry["item"], l10n.t("rss.filter_fetch_failed")))
                 continue
             entry["text"] = text
             ready.append(entry)
@@ -368,7 +376,7 @@ def run(dry_run: bool, day: str) -> int:
         for entry in ready:
             summary = summaries.get(entry["item"]["link"])
             if not summary or not (summary.get("summary") or "").strip():
-                filtered.append(_filtered(entry["item"], "总结失败"))
+                filtered.append(_filtered(entry["item"], l10n.t("rss.filter_summary_failed")))
                 continue
             articles.append(
                 {
@@ -429,7 +437,7 @@ def _expand_digests(
         item = entry["item"]
         page = pages.get(item["link"])
         if not page:
-            filtered.append(_filtered(item, "周刊页面获取失败"))
+            filtered.append(_filtered(item, l10n.t("rss.filter_weekly_fetch_failed")))
             continue
         links = rss_article.extract_digest_links(
             item["feed_name"],
@@ -438,7 +446,7 @@ def _expand_digests(
             llm_timeout=int(cfg["llmTimeout"]),
         )
         if not links:
-            filtered.append(_filtered(item, "周刊无有效外链"))
+            filtered.append(_filtered(item, l10n.t("rss.filter_weekly_no_links")))
             continue
         for link in links:
             key = rss_render.normalize_url(link["url"])
@@ -448,7 +456,7 @@ def _expand_digests(
                         "title": link["title"],
                         "url": link["url"],
                         "feed": item["feed_name"],
-                        "reason": "历史已收录",
+                        "reason": l10n.t("rss.filter_historical"),
                     }
                 )
                 continue

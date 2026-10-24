@@ -152,7 +152,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     @objc private func showKnowledgePanel() {
         guard let knowledgePanel else {
-            debugLog("[Knowledge] 菜单「显示知识面板」失败: 面板引用未注入")
+            debugLog("[Knowledge] menu 'show knowledge panel' failed: panel reference not injected")
             return
         }
         EventBus.shared.publish(PanelEvent.requestShow, payload: knowledgePanel)

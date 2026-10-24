@@ -206,10 +206,19 @@ def main() -> int:
     python_usage = "\n".join(
         read(path) for path in iter_files(PY_SOURCES, ".py") if path != PY_CATALOG
     )
+    generator = load_generator()
+    python_namespaces = generator.PYTHON_NAMESPACES | generator.SHARED_NAMESPACES
+    shared_namespaces = generator.SHARED_NAMESPACES
     for key in sorted(baseline):
         namespace = key.split(".", 1)[0]
-        if namespace in {"mcp", "proxy"}:
-            if not re.search(re.escape(key).join(("[\"']", "[\"']")), python_usage):
+        if namespace in python_namespaces:
+            py_ref = re.search(re.escape(key).join(("[\"']", "[\"']")), python_usage)
+            if namespace in shared_namespaces:
+                # Either runtime may own a shared key; silence only when both sides ignore it.
+                swift_ref = re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage)
+                if not (py_ref or swift_ref):
+                    warnings.append(f"unreferenced key: {key}")
+            elif not py_ref:
                 warnings.append(f"unreferenced Python key: {key}")
         elif not re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage):
             warnings.append(f"unreferenced Swift key: {key} ({swift_accessor(key)})")

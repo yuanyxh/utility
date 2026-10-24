@@ -73,7 +73,7 @@ final class KnowledgeMarkdownView: NSView, WKNavigationDelegate {
                 return text
             }
         }
-        debugLog("[Knowledge] marked.umd.js 缺失，Markdown 降级为纯文本")
+        debugLog("[Knowledge] marked.umd.js missing, Markdown falls back to plain text")
         return ""
     }()
 

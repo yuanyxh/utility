@@ -516,7 +516,7 @@ public final class KnowledgePanelController: NSWindowController {
             UserDefaults.standard.set(card.id, forKey: UDKey.knowledgeCurrentCard)
         }
         if card == nil {
-            debugLog("[Knowledge] 面板空态: 池中没有未读卡")
+            debugLog("[Knowledge] empty state: no unread cards in pool")
             NotificationCenter.default.post(name: .knowledgeNeedsRefill, object: nil)
         }
         renderDisplayed()
@@ -579,7 +579,7 @@ public final class KnowledgePanelController: NSWindowController {
         tabBar.setSelected(0)
         activeTab = 0
         renderDisplayed()
-        debugLog("[Knowledge] 列表预览: card=\(card.id)")
+        debugLog("[Knowledge] list preview: card=\(card.id)")
     }
 
     private func subtitle(for card: KnowledgeCard) -> String {
@@ -656,7 +656,7 @@ public final class KnowledgePanelController: NSWindowController {
             ? L10n.Knowledge.likedSaved
             : L10n.Knowledge.liked
         likeButton.isEnabled = false
-        debugLog("[Knowledge] 点赞: card=\(card.id) saved=\(knowledge.saveLikedMarkdown)")
+        debugLog("[Knowledge] like: card=\(card.id) saved=\(knowledge.saveLikedMarkdown)")
     }
 
     @objc private func onDislike() {
@@ -665,7 +665,7 @@ public final class KnowledgePanelController: NSWindowController {
         KnowledgeStore.shared.markStatus(cardID: card.id, status: "disliked")
         dislikeButton.setStyledTitle(L10n.Knowledge.disliked)
         dislikeButton.isEnabled = false
-        debugLog("[Knowledge] 按钮 disliked: card=\(card.id)")
+        debugLog("[Knowledge] button disliked: card=\(card.id)")
     }
 
     /// Filesystem-safe component: path separators and reserved characters become `-`.
@@ -683,11 +683,11 @@ public final class KnowledgePanelController: NSWindowController {
         let baseDir: String
         if raw.isEmpty {
             guard let notes = PythonScriptRunner.resolvedNotesDir() else {
-                debugLog("[Knowledge] 保存点赞卡失败: notes 根目录未配置")
+                debugLog("[Knowledge] save liked card failed: notes root not configured")
                 return false
             }
             baseDir = URL(fileURLWithPath: notes, isDirectory: true)
-                .appendingPathComponent("知识卡片", isDirectory: true).path
+                .appendingPathComponent(L10n.Knowledge.savedDir, isDirectory: true).path
         } else {
             baseDir = (raw as NSString).expandingTildeInPath
         }
@@ -717,10 +717,10 @@ public final class KnowledgePanelController: NSWindowController {
                 atPath: dir, withIntermediateDirectories: true,
             )
             try text.write(to: url, atomically: true, encoding: .utf8)
-            debugLog("[Knowledge] 已保存点赞卡: \(url.path)")
+            debugLog("[Knowledge] saved liked card: \(url.path)")
             return true
         } catch {
-            debugLog("[Knowledge] 保存点赞卡失败: \(error)")
+            debugLog("[Knowledge] save liked card failed: \(error)")
             return false
         }
     }

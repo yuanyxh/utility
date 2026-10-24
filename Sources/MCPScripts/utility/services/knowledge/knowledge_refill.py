@@ -31,7 +31,7 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
             break
         topic = pool.next_topic()
         if topic is None:
-            logger.warning("没有 active 主题,跳过主题化补货")
+            logger.warning("no active topic, skipping topic refill")
             break
         done = "\n".join(
             f"{c['seq'] + 1}. {c['name']}" for c in pool.concepts_of(topic["id"])
@@ -61,10 +61,10 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
             )
             pool.reset_topic_fail(topic["id"])
             added += 1
-            logger.info("主题入池: %s / %s", topic["name"], r["concept"])
+            logger.info("topic card added: %s / %s", topic["name"], r["concept"])
         elif code == engine.EXHAUSTED:
             pool.mark_topic_done(topic["id"])
-            logger.info("主题已讲完,标记 done: %s", topic["name"])
+            logger.info("topic exhausted, marked done: %s", topic["name"])
         elif code in (
             engine.EXPAND_FAIL,
             engine.CARD_UNAVAILABLE,
@@ -73,7 +73,7 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
             # 这几种都是**上游不可用**(LLM 返回空/断连/超时,llm_client.log 可证),不是内容问题:
             # 既不计入 fail_streak、也不在本轮继续硬撞 —— 否则一次网络抖动就能把主题永久标成
             # done(实测踩到:调用失败直接把两个主题烧成 done)。
-            logger.warning("上游不可用,本轮停止主题补货: %s (%s)", topic["name"], code)
+            logger.warning("upstream unavailable, stopping topic refill: %s (%s)", topic["name"], code)
             break
         elif code == engine.SCOPE_REJECTED:
             # 闸门拒绝是正常结果：落 rejected 防止下轮重问，不烧 fail_streak，
@@ -86,7 +86,7 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
                     pool.next_concept_seq(topic["id"]),
                     "rejected",
                 )
-            logger.info("选题越界,继续下一个: %s / %s", topic["name"], r["concept"])
+            logger.info("scope rejected, trying next: %s / %s", topic["name"], r["concept"])
         else:
             # 概念已消费(哪怕卡片没生成)也要落一行,否则下一轮会把同一个概念重问一遍,
             # 而 expand 拿到的 {done} 会原地打转。落库的 status 区分失败原因。
@@ -101,7 +101,7 @@ def _refill_topics(budget: int) -> tuple[int, int, list]:
                 )
             streak = pool.bump_topic_fail(topic["id"], max_streak)
             logger.warning(
-                "主题未产出: %s code=%s fail_streak=%d", topic["name"], code, streak
+                "topic produced nothing: %s code=%s fail_streak=%d", topic["name"], code, streak
             )
         results.append(
             {
@@ -137,7 +137,7 @@ def main() -> int:
         "pool_topic": pool.pool_count(pool.KIND_TOPIC),
         "results": results,
     }
-    logger.info("补货结束: made=%d calls_used=%d", made, summary["calls_used"])
+    logger.info("refill done: made=%d calls_used=%d", made, summary["calls_used"])
     print(json.dumps(summary, ensure_ascii=False))
     return 0
 

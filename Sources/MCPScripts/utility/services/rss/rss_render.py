@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from utility.core import l10n
+
 _URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+")
 _CJK_RE = re.compile(r"[一-龥]")
-_QUARTERS = {1: "一季度", 2: "二季度", 3: "三季度", 4: "四季度"}
+# Path constants: both languages carry the same quarter names so archives never move.
+_QUARTER_KEYS = {
+    1: "rss.quarter_1",
+    2: "rss.quarter_2",
+    3: "rss.quarter_3",
+    4: "rss.quarter_4",
+}
 
 
 def normalize_url(url: str) -> str:
@@ -34,7 +42,7 @@ def collect_history_urls(root: Path, exclude: Path | None = None) -> set[str]:
 
 def archive_path(root: Path, day: str) -> Path:
     month = int(day[5:7])
-    quarter = _QUARTERS[(month - 1) // 3 + 1]
+    quarter = l10n.t(_QUARTER_KEYS[(month - 1) // 3 + 1])
     return root / day[:4] / quarter / f"{day}.md"
 
 
@@ -47,9 +55,9 @@ def decorate_title(title: str, translation: str) -> str:
 
 
 def render(day: str, articles: list[dict], filtered: list[dict]) -> str:
-    lines = [f"# RSS 日报 — {day}", ""]
+    lines = [l10n.t("rss.digest_title", day=day), ""]
     if not articles:
-        lines.append("今日无有效内容。")
+        lines.append(l10n.t("rss.digest_empty"))
         lines.append("")
     for item in articles:
         lines.extend(
@@ -65,7 +73,7 @@ def render(day: str, articles: list[dict], filtered: list[dict]) -> str:
     if articles:
         lines.extend(["---", ""])
     if filtered:
-        lines.extend(["## 已过滤条目", ""])
+        lines.extend([l10n.t("rss.digest_filtered_header"), ""])
         for item in filtered:
             title = (item.get("title") or item.get("url") or "").strip()
             url = (item.get("url") or "").strip()
@@ -84,11 +92,11 @@ def validate(text: str) -> list[str]:
     issues: list[str] = []
     for match in re.finditer(r"^## \[([^\]]+)\]\((http[^)]+)\)", text, re.MULTILINE):
         if not _CJK_RE.search(match.group(1)):
-            issues.append(f"主条目标题无中文翻译：{match.group(1)[:50]}")
+            issues.append(f"main entry title has no Chinese translation: {match.group(1)[:50]}")
     if re.search(r"\]\(http[^)]*\)[（(][^）)]*[一-龥]", text):
-        issues.append("存在 [英文](url)(中文) 格式残留")
+        issues.append("leftover [English](url)(Chinese) pattern")
     for match in re.finditer(
         r"^- \[[^\]]+\]\([^)]+\)\s*—\s*([^\s\[])", text, re.MULTILINE
     ):
-        issues.append(f"过滤条目来源缺方括号：{match.group(0)[:60]}")
+        issues.append(f"filtered entry source missing brackets: {match.group(0)[:60]}")
     return issues

@@ -86,7 +86,9 @@ def check_symbol_cache_key(tmp: str) -> None:
     conn = _new_symbol_db(db)
     _insert(conn, "func alpha()")
 
-    real_getter = S._get_shared_embedder
+    from utility.services.mcp import search_vectors as SV
+
+    real_getter = SV._get_shared_embedder
     embedded: list[str] = []
 
     class _CountingEmbedder:
@@ -100,11 +102,11 @@ def check_symbol_cache_key(tmp: str) -> None:
 
     def run() -> None:
         embedded.clear()
-        S._get_shared_embedder = lambda: _CountingEmbedder(real_getter())
+        SV._get_shared_embedder = lambda: _CountingEmbedder(real_getter())
         try:
-            S._ensure_symbol_embeddings(db)
+            SV._ensure_symbol_embeddings(db)
         finally:
-            S._get_shared_embedder = real_getter
+            SV._get_shared_embedder = real_getter
 
     def edge_rows() -> int:
         return conn.execute("SELECT COUNT(*) FROM symbol_embeddings").fetchone()[0]

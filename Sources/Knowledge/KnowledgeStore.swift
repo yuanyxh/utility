@@ -52,7 +52,7 @@ final class KnowledgeStore {
             dbQueue = q
             return q
         } catch {
-            debugLog("[Knowledge] 打开数据库失败: \(error)")
+            debugLog("[Knowledge] open database failed: \(error)")
             return nil
         }
     }
@@ -71,7 +71,7 @@ final class KnowledgeStore {
                 ) ?? 0
             }
         } catch {
-            debugLog("[Knowledge] unseenCount(\(kind)) 失败: \(error)")
+            debugLog("[Knowledge] unseenCount(\(kind)) failed: \(error)")
             return 0
         }
     }
@@ -114,7 +114,7 @@ final class KnowledgeStore {
                 return Self.card(from: row)
             }
         } catch {
-            debugLog("[Knowledge] nextCard(\(kind)) 失败: \(error)")
+            debugLog("[Knowledge] nextCard(\(kind)) failed: \(error)")
             return nil
         }
     }
@@ -136,7 +136,7 @@ final class KnowledgeStore {
                 return Self.card(from: row)
             }
         } catch {
-            debugLog("[Knowledge] card(\(id)) 失败: \(error)")
+            debugLog("[Knowledge] card(\(id)) failed: \(error)")
             return nil
         }
     }
@@ -162,7 +162,7 @@ final class KnowledgeStore {
                 }
             }
         } catch {
-            debugLog("[Knowledge] listCards(\(kind)) 失败: \(error)")
+            debugLog("[Knowledge] listCards(\(kind)) failed: \(error)")
             return []
         }
     }
@@ -234,7 +234,7 @@ final class KnowledgeStore {
             }
             return true
         } catch {
-            debugLog("[Knowledge] markStatus(\(cardID) -> \(status)) 失败: \(error)")
+            debugLog("[Knowledge] markStatus(\(cardID) -> \(status)) failed: \(error)")
             return false
         }
     }

@@ -222,7 +222,7 @@ rss:
 | `rss.daily.fetchTimeout` | `20` | 单页抓取超时（秒） |
 | `rss.daily.llmTimeout` | `120` | 单次 LLM 调用超时（秒） |
 | `rss.daily.clash.enabled` | `false` | 抓取期间切换 Clash 代理组，结束后恢复 |
-| `rss.daily.clash.group` / `target` | `🐟 漏网之鱼` / `🚀 节点选择` | 切换的组与目标节点 |
+| `rss.daily.clash.group` / `target` | `""` / `""` | 你自己的 Clash 组与目标节点；两者都填才切换，留空跳过 |
 
 ### 定时任务
 

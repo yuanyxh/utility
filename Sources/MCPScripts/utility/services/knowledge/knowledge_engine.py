@@ -230,7 +230,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     # `basis_insufficient` 的唯一成因 —— 不打出实际数字,调 `MIN_*` 阈值就只能靠猜。
     if len(text) < MIN_EVIDENCE_CHARS:
         logger.info(
-            "依据不足(%s): 文本 %d 字 < %d · wiki=%s · 搜索 %d 条 · 抓页 %d 篇",
+            "insufficient evidence (%s): text %d chars < %d · wiki=%s · search %d hits · pages %d",
             concept,
             len(text),
             MIN_EVIDENCE_CHARS,
@@ -242,7 +242,7 @@ def gather_evidence(concept: str, theme: str) -> dict | None:
     # 要么有一条像样的维基条目,要么至少抓到 2 页正文
     if not has_wiki and fetched < MIN_PAGE_HITS:
         logger.info(
-            "依据不足(%s): 文本 %d 字够但无维基条目且只抓到 %d 篇正文(<%d)",
+            "insufficient evidence (%s): text %d chars but no wiki entry and only %d pages (<%d)",
             concept,
             len(text),
             fetched,
@@ -302,7 +302,7 @@ def advance(
     why_now = (d.get("why_now") or "").strip()
     if not concept:
         # 未标 exhausted 却给不出概念 = 契约违约
-        logger.warning("expand 既未标 exhausted 也没给出 concept: %r", d)
+        logger.warning("expand neither marked exhausted nor returned a concept: %r", d)
         return _res(EXPAND_FAIL, calls=calls)
 
     # 独立一次判断，而不是让 expand 自评：生成与审核分开，才不会被「自然引出」的
@@ -326,7 +326,7 @@ def advance(
     if gate is None:
         return _res(GATE_UNAVAILABLE, concept=concept, why_now=why_now, calls=calls)
     if gate.get("accept") is not True:
-        logger.info("选题越界: %s / %s (%s)", theme, concept, gate.get("reason", ""))
+        logger.info("scope rejected: %s / %s (%s)", theme, concept, gate.get("reason", ""))
         return _res(SCOPE_REJECTED, concept=concept, why_now=why_now, calls=calls)
 
     ev = gather_evidence(concept, theme)

@@ -621,15 +621,15 @@ public struct RSSDailyConfig: Codable {
 /// 可选：日报期间切换 Clash 代理组，结束后恢复原选择。
 public struct RSSClashConfig: Codable {
     var enabled: Bool = false
-    var group: String = "🐟 漏网之鱼"
-    var target: String = "🚀 节点选择"
+    var group: String = ""
+    var target: String = ""
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        group = try c.decodeIfPresent(String.self, forKey: .group) ?? "🐟 漏网之鱼"
-        target = try c.decodeIfPresent(String.self, forKey: .target) ?? "🚀 节点选择"
+        group = try c.decodeIfPresent(String.self, forKey: .group) ?? ""
+        target = try c.decodeIfPresent(String.self, forKey: .target) ?? ""
     }
 }
 

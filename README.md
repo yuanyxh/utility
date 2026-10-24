@@ -222,7 +222,7 @@ With `rss.daily.enabled: true` the app registers the internal task `rss-daily` (
 | `rss.daily.fetchTimeout` | `20` | per-page fetch timeout (seconds) |
 | `rss.daily.llmTimeout` | `120` | per LLM call timeout (seconds) |
 | `rss.daily.clash.enabled` | `false` | switch a Clash proxy group during fetching, then restore |
-| `rss.daily.clash.group` / `target` | `🐟 漏网之鱼` / `🚀 节点选择` | group and target node |
+| `rss.daily.clash.group` / `target` | `""` / `""` | your own Clash group and target node; both must be set or the switch is skipped |
 
 ### Scheduled tasks
 

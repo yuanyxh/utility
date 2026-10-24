@@ -109,7 +109,7 @@ final class KnowledgeService: NSObject {
             RunLoop.main.add(timer, forMode: .common)
             autoShowTimer = timer
         }
-        debugLog("[Knowledge] 调度已加载 (refill=\(knowledge.refillIntervalMinutes)m, autoShow=\(knowledge.autoShowIntervalMinutes)m)")
+        debugLog("[Knowledge] schedule loaded (refill=\(knowledge.refillIntervalMinutes)m, autoShow=\(knowledge.autoShowIntervalMinutes)m)")
     }
 
     func stop() {
@@ -130,7 +130,7 @@ final class KnowledgeService: NSObject {
             suspended = true
             refillLock.unlock()
             stop()
-            debugLog("[Knowledge] 系统休眠: 停止调度,正在跑的补货将被中止")
+            debugLog("[Knowledge] system sleep: stop scheduling, running refill will be aborted")
         }
         nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
             [weak self] _ in
@@ -139,7 +139,7 @@ final class KnowledgeService: NSObject {
             suspended = false
             refillLock.unlock()
             rearm()
-            debugLog("[Knowledge] 系统唤醒: 重新调度")
+            debugLog("[Knowledge] system wake: reschedule")
             refillTick()
         }
     }
@@ -159,13 +159,13 @@ final class KnowledgeService: NSObject {
         let asleep = suspended
         refillLock.unlock()
         guard !(running || asleep) else {
-            debugLog("[Knowledge] 补货节拍跳过: running=\(running) suspended=\(asleep)")
+            debugLog("[Knowledge] refill tick skipped: running=\(running) suspended=\(asleep)")
             return
         }
 
         let topics = KnowledgeStore.shared.unseenCount(kind: KnowledgePanelController.kindTopic)
         guard topics < knowledge.poolTargetTopic else {
-            debugLog("[Knowledge] 补货节拍跳过: 未读卡充足 unseen=\(topics)/\(knowledge.poolTargetTopic)")
+            debugLog("[Knowledge] refill tick skipped: enough unread unseen=\(topics)/\(knowledge.poolTargetTopic)")
             return
         }
         launchRefill()
@@ -179,14 +179,14 @@ final class KnowledgeService: NSObject {
             let running = refillRunning
             let asleep = suspended
             refillLock.unlock()
-            debugLog("[Knowledge] 起补货被挡: running=\(running) suspended=\(asleep)")
+            debugLog("[Knowledge] refill start blocked: running=\(running) suspended=\(asleep)")
             return
         }
         refillRunning = true
         refillLock.unlock()
 
         guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.knowledgeRefill) else {
-            debugLog("[Knowledge] 找不到补货脚本 \(PythonScripts.knowledgeRefill)")
+            debugLog("[Knowledge] refill script not found \(PythonScripts.knowledgeRefill)")
             finishRefill()
             return
         }
@@ -204,14 +204,14 @@ final class KnowledgeService: NSObject {
                 let out = String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 self?.record(summary: Self.briefSummary(out))
-                debugLog("[Knowledge] 补货结束: \(out)")
+                debugLog("[Knowledge] refill done: \(out)")
             } catch {
                 if case PythonProcessError.cancelled = error {
                     // 休眠中止不是失败:记进 lastSummary 会让唤醒后菜单显示一次莫名的「补货失败」
-                    debugLog("[Knowledge] 补货因系统休眠被中止")
+                    debugLog("[Knowledge] refill aborted by system sleep")
                 } else {
                     self?.record(summary: "")
-                    debugLog("[Knowledge] 补货失败: \(error)")
+                    debugLog("[Knowledge] refill failed: \(error)")
                 }
             }
         }
@@ -247,25 +247,25 @@ final class KnowledgeService: NSObject {
         // 到点判定放在守卫之前:节拍只有 1 分钟,若放到后面,长时间有面板开着时会每分钟刷一条守卫日志
         guard autoShowDue(intervalMinutes: knowledge.autoShowIntervalMinutes) else { return }
         guard let panel else {
-            debugLog("[Knowledge] 自动弹出跳过: 面板未接线")
+            debugLog("[Knowledge] auto show skipped: panel not wired")
             return
         }
         // 「等了两小时没弹出来」时,这三条是唯一能区分「没到点」与「被挡掉」的线索
         guard !panel.isPanelVisible else {
-            debugLog("[Knowledge] 自动弹出跳过: 面板已在显示")
+            debugLog("[Knowledge] auto show skipped: panel already visible")
             return
         }
         guard !PanelManager.shared.hasVisiblePanel else {
-            debugLog("[Knowledge] 自动弹出跳过: 别的面板正在显示")
+            debugLog("[Knowledge] auto show skipped: another panel is visible")
             return
         }
 
         panel.showAuto()
         UserDefaults.standard.set(Date(), forKey: UDKey.knowledgeLastAutoShow)
         if panel.hasCard {
-            debugLog("[Knowledge] 自动弹出面板")
+            debugLog("[Knowledge] auto show panel")
         } else {
-            debugLog("[Knowledge] 自动弹出时池中无卡,立即补货")
+            debugLog("[Knowledge] auto show: pool empty, refill immediately")
             launchRefill()
         }
     }

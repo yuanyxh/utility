@@ -119,10 +119,30 @@
 - macOS 26 起 `hdiutil create` 弃用，打包改用 `diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"`（目标已存在时自动覆盖）
 - ⚠️ **bash 3.2 会把紧跟 `$VAR` 的全角字符并入变量名**（`$VERSION（` → `VERSION<乱码>: unbound variable`，`set -u` 下直接退出）：变量后接中文/全角标点必须写 `${VAR}`
 
+### Verification
+每次改动按顺序跑，全绿才算完成：
+```bash
+swift build
+python3 scripts/gen-l10n.py --check
+python3 scripts/check-l10n-contract.py
+python3 scripts/check-router-config-contract.py
+python3 -m compileall -q Sources/MCPScripts
+python3 -m unittest discover -s tests/python -t .
+```
+Python 测试依赖 `httpx`，用项目 venv：`~/.config/utility/mcp-venv/bin/python -m unittest discover -s tests/python -t .`
+
+### scripts 目录
+- `scripts/` 根只放可执行入口（`check-*.py`、`gen-l10n.py`、`package-utility.sh`、`run-tests.sh`），这些路径被文档与 `run-tests.sh` 引用，**不得移动**
+- 校验器实现放子包：`scripts/router_contract/`（consts → parsers → proxy_checks/env_checks/content_checks → inputs → main）；新增校验脚本同样建包，根部入口只做 import + `main()`
+- 子包内路径常量：`SCRIPTS_DIR = dirname(dirname(__file__))`、`ROOT = dirname(SCRIPTS_DIR)`
+- ⚠️ venv 自举用 `os.execv` 重执行 `main.py` 时必须把 `scripts/` 加进 `PYTHONPATH`，否则子包导入失败
+
 ### i18n
 - 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
 - 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换
 - Python 侧走同一目录生成的 `l10n_catalog.py` + `l10n.py`；`refreshAllTitles()` 模式刷新运行时语言
+- 命名空间分工：`mcp` / `proxy` 仅 Python；`rss` 为共享（Swift CLI 帮助 + Python 日报），由 `SHARED_NAMESPACES` 控制，两侧都会生成访问器
+- 语言无关的路径/默认值常量（季度目录名、知识卡片目录名、Clash 节点名）两语言取同值，避免切换语言后路径漂移
 
 ### 代码内文本语言
 - 非用户可感知文本一律英文：注释、docstring、日志、内部错误消息、调试输出、测试名与断言消息

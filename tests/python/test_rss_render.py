@@ -105,7 +105,7 @@ class RenderTests(unittest.TestCase):
         )
         issues = rss_render.validate(text)
         self.assertEqual(len(issues), 1)
-        self.assertIn("无中文翻译", issues[0])
+        self.assertIn("no Chinese translation", issues[0])
 
 
 class HistoryTests(unittest.TestCase):
