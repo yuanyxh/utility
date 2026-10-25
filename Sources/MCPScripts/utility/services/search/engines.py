@@ -10,7 +10,9 @@ from __future__ import annotations
 import html as htmlmod
 import json
 import math
+import os
 import re
+import subprocess
 import threading
 import time
 import urllib.error
@@ -42,7 +44,11 @@ _HOME = {
     "so360": "https://www.so.com/",
     "baidu": "https://www.baidu.com/",
     "marginalia": "https://old-search.marginalia.nu/",
+    "google": "https://www.google.com/",
 }
+#: Google runs through the app's WKWebView subcommand, not the HTTP transport.
+GOOGLE_BIN_ENV = "UTILITY_BIN"
+GOOGLE_TIMEOUT = 15
 #: Only Baidu needs a homepage visit to receive the cookies that keep results stable.
 _WARMUP = ("baidu",)
 #: Seconds between two requests to the same engine. Longer for engines that ban quickly.
@@ -56,10 +62,29 @@ _MIN_INTERVAL = {
     "duckduckgo": 2.5,
 }
 #: Chinese queries hit the CN engines first; English queries avoid their noise.
-CJK_ORDER = ("sogou", "so360", "baidu", "bing", "marginalia", "brave", "duckduckgo")
-LATIN_ORDER = ("bing", "marginalia", "brave", "duckduckgo", "sogou", "so360", "baidu")
+CJK_ORDER = (
+    "sogou",
+    "google",
+    "so360",
+    "baidu",
+    "bing",
+    "marginalia",
+    "brave",
+    "duckduckgo",
+)
+LATIN_ORDER = (
+    "bing",
+    "google",
+    "marginalia",
+    "brave",
+    "duckduckgo",
+    "sogou",
+    "so360",
+    "baidu",
+)
 DEFAULT_ENGINES = (
     "bing",
+    "google",
     "sogou",
     "so360",
     "baidu",
@@ -71,6 +96,8 @@ DEFAULT_ENGINES = (
 _CANDIDATE_TARGET = 15
 #: Drop candidates whose weighted token coverage is below this floor.
 _MIN_SCORE = 0.25
+#: CJK queries match on bigrams, so coverage runs lower than for ASCII words.
+_CJK_MIN_SCORE = 0.15
 ENGINE_COOLDOWN = 600.0
 SEARCH_BUDGET = 25.0
 SEARCH_TIMEOUT = 12
@@ -170,6 +197,62 @@ def _warm(engine: str) -> None:
         pass
 
 
+def utility_binary() -> str | None:
+    """Resolve the app binary that serves the WKWebView search subcommand."""
+    explicit = os.environ.get(GOOGLE_BIN_ENV, "").strip()
+    if explicit and os.access(explicit, os.X_OK):
+        return explicit
+    path = os.path.dirname(os.path.realpath(__file__))
+    while True:
+        if os.path.basename(path) == "Contents":
+            candidate = os.path.join(path, "MacOS", "utility")
+            if os.access(candidate, os.X_OK):
+                return candidate
+        if os.path.isfile(os.path.join(path, "Package.swift")):
+            candidate = os.path.join(path, ".build", "debug", "utility")
+            if os.access(candidate, os.X_OK):
+                return candidate
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
+def _search_google(query: str, limit: int) -> list:
+    """Delegate Google to the app's offscreen WKWebView subcommand."""
+    binary = utility_binary()
+    if not binary:
+        raise RuntimeError(f"utility binary not found (set {GOOGLE_BIN_ENV})")
+    proc = subprocess.run(
+        [binary, "websearch", "--query", query, "--limit", str(limit)],
+        capture_output=True,
+        text=True,
+        timeout=GOOGLE_TIMEOUT,
+    )
+    if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise RuntimeError(
+            f"websearch exit {proc.returncode}: {lines[-1] if lines else ''}"
+        )
+    lines = (proc.stdout or "").strip().splitlines()
+    if not lines:
+        raise RuntimeError("websearch returned no output")
+    payload = json.loads(lines[-1])
+    if not payload.get("ok"):
+        status = payload.get("status", "failed")
+        raise RuntimeError(f"google {status}: {payload.get('error', '')}")
+    return [
+        {
+            "title": str(item.get("title", "")).strip(),
+            "url": str(item.get("url", "")).strip(),
+            "date": "",
+            "snippet": "",
+        }
+        for item in payload.get("results", [])
+        if str(item.get("url", "")).startswith("http")
+    ]
+
+
 def fetch(url: str, engine: str = "bing", timeout: int = TIMEOUT) -> str:
     """Fetch raw HTML with a browser-like request (kept for the knowledge pipeline)."""
     host = urllib.parse.urlparse(url).netloc.lower()
@@ -234,6 +317,8 @@ _ENGINE_PAGES = (
     ("html.duckduckgo.com", "/html/"),
     ("search.brave.com", "/search"),
     ("old-search.marginalia.nu", "/search"),
+    ("www.google.com", "/search"),
+    ("google.com", "/search"),
 )
 
 
@@ -685,7 +770,11 @@ def _resolve_baidu_jump(url: str) -> str:
 
 def _resolve_jumps(results: list) -> list:
     targets = [
-        r for r in results if "/link?url=" in r["url"] or "baidu.com/link?" in r["url"]
+        r
+        for r in results
+        if "/link?url=" in r["url"]
+        or "baidu.com/link?" in r["url"]
+        or "google.com/url?" in r["url"]
     ]
     if not targets:
         return results
@@ -696,9 +785,45 @@ def _resolve_jumps(results: list) -> list:
 
 
 def _resolve_one_jump(result: dict) -> str:
+    if result.get("engine") == "google":
+        return _resolve_google_jump(result["url"])
     if result.get("engine") == "sogou":
         return _resolve_sogou_jump(result["url"])
     return _resolve_baidu_jump(result["url"])
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _google_location(url: str) -> str:
+    try:
+        request = urllib.request.Request(url, headers=_headers("google"))
+        with _NO_REDIRECT_OPENER.open(request, timeout=8) as response:
+            return response.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (301, 302, 303, 307, 308):
+            return exc.headers.get("Location", "")
+        return ""
+    except Exception:
+        return ""
+
+
+def _resolve_google_jump(url: str) -> str:
+    """Google wraps results in /url?q=; a non-following GET returns the target."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.netloc.endswith("google.com") and parsed.path == "/url":
+        target = urllib.parse.parse_qs(parsed.query).get("q", [""])[0]
+        if target.startswith("http"):
+            return target
+    final = _google_location(url)
+    if final.startswith("http") and "google.com/url" not in final:
+        return final
+    return url
 
 
 # ── relevance ───────────────────────────────────────────────────────────────
@@ -778,6 +903,32 @@ def search_report(query: str, engines=None, min_results: int = 5):
     stopped_at = None
     deadline = time.monotonic() + SEARCH_BUDGET
     for engine in order:
+        if engine == "google":
+            if not _engine_ok(engine):
+                status[engine] = {"status": "cooldown"}
+                continue
+            if time.monotonic() >= deadline:
+                status[engine] = {"status": "skipped_budget"}
+                continue
+            attempted += 1
+            try:
+                parsed = _search_google(query, _CANDIDATE_TARGET)
+            except Exception as exc:
+                _record_failure(engine)
+                status[engine] = {
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                continue
+            _record_success(engine)
+            status[engine] = {"status": "ok", "parsed": len(parsed)}
+            for r in parsed:
+                r.setdefault("engine", engine)
+            out.extend(parsed)
+            if len(out) >= _CANDIDATE_TARGET:
+                stopped_at = engine
+                break
+            continue
         if engine not in _PARSERS:
             status[engine] = {"status": "unknown_engine"}
             continue
@@ -831,11 +982,12 @@ def search_report(query: str, engines=None, min_results: int = 5):
     # Jump resolution can land back on an engine's own result page (Sogou does
     # this for some queries), so the filter has to run again after resolution.
     ranked = [r for r in ranked if not is_engine_page(r["url"])]
-    results = [r for r in ranked if r.get("score", 0) >= _MIN_SCORE][:min_results]
+    min_score = _CJK_MIN_SCORE if _CJK_RE.search(query) else _MIN_SCORE
+    results = [r for r in ranked if r.get("score", 0) >= min_score][:min_results]
     for engine, info in status.items():
         if info.get("status") == "ok":
             info["kept"] = sum(1 for r in results if r.get("engine") == engine)
-    known = [e for e in order if e in _PARSERS]
+    known = [e for e in order if e in _PARSERS or e == "google"]
     all_failed = bool(known) and all(
         status.get(engine, {}).get("status") in ("failed", "cooldown", "parse_failed")
         for engine in known

@@ -139,6 +139,10 @@ enum PythonScriptRunner {
         if let notesDir = resolvedNotesDir() {
             env["NOTES_DIR"] = notesDir
         }
+        // Python shells out to this binary for WKWebView-backed search.
+        if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
+            env["UTILITY_BIN"] = binary
+        }
         return env
     }
 
@@ -280,6 +284,9 @@ enum PythonScriptRunner {
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         overrides["MEMORY_SERVER_URL"] = memoryServerURL
         overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
+        if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
+            overrides["UTILITY_BIN"] = binary
+        }
         return overrides
     }
 

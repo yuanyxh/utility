@@ -447,9 +447,11 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `project_dependencies` | one-hop file imports and importers |
 | `project_notes` | search project-local notes |
 | `tool_resource` | read a skill's companion resources |
-| `websearch_engine` | multi-engine search with optional page Markdown |
+| `websearch_engine` | multi-engine search (Google via offscreen WKWebView) with optional page Markdown |
 | `read_url` | fetch a URL as Markdown; local-only unless `use_proxy=true` |
 | (dynamic) | each skill under `MCP/Skills` registers as a tool |
+
+The Google branch shells out to `utility websearch --query <q> [--limit N]`, which renders the results page in an offscreen WKWebView and prints one JSON line.
 
 **Notes directory**
 

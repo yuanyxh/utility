@@ -35,6 +35,7 @@ reset_warm_state = engine_layer.reset_warm_state
 # Private aliases kept for existing offline checks and callers.
 _PARSERS = engine_layer._PARSERS
 _MIN_SCORE = engine_layer._MIN_SCORE
+_CJK_MIN_SCORE = engine_layer._CJK_MIN_SCORE
 _parse_sogou = engine_layer._parse_sogou
 _parse_baidu = engine_layer._parse_baidu
 is_engine_page = engine_layer.is_engine_page
