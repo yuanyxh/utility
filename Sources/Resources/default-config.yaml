@@ -5,6 +5,13 @@
 notifications:
   enabled: true
 
+# ---------- Runtime ----------
+runtime:
+  # Let the Python layer read this file itself instead of receiving each value as an env var.
+  # false = the Swift host keeps injecting (default); true = config-surface env is skipped.
+  # Runtime-only values (paths, ports, proxy, timeouts) are injected either way.
+  selfManaged: false
+
 # ---------- General ----------
 general:
   # UI language. Leave empty to follow the system; valid values: zh / en

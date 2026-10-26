@@ -22,6 +22,7 @@ from datetime import date
 from pathlib import Path
 
 from utility.core import l10n
+from utility.core.config import rss_daily_config
 from utility.llm import client as llm_client
 from utility.services.rss import rss_article
 from utility.services.rss import rss_render
@@ -52,7 +53,7 @@ DEFAULT_CONFIG = {
 
 def load_config() -> dict:
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    raw = os.environ.get("RSS_DAILY_CONFIG", "").strip()
+    raw = rss_daily_config().strip()
     if not raw:
         return cfg
     try:
@@ -327,7 +328,9 @@ def run(dry_run: bool, day: str) -> int:
             selected.append({"item": item, "kind": decision["kind"]})
         else:
             filtered.append(
-                _filtered(item, decision["reason"] or l10n.t("rss.filter_no_long_term_value"))
+                _filtered(
+                    item, decision["reason"] or l10n.t("rss.filter_no_long_term_value")
+                )
             )
 
     if dry_run:
@@ -366,7 +369,9 @@ def run(dry_run: bool, day: str) -> int:
         for entry in expanded:
             text = bodies.get(entry["item"]["link"])
             if not text or len(text) < 50:
-                filtered.append(_filtered(entry["item"], l10n.t("rss.filter_fetch_failed")))
+                filtered.append(
+                    _filtered(entry["item"], l10n.t("rss.filter_fetch_failed"))
+                )
                 continue
             entry["text"] = text
             ready.append(entry)
@@ -376,7 +381,9 @@ def run(dry_run: bool, day: str) -> int:
         for entry in ready:
             summary = summaries.get(entry["item"]["link"])
             if not summary or not (summary.get("summary") or "").strip():
-                filtered.append(_filtered(entry["item"], l10n.t("rss.filter_summary_failed")))
+                filtered.append(
+                    _filtered(entry["item"], l10n.t("rss.filter_summary_failed"))
+                )
                 continue
             articles.append(
                 {

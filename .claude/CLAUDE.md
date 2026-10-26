@@ -77,7 +77,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 转发入口 `/v1/*`、`/open/*`、`/raw/*` 共用同一 handler，路径在 `_upstream_path` 归一；`/raw` 是透明入口，跳过全部内容改写（规则注入/去重/瘦身/注记），其余能力照常
 
 ### LLM 调用与提示词
-- Python 侧唯一 LLM 出口是 `llm_client.py`；配置唯一来源 `config.py`，该模块不读 env、不持默认值
+- Python 侧唯一 LLM 出口是 `llm_client.py`；配置唯一消费入口是 `config.py`，取值顺序 **显式 env → `config_loader` 读 `config.yaml` → 调用方 default**，不得在别处直接读配置或另设默认。新增配置面 env 必须同时登记 `_YAML_FALLBACKS`，否则 `scripts/check-config-parity.py` 报红
 - `LLMTarget.ready` 与 `configured` 别混；**api_key 为空是合法的**（表示透传客户端 key）
 - 提示词在 `Sources/MCPScripts/prompts/<lang>/<feature>.md`；目录优先级：用户覆盖（语言无关）→ 内置（当前语言 → `zh-Hans` 基线）
 - 渲染**禁用** `str.format` / 逐 key 替换，必须按名字**一次性**替换

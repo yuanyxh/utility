@@ -30,16 +30,58 @@ from __future__ import annotations
 import json
 import os
 
+from utility.core import config_loader
+
 # Empty string = injected by the Swift layer via env var; when not injected, the related feature is disabled
 _DEFAULT_SUMMARY_MODEL = ""
 _DEFAULT_SUMMARY_API_URL = ""
 _DEFAULT_NOTES_DIR = ""
 _DEFAULT_DATA_DIR = ""
 
+#: env name -> (config.yaml dotted path, serialization). Only read when Swift did not inject the env.
+_YAML_FALLBACKS: dict[str, tuple[str, str]] = {
+    "AI_API_KEY": ("ai.apiKey", "text"),
+    "AI_LLM_TIMEOUT": ("ai.llmTimeout", "text"),
+    "UTILITY_LANG": ("general.language", "text"),
+    "SUMMARY_MODEL": ("ai.model", "text"),
+    "SUMMARY_API_URL": ("ai.baseURL", "text"),
+    "NOTES_DIR": ("mcp.knowledgeBasePath", "text"),
+    "SUMMARY_EXCLUDE_TAGS": ("mcp.excludeTags", "csv"),
+    "UTILITY_LOG_MAX_SIZE": ("general.logMaxSize", "text"),
+    "UTILITY_LOG_BACKUP_COUNT": ("general.logBackupCount", "text"),
+    "NOTE_EXCLUDE_DIRS": ("mcp.noteExcludeDirs", "json"),
+    "NOTE_EXTENSIONS": ("mcp.noteExtensions", "json"),
+    "KNOWLEDGE_TOPICS": ("knowledge.topics", "json"),
+    "KNOWLEDGE_TOPIC_TARGET": ("knowledge.poolTargetTopic", "text"),
+    "KNOWLEDGE_MAX_FAIL_STREAK": ("knowledge.maxFailStreak", "text"),
+    "KNOWLEDGE_RETENTION_DAYS": ("knowledge.retentionDays", "text"),
+    "RSS_DAILY_CONFIG": ("rss.daily", "json"),
+}
+
+
+def _serialize(node: object, kind: str) -> str:
+    """Render a YAML value in the exact shape its env consumer expects."""
+    if kind == "json":
+        return json.dumps(node, ensure_ascii=False)
+    if kind == "csv":
+        if isinstance(node, list):
+            return ",".join(str(item) for item in node)
+        return str(node)
+    return str(node)
+
 
 def get(key: str, default: str = "") -> str:
-    """Unified env read entry point."""
-    return os.environ.get(key, default)
+    """Unified config read: env first, config.yaml fallback, then `default`."""
+    raw = os.environ.get(key)
+    if raw is not None:
+        return raw
+    spec = _YAML_FALLBACKS.get(key)
+    if spec is None:
+        return default
+    node = config_loader.value(spec[0])
+    if node is None or node == "" or node == [] or node == {}:
+        return default
+    return _serialize(node, spec[1])
 
 
 def ai_api_key() -> str:
@@ -90,8 +132,17 @@ def summary_api_url(default: str = _DEFAULT_SUMMARY_API_URL) -> str:
     return get("SUMMARY_API_URL", default)
 
 
+def rss_daily_config(default: str = "") -> str:
+    """RSS daily task config as a JSON string (`rss.daily`)."""
+    return get("RSS_DAILY_CONFIG", default)
+
+
 def notes_dir(default: str = _DEFAULT_NOTES_DIR) -> str:
     raw = get("NOTES_DIR", default)
+    if not raw:
+        # Empty `mcp.knowledgeBasePath` derives from the config root, same as the Swift host.
+        base = data_dir()
+        raw = os.path.join(base, "notes") if base else ""
     if not raw:
         return ""
     return os.path.expanduser(raw)

@@ -20,6 +20,12 @@ enum PortProbe {
         static let tokenProxy = 8613
     }
 
+    /// Runtime-state file names, matching `daemon.SERVICE_*` on the Python side.
+    enum Service {
+        static let mcp = "mcp"
+        static let tokenProxy = "proxy"
+    }
+
     /// Finds the first bindable port at or after `startPort`, trying up to 100.
     ///
     /// Returns `startPort` when all are taken: letting the real bind fail and
@@ -30,6 +36,28 @@ enum PortProbe {
             return port
         }
         return startPort
+    }
+
+    /// Port recorded by a self-managed Python service in `<config>/runtime/<service>.json`.
+    ///
+    /// A stale file is ignored: the recorded PID must still be alive. Explicit config and the
+    /// cached value are consulted before this, so it only supplies auto-detected ports.
+    static func recordedPort(service: String) -> Int? {
+        let url = AppPaths.configDir
+            .appendingPathComponent("runtime")
+            .appendingPathComponent("\(service).json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let port = object["port"] as? Int, port > 0,
+              let pid = object["pid"] as? Int, isAlive(pid)
+        else { return nil }
+        return port
+    }
+
+    private static func isAlive(_ pid: Int) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid_t(pid), 0) == 0 { return true }
+        return errno == EPERM
     }
 
     /// Whether the port can be bound on local 127.0.0.1. Binds without listening.

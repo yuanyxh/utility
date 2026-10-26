@@ -85,6 +85,12 @@ enum PythonScriptRunner {
 
     // MARK: - Environment variables (single source of truth)
 
+    /// `runtime.selfManaged`: the Python side reads config.yaml itself, so config-surface env is skipped.
+    /// Runtime-only values (paths, ports, proxy, timeouts) are still injected.
+    static var isSelfManaged: Bool {
+        ConfigManager.shared.config.runtime.selfManaged
+    }
+
     /// Common base environment variables: AI config + data directory + notes directory + unbuffered output + username + timeout config.
     /// Script-specific variables (MCP_PORT / MODEL_PROXY_* / QDRANT_PATH, etc.) are appended by callers via
     /// `environment(overrides:)`, keeping "Swift-side env consolidation".
@@ -118,26 +124,32 @@ enum PythonScriptRunner {
             env["https_proxy"] = proxyString
         }
 
-        // ai config + language (values share the same source as the `.sh` tasks, see aiEnvironment())
-        for (key, value) in aiEnvironment() {
-            env[key] = value
-        }
-        for (key, value) in knowledgeEnvironment() {
-            env[key] = value
-        }
-        for (key, value) in noteEnvironment() {
-            env[key] = value
-        }
-        for (key, value) in logEnvironment() {
-            env[key] = value
-        }
-        for (key, value) in rssDailyEnvironment() {
-            env[key] = value
-        }
+        // `runtime.selfManaged` hands config reading to the Python side (`config_loader`).
+        if !isSelfManaged {
+            // ai config + language (values share the same source as the `.sh` tasks, see aiEnvironment())
+            for (key, value) in aiEnvironment() {
+                env[key] = value
+            }
+            for (key, value) in knowledgeEnvironment() {
+                env[key] = value
+            }
+            for (key, value) in noteEnvironment() {
+                env[key] = value
+            }
+            for (key, value) in logEnvironment() {
+                env[key] = value
+            }
+            for (key, value) in rssDailyEnvironment() {
+                env[key] = value
+            }
 
-        // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
-        if let notesDir = resolvedNotesDir() {
-            env["NOTES_DIR"] = notesDir
+            // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
+            if let notesDir = resolvedNotesDir() {
+                env["NOTES_DIR"] = notesDir
+            }
+        }
+        for (key, value) in languageEnvironment() {
+            env[key] = value
         }
         // Python shells out to this binary for WKWebView-backed search.
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
@@ -167,8 +179,15 @@ enum PythonScriptRunner {
         // **Keep the fraction**: `String(Int(...))` turns 0.5 into "0", and Python treats 0 as "not configured" and
         // falls back to the default 120s -- Swift thinks it was injected, Python thinks it was not configured; the same 0 means opposite things in the two places.
         if ai.llmTimeout > 0 { env[EnvKeys.aiLLMTimeout] = String(ai.llmTimeout) }
-        // Language: the Python side picks `prompts/<lang>/` by it. The criterion reuses L10n (single source of truth),
-        // otherwise you get combinations no one expects like "Chinese UI, English prompts".
+        return env
+    }
+
+    /// UI/prompt language resolved from config plus the system preference.
+    ///
+    /// Injected even under `runtime.selfManaged`: it is a derived value, and the Python
+    /// side cannot resolve "follow the system" from `general.language` alone.
+    static func languageEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
         env[EnvKeys.utilityLang] = L10n.resolvedLanguage(
             configured: ConfigManager.shared.config.general.language,
         )
@@ -266,24 +285,30 @@ enum PythonScriptRunner {
         memoryServerURL: String,
         excludeTags: String,
     ) -> [String: String] {
-        var overrides = aiEnvironment()
-        for (key, value) in knowledgeEnvironment() {
-            overrides[key] = value
+        var overrides: [String: String] = [:]
+        if !isSelfManaged {
+            overrides = aiEnvironment()
+            for (key, value) in knowledgeEnvironment() {
+                overrides[key] = value
+            }
+            for (key, value) in noteEnvironment() {
+                overrides[key] = value
+            }
+            for (key, value) in logEnvironment() {
+                overrides[key] = value
+            }
+            for (key, value) in rssDailyEnvironment() {
+                overrides[key] = value
+            }
+            if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
+            overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
         }
-        for (key, value) in noteEnvironment() {
-            overrides[key] = value
-        }
-        for (key, value) in logEnvironment() {
-            overrides[key] = value
-        }
-        for (key, value) in rssDailyEnvironment() {
+        for (key, value) in languageEnvironment() {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
-        if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         overrides["MEMORY_SERVER_URL"] = memoryServerURL
-        overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             overrides["UTILITY_BIN"] = binary
         }

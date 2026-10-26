@@ -22,10 +22,11 @@ import os
 import re
 import subprocess
 import sys
+from importlib.resources import files
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-AST_JS_DIR = SCRIPT_DIR / "ast-js"
+# Resource lookup works both from the source tree and an installed wheel.
+AST_JS_DIR = Path(str(files("utility.scanner") / "ast-js"))
 
 
 # ── Python AST extractor ──

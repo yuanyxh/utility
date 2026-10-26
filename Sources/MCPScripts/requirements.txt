@@ -12,3 +12,5 @@ uvicorn>=0.34.0
 starlette>=0.46.0
 anyio>=4.0
 pathspec>=0.12.0
+# config_loader 读 config.yaml；与 pyproject.toml 的 base 依赖保持一致
+PyYAML>=6.0

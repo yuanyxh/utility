@@ -35,6 +35,7 @@ public struct AppConfig: Codable {
     var prompts: PromptConfig = .init()
     var notifications: NotificationConfig = .init()
     var knowledge: KnowledgeConfig = .init()
+    var runtime: RuntimeConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
 
@@ -52,8 +53,24 @@ public struct AppConfig: Codable {
         prompts = (try? c.decode(PromptConfig.self, forKey: .prompts)) ?? .init()
         notifications = (try? c.decode(NotificationConfig.self, forKey: .notifications)) ?? .init()
         knowledge = (try? c.decode(KnowledgeConfig.self, forKey: .knowledge)) ?? .init()
+        runtime = (try? c.decodeIfPresent(RuntimeConfig.self, forKey: .runtime)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
+    }
+}
+
+// MARK: - Runtime
+
+/// Python-layer runtime switches (config.yaml `runtime`).
+public struct RuntimeConfig: Codable {
+    /// The Python layer reads config.yaml itself; Swift stops injecting those values as env.
+    var selfManaged: Bool = false
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        selfManaged = (try? c.decodeIfPresent(Bool.self, forKey: .selfManaged)) ?? false
     }
 }
 

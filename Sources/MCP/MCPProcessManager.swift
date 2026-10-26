@@ -57,6 +57,11 @@ final class MCPProcessManager {
         portLock.lock()
         defer { portLock.unlock() }
         if let cachedPort { return cachedPort }
+        // A self-managed service records its port; prefer it over bind probing.
+        if let recorded = PortProbe.recordedPort(service: PortProbe.Service.mcp) {
+            cachedPort = recorded
+            return recorded
+        }
         let detected = PortProbe.detectAvailable(startingFrom: PortProbe.Base.mcp)
         cachedPort = detected
         return detected

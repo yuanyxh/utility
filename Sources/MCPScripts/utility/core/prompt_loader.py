@@ -57,6 +57,7 @@ passing an empty prompt to the model is worse than failing outright).
 from __future__ import annotations
 
 import re
+from importlib.resources import files
 from pathlib import Path
 
 from utility.core.config import data_dir
@@ -87,6 +88,10 @@ _cache: dict[str, PromptTemplate] = {}
 
 
 def _builtin_root() -> Path:
+    packaged = Path(str(files("utility") / "prompts"))
+    if packaged.is_dir():
+        return packaged
+    # Source tree keeps prompts next to the package (Swift PromptManager reads it there).
     return Path(__file__).resolve().parents[2] / "prompts"
 
 

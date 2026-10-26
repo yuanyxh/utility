@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "utility"
+dynamic = ["version"]
+description = "Utility Python engine: memory MCP server, LLM gateway and desktop automation services"
+requires-python = ">=3.12"
+dependencies = [
+    # LLM calls (utility/llm/client.py, summarize)
+    "httpx>=0.28.0",
+    # Scanner path matching
+    "pathspec>=0.12.0",
+    # config_loader reads ~/.config/utility/config.yaml
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Model proxy only (aiohttp + upstream br/zstd decompression)
+proxy = [
+    "aiohttp>=3.10.0",
+    "Brotli>=1.2",
+    "backports.zstd",
+]
+# Vector memory: the heavy wheels (onnx runtime, qdrant client)
+memory = [
+    "mem0ai>=2.0,<3.0",
+    "fastembed>=0.8.0",
+    "numpy>=1.24.0",
+    "qdrant-client>=1.13.0",
+]
+# MCP server and the HTTP layer it runs on
+server = [
+    "mcp>=1.6.0",
+    "uvicorn>=0.34.0",
+    "starlette>=0.46.0",
+    "anyio>=4.0",
+]
+
+# VERSION holds a bare version string, so the regex must capture the whole line.
+[tool.hatch.version]
+path = "VERSION"
+pattern = "^(?P<version>[0-9][^\\s]*)$"
+
+[tool.hatch.build.targets.wheel]
+packages = ["Sources/MCPScripts/utility"]
+exclude = [
+    "**/__pycache__",
+    "Sources/MCPScripts/utility/scanner/ast-js/node_modules",
+]
+
+# Built-in prompts live outside the package in the source tree; the wheel carries a copy.
+[tool.hatch.build.targets.wheel.force-include]
+"Sources/MCPScripts/prompts" = "utility/prompts"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "Sources/MCPScripts/utility",
+    "Sources/MCPScripts/prompts",
+    "VERSION",
+    "pyproject.toml",
+]
+exclude = [
+    "**/__pycache__",
+    "Sources/MCPScripts/utility/scanner/ast-js/node_modules",
+]

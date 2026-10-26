@@ -126,6 +126,7 @@ swift build
 python3 scripts/gen-l10n.py --check
 python3 scripts/check-l10n-contract.py
 python3 scripts/check-router-config-contract.py
+python3 scripts/check-config-parity.py
 python3 -m compileall -q Sources/MCPScripts
 python3 -m unittest discover -s tests/python -t .
 ```
