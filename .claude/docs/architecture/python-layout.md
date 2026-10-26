@@ -70,8 +70,12 @@ Sources/MCPScripts/
 例外是 `UTILITY_LANG`：语言由配置与系统偏好合成，Python 无法从 `general.language` 单独解析
 「跟随系统」，因此始终注入。默认 `false`，回滚只需改配置。
 
-`minod` 目前只提供 `--check`（配置根、config.yaml 可解析、Python ≥ 3.12、状态目录、端口可用或健康）；
-服务启动需要把 Swift 侧的 env 派生迁到 Python，属 P3。
+`minod --check` 自检配置根、config.yaml 可解析、Python ≥ 3.12、状态目录与端口；
+`minod --serve [--service mcp|proxy|all]` 启动启用的服务：端口按「显式配置 → 健康状态文件 →
+`find_available`」解析，子进程 env 由 `utility/cli/env_builder.py` 从 config.yaml 派生
+（只含脚本专属项，形如 Swift `TokenProxyManager` / `MCPProcessManager` 的序列化结果：
+providers / clientAccel / clientText / outputFilter 一律 snake_case；`MCP_SYNONYMS`、
+`MCP_TOOL_DEFAULTS` 为空时不注入）。收到 SIGTERM/SIGINT/SIGHUP 后统一 terminate 子进程并清理状态文件。
 
 ## 端口与运行时状态
 
