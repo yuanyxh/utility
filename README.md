@@ -27,12 +27,13 @@ swift build -c release
 
 Requirements: macOS 14+, Swift 5.9+ (Xcode Command Line Tools).
 
-The AI layer also needs Python 3.12 and its own virtual environment. The app looks for the interpreter at a fixed path:
+The AI layer also needs Python 3.12. Its runtime comes from the separate
+[`agent-gateway`](https://github.com/yuanyxh/agent-gateway) repo:
 
-```bash
-python3 -m venv ~/.config/utility/mcp-venv
-~/.config/utility/mcp-venv/bin/pip install -r Sources/MCPScripts/requirements.txt
-```
+- **Packaged app**: ships the gateway wheel and installs it into `~/.config/utility/mcp-venv` on first launch
+  (the dependency step needs the network once; afterwards it runs offline)
+- **From source**: `GatewayResources` falls back to a sibling `../agent-gateway/src/agent_gateway`, no install needed;
+  or install manually with `python3 -m venv ~/.config/utility/mcp-venv && ~/.config/utility/mcp-venv/bin/pip install -e '../agent-gateway[proxy,memory,server]'`
 
 ---
 
@@ -582,7 +583,7 @@ Written articles go into the notes directory, then an automatic `git commit` run
 
 ### 4. Prompt system
 
-Each LLM call site's system / user text is not hardcoded but externalized to `Sources/MCPScripts/prompts/<lang>/<feature>.md`, one file each for system and user.
+Each LLM call site's system / user text is not hardcoded but externalized to `prompts/<lang>/<feature>.md` in the agent-gateway repo, one file each for system and user.
 
 | Call site | feature | Purpose |
 |---|---|---|
@@ -593,7 +594,7 @@ Each LLM call site's system / user text is not hardcoded but externalized to `So
 | MCP memory service | `contradiction` | detect contradictions against similar memories on write |
 | Menu-bar translation | `translate` / `translate_auto` | translate the selection; `translate_auto` detects the direction |
 
-Lookup order: `<config dir>/prompts/<feature>.md` (user override) → built-in `MCPScripts/prompts/<lang>/<feature>.md` (by language, falling back to `zh-Hans`).
+Lookup order: `<config dir>/prompts/<feature>.md` (user override) → built-in `Gateway/prompts/<lang>/<feature>.md` (by language, falling back to `zh-Hans`).
 
 The front-matter's `name` must match the filename; `placeholders` and the body's actual placeholders are cross-validated.
 

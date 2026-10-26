@@ -29,8 +29,8 @@ enum ASTExtractorRunner {
     /// Extract symbols and imports from multiple files in a single subprocess call (--batch mode).
     static func extractBatchWithImports(_ files: [BatchInput]) -> [String: ASTFileResult] {
         guard !files.isEmpty else { return [:] }
-        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
-            debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
+        guard PythonScriptRunner.isGatewayAvailable else {
+            debugLog("[AST] gateway unavailable, batch skipped")
             return [:]
         }
 
@@ -44,7 +44,7 @@ enum ASTExtractorRunner {
 
         do {
             let outputData = try PythonScriptRunner.runCaptureOutput(
-                scriptPath: scriptPath,
+                module: GatewayEntry.astExtractor,
                 arguments: ["--batch"],
                 stdin: jsonData,
                 timeout: 30.0,
@@ -66,14 +66,14 @@ enum ASTExtractorRunner {
         from content: String, filePath: String, ext: String
     ) -> ASTFileResult? {
         guard isSupported(ext) else { return nil }
-        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.astExtractor) else {
-            debugLog("[AST] \(PythonScripts.astExtractor) not found in bundle")
+        guard PythonScriptRunner.isGatewayAvailable else {
+            debugLog("[AST] gateway unavailable, single-file extraction skipped")
             return nil
         }
 
         do {
             let outputData = try PythonScriptRunner.runCaptureOutput(
-                scriptPath: scriptPath,
+                module: GatewayEntry.astExtractor,
                 arguments: ["--ext", ext, "--file-path", filePath],
                 stdin: content.data(using: .utf8),
                 timeout: 15.0,

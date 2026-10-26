@@ -131,7 +131,7 @@ final class MCPProcessManager {
 
     /// Env name for the synonym table (a cross-language contract; the Python
     /// side's `synonyms.SYNONYMS_ENV_KEY` holds the same value, cross-asserted
-    /// by `scripts/check-router-config-contract.py`).
+    /// by the agent-gateway repo's contract checks).
     static let synonymsEnvKey = "MCP_SYNONYMS"
 
     /// Synonym table → JSON; an empty table returns nil (not injected; the Python
@@ -148,7 +148,7 @@ final class MCPProcessManager {
 
     /// Env name for tool defaults (a cross-language contract; the Python side's
     /// `tool_defaults.TOOL_DEFAULTS_ENV_KEY` holds the same value, cross-asserted
-    /// by `scripts/check-router-config-contract.py`).
+    /// by the agent-gateway repo's contract checks).
     static let toolDefaultsEnvKey = "MCP_TOOL_DEFAULTS"
 
     /// Tool defaults → JSON; an empty table returns nil (not injected; the Python
@@ -190,13 +190,7 @@ final class MCPProcessManager {
             return
         }
 
-        guard let serverPath = findServerScript() else {
-            log("[MCP] server.py not found in bundle")
-            state = .crashed
-            return
-        }
-
-        let daemon = ensureDaemon(scriptPath: serverPath)
+        let daemon = ensureDaemon()
         state = .initializing
         // Reuse when the port is held by a healthy server, avoiding duplicate
         // spawns that race for the port
@@ -260,11 +254,11 @@ final class MCPProcessManager {
                 log("[MCP] ❌ \(msg)")
                 notify(L10n.Notify.mcpEnvCheckTitle, msg)
             } else {
-                let reqPath = "Sources/MCPScripts/requirements.txt"
+                // Installation is normally automatic (GatewayInstaller); this is the manual fallback
                 let steps = """
                 Create the virtual environment:
                   python3 -m venv ~/.config/utility/mcp-venv
-                  ~/.config/utility/mcp-venv/bin/pip install -r \(reqPath)
+                  ~/.config/utility/mcp-venv/bin/pip install '<Gateway/*.whl>[proxy,memory,server]'
                 """
                 log("[MCP] ❌ Virtual environment not ready\n\(steps)")
                 notify(L10n.Notify.mcpEnvCheckTitle, L10n.Notify.mcpEnvVenvMissing)
@@ -292,21 +286,17 @@ final class MCPProcessManager {
         return pythonAvailable
     }
 
-    private func findServerScript() -> String? {
-        PythonScriptRunner.findScript(named: PythonScripts.server)
-    }
-
     // MARK: - Daemon assembly
 
     /// Create (or reuse) the PythonDaemon and wire up state callbacks.
     /// The daemon lifecycle (start / crash restart / health check / stop) is
     /// self-managed by PythonDaemon.
-    private func ensureDaemon(scriptPath: String) -> PythonDaemon {
+    private func ensureDaemon() -> PythonDaemon {
         if let daemon { return daemon }
 
         let config = PythonDaemon.Config(
-            scriptPath: { [weak self] in
-                self?.findServerScript() ?? scriptPath
+            arguments: {
+                PythonScriptRunner.bootstrapArguments(for: GatewayEntry.server)
             },
             port: { [weak self] in
                 // The fallback value shares its source with PortProbe.Base.mcp,

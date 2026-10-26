@@ -37,19 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             self?.onConfigReloaded()
         }
 
-        // Start the MCP service
-        startMCPService()
-
-        // Start the Token proxy monitor
-        startTokenProxy()
-
-        // Register the built-in RSS daily task
-        updateRSSDailyTask()
-
         KnowledgeService.shared.panel = knowledgePanel
-        KnowledgeService.shared.start()
         // 菜单入口走这个引用;漏赋值时 showKnowledgePanel 的 guard 会静默 return(点了没反应、无日志)
         menuBar.knowledgePanel = knowledgePanel
+
+        // Everything below shells out to the gateway: install the bundled wheel first
+        // (no-op after the first launch of a given version).
+        GatewayInstaller.ensureInstalled { [weak self] in
+            self?.startMCPService()
+            self?.startTokenProxy()
+            self?.updateRSSDailyTask()
+            KnowledgeService.shared.start()
+        }
 
         registerAllHotkeys()
         installEventHandler()
@@ -126,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard let mcp = ConfigManager.shared.config.mcp,
               mcp.summaryEnabled,
               mcp.enabled,
-              let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.summarize)
+              PythonScriptRunner.isGatewayAvailable
         else {
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
             debugLog("[MCP] Summary task disabled or unavailable")
@@ -138,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let serverURL = HTTP.localBaseURL(port: mcp.port)
         let excludeTagsStr = mcp.excludeTags.joined(separator: ",")
         let cmd = PythonScriptRunner.shellCommand(
-            script: scriptPath,
+            entry: GatewayEntry.summarize,
             // Values come from the **same source** as the MCP service process (`PythonScriptRunner.taskEnvironmentOverrides`).
             // This used to keep its own whitelist, so newly added `AI_LLM_TIMEOUT` / `UTILITY_LANG` were only added on
             // the service-process side, making the scheduled summary always use a 120s timeout and still use the Chinese prompt under an English UI.
@@ -164,9 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     /// and make handleMissed re-fire the task after every restart).
     private func updateRSSDailyTask() {
         let daily = ConfigManager.shared.config.rss.daily
-        guard daily.enabled,
-              let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.rssDaily)
-        else {
+        guard daily.enabled, PythonScriptRunner.isGatewayAvailable else {
             TaskScheduler.shared.unregisterInternalTask(named: "rss-daily")
             debugLog("[RSS] Daily task disabled or unavailable")
             return
@@ -177,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             memoryServerURL: HTTP.localBaseURL(port: mcp?.port ?? 0),
             excludeTags: mcp?.excludeTags.joined(separator: ",") ?? "",
         )
-        let cmd = PythonScriptRunner.shellCommand(script: scriptPath, environmentOverrides: overrides)
+        let cmd = PythonScriptRunner.shellCommand(entry: GatewayEntry.rssDaily, environmentOverrides: overrides)
 
         let cron = daily.cron.trimmingCharacters(in: .whitespacesAndNewlines)
         let task = TaskConfig(

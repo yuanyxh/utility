@@ -2,9 +2,9 @@ import Foundation
 
 /// Unified entry point for executing Python scripts.
 ///
-/// For all py scripts (see the list in `PythonScripts`, corresponding to `Sources/MCPScripts/*.py`), venv
-/// location, script path resolution, environment variable construction, one-shot execution, and the resident
-/// daemon are all consolidated here; callers no longer each implement their own.
+/// For every gateway entry module (see `GatewayEntry`), venv location, bootstrap arguments,
+/// environment variable construction, one-shot execution, and the resident daemon are all
+/// consolidated here; callers no longer each implement their own.
 /// Business decisions (state semantics, event broadcast, reuse probing, notification) remain with the
 /// composing parties (MCPProcessManager / TokenProxyManager); this class only provides the generic skeleton.
 enum PythonScriptRunner {
@@ -12,7 +12,7 @@ enum PythonScriptRunner {
 
     /// Path to the Python venv where MCP dependencies are installed.
     /// Auto-detect the system Python version and construct the corresponding venv path.
-    /// Created by: `python3.X -m venv ~/.config/utility/mcp-venv && pip install -r requirements.txt`
+    /// Created by `GatewayInstaller` on first launch (venv + the bundled gateway wheel)
     /// Lazily resolved once and cached.
     ///
     /// Resolution spawns a child process (`/usr/bin/env python3 --version`) and synchronously waits
@@ -22,10 +22,13 @@ enum PythonScriptRunner {
     /// during the process lifetime, so caching is safe.
     static let pythonVenvPath: String = resolveVenvPath()
 
+    /// `~/.config/utility/mcp-venv` — the installer needs it before the interpreter exists.
+    static let venvDir: String = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/utility/mcp-venv")
+        .path
+
     private static func resolveVenvPath() -> String {
-        let venvDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/utility/mcp-venv")
-            .path
+        let venvDir = self.venvDir
 
         // Detect the system Python version (e.g. python3.12)
         if let version = detectPythonVersion() {
@@ -57,6 +60,20 @@ enum PythonScriptRunner {
         return components?.first
     }
 
+    /// True when the gateway can be imported: a sibling checkout provides sources, or the venv
+    /// holds an installed `agent_gateway`. A bare venv is not enough — the wheel install may
+    /// have failed offline, and registering tasks against it would fail every run.
+    static var isGatewayAvailable: Bool {
+        if GatewayResources.developmentSourceRoot() != nil { return true }
+        let lib = venvDir + "/lib"
+        guard let versions = try? FileManager.default.contentsOfDirectory(atPath: lib) else {
+            return false
+        }
+        return versions.contains {
+            FileManager.default.fileExists(atPath: "\(lib)/\($0)/site-packages/agent_gateway")
+        }
+    }
+
     /// Resolve an available python executable: prefer the mcp venv, fall back to the system python3 when missing.
     static func resolvePython() -> String? {
         if FileManager.default.fileExists(atPath: pythonVenvPath) {
@@ -74,13 +91,17 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Script path resolution (single source of truth)
+    // MARK: - Entry module resolution (single source of truth)
 
-    /// Resolve path to a script in MCPScripts bundle directory.
-    /// Checks bundle first (packaged app), then dev source directory.
-    /// Path derivation lives in `MCPScriptsResources` (the prompt template reader shares the same set of candidate directories).
-    static func findScript(named name: String) -> String? {
-        MCPScriptsResources.path(relative: name)
+    /// `-c` code that runs `main()` of a gateway entry module, so the host never needs a
+    /// script path inside the bundle. `sys.exit` propagates the module's return code —
+    /// without it a failing task still exits 0 and the scheduler counts it as success.
+    static func bootstrapCode(for module: String) -> String {
+        "import sys; from \(module) import main; sys.exit(main())"
+    }
+
+    static func bootstrapArguments(for module: String) -> [String] {
+        ["-c", bootstrapCode(for: module)]
     }
 
     // MARK: - Environment variables (single source of truth)
@@ -154,6 +175,10 @@ enum PythonScriptRunner {
         // Python shells out to this binary for WKWebView-backed search.
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             env["UTILITY_BIN"] = binary
+        }
+        // Development without installing the wheel: point Python at the sibling checkout.
+        if let devRoot = GatewayResources.developmentSourceRoot() {
+            env["PYTHONPATH"] = devRoot
         }
         return env
     }
@@ -312,6 +337,9 @@ enum PythonScriptRunner {
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             overrides["UTILITY_BIN"] = binary
         }
+        if let devRoot = GatewayResources.developmentSourceRoot() {
+            overrides["PYTHONPATH"] = devRoot
+        }
         return overrides
     }
 
@@ -341,7 +369,7 @@ enum PythonScriptRunner {
     /// inherits the parent process environment, so only the overrides the script needs are injected here (consistent
     /// with the existing call behavior).
     static func shellCommand(
-        script: String,
+        entry: String,
         arguments: [String] = [],
         environmentOverrides: [String: String] = [:],
     ) -> String {
@@ -353,7 +381,8 @@ enum PythonScriptRunner {
             parts.append("\(key)=\(shellQuote(environmentOverrides[key] ?? ""))")
         }
         parts.append(pythonVenvPath)
-        parts.append(script)
+        parts.append("-c")
+        parts.append(shellQuote(bootstrapCode(for: entry)))
         parts.append(contentsOf: arguments)
         return parts.joined(separator: " ")
     }
@@ -364,8 +393,8 @@ enum PythonScriptRunner {
     /// pipe buffer filling up and blocking the child process); on timeout, kill it and throw.
     /// - Returns: the complete stdout bytes.
     static func runCaptureOutput(
-        scriptPath: String,
-        arguments: [String],
+        module: String,
+        arguments: [String] = [],
         stdin: Data? = nil,
         timeout: TimeInterval,
         environment: [String: String]? = nil,
@@ -377,7 +406,7 @@ enum PythonScriptRunner {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: pythonPath)
-        proc.arguments = [scriptPath] + arguments
+        proc.arguments = bootstrapArguments(for: module) + arguments
         // Without this the child inherits the GUI process's launchd environment, which has no
         // AI_API_KEY / UTILITY_DATA_DIR — the script then runs "successfully" and produces nothing.
         if let environment {
@@ -421,7 +450,7 @@ enum PythonScriptRunner {
                 // a few seconds of latency is irrelevant next to the LLM calls it avoids.
                 if shouldCancel?() == true {
                     kill(proc.processIdentifier, SIGKILL)
-                    throw PythonProcessError.cancelled(script: scriptPath)
+                    throw PythonProcessError.cancelled(script: module)
                 }
                 Thread.sleep(forTimeInterval: 0.05)
             }
@@ -429,7 +458,7 @@ enum PythonScriptRunner {
             outputPipe.fileHandleForReading.readabilityHandler = nil
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
-                throw PythonProcessError.timeout(script: scriptPath)
+                throw PythonProcessError.timeout(script: module)
             }
             while let chunk = outputPipe.fileHandleForReading.availableData as Data?, !chunk.isEmpty {
                 outputLock.lock()

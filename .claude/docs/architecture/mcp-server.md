@@ -1,5 +1,7 @@
 # MCP 服务（server.py）
 
+> Python 源码在独立仓 `agent-gateway`（`src/agent_gateway/`）；本仓只有 Swift 宿主与打包时的 wheel。
+
 > 从 `.claude/CLAUDE.md` 分层迁出（2026-10-18），内容逐字保留。
 > 修改对应模块前先读本文件；CLAUDE.md 只保留必须遵守的不变量。
 
@@ -16,7 +18,7 @@
 - `websearch_engine` 是内置工具（`web_search.py`），不再走 Skill 层：多引擎级联（Bing/Google/搜狗/360/百度/Marginalia/Brave/DDG）、按查询语言选顺序、按引擎限流 + 连续失败冷却；可选抓取前 N 页并转 Markdown、按页与总量限长。旧 `websearch-fallback` skill 已移除，页面内容不再以 HTML 返回
 - **Google 不走 HTTP 传输**：`_search_google` 调 app 内的 `utility websearch` 子命令（`Sources/CLI/WebSearchCommand.swift`，离屏 WKWebView 执行页面 JS 抽取结果），二进制由 `UTILITY_BIN` 定位，缺省再按 `Contents/MacOS/utility`、`.build/debug/utility` 推导。子命令输出单行 JSON（`ok/status/results/final_url`），失败状态含 `captcha` / `enablejs` / `render_timeout` / `network_error`。`google.com/url?q=` 跳转由 `_resolve_google_jump` 解析：先取 `q`，否则发一个不跟随重定向的 GET 读 `Location`
 - CJK 查询按 bigram 匹配，覆盖本就低于 ASCII 词，故阈值单列 `_CJK_MIN_SCORE`(0.15)，与 `_MIN_SCORE`(0.25) 并用
-- **三层拆分**：`services/search/engines.py`（引擎与排序）→ `services/fetch/http.py`（UA/代理/限流/重试/解压）→ `services/markdown/html.py`（纯 HTML→Markdown）。`web_search.py` 只保留兼容 facade，旧调用方与 `scripts/check-web-search.py` 的 monkeypatch 点不变；新增调用应直接依赖具体层
+- **三层拆分**：`services/search/engines.py`（引擎与排序）→ `services/fetch/http.py`（UA/代理/限流/重试/解压）→ `services/markdown/html.py`（纯 HTML→Markdown）。`web_search.py` 只保留兼容 facade，旧调用方与 gateway 仓 `scripts/check-web-search.py` 的 monkeypatch 点不变；新增调用应直接依赖具体层
 - **`read_url` 内置工具**（取代已移除的 `read` skill）：本地抓取 + 转换优先，`use_proxy=true` 才依次尝试 defuddle.md / r.jina.ai；GitHub blob 自动改写 raw。失败返回 `{ok:false, error_code, message, attempts[], hint}`，成功返回 `{ok:true, markdown, tier, truncated, warnings?}`——错误必须让 agent 能区分「网络失败 / 登录壳 / 空页 / 不支持格式」。PDF（`unsupported_format`）与飞书（`unsupported_site`）显式拒绝，不静默返回二进制
 - **引擎挑战页与普通页面分开判定**：`http.get_text(detect_challenge=True)` 给搜索引擎用（命中 marker 即 `Blocked`）；页面读取传 `false`，否则 Wikipedia 的 `<noscript>Enable JavaScript</noscript>` 会让整篇文章被判成挑战页。登录壳由 `read_service._assess()` 在**转换后的 Markdown** 上判断
 - Markdown 转换器不得跳过 `html/body/main/article` 这类结构容器：Wikipedia 的 `main-menu-disabled` 类名曾命中 boilerplate 正则，导致整页输出为空
@@ -43,4 +45,4 @@
 - 冷层摘要 payload 写 `source_memory_ids`；覆盖时对应点标 `stale`，检索默认过滤
 - 超期清理：`superseded`/`deleted` 30 天，`active` 180 天
 
-- `pyproject.toml` 未知，依赖见 `requirements.txt`
+- 依赖清单唯一来源是 gateway 仓 `pyproject.toml` 的 extras（`proxy`/`memory`/`server`），不再有 `requirements.txt`

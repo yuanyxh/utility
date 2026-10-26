@@ -19,8 +19,8 @@ import Foundation
 ///   raises `SendableClosureCaptures`, and the warning noise drowns out genuinely new warnings.
 final class PythonDaemon: @unchecked Sendable {
     struct Config {
-        /// Script path (closure: after a config reload, forceRestart can apply the new path without rebuilding the daemon)
-        var scriptPath: () -> String
+        /// Interpreter arguments (closure: a config reload can change the entry without rebuilding the daemon).
+        var arguments: () -> [String]
         /// Port (closure: applies the new port after a config reload, avoiding a port race between the old and new processes)
         var port: () -> Int
         /// Health check path, defaults to /health
@@ -244,7 +244,7 @@ final class PythonDaemon: @unchecked Sendable {
         isStopping = false
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: PythonScriptRunner.pythonVenvPath)
-        proc.arguments = [config.scriptPath()]
+        proc.arguments = config.arguments()
 
         // Build environment variables from config live
         proc.environment = config.environment()

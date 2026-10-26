@@ -15,7 +15,22 @@ if [ -z "$SIGNING_IDENTITY" ]; then
     exit 1
 fi
 
-echo "=== 0/5 i18n contract ==="
+echo "=== 0/6 Gateway 资源 ==="
+# app 不再携带 Python 源码：扫 gateway 仓构建 wheel，prompts 同步拷入资源目录。
+# 缺仓库或产物缺失一律硬失败——静默跳过会做出一个启动即崩的包。
+GATEWAY_REPO="${GATEWAY_REPO:-$(cd .. && pwd)/agent-gateway}"
+PYTHON="${PYTHON:-$HOME/.config/utility/mcp-venv/bin/python3}"
+[ -d "$GATEWAY_REPO/src/agent_gateway" ] || { echo "错误: 未找到 agent-gateway 仓库: $GATEWAY_REPO"; exit 1; }
+[ -x "$PYTHON" ] || { echo "错误: 未找到 Python: $PYTHON"; exit 1; }
+rm -rf Sources/Gateway/*.whl Sources/Gateway/prompts
+"$PYTHON" -m pip wheel "$GATEWAY_REPO" --no-deps -w Sources/Gateway --quiet --disable-pip-version-check
+cp -R "$GATEWAY_REPO/src/agent_gateway/prompts" Sources/Gateway/prompts
+ls Sources/Gateway/*.whl >/dev/null 2>&1 || { echo "错误: wheel 构建失败: Sources/Gateway/"; exit 1; }
+[ -d Sources/Gateway/prompts ] || { echo "错误: prompts 未拷入 Sources/Gateway/"; exit 1; }
+echo "wheel: $(ls Sources/Gateway/*.whl | xargs -n1 basename)"
+
+echo ""
+echo "=== 1/6 i18n contract ==="
 python3 scripts/gen-l10n.py --check
 python3 scripts/check-l10n-contract.py
 
@@ -37,16 +52,16 @@ echo "$VERSION" > "$VERSION_FILE"
 echo "版本: ${VERSION}（已写入 ${VERSION_FILE}）"
 
 echo ""
-echo "=== 1/5 Clean build ==="
+echo "=== 2/6 Clean build ==="
 rm -rf .build
 swift build -c release
 
 echo ""
-echo "=== 2/5 Sign binary ==="
+echo "=== 3/6 Sign binary ==="
 codesign -s "$SIGNING_IDENTITY" --force --options runtime .build/release/utility
 
 echo ""
-echo "=== 3/5 Build .app bundle ==="
+echo "=== 4/6 Build .app bundle ==="
 APP="${APP_NAME}.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -70,6 +85,12 @@ cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 # 源码目录跑过 Python 会留下 __pycache__,随 .copy 被打进资源 bundle。
 # 必须在签名前清除:残留 .pyc 会被封入 CodeResources,运行时重生成即破坏签名封印。
 find "$APP" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+# Gateway 资源必须真的进了 app：缺 wheel 时首启装不了包，app 起来但所有 AI 能力失效。
+GATEWAY_IN_APP="$RES_BUNDLE/Contents/Resources/Gateway"
+[ -d "$GATEWAY_IN_APP" ] || { echo "错误: 资源 bundle 内缺少 Gateway/: $RES_BUNDLE"; exit 1; }
+ls "$GATEWAY_IN_APP"/*.whl >/dev/null 2>&1 || { echo "错误: app 内缺少 gateway wheel: $GATEWAY_IN_APP"; exit 1; }
+[ -d "$GATEWAY_IN_APP/prompts" ] || { echo "错误: app 内缺少 prompts: $GATEWAY_IN_APP"; exit 1; }
 
 # bundle 内部布局同样随版本变化（旧：AppIcon.icns 在根，新：Contents/Resources/ 下）
 ICON="$RES_BUNDLE/Contents/Resources/AppIcon.icns"
@@ -107,14 +128,14 @@ cat > "$APP/Contents/Info.plist" << EOF
 EOF
 
 echo ""
-echo "=== 4/5 Sign .app ==="
+echo "=== 5/6 Sign .app ==="
 # 必须签 .app 本身并硬校验：签名失败被吞掉时 bundle 无 _CodeSignature/CodeResources、
 # Info.plist 未绑定、identifier 退化为可执行文件名,系统将拒绝为其建立通知授权。
 codesign -s "$SIGNING_IDENTITY" --force --options runtime --identifier "$BUNDLE_ID" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
 
 echo ""
-echo "=== 5/5 Package .dmg ==="
+echo "=== 6/6 Package .dmg ==="
 DMG="${APP_NAME}-${VERSION}.dmg"
 rm -f "$DMG"
 diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"

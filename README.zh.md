@@ -27,12 +27,11 @@ swift build -c release
 
 要求：macOS 14+、Swift 5.9+(Xcode Command Line Tools)。
 
-AI 层另需 Python 3.12 与虚拟环境。应用从固定路径查找解释器：
+AI 层另需 Python 3.12。运行时来自独立仓 [`agent-gateway`](https://github.com/yuanyxh/agent-gateway)：
 
-```bash
-python3 -m venv ~/.config/utility/mcp-venv
-~/.config/utility/mcp-venv/bin/pip install -r Sources/MCPScripts/requirements.txt
-```
+- **打包版**：app 内含 gateway wheel，首启自动建 `~/.config/utility/mcp-venv` 并安装（依赖需联网一次，之后断网可用）
+- **源码运行**：`GatewayResources` 回退到同级 `../agent-gateway/src/agent_gateway`，无需安装；也可手动
+  `python3 -m venv ~/.config/utility/mcp-venv && ~/.config/utility/mcp-venv/bin/pip install -e '../agent-gateway[proxy,memory,server]'`
 
 ---
 
@@ -547,7 +546,7 @@ flowchart LR
 
 ### 四、提示词系统
 
-各 LLM 调用点的 system / user 文案不写死在代码里，外置为 `Sources/MCPScripts/prompts/<lang>/<feature>.md`，system 与 user 各占一份。
+各 LLM 调用点的 system / user 文案不写死在代码里，外置为 agent-gateway 仓的 `prompts/<lang>/<feature>.md`，system 与 user 各占一份。
 
 | 调用方 | feature | 用途 |
 |---|---|---|
@@ -558,7 +557,7 @@ flowchart LR
 | MCP 记忆服务 | `contradiction` | 新记忆入库时与相似记忆做矛盾检测 |
 | 菜单栏翻译 | `translate` / `translate_auto` | 翻译选中内容；`translate_auto` 自动判断语向 |
 
-查找顺序：`<配置目录>/prompts/<feature>.md`(用户覆盖) → 内置 `MCPScripts/prompts/<lang>/<feature>.md`(按语言，缺则回退 `zh-Hans`)。
+查找顺序：`<配置目录>/prompts/<feature>.md`(用户覆盖) → 内置 `Gateway/prompts/<lang>/<feature>.md`(按语言，缺则回退 `zh-Hans`)。
 
 front-matter 的 `name` 必须与文件名一致；`placeholders` 与正文占位符双向自校验。
 

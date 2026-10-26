@@ -185,8 +185,8 @@ final class KnowledgeService: NSObject {
         refillRunning = true
         refillLock.unlock()
 
-        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.knowledgeRefill) else {
-            debugLog("[Knowledge] refill script not found \(PythonScripts.knowledgeRefill)")
+        guard PythonScriptRunner.isGatewayAvailable else {
+            debugLog("[Knowledge] gateway unavailable, refill skipped")
             finishRefill()
             return
         }
@@ -195,7 +195,7 @@ final class KnowledgeService: NSObject {
             defer { self?.finishRefill() }
             do {
                 let data = try PythonScriptRunner.runCaptureOutput(
-                    scriptPath: scriptPath,
+                    module: GatewayEntry.knowledgeRefill,
                     arguments: [],
                     timeout: 900,
                     environment: PythonScriptRunner.environment(overrides: [:]),

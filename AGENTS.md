@@ -124,19 +124,19 @@
 ```bash
 swift build
 python3 scripts/gen-l10n.py --check
-python3 scripts/check-l10n-contract.py
-python3 scripts/check-router-config-contract.py
-python3 scripts/check-config-parity.py
-python3 -m compileall -q Sources/MCPScripts
-python3 -m unittest discover -s tests/python -t .
+python3 scripts/check-l10n-contract.py          # 加 --python-root ../agent-gateway/src/agent_gateway 连 Python 侧一起查
+python3 scripts/check-examples-parity.py
+bash scripts/run-tests.sh
 ```
-Python 测试依赖 `httpx`，用项目 venv：`~/.config/utility/mcp-venv/bin/python -m unittest discover -s tests/python -t .`
+**Python 侧验证在 `agent-gateway` 仓内做**（unittest、向量缓存不变式、web-search）：`PYTHONPATH=src ~/.config/utility/mcp-venv/bin/python3 -m unittest discover -s tests -t .`。
+本仓已无 Python 源码，`Sources/MCPScripts` 于 2026-10-26 删除。
 
 ### scripts 目录
 - `scripts/` 根只放可执行入口（`check-*.py`、`gen-l10n.py`、`package-utility.sh`、`run-tests.sh`），这些路径被文档与 `run-tests.sh` 引用，**不得移动**
-- 校验器实现放子包：`scripts/router_contract/`（consts → parsers → proxy_checks/env_checks/content_checks → inputs → main）；新增校验脚本同样建包，根部入口只做 import + `main()`
+- 校验器实现放子包；新增校验脚本同样建包，根部入口只做 import + `main()`
 - 子包内路径常量：`SCRIPTS_DIR = dirname(dirname(__file__))`、`ROOT = dirname(SCRIPTS_DIR)`
-- ⚠️ venv 自举用 `os.execv` 重执行 `main.py` 时必须把 `scripts/` 加进 `PYTHONPATH`，否则子包导入失败
+- 引用 Python 源码的校验（`router_contract`、`config_parity`、web-search、向量缓存不变式）已随源码迁往 `agent-gateway` 仓的 `scripts/`
+- `gen-l10n.py` 只写 `L10nKeys.swift`；Python 目录用 `--python-out` 显式指定，生成后在 gateway 仓跑 `ruff format`（生成器不做行宽折行）
 
 ### i18n
 - 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
@@ -218,7 +218,9 @@ Python 测试依赖 `httpx`，用项目 venv：`~/.config/utility/mcp-venv/bin/p
 - 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报；LLM 未配置时退出码 1，不写空日报
 
 ### MCP 服务
-- server.py / summarize.py / token_proxy.py 的入口 shim 在 `Sources/MCPScripts/` 根目录，实现在 `utility/services/{mcp,summarize,proxy}/`；脚本路径解析与 venv 定位统一由 `PythonScriptRunner` 提供（bundle → dev fallback）
+- 入口模块全部在 `agent-gateway` 仓（`agent_gateway.services.{mcp.server,summarize.summarize,proxy.token_proxy}` 等），宿主按模块名 `-c "from <module> import main; main()"` 启动；模块名常量见 `Sources/Core/Constants.swift` 的 `GatewayEntry`，启动参数与 venv 定位统一由 `PythonScriptRunner` 提供
+- 资源定位唯一入口 `Sources/Core/GatewayResources.swift`（bundle `Gateway/` → 本仓 `Sources/Gateway/` → 同级 `../agent-gateway/src/agent_gateway`）；首启安装 wheel 见 `Sources/MCP/GatewayInstaller.swift`
+- 打包脚本先用 gateway 仓构建 wheel + 拷 prompts 到 `Sources/Gateway/`，再 `swift build`；缺任何一项硬失败
 - server.py 只保留入口 / HTTP endpoints / 项目与网页工具；记忆子系统在 `server_memory.py`，工具 schema 在 `server_tool_schema.py`，归档在 `server_archive.py`，技能扫描在 `server_skills.py`，共享常量/状态/工具在 `server_constants.py` / `server_state.py` / `server_utils.py`。`hot_memory` / `qdrant` 一律经 `server_state` 存取，禁止再引入模块级全局
 - `token_proxy.handle_proxy` 只做编排：`_prepare_request` → `_apply_rewrites` → `_forward`，共享字段放在 `_ProxyState`
 - 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
@@ -337,7 +339,7 @@ Python 测试依赖 `httpx`，用项目 venv：`~/.config/utility/mcp-venv/bin/p
 **根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（`PythonDaemon`，重构前为 MCPProcessManager 内联逻辑）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
 
 **修复**：
-- `Sources/MCPScripts/utility/services/mcp/server.py` / `utility/services/summarize/summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
+- `agent-gateway` 仓的 `services/mcp/server.py` / `services/summarize/summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
 - `Sources/MCP/PythonDaemon.swift`：就绪信号检测通过后继续读取 pipe 并丢弃数据（双重保险）
 
 **症状识别**：

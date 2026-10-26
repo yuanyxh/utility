@@ -3,8 +3,10 @@
 
 The JSON files are the only source of truth. This script validates them and writes:
 
-- Sources/Core/L10nKeys.swift        (Swift accessors, all namespaces except Python-only ones)
-- Sources/MCPScripts/utility/core/l10n_catalog.py (Python catalog, Python-only + shared)
+- Sources/Core/L10nKeys.swift  (Swift accessors, all namespaces except Python-only ones)
+
+The Python catalog now lives in the agent-gateway repo. Pass --python-out to regenerate it
+across repos (explicit, never implicit: this repo must not know the sibling's path).
 
 Run with --check to verify the checked-in files are current (CI / packaging).
 """
@@ -21,9 +23,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(ROOT, "Sources", "Resources")
 SWIFT_OUT = os.path.join(ROOT, "Sources", "Core", "L10nKeys.swift")
-PY_OUT = os.path.join(
-    ROOT, "Sources", "MCPScripts", "utility", "core", "l10n_catalog.py"
-)
+#: Python catalog output; only written when --python-out is passed (the file lives in agent-gateway).
+PY_OUT = None
 
 BASELINE_LANG = "zh-Hans"
 LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")
@@ -301,6 +302,11 @@ def main() -> int:
     parser.add_argument(
         "--check", action="store_true", help="verify generated files are current"
     )
+    parser.add_argument(
+        "--python-out",
+        metavar="PATH",
+        help="also write the Python catalog here (agent-gateway's core/l10n_catalog.py)",
+    )
     args = parser.parse_args()
     try:
         languages = load_languages()
@@ -311,7 +317,8 @@ def main() -> int:
         print(f"[gen-l10n] error: {e}", file=sys.stderr)
         return 1
     ok = write_or_check(SWIFT_OUT, swift, args.check)
-    ok = write_or_check(PY_OUT, py, args.check) and ok
+    if args.python_out:
+        ok = write_or_check(os.path.abspath(args.python_out), py, args.check) and ok
     if args.check and ok:
         print(f"[gen-l10n] up to date ({len(keys)} keys, {len(languages)} languages)")
     return 0 if ok else 1

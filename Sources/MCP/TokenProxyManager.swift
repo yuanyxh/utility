@@ -289,12 +289,11 @@ final class TokenProxyManager {
 
     private func ensureDaemon() -> PythonDaemon? {
         if let daemon { return daemon }
-        guard let scriptPath = PythonScriptRunner.findScript(named: PythonScripts.tokenProxy) else {
-            return nil
-        }
         var config = PythonDaemon.Config(
-            // token_proxy.py path is fixed, so capturing it is fine; the port may change on config reload, so use a closure
-            scriptPath: { scriptPath },
+            // The entry is fixed; the port may change on config reload, so it stays a closure
+            arguments: {
+                PythonScriptRunner.bootstrapArguments(for: GatewayEntry.tokenProxy)
+            },
             port: { [weak self] in
                 // The fallback value shares the same source as PortProbe.Base.tokenProxy, avoiding two literals drifting apart
                 self?.currentPort ?? PortProbe.Base.tokenProxy

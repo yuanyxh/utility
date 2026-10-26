@@ -12,12 +12,16 @@ cannot see:
   - `t("literal.key")` calls reference a key that exists
   - keys nobody references (warning only — translation can land before the call site)
 
+The Python side lives in the agent-gateway repo; pass --python-root to check it as well
+(otherwise only the Swift side is verified).
+
 Usage (from the project root): python3 scripts/check-l10n-contract.py
 Exit 0 = all passed; 1 = a contract violation.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import importlib.util
 import json
@@ -29,12 +33,13 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(ROOT, "Sources", "Resources")
 SWIFT_SOURCES = os.path.join(ROOT, "Sources")
-PY_SOURCES = os.path.join(ROOT, "Sources", "MCPScripts")
 GEN = os.path.join(ROOT, "scripts", "gen-l10n.py")
 L10N_RUNTIME = os.path.join(SWIFT_SOURCES, "Core", "L10n.swift")
 L10N_KEYS = os.path.join(SWIFT_SOURCES, "Core", "L10nKeys.swift")
-PY_RUNTIME = os.path.join(PY_SOURCES, "utility", "core", "l10n.py")
-PY_CATALOG = os.path.join(PY_SOURCES, "utility", "core", "l10n_catalog.py")
+#: Set by --python-root; None = Python side not checked (its sources live in agent-gateway).
+PY_SOURCES = None
+PY_RUNTIME = None
+PY_CATALOG = None
 
 BASELINE = "zh-Hans"
 LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")
@@ -121,6 +126,19 @@ def python_language_constants(path: str) -> list[tuple[int, str]]:
 
 
 def main() -> int:
+    global PY_SOURCES, PY_RUNTIME, PY_CATALOG
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--python-root",
+        metavar="PATH",
+        help="agent-gateway src/agent_gateway, enables the Python-side assertions",
+    )
+    args = parser.parse_args()
+    if args.python_root:
+        PY_SOURCES = os.path.abspath(args.python_root)
+        PY_RUNTIME = os.path.join(PY_SOURCES, "core", "l10n.py")
+        PY_CATALOG = os.path.join(PY_SOURCES, "core", "l10n_catalog.py")
+
     violations: list[str] = []
     warnings: list[str] = []
     languages = load_languages()
@@ -166,7 +184,7 @@ def main() -> int:
 
     # Group 4: Python must not hardcode a language tag outside runtime/generated modules.
     tags = set(languages)
-    for path in iter_files(PY_SOURCES, ".py"):
+    for path in iter_files(PY_SOURCES, ".py") if PY_SOURCES else ():
         if path in (PY_RUNTIME, PY_CATALOG):
             continue
         for lineno, value in python_language_constants(path):
@@ -176,8 +194,8 @@ def main() -> int:
                 )
 
     # Group 5: Python literal keys exist. Parameter descriptions are fixed English and
-    # are checked by check-router-config-contract.py, not against this catalog.
-    for path in iter_files(PY_SOURCES, ".py"):
+    # are not checked against this catalog.
+    for path in iter_files(PY_SOURCES, ".py") if PY_SOURCES else ():
         if path == PY_CATALOG:
             continue
         tree = ast.parse(read(path), filename=path)
@@ -204,13 +222,16 @@ def main() -> int:
         if path not in (L10N_RUNTIME, L10N_KEYS)
     )
     python_usage = "\n".join(
-        read(path) for path in iter_files(PY_SOURCES, ".py") if path != PY_CATALOG
+        read(path) for path in (iter_files(PY_SOURCES, ".py") if PY_SOURCES else ())
+        if path != PY_CATALOG
     )
     generator = load_generator()
     python_namespaces = generator.PYTHON_NAMESPACES | generator.SHARED_NAMESPACES
     shared_namespaces = generator.SHARED_NAMESPACES
     for key in sorted(baseline):
         namespace = key.split(".", 1)[0]
+        if not PY_SOURCES and namespace in python_namespaces:
+            continue  # cannot see the Python side; skipping beats a wall of false warnings
         if namespace in python_namespaces:
             py_ref = re.search(re.escape(key).join(("[\"']", "[\"']")), python_usage)
             if namespace in shared_namespaces:

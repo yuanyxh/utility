@@ -7,7 +7,7 @@ import Foundation
 /// 1. `translation.prompt` — translation-specific inline template (`Translator` reads it directly, not through this class)
 /// 2. `prompts.templates[feature]` — inline template in config
 /// 3. File: `~/.config/utility/prompts/<feature>.md` (user override, **language-independent**)
-///    → `MCPScripts/prompts/<lang>/<feature>.md` (bundled, falls back by current language → `zh-Hans` baseline)
+///    → `Gateway/prompts/<lang>/<feature>.md` (bundled, falls back by current language → `zh-Hans` baseline)
 /// 4. `L10n` built-in text (`Sources/Resources/<lang>.json`)
 ///
 /// Layer 3 **shares the same directory and the same contract** with the Python-side `prompt_loader.py`:
@@ -15,11 +15,11 @@ import Foundation
 /// same rules and run the same self-checks. So "switching a language" and "editing one prompt" are the same
 /// thing on both sides, no need to change two copies.
 ///
-/// Layer 4 is not a "second copy of the text" but a **fallback for a broken install**: `MCPScripts/prompts/`
+/// Layer 4 is not a "second copy of the text" but a **fallback for a broken install**: `Gateway/prompts/`
 /// is bundled, and a missing file means an incomplete install. Without the fallback, what gets sent to the
 /// model would be an empty system prompt—harder to diagnose than a hard failure (it shows as "the model
 /// gives irrelevant answers" rather than "translation error"). The two layers' contents are asserted
-/// byte-for-byte by `scripts/check-router-config-contract.py`, so they won't drift.
+/// by the agent-gateway repo's contract checks, so they won't drift.
 public final class PromptManager {
     public static let shared = PromptManager()
 
@@ -29,7 +29,7 @@ public final class PromptManager {
     /// Same value as `prompt_loader.FALLBACK_LANG`—the two sides' judgment of "is this language present" must agree.
     static let fallbackLanguage = "zh-Hans"
 
-    /// Prompt directory name (under `MCPScripts/`).
+    /// Prompt directory name (under `Gateway/`).
     private static let promptsDir = "prompts"
 
     /// Get the prompt for the specified feature, with variable substitution.
@@ -113,7 +113,7 @@ public final class PromptManager {
             langs.append(fallbackLanguage)
         }
         for lang in langs {
-            if let path = MCPScriptsResources.path(relative: "\(promptsDir)/\(lang)/\(feature).md") {
+            if let path = GatewayResources.path(relative: "\(promptsDir)/\(lang)/\(feature).md") {
                 candidates.append((path, lang))
             }
         }

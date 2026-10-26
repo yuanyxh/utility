@@ -19,7 +19,7 @@ let package = Package(
             ],
             resources: [
                 .process("Resources"),
-                .copy("MCPScripts"),
+                .copy("Gateway"),
             ]
         )
     ]

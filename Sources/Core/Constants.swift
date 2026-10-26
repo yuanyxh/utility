@@ -58,17 +58,17 @@ enum UDKey {
 
 // MARK: - Python Script Names
 
-/// File names of the embedded Python scripts. Referenced across three directories — App/ MCP/ Scanner/ —
-/// and constituting the Swift ↔ script-directory contract (the sole argument of `PythonScriptRunner.findScript(named:)`),
-/// hence centralized here, to avoid the same file name drifting after literal duplication in many places.
-enum PythonScripts {
-    static let server = "server.py"
-    static let tokenProxy = "token_proxy.py"
-    static let summarize = "summarize.py"
-    static let astExtractor = "ast_extractor.py"
-    static let knowledgeRefill = "knowledge_refill.py"
-    static let rssDaily = "rss_daily.py"
-    static let minod = "minod.py"
+/// Python entry modules of the installed agent-gateway package.
+///
+/// The host no longer ships Python source: these are import paths resolved inside
+/// the venv that holds the `agent-gateway` wheel.
+enum GatewayEntry {
+    static let server = "agent_gateway.services.mcp.server"
+    static let tokenProxy = "agent_gateway.services.proxy.token_proxy"
+    static let summarize = "agent_gateway.services.summarize.summarize"
+    static let astExtractor = "agent_gateway.scanner.ast_extractor"
+    static let knowledgeRefill = "agent_gateway.services.knowledge.knowledge_refill"
+    static let rssDaily = "agent_gateway.services.rss.rss_daily"
 }
 
 // MARK: - Python Subprocess Environment Variable Names

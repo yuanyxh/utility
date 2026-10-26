@@ -1,5 +1,7 @@
 # Python 运行时（PythonScriptRunner / PythonDaemon / 日志）
 
+> Python 源码在独立仓 `agent-gateway`（`src/agent_gateway/`）；本仓只有 Swift 宿主与打包时的 wheel。 进程一律按模块名启动（`GatewayEntry`），不再有脚本路径。
+
 > 从 `.claude/CLAUDE.md` 分层迁出（2026-10-18），内容逐字保留。
 > 修改对应模块前先读本文件；CLAUDE.md 只保留必须遵守的不变量。
 
@@ -13,7 +15,7 @@
 - **端口解析必须缓存，禁止每次访问重新探测**（`PortProbe.swift` + 各 Manager 的 `currentPort`）：探测手段是对 127.0.0.1 做 bind 测试，而服务起来后**自己就占着那个端口**，再探测会跳过它返回下一个（9001→9002 / 8613→8614）。曾把 `port` 写成每次重算的 computed property，后果是运行期任何一次读取都拿到漂移值——`fetchTodaySummary()` 因代理自己占着 8613 而恒打 8614，菜单栏今日用量永远为空；`MCPClient` 则硬编码 9001 兜底，与 `MCPProcessManager` 的自动探测构成两处推导，9001 被占用时所有项目检索请求失败。现修法：公共逻辑收进 `PortProbe`（原先两个 Manager 逐字重复 37 行），`currentPort` 惰性解析一次并缓存，且**显式配置（`port > 0`）始终优先、不走缓存**（用户改配置要能立即生效）
 - **PythonDaemon 的并发不变量**：`state`/`crashCount`/`isStopping`/`process` 由 `lifecycleQueue` 独占（`terminationHandler` 由系统在自己队列回调，必须收敛回该队列再读写）；`state` 的 `onStateChange` 回调统一 `DispatchQueue.main.async` 投递（消费方要更新菜单栏 UI）；`healthCheckTimer` 在主线程 runloop 上创建与失效
 - **健康判据是纯函数 `isHealthyBody(_:service:)`**：复用探测（`probeExistingServer`，在 lifecycleQueue 上用信号量同步等待，不碰主线程故无死锁）与轮询检查（`checkHealth`，`@MainActor` + async/await）共用同一判据——两处各写一份会漂移，表现为「复用了进程却一直判定未就绪」
-- **MCPProcessManager**：server.py 业务编排——State 5 态/EventBus 广播/端口复用探测（service=="mino-brain" 校验）/pythonCheck 预检/崩溃通知；进程生命周期委托 PythonDaemon
+- **MCPProcessManager**：MCP 服务业务编排——State 5 态/EventBus 广播/端口复用探测（service=="mino-brain" 校验）/pythonCheck 预检/崩溃通知；进程生命周期委托 PythonDaemon
 - 就绪检测：stderr 输出 "Application startup complete" / "Uvicorn running on"（readySignals）；token_proxy 静默启动直接健康检查
 - 无启动超时杀进程——`terminationHandler` 处理真实崩溃，`isStopping` 标志防止 stop() 误触重启
 - Python venv 路径 `~/.config/utility/mcp-venv/bin/python3`
@@ -23,4 +25,4 @@
 ### 共享 Python 日志模块（log_utils.py）
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`
 - 禁止 StreamHandler（pipe buffer 死锁），TimedRotatingFileHandler midnight 轮转 30 天
-- server.py 和 summarize.py 已替换为使用此模块
+- `services/mcp/server.py` 和 `services/summarize/summarize.py` 已替换为使用此模块

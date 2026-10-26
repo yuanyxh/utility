@@ -30,7 +30,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 
 | 模块 | 文档 |
 |---|---|
-| Python 层目录约定 / 入口 shim / import 规则 | `.claude/docs/architecture/python-layout.md` |
+| Python 层位置 / 模块入口 / wheel 安装 / prompts 定位 | `.claude/docs/architecture/python-layout.md` |
 | 面板 / EventBus / 热键 / Stage / OCR / 内存诊断 | `.claude/docs/architecture/panel-ui.md` |
 | 符号提取 Scanner | `.claude/docs/architecture/scanner.md` |
 | PythonScriptRunner / PythonDaemon / 日志 | `.claude/docs/architecture/python-runtime.md` |
@@ -51,6 +51,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Stage 拖放检测用 mouseDown/mouseUp 的 changeCount 快照对比，不能只看 hasContent（`.drag` 残留会误判）
 - 请求封装类必须用 `RequestConfig` struct 收束全部控制参数，不拆成单独函数参数
 - i18n 唯一数据源是 `Sources/Resources/<lang>.json`；Swift 访问器由 `scripts/gen-l10n.py` 生成到 `L10nKeys.swift`（禁止手改），Python 生成 `l10n_catalog.py`；占位符只用 `{name}` / `{name:d}` / `{name:.Nf}`（禁止 `%@`/`%ld`/`String(format:)`）；改 JSON 后必须重新生成，打包前跑 `gen-l10n.py --check` 与 `check-l10n-contract.py`；运行时切语言用 `refreshAllTitles()` 模式
+- Python 侧 `l10n_catalog.py` 在 agent-gateway 仓：`gen-l10n.py --python-out <gateway>/src/agent_gateway/core/l10n_catalog.py` 生成后才算同步（生成器不做折行，生成后在 gateway 仓跑 `ruff format`）
 
 ### 符号提取（Scanner）
 - 全量扫描写入必须是**单事务原子替换**（`replaceScanResults()`）；`clearAll()` 已删除，**禁止重新引入**
@@ -64,7 +65,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `terminationHandler` 的身份判断 `process !== p` 必须放在 `isStopping` 之前；崩溃判据包含非零退出码
 - 健康检查必须 `async/await` + `@MainActor`，禁止 `DispatchSemaphore`（阻塞主线程导致回调死锁）
 - 崩溃重启前先探测端口，健康则认领而不是再 spawn
-- 契约脚本第 3 组断言的是**实际注入点**，不是「源码里出现过这个名字」
+- 跨语言契约由 gateway 仓导出 `contracts/env.json`；本仓不再扫 Python 源码
+- 进程按**模块名**启动（`GatewayEntry`），宿主侧不得出现 `.py` 路径；资源定位只经 `GatewayResources`
 
 ### Token Proxy
 - 转发上游**不得透传客户端 `Accept-Encoding`**：`skip_headers` 排除 + `headers["Accept-Encoding"]` 显式声明，两处都要
@@ -77,9 +79,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 转发入口 `/v1/*`、`/open/*`、`/raw/*` 共用同一 handler，路径在 `_upstream_path` 归一；`/raw` 是透明入口，跳过全部内容改写（规则注入/去重/瘦身/注记），其余能力照常
 
 ### LLM 调用与提示词
-- Python 侧唯一 LLM 出口是 `llm_client.py`；配置唯一消费入口是 `config.py`，取值顺序 **显式 env → `config_loader` 读 `config.yaml` → 调用方 default**，不得在别处直接读配置或另设默认。新增配置面 env 必须同时登记 `_YAML_FALLBACKS`，否则 `scripts/check-config-parity.py` 报红
+- Python 侧唯一 LLM 出口是 `llm_client.py`；配置唯一消费入口是 `config.py`，取值顺序 **显式 env → `config_loader` 读 `config.yaml` → 调用方 default**，不得在别处直接读配置或另设默认。这些模块现在都在 agent-gateway 仓，改动在那里验证
 - `LLMTarget.ready` 与 `configured` 别混；**api_key 为空是合法的**（表示透传客户端 key）
-- 提示词在 `Sources/MCPScripts/prompts/<lang>/<feature>.md`；目录优先级：用户覆盖（语言无关）→ 内置（当前语言 → `zh-Hans` 基线）
+- 提示词在 gateway 仓的 `prompts/<lang>/<feature>.md`，打包时拷到 `Sources/Gateway/prompts/`；目录优先级：用户覆盖（`~/.config/utility/prompts/`，语言无关）→ 内置（当前语言 → `zh-Hans` 基线）
 - 渲染**禁用** `str.format` / 逐 key 替换，必须按名字**一次性**替换
 - 语言唯一判据 `L10n.resolvedLanguage()` / `UTILITY_LANG`
 - 工具描述与参数描述固定英文，不进语言目录；参数描述只做 `inputSchema.description`，未登记的键抛 `MissingParamText`
@@ -125,6 +127,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Bug 修复依赖现实调试信息，禁止靠猜测修改
 
 ## 未来规划
+- **仓边界（2026-10-26 定）**：Python 能力层迁往独立仓 `agent-gateway`（随 app 分发 wheel，首启装 venv）；
+  服务端与 RN/Expo 在独立 workspace 仓（Node/TS）。**禁止在本仓新增服务端、Agent、移动端代码**，
+  也禁止把 Python 层再做成本仓内的"多包"；`Sources/MCPScripts` 已于 2026-10-26 随 G2 删除
 - Orchestrate 已实现 + 真实测试验证通过（2026-07-15），但代码已移除（2026-08-03 确认），设计沉淀见 `.claude/docs/architecture/design-notes.md` 与 `.claude/plans/agent-orchestrate.md`
 - devflow 研发编排（云效需求拉取 → 子会话 → 状态流转 → 汇报）为当前落地方向
 - MCP 移植、Agent 寄生模式已完成；项目依赖图持续维护

@@ -175,14 +175,14 @@ mcp:
   # used by full-text search such as project_search.
   # **Incremental** semantics — same key overrides a built-in, new keys append; write only
   # what you want to add, no need to copy the whole built-in table (it lives in
-  # Sources/MCPScripts/utility/core/synonyms.py). Restart the MCP service for changes to take effect.
+  # agent-gateway 仓 src/agent_gateway/core/synonyms.py). Restart the MCP service for changes to take effect.
   synonyms: {}
     # 部署: "deploy release publish"
     # 请求: "request http call"
 
   # Tool argument defaults: tool name -> args name -> value. **Incremental** semantics —
   # same name overrides a built-in; write only what you want to change (the built-in table
-  # is in Sources/MCPScripts/utility/core/tool_defaults.py). These defaults directly decide how much each
+  # is in agent-gateway 仓 src/agent_gateway/core/tool_defaults.py). These defaults directly decide how much each
   # tool call returns (token cost). Restart the MCP service for changes to take effect.
   toolDefaults:
     recall:
@@ -216,7 +216,7 @@ clipboard:
 # Prompt templates are **file**-based (Swift translation and Python summarization share the
 # same directory and the same contract):
 #   user override: <config dir>/prompts/<feature>.md   (~/.config/utility/prompts/, language-independent)
-#   bundled: MCPScripts/prompts/<lang>/<feature>.md
+#   bundled: Gateway/prompts/<lang>/<feature>.md (shipped from the agent-gateway repo)
 # A custom file is not split by language — whoever writes a prompt has one native language,
 # and switching the UI language should not invalidate it.
 # Bundled templates are split by language: the language comes from general.language, and a
