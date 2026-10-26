@@ -126,8 +126,12 @@ swift build
 python3 scripts/gen-l10n.py --check
 python3 scripts/check-l10n-contract.py          # 加 --python-root ../agent-gateway/src/agent_gateway 连 Python 侧一起查
 python3 scripts/check-examples-parity.py
+python3 scripts/check-gateway-entries.py --entries ../agent-gateway/contracts/entries.json
 bash scripts/run-tests.sh
 ```
+
+打包产物验证（本地不打包也能跑 wheel 路径）：`UTILITY_GATEWAY_USE_WHEEL=1 .build/debug/utility`。
+干净 clone 直接 `swift build` 不含 wheel、也没有同级仓时 AI 功能不可用——发包必须走 `package-utility.sh`。
 **Python 侧验证在 `agent-gateway` 仓内做**（unittest、向量缓存不变式、web-search）：`PYTHONPATH=src ~/.config/utility/mcp-venv/bin/python3 -m unittest discover -s tests -t .`。
 本仓已无 Python 源码，`Sources/MCPScripts` 于 2026-10-26 删除。
 

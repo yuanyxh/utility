@@ -30,7 +30,8 @@ swift build -c release
 AI 层另需 Python 3.12。运行时来自独立仓 [`agent-gateway`](https://github.com/yuanyxh/agent-gateway)：
 
 - **打包版**：app 内含 gateway wheel，首启自动建 `~/.config/utility/mcp-venv` 并安装（依赖需联网一次，之后断网可用）
-- **源码运行**：`GatewayResources` 回退到同级 `../agent-gateway/src/agent_gateway`，无需安装；也可手动
+- **源码运行**：`GatewayResources` 回退到同级 `../agent-gateway/src/agent_gateway`，无需安装（注意：直接
+  `swift build` 出来的 app 不含 wheel，AI 功能靠这份同级仓，发包必须走 `scripts/package-utility.sh`）；也可手动
   `python3 -m venv ~/.config/utility/mcp-venv && ~/.config/utility/mcp-venv/bin/pip install -e '../agent-gateway[proxy,memory,server]'`
 
 ---

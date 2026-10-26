@@ -32,7 +32,9 @@ The AI layer also needs Python 3.12. Its runtime comes from the separate
 
 - **Packaged app**: ships the gateway wheel and installs it into `~/.config/utility/mcp-venv` on first launch
   (the dependency step needs the network once; afterwards it runs offline)
-- **From source**: `GatewayResources` falls back to a sibling `../agent-gateway/src/agent_gateway`, no install needed;
+- **From source**: `GatewayResources` falls back to a sibling `../agent-gateway/src/agent_gateway`, no install needed
+  (a plain `swift build` ships no wheel — AI features come from that sibling checkout; releases must go through
+  `scripts/package-utility.sh`);
   or install manually with `python3 -m venv ~/.config/utility/mcp-venv && ~/.config/utility/mcp-venv/bin/pip install -e '../agent-gateway[proxy,memory,server]'`
 
 ---

@@ -75,6 +75,17 @@ def placeholders(text: str) -> dict[str, str]:
     return found
 
 
+def catalog_fingerprint(path: str) -> str | None:
+    """`FINGERPRINT` constant of a generated Python catalog, without importing it."""
+    for node in ast.parse(read(path), filename=path).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "FINGERPRINT":
+                return node.value.value if isinstance(node.value, ast.Constant) else None
+    return None
+
+
 def swift_accessor(key: str) -> str:
     namespace, name = key.split(".", 1)
     ns = SWIFT_ACRONYMS.get(namespace) or "".join(
@@ -243,6 +254,17 @@ def main() -> int:
                 warnings.append(f"unreferenced Python key: {key}")
         elif not re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage):
             warnings.append(f"unreferenced Swift key: {key} ({swift_accessor(key)})")
+
+    # Group 7: the Python catalog must come from these JSON files. Its generator lives in this
+    # repo, so a drift is invisible until a key is rendered at runtime (MissingText).
+    if PY_CATALOG and os.path.isfile(PY_CATALOG):
+        expected = generator.fingerprint(languages)
+        actual = catalog_fingerprint(PY_CATALOG)
+        if actual != expected:
+            violations.append(
+                f"{os.path.relpath(PY_CATALOG, ROOT)}: FINGERPRINT {actual} != current JSON {expected} "
+                "(regenerate with gen-l10n.py --python-out, then ruff format)"
+            )
 
     for message in violations:
         print(f"[l10n] violation: {message}", file=sys.stderr)

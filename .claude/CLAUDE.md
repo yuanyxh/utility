@@ -67,6 +67,9 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 崩溃重启前先探测端口，健康则认领而不是再 spawn
 - 跨语言契约由 gateway 仓导出 `contracts/env.json`；本仓不再扫 Python 源码
 - 进程按**模块名**启动（`GatewayEntry`），宿主侧不得出现 `.py` 路径；资源定位只经 `GatewayResources`
+- `GatewayEntry` 必须与 gateway 的 `contracts/entries.json` 一致（`scripts/check-gateway-entries.py`，打包与 run-tests 都跑）
+- 首启装 wheel：每步都要有超时；**extras 必须 import 通过才写戳**（pip 对未知 extra 只警告、退出码仍 0）；失败写 `.agent-gateway-broken` 标记，`isGatewayAvailable` 据此不注册定时任务
+- 开发态默认用同级仓源码（`PYTHONPATH`），`UTILITY_GATEWAY_USE_WHEEL=1` 才切到 venv 里的 wheel ——**打包产物只能靠这个开关在本地验证**
 
 ### Token Proxy
 - 转发上游**不得透传客户端 `Accept-Encoding`**：`skip_headers` 排除 + `headers["Accept-Encoding"]` 显式声明，两处都要

@@ -27,7 +27,13 @@ rm -rf Sources/Gateway/*.whl Sources/Gateway/prompts
 cp -R "$GATEWAY_REPO/src/agent_gateway/prompts" Sources/Gateway/prompts
 ls Sources/Gateway/*.whl >/dev/null 2>&1 || { echo "错误: wheel 构建失败: Sources/Gateway/"; exit 1; }
 [ -d Sources/Gateway/prompts ] || { echo "错误: prompts 未拷入 Sources/Gateway/"; exit 1; }
-echo "wheel: $(ls Sources/Gateway/*.whl | xargs -n1 basename)"
+# 入口契约/环境契约从 gateway 源现导，不依赖对方仓的提交状态
+PYTHONPATH="$GATEWAY_REPO/src" "$PYTHON" -m agent_gateway.cli.minod --export-contracts --contracts-out "$PWD/Sources/Gateway" >/dev/null
+python3 scripts/check-gateway-entries.py --entries Sources/Gateway/entries.json
+# 依赖快照：首启按这份 constraints 装，上游发新版也不会改掉已发布 app 的依赖树
+"$PYTHON" -m pip freeze --exclude-editable | grep -vi '^agent[-_]gateway' > Sources/Gateway/constraints.txt
+[ -s Sources/Gateway/constraints.txt ] || { echo "错误: constraints 快照为空"; exit 1; }
+echo "wheel: $(ls Sources/Gateway/*.whl | xargs -n1 basename) / constraints: $(wc -l < Sources/Gateway/constraints.txt) 行"
 
 echo ""
 echo "=== 1/6 i18n contract ==="
@@ -91,6 +97,8 @@ GATEWAY_IN_APP="$RES_BUNDLE/Contents/Resources/Gateway"
 [ -d "$GATEWAY_IN_APP" ] || { echo "错误: 资源 bundle 内缺少 Gateway/: $RES_BUNDLE"; exit 1; }
 ls "$GATEWAY_IN_APP"/*.whl >/dev/null 2>&1 || { echo "错误: app 内缺少 gateway wheel: $GATEWAY_IN_APP"; exit 1; }
 [ -d "$GATEWAY_IN_APP/prompts" ] || { echo "错误: app 内缺少 prompts: $GATEWAY_IN_APP"; exit 1; }
+[ -f "$GATEWAY_IN_APP/entries.json" ] || { echo "错误: app 内缺少入口契约 entries.json: $GATEWAY_IN_APP"; exit 1; }
+[ -s "$GATEWAY_IN_APP/constraints.txt" ] || { echo "错误: app 内缺少依赖快照 constraints.txt: $GATEWAY_IN_APP"; exit 1; }
 
 # bundle 内部布局同样随版本变化（旧：AppIcon.icns 在根，新：Contents/Resources/ 下）
 ICON="$RES_BUNDLE/Contents/Resources/AppIcon.icns"

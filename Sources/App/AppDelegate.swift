@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // 菜单入口走这个引用;漏赋值时 showKnowledgePanel 的 guard 会静默 return(点了没反应、无日志)
         menuBar.knowledgePanel = knowledgePanel
 
+        GatewayResources.logResolution()
         // Everything below shells out to the gateway: install the bundled wheel first
         // (no-op after the first launch of a given version).
         GatewayInstaller.ensureInstalled { [weak self] in

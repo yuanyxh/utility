@@ -61,17 +61,10 @@ enum PythonScriptRunner {
     }
 
     /// True when the gateway can be imported: a sibling checkout provides sources, or the venv
-    /// holds an installed `agent_gateway`. A bare venv is not enough — the wheel install may
-    /// have failed offline, and registering tasks against it would fail every run.
+    /// holds a verified install. A bare venv is not enough — the wheel install may have failed
+    /// offline, and registering tasks against it would fail every run.
     static var isGatewayAvailable: Bool {
-        if GatewayResources.developmentSourceRoot() != nil { return true }
-        let lib = venvDir + "/lib"
-        guard let versions = try? FileManager.default.contentsOfDirectory(atPath: lib) else {
-            return false
-        }
-        return versions.contains {
-            FileManager.default.fileExists(atPath: "\(lib)/\($0)/site-packages/agent_gateway")
-        }
+        GatewayResources.developmentSourceRoot() != nil || GatewayInstaller.isInstalled
     }
 
     /// Resolve an available python executable: prefer the mcp venv, fall back to the system python3 when missing.
