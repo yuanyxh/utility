@@ -165,6 +165,9 @@ enum PythonScriptRunner {
         for (key, value) in languageEnvironment() {
             env[key] = value
         }
+        for (key, value) in utilityCLIEnvironment() {
+            env[key] = value
+        }
         // Python shells out to this binary for WKWebView-backed search.
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             env["UTILITY_BIN"] = binary
@@ -267,19 +270,19 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)
     }
 
-    /// RSS 日报任务配置（JSON）与 app 可执行文件路径。
-    /// 与 `aiEnvironment()` 同理，必须同时出现在 `baseEnvironment()` 与 `taskEnvironmentOverrides()` 两个注入点。
+    /// RSS daily task config (JSON). Config-surface, so `runtime.selfManaged` skips it.
     static func rssDailyEnvironment() -> [String: String] {
-        var env: [String: String] = [:]
-        if let data = try? JSONEncoder().encode(ConfigManager.shared.config.rss.daily),
-           let json = String(data: data, encoding: .utf8)
-        {
-            env[EnvKeys.rssDailyConfig] = json
-        }
-        if let executable = Bundle.main.executablePath {
-            env[EnvKeys.utilityCLIPath] = executable
-        }
-        return env
+        guard let data = try? JSONEncoder().encode(ConfigManager.shared.config.rss.daily),
+              let json = String(data: data, encoding: .utf8)
+        else { return [:] }
+        return [EnvKeys.rssDailyConfig: json]
+    }
+
+    /// Executable path consumed by `rss_daily._cli_path()`. Runtime-only, so both injection points
+    /// must add it unconditionally -- `selfManaged` only skips config-surface env.
+    static func utilityCLIEnvironment() -> [String: String] {
+        guard let executable = Bundle.main.executablePath else { return [:] }
+        return [EnvKeys.utilityCLIPath: executable]
     }
 
     /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
@@ -322,6 +325,9 @@ enum PythonScriptRunner {
             overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
         }
         for (key, value) in languageEnvironment() {
+            overrides[key] = value
+        }
+        for (key, value) in utilityCLIEnvironment() {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
