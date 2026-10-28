@@ -12,7 +12,7 @@ public final class AppDatabase {
             at: AppPaths.configDir, withIntermediateDirectories: true,
         )
         let dbPath = AppPaths.database.path
-        dbQueue = try DatabaseQueue(path: dbPath)
+        dbQueue = try SQLiteFactory.open(path: dbPath)
         try migrator.migrate(dbQueue)
         debugLog("[Database] Opened at \(dbPath)")
     }

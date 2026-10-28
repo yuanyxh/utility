@@ -12,11 +12,8 @@ final class ProjectDatabase {
         let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
         try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
         let dbPath = (utilityDir as NSString).appendingPathComponent(Self.depsFilename)
-        // Multiple connections write deps.sqlite concurrently (Scanner full scan + FileWatcher incremental + MCP reads);
-        // GRDB's default busyMode=.immediateError fails immediately on lock conflict; change to .timeout(5) to wait for the lock instead of failing
-        var configuration = Configuration()
-        configuration.busyMode = .timeout(5)
-        dbQueue = try DatabaseQueue(path: dbPath, configuration: configuration)
+        // Several connections write deps.sqlite concurrently (full scan + incremental + MCP reads).
+        dbQueue = try SQLiteFactory.open(path: dbPath)
         try migrator.migrate(dbQueue)
     }
 

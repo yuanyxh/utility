@@ -42,13 +42,11 @@ final class KnowledgeStore {
         lock.lock()
         defer { lock.unlock() }
         if let dbQueue { return dbQueue }
-        var config = Configuration()
-        // WAL 与 busy timeout 两侧都必须设：Python 补货子进程与这里同时打开同一个文件，
-        // 只设一侧会回落到 delete 模式并互相阻塞。
-        config.journalMode = .wal
-        config.busyMode = .timeout(5)
+        // WAL 与 busy timeout 必须都设：Python 补货子进程与这里同时打开同一个文件。
         do {
-            let q = try DatabaseQueue(path: AppPaths.knowledgeDatabase.path, configuration: config)
+            let q = try SQLiteFactory.open(
+                path: AppPaths.knowledgeDatabase.path, journal: .wal,
+            )
             dbQueue = q
             return q
         } catch {

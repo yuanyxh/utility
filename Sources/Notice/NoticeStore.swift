@@ -39,13 +39,10 @@ public final class NoticeStore {
         lock.lock()
         defer { lock.unlock() }
         if let dbQueue { return dbQueue }
-        var config = Configuration()
-        config.journalMode = .wal
-        config.busyMode = .timeout(5)
         try FileManager.default.createDirectory(
             at: AppPaths.configDir, withIntermediateDirectories: true,
         )
-        let queue = try DatabaseQueue(path: AppPaths.noticesDatabase.path, configuration: config)
+        let queue = try SQLiteFactory.open(path: AppPaths.noticesDatabase.path, journal: .wal)
         try createTable(queue)
         dbQueue = queue
         return queue
