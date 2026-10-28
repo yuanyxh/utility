@@ -7,16 +7,16 @@ import WebKit
 struct WebSearchCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "websearch",
-        abstract: "Run a Google search through an offscreen WKWebView.",
+        abstract: L10n.CLI.websearchAbstract,
     )
 
-    @Option(name: .long, help: "Search query")
+    @Option(name: .long, help: ArgumentHelp(L10n.CLI.websearchQueryHelp))
     var query: String
 
-    @Option(name: .long, help: "Maximum number of results")
+    @Option(name: .long, help: ArgumentHelp(L10n.CLI.websearchLimitHelp))
     var limit = 10
 
-    @Option(name: .long, help: "Page render timeout in seconds")
+    @Option(name: .long, help: ArgumentHelp(L10n.CLI.websearchTimeoutHelp))
     var timeout = 20.0
 
     mutating func run() throws {
