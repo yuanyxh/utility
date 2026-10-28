@@ -218,6 +218,7 @@ rss:
 | `rss.daily.articleMaxChars` | `12000` | 单篇正文截断长度 |
 | `rss.daily.filterBatch` | `40` | 初筛每批条数 |
 | `rss.daily.summaryBatch` | `4` | 总结每批条数 |
+| `rss.daily.maxAgeDays` | `7` | 只处理最近 N 天发布的条目，`0` 表示不限 |
 | `rss.daily.maxDigestLinks` | `10` | 周刊最多拆解外链数 |
 | `rss.daily.fetchTimeout` | `20` | 单页抓取超时（秒） |
 | `rss.daily.llmTimeout` | `120` | 单次 LLM 调用超时（秒） |

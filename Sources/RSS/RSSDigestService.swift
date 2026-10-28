@@ -33,7 +33,7 @@ final class RSSDigestService {
             debugLog("[RSS] fetched \(added.count) new items")
         }
 
-        let items = try RSSManager.shared.unread()
+        let items = try RSSManager.shared.unread(maxAgeDays: cfg.maxAgeDays)
         let history = RSSDigestRender.collectHistoryURLs(root: root, exclude: archive)
 
         var filtered: [RSSDigestRender.Filtered] = []
@@ -82,6 +82,12 @@ final class RSSDigestService {
         let summary = "rss daily: \(archive.path) articles=\(merged.articles.count) "
             + "filtered=\(merged.filtered.count)"
         debugLog("[RSS] \(summary)")
+        let reasonCounts = Dictionary(grouping: merged.filtered, by: \.reason)
+            .mapValues(\.count)
+            .sorted { $0.value > $1.value }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ", ")
+        debugLog("[RSS] filter reasons: \(reasonCounts)")
         return summary
     }
 
@@ -123,11 +129,11 @@ final class RSSDigestService {
         let (decisions, responded) = await decide(candidates, cfg: cfg)
         var selected: [Entry] = []
         for (index, item) in candidates.enumerated() {
-            let decision = decisions[index] ?? (keep: true, kind: "article", reason: "")
+            let decision = decisions[index] ?? (keep: true, kind: "article", reason: "", code: "")
             guard decision.keep else {
                 filtered.append(filteredEntry(
                     item,
-                    decision.reason.isEmpty ? L10n.RSS.filterNoLongTermValue : decision.reason
+                    reasonText(code: decision.code, fallback: decision.reason)
                 ))
                 continue
             }
@@ -189,8 +195,8 @@ final class RSSDigestService {
     private func decide(
         _ items: [RSSItem],
         cfg: RSSDailyConfig
-    ) async -> (decisions: [Int: (keep: Bool, kind: String, reason: String)], responded: Bool) {
-        var decisions: [Int: (keep: Bool, kind: String, reason: String)] = [:]
+    ) async -> (decisions: [Int: (keep: Bool, kind: String, reason: String, code: String)], responded: Bool) {
+        var decisions: [Int: (keep: Bool, kind: String, reason: String, code: String)] = [:]
         var responded = false
         let batch = max(1, cfg.filterBatch)
         var start = 0
@@ -220,7 +226,8 @@ final class RSSDigestService {
                     decisions[start + index] = (
                         keep: keep,
                         kind: kind == "digest" ? "digest" : "article",
-                        reason: ((entry["reason"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+                        reason: ((entry["reason"] as? String) ?? "").trimmingCharacters(in: .whitespaces),
+                        code: ((entry["reason_code"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
                     )
                 }
             } else {
@@ -237,37 +244,49 @@ final class RSSDigestService {
         var start = 0
         while start < entries.count {
             let chunk = Array(entries[start ..< min(start + batch, entries.count)])
-            let blocks = chunk.enumerated().map { index, entry in
-                "[\(index)] 标题：\(entry.title)\n"
-                    + "来源：\(entry.feed)\n"
-                    + "正文：\n\(String(entry.text.prefix(6000)))"
-            }
-            let tokens = min(3000, max(1000, chunk.count * 400))
-            let parsed = await chatJSON(
-                "rss_summary",
-                ["items_text": blocks.joined(separator: "\n\n")],
-                label: "rss_summary",
-                maxTokens: tokens,
-                cfg: cfg
-            )
-            if let items = parsed?["items"] as? [[String: Any]] {
-                for item in items {
-                    guard let index = Self.intValue(item["index"]), index >= 0, index < chunk.count else {
-                        continue
-                    }
-                    results[chunk[index].link] = SummaryPayload(
-                        titleTranslation: ((item["title_translation"] as? String) ?? "")
-                            .trimmingCharacters(in: .whitespaces),
-                        summary: ((item["summary"] as? String) ?? "")
-                            .trimmingCharacters(in: .whitespaces)
-                    )
-                }
-            } else {
-                debugLog("[RSS] summary batch \(start) failed")
-            }
+            results.merge(await summarizeChunk(chunk, cfg: cfg)) { _, new in new }
             start += batch
         }
         return results
+    }
+
+    /// Summarize one batch; a failed batch is split in half so one bad entry cannot drop the rest.
+    private func summarizeChunk(_ chunk: [Entry], cfg: RSSDailyConfig) async -> [String: SummaryPayload] {
+        guard !chunk.isEmpty else { return [:] }
+        let blocks = chunk.enumerated().map { index, entry in
+            "[\(index)] 标题：\(entry.title)\n"
+                + "来源：\(entry.feed)\n"
+                + "正文：\n\(String(entry.text.prefix(6000)))"
+        }
+        let tokens = min(4000, max(1200, chunk.count * 700))
+        let parsed = await chatJSON(
+            "rss_summary",
+            ["items_text": blocks.joined(separator: "\n\n")],
+            label: "rss_summary",
+            maxTokens: tokens,
+            cfg: cfg
+        )
+        var results: [String: SummaryPayload] = [:]
+        for item in parsed?["items"] as? [[String: Any]] ?? [] {
+            guard let index = Self.intValue(item["index"]), index >= 0, index < chunk.count else {
+                continue
+            }
+            results[chunk[index].link] = SummaryPayload(
+                titleTranslation: ((item["title_translation"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespaces),
+                summary: ((item["summary"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespaces)
+            )
+        }
+        guard results.isEmpty else { return results }
+        guard chunk.count > 1 else {
+            debugLog("[RSS] summary failed for \(chunk[0].link)")
+            return [:]
+        }
+        let mid = chunk.count / 2
+        var split = await summarizeChunk(Array(chunk[..<mid]), cfg: cfg)
+        split.merge(await summarizeChunk(Array(chunk[mid...]), cfg: cfg)) { _, new in new }
+        return split
     }
 
     private func chatJSON(
@@ -281,16 +300,26 @@ final class RSSDigestService {
             debugLog("[RSS] prompt missing: \(feature)")
             return nil
         }
-        for _ in 0 ..< 2 {
-            let raw = try? await client.chat(
-                prompt: prompt,
-                maxTokens: maxTokens,
-                timeout: TimeInterval(cfg.llmTimeout),
-                disableThinking: true,
-                extraBody: ["thinking": ["type": "disabled"]],
-                label: label
-            )
-            if let parsed = Self.jsonObject(raw) { return parsed }
+        for attempt in 0 ..< 2 {
+            do {
+                let raw = try await client.chat(
+                    prompt: prompt,
+                    maxTokens: maxTokens,
+                    timeout: TimeInterval(cfg.llmTimeout),
+                    disableThinking: true,
+                    extraBody: ["thinking": ["type": "disabled"]],
+                    label: label
+                )
+                let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.isEmpty {
+                    debugLog("[RSS] \(label) empty response try \(attempt + 1)")
+                    continue
+                }
+                if let parsed = Self.jsonObject(text) { return parsed }
+                debugLog("[RSS] \(label) parse failed try \(attempt + 1), tail=\(text.suffix(160))")
+            } catch {
+                debugLog("[RSS] \(label) call failed try \(attempt + 1): \(error)")
+            }
         }
         return nil
     }
@@ -455,6 +484,21 @@ final class RSSDigestService {
         )
     }
 
+    /// Map the LLM's enum code to a localized label; free text stays as a fallback.
+    private func reasonText(code: String, fallback: String) -> String {
+        switch code {
+        case "release": return L10n.RSS.filterRelease
+        case "ad": return L10n.RSS.filterAd
+        case "news": return L10n.RSS.filterNews
+        case "personal": return L10n.RSS.filterPersonal
+        case "tool": return L10n.RSS.filterTool
+        case "duplicate": return L10n.RSS.filterDuplicate
+        case "shallow": return L10n.RSS.filterShallow
+        case "stale": return L10n.RSS.filterStale
+        default: return fallback.isEmpty ? L10n.RSS.filterNoLongTermValue : fallback
+        }
+    }
+
     private func filteredEntry(_ item: RSSItem, _ reason: String) -> RSSDigestRender.Filtered {
         RSSDigestRender.Filtered(
             title: item.title,
@@ -531,17 +575,98 @@ final class RSSDigestService {
         return fallback
     }
 
+    /// Strict parse first; on failure salvage the complete `items` objects that survived truncation.
     private static func jsonObject(_ raw: String?) -> [String: Any]? {
-        guard let raw else { return nil }
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}") else {
-            return nil
+        guard let raw, let start = raw.firstIndex(of: "{") else { return nil }
+        let text = String(raw[start...])
+        if let object = decodeObject(text) { return object }
+        let items = completeItems(text)
+        guard !items.isEmpty else { return nil }
+        debugLog("[RSS] json salvaged \(items.count) complete items")
+        return ["items": items]
+    }
+
+    private static func decodeObject(_ text: String) -> [String: Any]? {
+        if let object = parseObject(text) { return object }
+        let cleaned = escapeControls(text)
+        guard cleaned != text else { return nil }
+        return parseObject(cleaned)
+    }
+
+    private static func parseObject(_ text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Models often emit raw newlines inside string values; escape them before parsing.
+    private static func escapeControls(_ text: String) -> String {
+        var out = ""
+        out.reserveCapacity(text.count)
+        var inString = false
+        var escaping = false
+        for ch in text {
+            guard inString else {
+                if ch == "\"" { inString = true }
+                out.append(ch)
+                continue
+            }
+            if escaping {
+                escaping = false
+                out.append(ch)
+            } else if ch == "\\" {
+                escaping = true
+                out.append(ch)
+            } else if ch == "\"" {
+                inString = false
+                out.append(ch)
+            } else if ch == "\n" {
+                out.append("\\n")
+            } else if ch == "\r" {
+                out.append("\\r")
+            } else if ch == "\t" {
+                out.append("\\t")
+            } else {
+                out.append(ch)
+            }
         }
-        text = String(text[start ... end])
-        guard let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return object
+        return out
+    }
+
+    /// Collect every syntactically complete object inside the array that follows `"items"`.
+    private static func completeItems(_ text: String) -> [[String: Any]] {
+        guard let key = text.range(of: "\"items\""),
+              let open = text[key.upperBound...].firstIndex(of: "[")
+        else { return [] }
+        var objects: [[String: Any]] = []
+        var depth = 1
+        var inString = false
+        var escaping = false
+        var start: String.Index?
+        var index = text.index(after: open)
+        while index < text.endIndex {
+            let ch = text[index]
+            if inString {
+                if escaping { escaping = false } else if ch == "\\" { escaping = true } else if ch == "\"" { inString = false }
+            } else {
+                switch ch {
+                case "\"": inString = true
+                case "{":
+                    if depth == 1 { start = index }
+                    depth += 1
+                case "}":
+                    depth -= 1
+                    if depth == 1, let from = start, let object = decodeObject(String(text[from ... index])) {
+                        objects.append(object)
+                    }
+                    if depth == 1 { start = nil }
+                case "[": depth += 1
+                case "]": depth -= 1
+                default: break
+                }
+            }
+            index = text.index(after: index)
+        }
+        return objects
     }
 }
 

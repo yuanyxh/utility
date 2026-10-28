@@ -91,12 +91,22 @@ public final class RSSManager {
 
     // MARK: - Query
 
-    public func unread() throws -> [RSSItem] {
-        try db.read { db in
-            try RSSItem
-                .filter(Column("is_read") == false)
-                .order(Column("pub_date").desc)
-                .fetchAll(db)
+    /// Unread items, optionally limited by publication window (0 = no limit).
+    /// Rows whose pub_date failed to parse (stored as the epoch) bypass the window.
+    public func unread(maxAgeDays: Int = 0) throws -> [RSSItem] {
+        let unknownDate = Date(timeIntervalSince1970: 946_684_800)
+        let cutoff = maxAgeDays > 0
+            ? Calendar.current.date(byAdding: .day, value: -maxAgeDays, to: Date())
+            : nil
+        return try db.read { db in
+            var request = RSSItem.filter(Column("is_read") == false)
+            if let cutoff {
+                request = request.filter(
+                    sql: "pub_date >= ? OR pub_date < ?",
+                    arguments: [cutoff, unknownDate],
+                )
+            }
+            return try request.order(Column("pub_date").desc).fetchAll(db)
         }
     }
 

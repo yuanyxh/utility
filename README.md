@@ -224,6 +224,7 @@ With `rss.daily.enabled: true` the app registers the internal task `rss-daily` (
 | `rss.daily.articleMaxChars` | `12000` | per-article truncation |
 | `rss.daily.filterBatch` | `40` | entries per pre-filter call |
 | `rss.daily.summaryBatch` | `4` | articles per summary call |
+| `rss.daily.maxAgeDays` | `7` | only items published within N days; `0` disables |
 | `rss.daily.maxDigestLinks` | `10` | max external links expanded from a weekly digest |
 | `rss.daily.fetchTimeout` | `20` | per-page fetch timeout (seconds) |
 | `rss.daily.llmTimeout` | `120` | per LLM call timeout (seconds) |

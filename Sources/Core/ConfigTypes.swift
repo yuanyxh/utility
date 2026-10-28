@@ -612,6 +612,8 @@ public struct RSSDailyConfig: Codable {
     var articleMaxChars: Int = 12000
     var filterBatch: Int = 40
     var summaryBatch: Int = 4
+    /// Only items published within this window enter a digest; 0 disables the window.
+    var maxAgeDays: Int = 7
     var maxDigestLinks: Int = 10
     var fetchTimeout: Int = 20
     var llmTimeout: Int = 120
@@ -628,6 +630,7 @@ public struct RSSDailyConfig: Codable {
         articleMaxChars = try c.decodeIfPresent(Int.self, forKey: .articleMaxChars) ?? 12000
         filterBatch = try c.decodeIfPresent(Int.self, forKey: .filterBatch) ?? 40
         summaryBatch = try c.decodeIfPresent(Int.self, forKey: .summaryBatch) ?? 4
+        maxAgeDays = try c.decodeIfPresent(Int.self, forKey: .maxAgeDays) ?? 7
         maxDigestLinks = try c.decodeIfPresent(Int.self, forKey: .maxDigestLinks) ?? 10
         fetchTimeout = try c.decodeIfPresent(Int.self, forKey: .fetchTimeout) ?? 20
         llmTimeout = try c.decodeIfPresent(Int.self, forKey: .llmTimeout) ?? 120

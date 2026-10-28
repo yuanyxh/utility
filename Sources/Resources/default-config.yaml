@@ -300,6 +300,7 @@ rss:
     articleMaxChars: 12000
     filterBatch: 40
     summaryBatch: 4
+    maxAgeDays: 7         # only items published in the last N days; 0 = no limit
     maxDigestLinks: 10
     fetchTimeout: 20
     llmTimeout: 120
