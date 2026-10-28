@@ -192,6 +192,9 @@ Needs Screen Recording permission.
 | `utility rss --unread` | list unread as JSON |
 | `utility rss --mark-read <id>` | mark one read |
 | `utility rss --mark-all-read` | mark everything read |
+| `utility rss --digest` | run the daily digest now (fetch → filter → summarize → archive) |
+| `utility rss --dry-run` | run filtering only, write nothing |
+| `utility rss --date YYYY-MM-DD` | digest date, defaults to today |
 
 **Settings**
 
