@@ -54,13 +54,13 @@ public final class NotificationManager: NSObject {
     private func subscribeToEvents() {
         EventBus.shared.subscribe(AppEvent.notify) { [weak self] payload in
             guard let self, let note = payload as? NotificationPayload else { return }
-            post(title: note.title, body: note.body)
+            post(title: note.title, body: note.body, sessionID: note.sessionID)
         }
     }
 
     // MARK: - Post (private)
 
-    private func post(title: String, body: String) {
+    private func post(title: String, body: String, sessionID: String?) {
         guard ConfigManager.shared.config.notifications.enabled else {
             debugLog("[Notify] Dropped (notifications disabled): \(title)")
             return
@@ -75,6 +75,7 @@ public final class NotificationManager: NSObject {
             note.informativeText = body
             note.soundName = NSUserNotificationDefaultSoundName
             note.deliveryDate = Date()
+            if let sessionID { note.userInfo = ["sessionID": sessionID] }
             NSUserNotificationCenter.default.scheduleNotification(note)
         #else
             guard granted else {
@@ -85,6 +86,7 @@ public final class NotificationManager: NSObject {
             content.title = title
             content.body = body
             content.sound = .default
+            if let sessionID { content.userInfo = ["sessionID": sessionID] }
             let request = UNNotificationRequest(
                 identifier: UUID().uuidString, content: content, trigger: nil,
             )
@@ -105,6 +107,14 @@ public final class NotificationManager: NSObject {
         ) -> Bool {
             true
         }
+
+        public func userNotificationCenter(
+            _: NSUserNotificationCenter,
+            didActivate notification: NSUserNotification,
+        ) {
+            guard let sessionID = notification.userInfo?["sessionID"] as? String else { return }
+            EventBus.shared.publish(AppEvent.terminalOpenSession, payload: sessionID)
+        }
     }
 #else
     extension NotificationManager: UNUserNotificationCenterDelegate {
@@ -114,6 +124,19 @@ public final class NotificationManager: NSObject {
             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void,
         ) {
             completionHandler([.banner, .sound])
+        }
+
+        public func userNotificationCenter(
+            _: UNUserNotificationCenter,
+            didReceive response: UNNotificationResponse,
+            withCompletionHandler completionHandler: @escaping () -> Void,
+        ) {
+            if let sessionID = response.notification.request.content
+                .userInfo["sessionID"] as? String
+            {
+                EventBus.shared.publish(AppEvent.terminalOpenSession, payload: sessionID)
+            }
+            completionHandler()
         }
     }
 #endif

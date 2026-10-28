@@ -13,6 +13,37 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
             }
             super.keyDown(with: event)
         }
+
+        /// Paste at the visible area when the caret is off-screen, then keep
+        /// the scroll position: pasting at an off-screen caret jumps far away.
+        override func paste(_ sender: Any?) {
+            moveCaretIntoViewIfNeeded()
+            let origin = visibleRect.origin
+            super.paste(sender)
+            scroll(origin)
+            if let scrollView = enclosingScrollView {
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
+
+        private func moveCaretIntoViewIfNeeded() {
+            guard let layout = layoutManager, let container = textContainer else { return }
+            let caret = selectedRange()
+            let glyphs = layout.glyphRange(forCharacterRange: caret, actualCharacterRange: nil)
+            var caretRect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            let inset = textContainerOrigin
+            caretRect.origin.x += inset.x
+            caretRect.origin.y += inset.y
+            let visible = visibleRect
+            guard !visible.intersects(caretRect) else { return }
+            let point = NSPoint(x: visible.minX + 2, y: visible.minY + 2)
+            let containerPoint = NSPoint(x: point.x - inset.x, y: point.y - inset.y)
+            let glyph = layout.glyphIndex(for: containerPoint, in: container)
+            let index = layout.characterIndexForGlyph(at: glyph)
+            if index != NSNotFound {
+                setSelectedRange(NSRange(location: index, length: 0))
+            }
+        }
     }
 
     private static let editorFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -33,6 +64,8 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
             backing: .buffered, defer: false,
         )
         panel.title = L10n.Config.editorTitle
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.backgroundColor = VSTheme.windowBackground
         panel.level = .floating
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -40,9 +73,16 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         panel.minSize = NSSize(width: 520, height: 360)
 
         super.init(window: panel)
+        MainActor.assumeIsolated {
+            AppWindowRegistry.register(panel)
+        }
         setupUI()
         refreshTitles()
         textView.onCommandEnter = { [weak self] in self?.commit() }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onWindowBecameKey),
+            name: NSWindow.didBecomeKeyNotification, object: panel,
+        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
@@ -77,6 +117,8 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = VSTheme.windowBackground
 
         textView.frame = NSRect(x: 0, y: 0, width: 720, height: 540)
         textView.minSize = .zero
@@ -91,6 +133,10 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
             width: 0, height: CGFloat.greatestFiniteMagnitude,
         )
         textView.font = Self.editorFont
+        textView.backgroundColor = VSTheme.windowBackground
+        textView.textColor = VSTheme.editorText
+        textView.insertionPointColor = VSTheme.terminalCaret
+        textView.selectedTextAttributes = [.backgroundColor: VSTheme.terminalSelection]
         textView.textContainerInset = NSSize(width: 8, height: 8)
         textView.isRichText = false
         textView.allowsUndo = true
@@ -104,19 +150,21 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         scrollView.documentView = textView
 
         statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = VSTheme.secondaryText
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         hintLabel.font = .systemFont(ofSize: 11)
-        hintLabel.textColor = .tertiaryLabelColor
+        hintLabel.textColor = VSTheme.secondaryText
         hintLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         let footer = NSStackView(views: [statusLabel, hintLabel])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        footer.wantsLayer = true
+        footer.layer?.backgroundColor = VSTheme.sidebarBackground.cgColor
         footer.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [scrollView, footer])
@@ -141,12 +189,19 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         refreshTitles()
     }
 
+    @objc private func onWindowBecameKey() {
+        window?.makeFirstResponder(textView)
+    }
+
     // MARK: - Load / Save
 
     private func loadFromDisk() {
         let text = (try? String(contentsOf: AppPaths.configFile, encoding: .utf8)) ?? ""
         textView.string = text
         lastLoadedText = text
+        // `string` leaves the caret at EOF; align it with the visible top.
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
         applyHighlight()
     }
 
@@ -164,7 +219,7 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         let text = storage.string
         let base: [NSAttributedString.Key: Any] = [
             .font: Self.editorFont,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: VSTheme.editorText,
         ]
         // Keep attribute edits off the undo stack.
         let undo = textView.undoManager
@@ -184,11 +239,11 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
 
     private func color(for kind: YAMLTokenKind) -> NSColor {
         switch kind {
-        case .comment: .secondaryLabelColor
-        case .key: .systemBlue
-        case .string: .systemRed
-        case .scalar: .systemPurple
-        case .punctuation: .systemTeal
+        case .comment: VSTheme.syntaxComment
+        case .key: VSTheme.syntaxKey
+        case .string: VSTheme.syntaxString
+        case .scalar: VSTheme.syntaxNumber
+        case .punctuation: VSTheme.syntaxPunctuation
         }
     }
 
@@ -197,11 +252,11 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         do {
             try ConfigManager.shared.apply(rawText: text)
             lastLoadedText = text
-            setStatus(L10n.Config.editorSaved, color: .secondaryLabelColor)
+            setStatus(L10n.Config.editorSaved, color: VSTheme.success)
             onApplied()
         } catch {
             debugLog("[ConfigEditor] validation failed: \(error)")
-            setStatus(L10n.Config.editorInvalid(message: error.localizedDescription), color: .systemRed)
+            setStatus(L10n.Config.editorInvalid(message: error.localizedDescription), color: VSTheme.error)
             presentValidationAlert(error)
         }
     }

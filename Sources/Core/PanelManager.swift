@@ -52,15 +52,35 @@ public final class PanelManager {
         let nextPanel: PanelProtocol? = (idx ?? 0) > 0 ? stack[(idx ?? 0) - 1] : nil
         lock.unlock()
 
-        if nextPanel != nil {
-            cgEventPaste()
-        } else {
-            schedulePaste(attempts: 9)
-        }
-
         remove(panel.panelID)
         panel.closePanel()
-        hideIfEmpty()
+        if nextPanel != nil {
+            cgEventPaste()
+            hideIfEmpty()
+        } else {
+            finishPaste()
+        }
+    }
+
+    /// Paste into the tool window when staying in-app, else into the previous app.
+    private func finishPaste() {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if AppWindowRegistry.hasVisibleWindow, NSApplication.shared.isActive,
+                   let target = AppWindowRegistry.frontmostWindow
+                {
+                    target.makeKeyAndOrderFront(nil)
+                    NSApp.sendAction(
+                        #selector(NSText.paste(_:)), to: target.firstResponder, from: nil,
+                    )
+                    return
+                }
+                if !AppWindowRegistry.hasVisibleWindow {
+                    NSApplication.shared.hide(nil)
+                }
+                schedulePaste(attempts: 9)
+            }
+        }
     }
 
     // MARK: - State
@@ -83,9 +103,19 @@ public final class PanelManager {
 
     private func hideIfEmpty() {
         lock.lock()
-        defer { lock.unlock() }
-        if stack.isEmpty {
-            DispatchQueue.main.async {
+        let empty = stack.isEmpty
+        lock.unlock()
+        guard empty else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                // Keep persistent tool windows visible; hiding would take them
+                // away when paste targets the previous app.
+                if AppWindowRegistry.hasVisibleWindow {
+                    if NSApplication.shared.isActive {
+                        AppWindowRegistry.frontmostWindow?.makeKeyAndOrderFront(nil)
+                    }
+                    return
+                }
                 NSApplication.shared.hide(nil)
             }
         }

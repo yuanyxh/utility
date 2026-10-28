@@ -31,6 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Force-initialize PanelManager (registers EventBus subscriptions)
         _ = PanelManager.shared
         KeyDispatcher.shared.start()
+        MainActor.assumeIsolated {
+            EditingShortcutRouter.install()
+        }
         TaskScheduler.shared.start()
 
         // Subscribe to config reload to re-evaluate the MCP service + summary task
@@ -62,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         MCPProcessManager.shared.stop()
         TokenProxyManager.shared.stop()
         menuBar.terminateAllTasks()
+        MainActor.assumeIsolated {
+            TerminalManager.shared.shutdown()
+        }
     }
 
     /// Start MCP Python server if enabled in config.
@@ -207,6 +213,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             guard let self else { return }
             let event = knowledgePanel.isPanelVisible ? PanelEvent.requestClose : PanelEvent.requestShow
             EventBus.shared.publish(event, payload: knowledgePanel)
+        }
+
+        if config.terminal.enabled {
+            hotkeyManager.register(hotkey: config.terminal.hotkey, id: "term") {
+                Task { @MainActor in
+                    TerminalManager.shared.toggleWindow()
+                }
+            }
         }
 
         hotkeyManager.register(hotkey: config.translation.hotkeyOCR, id: "ocrt") { [weak self] in

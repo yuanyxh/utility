@@ -4,6 +4,7 @@ import Foundation
 struct NotificationPayload {
     let title: String
     let body: String
+    var sessionID: String?
 }
 
 /// App-level event enum
@@ -11,6 +12,7 @@ enum AppEvent: String, Hashable, CaseIterable {
     case configDidLoad
     case notify // payload: NotificationPayload
     case networkSpeedUpdated
+    case terminalOpenSession // payload: session id
 }
 
 /// Panel events — pub/sub string keys, the payload carries parameters

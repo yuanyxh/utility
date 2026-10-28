@@ -302,6 +302,20 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 | menu bar | shows up/down throughput for active interfaces (`0.00M` when offline) |
 | `Cmd`-drag | reposition |
 
+### Multi-terminal
+
+`option+space` shows or hides the terminal window (change `terminal.hotkey`; restart required).
+
+| Action | Effect |
+|---|---|
+| `+` (top-left) | New terminal |
+| Click a row | Switch session |
+| `×` on a row | Close the session and end its process |
+| Process exit | Row is removed |
+| Unread badge | Red count on the right; clicking the notification jumps to that session |
+
+Backend defaults to `auto`: tmux first, then the system screen, then plain PTY. With tmux/screen, sessions keep running after the app quits and reattach on the next open; `local` ends them with the app.
+
 ### Menu bar
 
 ```mermaid

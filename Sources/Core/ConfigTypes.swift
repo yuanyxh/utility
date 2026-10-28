@@ -38,6 +38,7 @@ public struct AppConfig: Codable {
     var runtime: RuntimeConfig = .init()
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
+    var terminal: TerminalConfig = .init()
 
     public init() {}
 
@@ -56,6 +57,37 @@ public struct AppConfig: Codable {
         runtime = (try? c.decodeIfPresent(RuntimeConfig.self, forKey: .runtime)) ?? .init()
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
+        terminal = (try? c.decodeIfPresent(TerminalConfig.self, forKey: .terminal)) ?? .init()
+    }
+}
+
+// MARK: - Terminal
+
+public struct TerminalConfig: Codable {
+    var enabled: Bool = true
+    var hotkey: String = "option+space"
+    /// auto | tmux | screen | local
+    var backend: String = "auto"
+    /// Empty = $SHELL
+    var shell: String = ""
+    /// Empty = home directory
+    var workingDirectory: String = ""
+    var fontSize: Double = 12
+    var maxSessions: Int = 20
+    var restoreSessions: Bool = true
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+space"
+        backend = try c.decodeIfPresent(String.self, forKey: .backend) ?? "auto"
+        shell = try c.decodeIfPresent(String.self, forKey: .shell) ?? ""
+        workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory) ?? ""
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? 12
+        maxSessions = try c.decodeIfPresent(Int.self, forKey: .maxSessions) ?? 20
+        restoreSessions = try c.decodeIfPresent(Bool.self, forKey: .restoreSessions) ?? true
     }
 }
 

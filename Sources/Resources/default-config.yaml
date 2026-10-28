@@ -287,6 +287,19 @@ tasks: []
   #     type: sh
   #     command: rm -rf /tmp/myapp-*
 
+# ---------- Terminal ----------
+# Hotkey toggles the terminal window; changes require an app restart.
+terminal:
+  enabled: true
+  hotkey: option+space
+  # auto = tmux > screen > local; local sessions end when the app quits.
+  backend: auto
+  shell: ''            # empty = $SHELL
+  workingDirectory: '' # empty = home directory
+  fontSize: 12
+  maxSessions: 20
+  restoreSessions: true
+
 # ---------- RSS ----------
 rss:
   feeds: []
