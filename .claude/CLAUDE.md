@@ -50,8 +50,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 热键只在启动时 `registerAllHotkeys()` 注册，配置重载不重注册 —— 改热键要重启 app
 - Stage 拖放检测用 mouseDown/mouseUp 的 changeCount 快照对比，不能只看 hasContent（`.drag` 残留会误判）
 - 请求封装类必须用 `RequestConfig` struct 收束全部控制参数，不拆成单独函数参数
-- i18n 唯一数据源是 `Sources/Resources/<lang>.json`；Swift 访问器由 `scripts/gen-l10n.py` 生成到 `L10nKeys.swift`（禁止手改），Python 生成 `l10n_catalog.py`；占位符只用 `{name}` / `{name:d}` / `{name:.Nf}`（禁止 `%@`/`%ld`/`String(format:)`）；改 JSON 后必须重新生成，打包前跑 `gen-l10n.py --check` 与 `check-l10n-contract.py`；运行时切语言用 `refreshAllTitles()` 模式
-- Python 侧 `l10n_catalog.py` 在 agent-gateway 仓：`gen-l10n.py --python-out <gateway>/src/agent_gateway/core/l10n_catalog.py` 生成后才算同步（生成器不做折行，生成后在 gateway 仓跑 `ruff format`）
+- i18n 唯一数据源是 `Sources/Resources/<lang>.json`；Swift 访问器由 `scripts/gen-l10n.py` 生成到 `L10nKeys.swift`（禁止手改）；占位符只用 `{name}` / `{name:d}` / `{name:.Nf}`（禁止 `%@`/`%ld`/`String(format:)`）；改 JSON 后必须重新生成，打包前跑 `gen-l10n.py --check` 与 `check-l10n-contract.py`；运行时切语言用 `refreshAllTitles()` 模式
+- Python 侧语言包由 agent-gateway 自持（`src/agent_gateway/locales/*.json`），本仓不生成、不校验
 
 ### 符号提取（Scanner）
 - 全量扫描写入必须是**单事务原子替换**（`replaceScanResults()`）；`clearAll()` 已删除，**禁止重新引入**

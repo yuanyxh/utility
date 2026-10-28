@@ -140,13 +140,13 @@ bash scripts/run-tests.sh
 - 校验器实现放子包；新增校验脚本同样建包，根部入口只做 import + `main()`
 - 子包内路径常量：`SCRIPTS_DIR = dirname(dirname(__file__))`、`ROOT = dirname(SCRIPTS_DIR)`
 - 引用 Python 源码的校验（`router_contract`、`config_parity`、web-search、向量缓存不变式）已随源码迁往 `agent-gateway` 仓的 `scripts/`
-- `gen-l10n.py` 只写 `L10nKeys.swift`；Python 目录用 `--python-out` 显式指定，生成后在 gateway 仓跑 `ruff format`（生成器不做行宽折行）
+- `gen-l10n.py` 只写 `L10nKeys.swift`；Python 侧语言包由 agent-gateway 自持（`locales/*.json`），本仓不再生成
 
 ### i18n
 - 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
 - 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换
-- Python 侧走同一目录生成的 `l10n_catalog.py` + `l10n.py`；`refreshAllTitles()` 模式刷新运行时语言
-- 命名空间分工：`mcp` / `proxy` 仅 Python；`rss` 为共享（Swift CLI 帮助 + Python 日报），由 `SHARED_NAMESPACES` 控制，两侧都会生成访问器
+- Python 侧自持 `locales/<lang>.json`，由 `l10n.py` 加载；`refreshAllTitles()` 模式刷新运行时语言
+- 本仓 JSON 只保留 Swift 用到的键；`mcp` / `proxy` 已随 RSS 上移全部迁到 gateway
 - 语言无关的路径/默认值常量（季度目录名、知识卡片目录名、Clash 节点名）两语言取同值，避免切换语言后路径漂移
 
 ### 代码内文本语言
@@ -215,11 +215,13 @@ bash scripts/run-tests.sh
 
 ### RSS 内置日报
 
-- 采集唯一实现是 `RSSManager.fetchAll()`（CLI `utility rss --fetch`）；`rss_daily.py` 只裸 SQL 读 `rss_item` 并回写 `is_read`，不重复实现抓取
-- 日报由内部任务 `rss-daily` 驱动（`AppDelegate.updateRSSDailyTask()`），`cron` 为空时注册 `manual` 模式；启用时直接 register，禁止先 unregister
-- `rss_filter` / `rss_digest` / `rss_summary` 三次 LLM 调用必须传 `extra_body={"thinking": {"type": "disabled"}}`：该 provider 不关闭思考时会耗尽 `max_tokens` 且单次调用可达数分钟
-- LLM 只返回 JSON；标题格式、来源方括号、归档路径全部由 `rss_render.py` 确定性拼装
-- 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报；LLM 未配置时退出码 1，不写空日报
+- 采集与编排同在宿主：`RSSManager.fetchAll()` 抓取，`RSSDigestService`（CLI `utility rss --digest`）跑完整日报，Python 侧不再有 `rss_daily`
+- 日报由内部任务 `rss-daily` 驱动（`AppDelegate.updateRSSDailyTask()`），cmd 直接执行宿主二进制 `rss --digest --fetch`；`cron` 为空时注册 `manual` 模式；启用时直接 register，禁止先 unregister
+- 抓正文与摘要走 gateway `/api/read`、`/api/summarize`；筛选、周刊拆解走 `/api/llm/chat`，提示词在 `Sources/Resources/prompts/<feature>.<lang>.md`（业务层持有，SwiftPM 会扁平化资源目录，语言写在文件名里）
+- 三次 LLM 调用必须 `disableThinking` + `extra_body={"thinking":{"type":"disabled"}}`：不关闭思考会耗尽 `max_tokens`
+- LLM 只返回 JSON；标题格式、来源方括号、归档路径由 `RSSDigestRender` 确定性拼装
+- 同一天重跑按去重键**追加**到当天归档（`mergeWithExisting`）：文章用 URL 归一化，过滤项用 URL（无 URL 时用标题）；空结果不会清空已有日报与过滤记录
+- 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报
 
 ### MCP 服务
 - 入口模块全部在 `agent-gateway` 仓（`agent_gateway.services.{mcp.server,summarize.summarize,proxy.token_proxy}` 等），宿主按模块名 `-c "from <module> import main; main()"` 启动；模块名常量见 `Sources/Core/Constants.swift` 的 `GatewayEntry`，启动参数与 venv 定位统一由 `PythonScriptRunner` 提供
