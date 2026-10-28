@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Check the i18n catalog contract shared by Swift and Python.
+"""Check the Swift-side i18n contract.
 
-The JSON files under `Sources/Resources/` are the only source of truth; the typed Swift API and
-the Python catalog are generated from them. This script guards the seams that a generator alone
-cannot see:
+`Sources/Resources/<lang>.json` is the only source of truth for host UI copy; the typed
+accessors in `Sources/Core/L10nKeys.swift` are generated from it. This script guards the seams
+a generator alone cannot see:
 
   - every language has the same keys and the same typed placeholders as the baseline
-  - both generated files are current (`gen-l10n.py --check`)
+  - the generated file is current (`gen-l10n.py --check`)
   - Swift never bypasses the generated accessors (`L10n.string/render/format` is private-by-convention)
-  - Python never hardcodes a language tag outside the runtime/generated modules
-  - `t("literal.key")` calls reference a key that exists
-  - keys nobody references (warning only — translation can land before the call site)
+  - every key is referenced by at least one accessor (warning only)
 
-The Python side lives in the agent-gateway repo; pass --python-root to check it as well
-(otherwise only the Swift side is verified).
+The Python side (agent-gateway) owns its own locale files, so nothing here reaches across repos.
 
 Usage (from the project root): python3 scripts/check-l10n-contract.py
 Exit 0 = all passed; 1 = a contract violation.
@@ -21,9 +18,6 @@ Exit 0 = all passed; 1 = a contract violation.
 
 from __future__ import annotations
 
-import argparse
-import ast
-import importlib.util
 import json
 import os
 import re
@@ -36,10 +30,6 @@ SWIFT_SOURCES = os.path.join(ROOT, "Sources")
 GEN = os.path.join(ROOT, "scripts", "gen-l10n.py")
 L10N_RUNTIME = os.path.join(SWIFT_SOURCES, "Core", "L10n.swift")
 L10N_KEYS = os.path.join(SWIFT_SOURCES, "Core", "L10nKeys.swift")
-#: Set by --python-root; None = Python side not checked (its sources live in agent-gateway).
-PY_SOURCES = None
-PY_RUNTIME = None
-PY_CATALOG = None
 
 BASELINE = "zh-Hans"
 LANG_FILE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*\.json$")
@@ -48,13 +38,6 @@ PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(?::(\.\d+f|d))?\}")
 SWIFT_BYPASS_RE = re.compile(r"\bL10n\.(?:string|render|format)\s*\(")
 SWIFT_ACRONYMS = {"rss": "RSS", "cli": "CLI"}
 SWIFT_NAME_ACRONYMS = {"url": "URL"}
-
-
-def load_generator():
-    spec = importlib.util.spec_from_file_location("gen_l10n", GEN)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def load_languages() -> dict[str, dict[str, str]]:
@@ -73,17 +56,6 @@ def placeholders(text: str) -> dict[str, str]:
         spec = match.group(2)
         found[match.group(1)] = "int" if spec == "d" else "double" if spec else "string"
     return found
-
-
-def catalog_fingerprint(path: str) -> str | None:
-    """`FINGERPRINT` constant of a generated Python catalog, without importing it."""
-    for node in ast.parse(read(path), filename=path).body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "FINGERPRINT":
-                return node.value.value if isinstance(node.value, ast.Constant) else None
-    return None
 
 
 def swift_accessor(key: str) -> str:
@@ -110,46 +82,7 @@ def read(path: str) -> str:
         return f.read()
 
 
-def python_language_constants(path: str) -> list[tuple[int, str]]:
-    """Language tags written as a table key or as a fallback constant.
-
-    Only these two shapes are checked: they are how the duplicated tables were written. A plain
-    string such as `WIKI_LANGS = ("zh", "en")` is search behaviour, not UI copy, and is not flagged.
-    """
-    tree = ast.parse(read(path), filename=path)
-    hits: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Dict):
-            for key in node.keys:
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    hits.append((key.lineno, key.value))
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            value = node.value
-            if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
-                continue
-            for target in targets:
-                if isinstance(target, ast.Name) and re.fullmatch(
-                    r"(FALLBACK|BASELINE)_LANG", target.id
-                ):
-                    hits.append((value.lineno, value.value))
-    return hits
-
-
 def main() -> int:
-    global PY_SOURCES, PY_RUNTIME, PY_CATALOG
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--python-root",
-        metavar="PATH",
-        help="agent-gateway src/agent_gateway, enables the Python-side assertions",
-    )
-    args = parser.parse_args()
-    if args.python_root:
-        PY_SOURCES = os.path.abspath(args.python_root)
-        PY_RUNTIME = os.path.join(PY_SOURCES, "core", "l10n.py")
-        PY_CATALOG = os.path.join(PY_SOURCES, "core", "l10n_catalog.py")
-
     violations: list[str] = []
     warnings: list[str] = []
     languages = load_languages()
@@ -175,7 +108,7 @@ def main() -> int:
                     f"{lang}: {key}: placeholders {placeholders(value)} != {baseline_ph.get(key)}"
                 )
 
-    # Group 2: generated files are current.
+    # Group 2: the generated file is current.
     result = subprocess.run(
         [sys.executable, GEN, "--check"], capture_output=True, text=True, check=False
     )
@@ -193,78 +126,15 @@ def main() -> int:
                     f"{os.path.relpath(path, ROOT)}:{lineno}: bypasses the generated accessors"
                 )
 
-    # Group 4: Python must not hardcode a language tag outside runtime/generated modules.
-    tags = set(languages)
-    for path in iter_files(PY_SOURCES, ".py") if PY_SOURCES else ():
-        if path in (PY_RUNTIME, PY_CATALOG):
-            continue
-        for lineno, value in python_language_constants(path):
-            if value in tags:
-                violations.append(
-                    f"{os.path.relpath(path, ROOT)}:{lineno}: hardcoded language tag {value!r}"
-                )
-
-    # Group 5: Python literal keys exist. Parameter descriptions are fixed English and
-    # are not checked against this catalog.
-    for path in iter_files(PY_SOURCES, ".py") if PY_SOURCES else ():
-        if path == PY_CATALOG:
-            continue
-        tree = ast.parse(read(path), filename=path)
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "t"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-            ):
-                continue
-            key = node.args[0].value
-            if key not in baseline:
-                violations.append(
-                    f"{os.path.relpath(path, ROOT)}:{node.lineno}: t({key!r}) is not in the catalog"
-                )
-
-    # Group 6: unreferenced keys (warning only).
+    # Group 4: unreferenced keys (warning only — translation can land before the call site).
     swift_usage = "\n".join(
         read(path)
         for path in iter_files(SWIFT_SOURCES, ".swift")
         if path not in (L10N_RUNTIME, L10N_KEYS)
     )
-    python_usage = "\n".join(
-        read(path) for path in (iter_files(PY_SOURCES, ".py") if PY_SOURCES else ())
-        if path != PY_CATALOG
-    )
-    generator = load_generator()
-    python_namespaces = generator.PYTHON_NAMESPACES | generator.SHARED_NAMESPACES
-    shared_namespaces = generator.SHARED_NAMESPACES
     for key in sorted(baseline):
-        namespace = key.split(".", 1)[0]
-        if not PY_SOURCES and namespace in python_namespaces:
-            continue  # cannot see the Python side; skipping beats a wall of false warnings
-        if namespace in python_namespaces:
-            py_ref = re.search(re.escape(key).join(("[\"']", "[\"']")), python_usage)
-            if namespace in shared_namespaces:
-                # Either runtime may own a shared key; silence only when both sides ignore it.
-                swift_ref = re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage)
-                if not (py_ref or swift_ref):
-                    warnings.append(f"unreferenced key: {key}")
-            elif not py_ref:
-                warnings.append(f"unreferenced Python key: {key}")
-        elif not re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage):
-            warnings.append(f"unreferenced Swift key: {key} ({swift_accessor(key)})")
-
-    # Group 7: the Python catalog must come from these JSON files. Its generator lives in this
-    # repo, so a drift is invisible until a key is rendered at runtime (MissingText).
-    if PY_CATALOG and os.path.isfile(PY_CATALOG):
-        expected = generator.fingerprint(languages)
-        actual = catalog_fingerprint(PY_CATALOG)
-        if actual != expected:
-            violations.append(
-                f"{os.path.relpath(PY_CATALOG, ROOT)}: FINGERPRINT {actual} != current JSON {expected} "
-                "(regenerate with gen-l10n.py --python-out, then ruff format)"
-            )
+        if not re.search(re.escape(swift_accessor(key)) + r"\b", swift_usage):
+            warnings.append(f"unreferenced key: {key} ({swift_accessor(key)})")
 
     for message in violations:
         print(f"[l10n] violation: {message}", file=sys.stderr)

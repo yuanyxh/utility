@@ -14,13 +14,7 @@ python3 scripts/gen-l10n.py --check
 
 echo ""
 echo "=== 3/4 i18n contract ==="
-GATEWAY_SRC="${GATEWAY_REPO:-$(cd .. && pwd)/agent-gateway}/src/agent_gateway"
-if [ -d "$GATEWAY_SRC" ]; then
-    python3 scripts/check-l10n-contract.py --python-root "$GATEWAY_SRC"
-else
-    echo "跳过 Python 侧断言（未找到 $GATEWAY_SRC）"
-    python3 scripts/check-l10n-contract.py
-fi
+python3 scripts/check-l10n-contract.py
 
 echo ""
 echo "=== 4/4 入口契约 ==="
