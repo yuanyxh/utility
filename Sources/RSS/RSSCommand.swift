@@ -2,8 +2,23 @@ import ArgumentParser
 import Foundation
 
 /// RSS command-line interface
-/// Usage: utility rss --fetch / --unread / --mark-read <id>
+/// Usage: utility rss --fetch / --unread / --mark-read <id> / --digest
 struct RSSCommand: ParsableCommand {
+    /// Run one async action to completion: print the result, exit 0; on error exit 1.
+    private func runAsync(_ work: @escaping () async throws -> String) {
+        Task {
+            do {
+                let output = try await work()
+                print(output)
+                Darwin.exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("\(error)\n".utf8))
+                Darwin.exit(1)
+            }
+        }
+        RunLoop.main.run()
+    }
+
     static let configuration = CommandConfiguration(
         commandName: "rss",
         abstract: L10n.RSS.helpHeader,
@@ -21,19 +36,34 @@ struct RSSCommand: ParsableCommand {
     @Flag(name: .long, help: ArgumentHelp(L10n.RSS.helpMarkAllRead))
     var markAllRead = false
 
+    @Flag(name: .long, help: ArgumentHelp(L10n.RSS.helpDigest))
+    var digest = false
+
+    @Flag(name: .long, help: ArgumentHelp(L10n.RSS.helpDryRun))
+    var dryRun = false
+
+    @Option(name: .long, help: ArgumentHelp(L10n.RSS.helpDate))
+    var date: String?
+
     mutating func run() throws {
-        if fetch {
-            Task {
-                do {
-                    let new = try await RSSManager.shared.fetchAll()
-                    print(L10n.RSS.fetchDone(count: new.count))
-                    Darwin.exit(0)
-                } catch {
-                    FileHandle.standardError.write(Data("\(error)\n".utf8))
-                    Darwin.exit(1)
-                }
+        if digest || dryRun {
+            let fetchFeeds = fetch
+            let previewOnly = dryRun
+            let digestDay = date
+            runAsync {
+                try await RSSDigestService.shared.run(
+                    fetch: fetchFeeds,
+                    dryRun: previewOnly,
+                    day: digestDay,
+                )
             }
-            RunLoop.main.run()
+        }
+
+        if fetch {
+            runAsync {
+                let new = try await RSSManager.shared.fetchAll()
+                return L10n.RSS.fetchDone(count: new.count)
+            }
         }
 
         if unread {

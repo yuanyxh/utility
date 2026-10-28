@@ -170,12 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             return
         }
 
-        let mcp = ConfigManager.shared.config.mcp
-        let overrides = PythonScriptRunner.taskEnvironmentOverrides(
-            memoryServerURL: HTTP.localBaseURL(port: mcp?.port ?? 0),
-            excludeTags: mcp?.excludeTags.joined(separator: ",") ?? "",
-        )
-        let cmd = PythonScriptRunner.shellCommand(entry: GatewayEntry.rssDaily, environmentOverrides: overrides)
+        guard let executable = Bundle.main.executablePath else {
+            TaskScheduler.shared.unregisterInternalTask(named: "rss-daily")
+            debugLog("[RSS] executable path unavailable, daily task disabled")
+            return
+        }
+        let cmd = "\(PythonScriptRunner.shellQuote(executable)) rss --digest --fetch"
 
         let cron = daily.cron.trimmingCharacters(in: .whitespacesAndNewlines)
         let task = TaskConfig(

@@ -28,7 +28,7 @@ enum PythonScriptRunner {
         .path
 
     private static func resolveVenvPath() -> String {
-        let venvDir = self.venvDir
+        let venvDir = venvDir
 
         // Detect the system Python version (e.g. python3.12)
         if let version = detectPythonVersion() {
@@ -153,9 +153,6 @@ enum PythonScriptRunner {
             for (key, value) in logEnvironment() {
                 env[key] = value
             }
-            for (key, value) in rssDailyEnvironment() {
-                env[key] = value
-            }
 
             // mcp path config (token_proxy also needs NOTES_DIR, so it lives in the common layer)
             if let notesDir = resolvedNotesDir() {
@@ -165,18 +162,28 @@ enum PythonScriptRunner {
         for (key, value) in languageEnvironment() {
             env[key] = value
         }
-        for (key, value) in utilityCLIEnvironment() {
-            env[key] = value
-        }
         // Python shells out to this binary for WKWebView-backed search.
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             env["UTILITY_BIN"] = binary
+            env["GATEWAY_SEARCH_PROVIDERS"] = gatewaySearchProviders(binary: binary)
         }
         // Development without installing the wheel: point Python at the sibling checkout.
         if let devRoot = GatewayResources.developmentSourceRoot() {
             env["PYTHONPATH"] = devRoot
         }
         return env
+    }
+
+    /// Search providers injected into the gateway. The gateway never discovers this binary itself.
+    private static func gatewaySearchProviders(binary: String) -> String {
+        let command = [binary, "websearch", "--query", "{q}", "--limit", "{limit}"]
+        let payload: [String: Any] = [
+            "google": ["command": command, "timeout": 25]
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8)
+        else { return "" }
+        return json
     }
 
     // MARK: - Cross-language env values (shared by the service process and `.sh` tasks)
@@ -270,21 +277,6 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)
     }
 
-    /// RSS daily task config (JSON). Config-surface, so `runtime.selfManaged` skips it.
-    static func rssDailyEnvironment() -> [String: String] {
-        guard let data = try? JSONEncoder().encode(ConfigManager.shared.config.rss.daily),
-              let json = String(data: data, encoding: .utf8)
-        else { return [:] }
-        return [EnvKeys.rssDailyConfig: json]
-    }
-
-    /// Executable path consumed by `rss_daily._cli_path()`. Runtime-only, so both injection points
-    /// must add it unconditionally -- `selfManaged` only skips config-surface env.
-    static func utilityCLIEnvironment() -> [String: String] {
-        guard let executable = Bundle.main.executablePath else { return [:] }
-        return [EnvKeys.utilityCLIPath: executable]
-    }
-
     /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
     static func resolvedNotesDir() -> String? {
         guard let mcp = ConfigManager.shared.config.mcp else { return nil }
@@ -318,16 +310,10 @@ enum PythonScriptRunner {
             for (key, value) in logEnvironment() {
                 overrides[key] = value
             }
-            for (key, value) in rssDailyEnvironment() {
-                overrides[key] = value
-            }
             if let notesDir = resolvedNotesDir() { overrides["NOTES_DIR"] = notesDir }
             overrides["SUMMARY_EXCLUDE_TAGS"] = excludeTags
         }
         for (key, value) in languageEnvironment() {
-            overrides[key] = value
-        }
-        for (key, value) in utilityCLIEnvironment() {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
@@ -335,6 +321,7 @@ enum PythonScriptRunner {
         overrides["MEMORY_SERVER_URL"] = memoryServerURL
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
             overrides["UTILITY_BIN"] = binary
+            overrides["GATEWAY_SEARCH_PROVIDERS"] = gatewaySearchProviders(binary: binary)
         }
         if let devRoot = GatewayResources.developmentSourceRoot() {
             overrides["PYTHONPATH"] = devRoot

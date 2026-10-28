@@ -43,9 +43,78 @@ final class MCPClient {
         return try await post("/api/project/exports", body: body)
     }
 
+    // MARK: - Gateway capabilities
+
+    /// Read a page as Markdown through the gateway's local-first extractor.
+    func readMarkdown(
+        url: String,
+        maxChars: Int = 0,
+        useProxy: Bool = false,
+        timeout: TimeInterval = 60
+    ) async throws -> ReadResult {
+        try await postJSON(
+            "/api/read",
+            body: ["url": url, "max_chars": maxChars, "use_proxy": useProxy],
+            timeout: timeout
+        )
+    }
+
+    /// Single-turn chat; business prompts stay on the host side.
+    func chat(
+        prompt: String,
+        system: String = "",
+        maxTokens: Int = 1024,
+        timeout: TimeInterval = 120,
+        disableThinking: Bool = false,
+        extraBody: [String: Any] = [:],
+        label: String = "host_chat"
+    ) async throws -> String {
+        let result: ChatResult = try await postJSON(
+            "/api/llm/chat",
+            body: [
+                "prompt": prompt,
+                "system": system,
+                "max_tokens": maxTokens,
+                "timeout": timeout,
+                "disable_thinking": disableThinking,
+                "extra_body": extraBody,
+                "label": label,
+            ],
+            timeout: timeout + 30
+        )
+        guard result.ok, let text = result.text else {
+            throw MCPError.serverError(200, result.error ?? "chat failed")
+        }
+        return text
+    }
+
     // MARK: - Internal
 
+    private func postJSON<T: Decodable>(
+        _ endpoint: String,
+        body: [String: Any],
+        timeout: TimeInterval
+    ) async throws -> T {
+        try await send(
+            endpoint,
+            data: JSONSerialization.data(withJSONObject: body),
+            timeout: timeout
+        )
+    }
+
     private func post<T: Decodable>(_ endpoint: String, body: RequestBody) async throws -> T {
+        try await send(
+            endpoint,
+            data: JSONEncoder().encode(body),
+            timeout: Self.requestTimeout
+        )
+    }
+
+    private func send<T: Decodable>(
+        _ endpoint: String,
+        data: Data,
+        timeout: TimeInterval
+    ) async throws -> T {
         guard let url = URL(string: baseURL + endpoint) else {
             throw MCPError.invalidURL(endpoint)
         }
@@ -53,21 +122,21 @@ final class MCPClient {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
-        req.timeoutInterval = Self.requestTimeout
+        req.httpBody = data
+        req.timeoutInterval = timeout
 
-        let (data, response) = try await session.data(for: req)
+        let (body, response) = try await session.data(for: req)
 
         guard let httpResp = response as? HTTPURLResponse else {
             throw MCPError.invalidResponse
         }
 
         guard httpResp.statusCode == 200 else {
-            let msg = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error ?? "unknown"
+            let msg = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.error ?? "unknown"
             throw MCPError.serverError(httpResp.statusCode, msg)
         }
 
-        return try decoder.decode(T.self, from: data)
+        return try decoder.decode(T.self, from: body)
     }
 }
 
@@ -132,6 +201,28 @@ struct ExportsResult: Decodable {
         let path: String
         let symbols: [ExportSymbol]
     }
+}
+
+struct ReadResult: Decodable {
+    let ok: Bool
+    let url: String?
+    let title: String?
+    let markdown: String?
+    let chars: Int?
+    let truncated: Bool?
+    let errorCode: String?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, url, title, markdown, chars, truncated, message
+        case errorCode = "error_code"
+    }
+}
+
+private struct ChatResult: Decodable {
+    let ok: Bool
+    let text: String?
+    let error: String?
 }
 
 // MARK: - Errors

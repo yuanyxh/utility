@@ -68,7 +68,6 @@ enum GatewayEntry {
     static let summarize = "agent_gateway.services.summarize.summarize"
     static let astExtractor = "agent_gateway.scanner.ast_extractor"
     static let knowledgeRefill = "agent_gateway.services.knowledge.knowledge_refill"
-    static let rssDaily = "agent_gateway.services.rss.rss_daily"
 }
 
 // MARK: - Python Subprocess Environment Variable Names
@@ -109,10 +108,6 @@ enum EnvKeys {
     /// Log rotation shared by Swift `debug.log` and every Python logger (`general.log*`).
     static let logMaxSize = "UTILITY_LOG_MAX_SIZE"
     static let logBackupCount = "UTILITY_LOG_BACKUP_COUNT"
-
-    /// RSS 日报配置（JSON，来自 `rss.daily`）与 app 自身可执行文件路径（供脚本调用 `rss --fetch`）。
-    static let rssDailyConfig = "RSS_DAILY_CONFIG"
-    static let utilityCLIPath = "UTILITY_CLI_PATH"
 }
 
 // MARK: - Shared Pasteboard Types
