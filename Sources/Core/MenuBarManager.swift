@@ -4,6 +4,7 @@ import ServiceManagement
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var reloadItem: NSMenuItem!
+    private var openConfigItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
     private var mcpMenuItem: NSMenuItem!
@@ -17,6 +18,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     /// 知识面板实例由 AppDelegate 注入 —— PanelManager 靠对象标识区分面板，不能有第二个实例。
     weak var knowledgePanel: PanelProtocol?
+    private var configEditor: ConfigEditorWindowController?
 
     override public init() {
         super.init()
@@ -57,6 +59,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         )
         reloadItem.target = self
         menu.addItem(reloadItem)
+
+        openConfigItem = NSMenuItem(
+            title: L10n.Menu.openConfig, action: #selector(openConfigEditor), keyEquivalent: "",
+        )
+        openConfigItem.target = self
+        menu.addItem(openConfigItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -563,6 +571,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     func refreshAllTitles() {
         reloadItem.title = L10n.Menu.reloadConfig
+        openConfigItem.title = L10n.Menu.openConfig
         launchAtLoginItem.title = L10n.Menu.launchAtLogin
         rssMenuItem.title = L10n.Menu.rss
         mcpMenuItem.title = mcpTitleText(MCPProcessManager.shared.state)
@@ -575,16 +584,28 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     @objc private func reloadConfig() {
         do {
             try ConfigManager.shared.reload()
-            cleanupOrphanProcesses()
-            refreshAllTitles()
-            refreshRSSItem()
-            refreshTasksItem()
+            finishConfigReload()
         } catch {
             debugLog("[MenuBar] Reload failed: \(error)")
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                 title: L10n.Notify.configReloadFailed, body: error.localizedDescription,
             ))
         }
+    }
+
+    @objc private func openConfigEditor() {
+        let editor = configEditor ?? ConfigEditorWindowController { [weak self] in
+            self?.finishConfigReload()
+        }
+        configEditor = editor
+        editor.show()
+    }
+
+    private func finishConfigReload() {
+        cleanupOrphanProcesses()
+        refreshAllTitles()
+        refreshRSSItem()
+        refreshTasksItem()
     }
 
     @objc private func clearClipboard() {

@@ -34,6 +34,17 @@ public final class ConfigManager {
         try load()
     }
 
+    /// Validates `rawText` as a complete config, writes it verbatim, then reloads.
+    /// Validation runs before the write, so a bad edit never replaces a working config.
+    public func apply(rawText: String) throws {
+        _ = try YAMLDecoder().decode(AppConfig.self, from: Data(rawText.utf8))
+        if !fileManager.fileExists(atPath: configDir.path) {
+            try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
+        }
+        try rawText.write(to: configFile, atomically: true, encoding: .utf8)
+        try load()
+    }
+
     /// Encodes the current config back to the config file (persists runtime changes).
     public func save() throws {
         let encoder = YAMLEncoder()
