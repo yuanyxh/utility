@@ -40,7 +40,16 @@ final class RSSDigestService {
         let (candidates, seen) = prefilter(items, history: history, filtered: &filtered)
         debugLog("[RSS] unread=\(items.count) candidates=\(candidates.count) prefiltered=\(filtered.count)")
 
-        let selected = await select(candidates, cfg: cfg, filtered: &filtered)
+        let (selected, llmResponded) = await select(candidates, cfg: cfg, filtered: &filtered)
+
+        // A dead LLM must not archive an empty digest and mark everything read.
+        guard llmResponded || dryRun || candidates.isEmpty else {
+            throw NSError(
+                domain: "RSSDigest",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "LLM unavailable; digest aborted"]
+            )
+        }
 
         if dryRun {
             let digests = selected.filter { $0.kind == "digest" }.count
@@ -110,8 +119,8 @@ final class RSSDigestService {
         _ candidates: [RSSItem],
         cfg: RSSDailyConfig,
         filtered: inout [RSSDigestRender.Filtered]
-    ) async -> [Entry] {
-        let decisions = await decide(candidates, cfg: cfg)
+    ) async -> (entries: [Entry], llmResponded: Bool) {
+        let (decisions, responded) = await decide(candidates, cfg: cfg)
         var selected: [Entry] = []
         for (index, item) in candidates.enumerated() {
             let decision = decisions[index] ?? (keep: true, kind: "article", reason: "")
@@ -129,7 +138,7 @@ final class RSSDigestService {
                 kind: decision.kind
             ))
         }
-        return selected
+        return (selected, responded)
     }
 
     /// Fetch bodies, summarize them, and keep only entries with a usable summary.
@@ -177,8 +186,12 @@ final class RSSDigestService {
 
     // MARK: - LLM steps
 
-    private func decide(_ items: [RSSItem], cfg: RSSDailyConfig) async -> [Int: (keep: Bool, kind: String, reason: String)] {
+    private func decide(
+        _ items: [RSSItem],
+        cfg: RSSDailyConfig
+    ) async -> (decisions: [Int: (keep: Bool, kind: String, reason: String)], responded: Bool) {
         var decisions: [Int: (keep: Bool, kind: String, reason: String)] = [:]
+        var responded = false
         let batch = max(1, cfg.filterBatch)
         var start = 0
         while start < items.count {
@@ -196,6 +209,7 @@ final class RSSDigestService {
                 cfg: cfg
             )
             if let entries = parsed?["items"] as? [[String: Any]] {
+                responded = true
                 for entry in entries {
                     guard let index = Self.intValue(entry["index"]), index >= 0, index < chunk.count else {
                         continue
@@ -214,7 +228,7 @@ final class RSSDigestService {
             }
             start += batch
         }
-        return decisions
+        return (decisions, responded)
     }
 
     private func summarize(_ entries: [Entry], cfg: RSSDailyConfig) async -> [String: SummaryPayload] {
