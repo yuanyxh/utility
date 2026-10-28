@@ -206,6 +206,19 @@ bash scripts/run-tests.sh
 - `mouseDown` 快照 changeCount → `mouseUp` 对比
 - `PasteboardImageTypes.all` 集中定义图片类型
 
+### 多终端
+- 后端 `auto` 顺序 tmux > screen > local；screen/tmux 会话在 App 退出后继续运行，`local` 随 App 结束
+- 会话必须在视图的 PTY 内用 `-S` 创建，禁止 `-dmS`：detached 会话固定 80x24，attach 后内容居中、尺寸错位
+- 创建 1s 后主动 SIGTERM 创建客户端，让 screen server 重挂 launchd（PPID=1）；否则 server 继承 App 的网络权限，`arp -a` 等返回空
+- ⚠️ **`screen -X` 只能在已 attached 或确认 detached 时发**：客户端刚死的窗口期内发命令会让 server 卡死，之后 attach 的客户端永远停在初始化前。`utf8 on` 因此只在 `prepareAttach` 里发，`launch` 中禁止再发
+- 附着看门狗：1.5s 未 Attached 就杀掉卡住的客户端重连，最多 2 次
+- 恢复会话先 `window.layoutIfNeeded()` 并把视图预置为目标尺寸再建 PTY；先按默认 760x520 建 PTY 再 resize 会让 screen 按底部对齐平移整屏（提示符漂移）
+- screen 会吞掉 OSC（0/9/777 都到不了客户端），但 `log on` 记录的窗口原始输出里 OSC 完整——通知就靠这一条通道
+- 通知只认程序显式发出的 OSC（Claude Code 在 `TERM_PROGRAM=ghostty` 下发 OSC 777），**不要按输出静默推断任务结束**：长时间 Bash 误报，TUI 流式输出刷屏
+- 日志目录 `~/.cache/utility/term-logs` 必须 0700（文件是终端全部原始输出），关闭/退出会话时发 `screen -X log off`，否则客户端 detach 后 server 继续写
+- 截断日志必须用可写句柄（`FileHandle(forUpdatingAtPath:)`）：只读句柄 `truncate` 必失败，失败后归零 offset 会让每 0.5s 重放全部历史通知
+- tmux 后端尚未接通知源（`pipe-pane` 未实现），`auto` 会优先选 tmux，装了 tmux 的环境收不到通知
+
 ### Config YAML
 - 所有字段 `decodeIfPresent`（避免缺少 key 导致 crash）
 - YAML key 必须与 struct property 名完全相同
