@@ -152,5 +152,22 @@
     "cli.agent_help": "Agent command, e.g. \"claude -p 'analyze module'\" or \"aider --model sonnet\"",
     "cli.project_help": "Project directory path (default: current directory)",
     "cli.init_abstract": "Scan the project and generate a dependency graph (.utility/deps.sqlite)",
-    "cli.init_path_help": "Project path (default: current directory)"
+    "cli.init_path_help": "Project path (default: current directory)",
+    "cli.notice_abstract": "Timed reminders: CLI writes, the app posts the notification",
+    "cli.notice_add_abstract": "Register a reminder",
+    "cli.notice_list_abstract": "List pending reminders",
+    "cli.notice_cancel_abstract": "Cancel a reminder",
+    "cli.notice_in_help": "Relative delay such as 10m, 30s, 2h, 1d",
+    "cli.notice_at_help": "Absolute time such as 20:30 or \"2026-10-29 09:00\"",
+    "cli.notice_title_help": "Notification title",
+    "cli.notice_body_help": "Notification body; defaults to the title",
+    "cli.notice_id_help": "Reminder ID",
+    "cli.notice_time_required": "Exactly one of --in or --at is required",
+    "cli.notice_time_invalid": "Cannot parse time: {value}",
+    "cli.notice_added": "Registered {id}, will remind at {due}",
+    "cli.notice_empty": "No pending reminders",
+    "cli.notice_cancelled": "Cancelled {id}",
+    "cli.notice_not_found": "Reminder not found: {id}",
+    "notify.notice_missed": "Missed reminders",
+    "notify.notice_missed_body": "{count:d} reminders were older than 24 hours and were not shown"
 }

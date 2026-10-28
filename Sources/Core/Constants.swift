@@ -20,6 +20,9 @@ enum AppPaths {
     /// ~/.config/utility/knowledge.sqlite —— 知识面板卡片池（表由 Python 侧拥有）
     static let knowledgeDatabase: URL = configDir.appendingPathComponent("knowledge.sqlite")
 
+    /// ~/.config/utility/notices.sqlite —— 定时提醒队列（CLI 写、宿主读）
+    static let noticesDatabase: URL = configDir.appendingPathComponent("notices.sqlite")
+
     /// ~/.cache/utility/clip/
     static let clipCacheDir: URL = {
         let dir = FileManager.default.homeDirectoryForCurrentUser

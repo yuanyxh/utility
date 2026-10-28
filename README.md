@@ -606,7 +606,23 @@ The front-matter's `name` must match the filename; `placeholders` and the body's
 
 ---
 
-### 5. Project index and Agent parasitic mode
+### 5. Timed reminders
+
+`utility notice` writes reminders to `~/.config/utility/notices.sqlite`; the running Utility.app polls for due rows every 5 minutes, posts a system notification, then deletes the row. The CLI is a short-lived process with no notification authorization, so it only registers.
+
+| Command | Effect |
+|---|---|
+| `utility notice add --in 10m "title" "body"` | relative delay (units s/m/h/d) |
+| `utility notice add --at 20:30 "title"` | absolute time, rolls to tomorrow when past |
+| `utility notice add --at "2026-10-29 09:00" "title"` | explicit date and time |
+| `utility notice list` | list pending reminders |
+| `utility notice cancel <id>` | cancel a reminder |
+
+Reminders do not fire while the app is not running; on launch it replays those within 24 hours and collapses older ones into a single "missed reminders" notice. There is no repeat mode — use a cron task for anything periodic.
+
+---
+
+### 6. Project index and Agent parasitic mode
 
 The data behind the `project_*` tools comes from `ProjectScanner` (full scan) + `FileWatcher` (incremental), which write to `.utility/deps.sqlite` under the project root. Multi-language extractors register by extension (Swift / JS-TS / Python / Vue / Java / Kotlin); extraction precedence is AST script → regex fallback. Symbols carry `start_line`/`end_line`.
 

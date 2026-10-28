@@ -565,7 +565,23 @@ front-matter 的 `name` 必须与文件名一致；`placeholders` 与正文占�
 
 ---
 
-### 五、项目索引与 Agent 寄生模式
+### 五、定时提醒
+
+`utility notice` 把提醒写进 `~/.config/utility/notices.sqlite`，常驻的 Utility.app 每 5 分钟查一次到期记录，经系统通知弹出后删除该行。CLI 是短命进程、没有通知授权，所以只负责登记，不负责弹窗。
+
+| 命令 | 作用 |
+|---|---|
+| `utility notice add --in 10m "标题" "正文"` | 相对延迟登记（单位 s/m/h/d） |
+| `utility notice add --at 20:30 "标题"` | 绝对时间登记，已过则顺延到明天 |
+| `utility notice add --at "2026-10-29 09:00" "标题"` | 指定日期时间 |
+| `utility notice list` | 列出未触发的提醒 |
+| `utility notice cancel <id>` | 取消提醒 |
+
+App 未运行时提醒不会响；启动后补发 24 小时内的提醒，更早的合并成一条「错过的提醒」。没有重复提醒能力，周期性提醒请用任务配置的 cron。
+
+---
+
+### 六、项目索引与 Agent 寄生模式
 
 `project_*` 工具的数据来自 `ProjectScanner` 全量扫描 + `FileWatcher` 增量扫描，写入项目根下的 `.utility/deps.sqlite`。多语言提取器按扩展名注册(Swift / JS-TS / Python / Vue / Java / Kotlin)，提取优先级 AST 脚本 → 正则兜底。符号含 `start_line`/`end_line`。
 

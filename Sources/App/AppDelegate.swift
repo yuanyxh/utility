@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
 
         NotificationManager.shared.requestAuthorization()
+        NoticeWatcher.shared.start()
 
         // Force-initialize PanelManager (registers EventBus subscriptions)
         _ = PanelManager.shared

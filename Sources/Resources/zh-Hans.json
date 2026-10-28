@@ -152,5 +152,22 @@
     "cli.agent_help": "Agent 命令，例如 \"claude -p 'analyze module'\" 或 \"aider --model sonnet\"",
     "cli.project_help": "项目目录路径（默认当前目录）",
     "cli.init_abstract": "扫描项目并生成依赖图（.utility/deps.sqlite）",
-    "cli.init_path_help": "项目路径（默认当前目录）"
+    "cli.init_path_help": "项目路径（默认当前目录）",
+    "cli.notice_abstract": "定时提醒：CLI 写入，宿主到点弹通知",
+    "cli.notice_add_abstract": "登记一条提醒",
+    "cli.notice_list_abstract": "列出未触发的提醒",
+    "cli.notice_cancel_abstract": "取消一条提醒",
+    "cli.notice_in_help": "相对延迟，如 10m、30s、2h、1d",
+    "cli.notice_at_help": "绝对时间，如 20:30 或 \"2026-10-29 09:00\"",
+    "cli.notice_title_help": "通知标题",
+    "cli.notice_body_help": "通知正文，省略时与标题相同",
+    "cli.notice_id_help": "提醒 ID",
+    "cli.notice_time_required": "--in 与 --at 必须二选一",
+    "cli.notice_time_invalid": "无法解析时间: {value}",
+    "cli.notice_added": "已登记 {id}，将于 {due} 提醒",
+    "cli.notice_empty": "没有待触发的提醒",
+    "cli.notice_cancelled": "已取消 {id}",
+    "cli.notice_not_found": "未找到提醒: {id}",
+    "notify.notice_missed": "错过的提醒",
+    "notify.notice_missed_body": "{count:d} 条提醒已超过 24 小时，未逐条弹出"
 }

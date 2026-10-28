@@ -15,6 +15,7 @@ struct UtilityCLI: ParsableCommand {
             RSSCommand.self,
             InitCommand.self,
             WebSearchCommand.self,
+            NoticeCommand.self,
         ],
         defaultSubcommand: nil,
     )

@@ -17,6 +17,15 @@ public final class NotificationManager: NSObject {
         private var granted = false
     #endif
 
+    /// False until authorization resolves; callers must keep work queued instead of dropping it.
+    public var canPost: Bool {
+        #if DEBUG
+            enabled
+        #else
+            granted
+        #endif
+    }
+
     override private init() {
         super.init()
     }
