@@ -162,9 +162,11 @@ enum PythonScriptRunner {
         for (key, value) in languageEnvironment() {
             env[key] = value
         }
-        // Python shells out to this binary for WKWebView-backed search.
+        for (key, value) in gatewayPathEnvironment() {
+            env[key] = value
+        }
+        // Google search shells out to this binary; the provider is injected as a command.
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
-            env["UTILITY_BIN"] = binary
             env["GATEWAY_SEARCH_PROVIDERS"] = gatewaySearchProviders(binary: binary)
         }
         // Development without installing the wheel: point Python at the sibling checkout.
@@ -277,6 +279,15 @@ enum PythonScriptRunner {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Gateway data, cache and config roots; without these it falls back to its own defaults.
+    static func gatewayPathEnvironment() -> [String: String] {
+        [
+            "GATEWAY_HOME": AppPaths.configDir.path,
+            "GATEWAY_CACHE": AppPaths.cacheDir.path,
+            "GATEWAY_CONFIG": AppPaths.configFile.path,
+        ]
+    }
+
     /// Knowledge base notes directory (empty config -> `<config domain>/notes`). Also shared by the two injection points.
     static func resolvedNotesDir() -> String? {
         guard let mcp = ConfigManager.shared.config.mcp else { return nil }
@@ -318,9 +329,11 @@ enum PythonScriptRunner {
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
         overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
+        for (key, value) in gatewayPathEnvironment() {
+            overrides[key] = value
+        }
         overrides["MEMORY_SERVER_URL"] = memoryServerURL
         if let binary = Bundle.main.executableURL?.path, !binary.isEmpty {
-            overrides["UTILITY_BIN"] = binary
             overrides["GATEWAY_SEARCH_PROVIDERS"] = gatewaySearchProviders(binary: binary)
         }
         if let devRoot = GatewayResources.developmentSourceRoot() {

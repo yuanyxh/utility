@@ -36,6 +36,14 @@ enum AppPaths {
         return dir
     }()
 
+    /// ~/.cache/utility/
+    static let cacheDir: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/utility")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     /// ~/.cache/utility/debug.log
     static let debugLog: String = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
