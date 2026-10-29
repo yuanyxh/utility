@@ -213,6 +213,7 @@ bash scripts/run-tests.sh
 - 会话用 `new-session -d` 建好，窗口只做 `attach-session -d -t`；App 退出等于 detach，重开按 `terminal-sessions.json` 恢复
 - 恢复会话先 `window.layoutIfNeeded()` 并把视图预置为目标尺寸再 attach，避免首帧按默认尺寸渲染后再缩放
 - 通知只认程序显式发出的 OSC（Claude Code 在 `TERM_PROGRAM=ghostty` 下发 OSC 777），**不要按输出静默推断任务结束**：长时间 Bash 误报，TUI 流式输出刷屏
+- ⚠️ **tmux 3.8 会把 pane 内的 `TERM_PROGRAM` 改写成 `tmux`**（`TERM_PROGRAM_VERSION=3.8`），即使 server 环境是 ghostty；Claude 不认识 `tmux` 就不发 OSC 777，通知整条链路静默失效。`new-session` 必须用 `env TERM_PROGRAM=ghostty <shell>` 启动，已有会话不会自动修复，需重建或手动 export
 - 不做未读计数与侧栏角标：OSC 原样转发（同 Ghostty）。只在两种情况下抑制——通知到达时用户正在看该会话，或最后一段输出是在聚焦状态下到达的（`lastSeenOutputAt >= lastOutputAt`，即离开前已看过，覆盖 Claude Code 延迟 60s 发出的通知）。输出时间戳只用于这个判据，不代表任务结束
 - **必须保留 SwiftTerm 默认的 mouse reporting**：Claude 全屏 TUI 的滚轮滚动依赖终端转发鼠标事件（官方 issue #75143）；关掉后滚轮会被编码成 ↑/↓（`alternateScrollMode`），被 TUI 当成输入历史。拖选冲突用 `TerminalDropView.mouseDown` 临时挂起 `allowMouseReporting`（mouseUp 恢复，滚轮事件带自愈）解决——按下即本地选择，滚轮仍转发
 - 会话创建时喂 `ESC[?1007l` 关掉 alternate scroll：程序没开 mouse reporting 时滚轮不再变 ↑/↓（不会污染输入历史）；代价是 alternate screen 本身没有本地历史，滚轮保持无效

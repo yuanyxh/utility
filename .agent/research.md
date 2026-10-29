@@ -22,7 +22,8 @@
 | 构建门 `swift build` | 采纳 | `verify.build`，CI 缺失时的唯一编译门 |
 | 本地验证 `scripts/run-tests.sh` | 采纳 | `verify.test`（examples parity、i18n 契约、gateway entries） |
 | 打包 `scripts/package-utility.sh` | 采纳 | `verify.run`，产物装到 `/Applications` |
-| 格式化 / 静态检查 | 拒绝 | swift-format 与 swiftlint 均未安装，登记为缺失而非伪造命令 |
+| 格式化 | 采纳 | `xcrun swift-format`（Xcode 27 内置），配置见 `.swift-format` |
+| 静态检查 | 拒绝 | swiftlint 未安装，`swift-format lint` 作为最低门 |
 | 远程 CI | 拒绝 | 仓库无 workflow；本地验证替代 |
 | 证据分级（TST-07） | 采纳 | 写入 `.agent/rules/testing.md` 与 `lessons.md` |
 

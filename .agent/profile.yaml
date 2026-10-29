@@ -44,8 +44,8 @@ delivery:
 quality:
   test_level: basic
   security_level: standard
-  format: none
-  lint: none
+  format: swift-format
+  lint: swift-format
   typecheck: none
   perf_budget: ""
   compliance: []
@@ -53,8 +53,8 @@ quality:
 verify:
   install: swift package resolve
   build: swift build
-  format: ""
-  lint: ""
+  format: xcrun swift-format lint --configuration .swift-format Sources
+  lint: xcrun swift-format lint --configuration .swift-format Sources
   typecheck: ""
   test: bash scripts/run-tests.sh
   run: SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh

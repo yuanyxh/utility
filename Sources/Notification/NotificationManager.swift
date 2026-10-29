@@ -91,7 +91,11 @@ public final class NotificationManager: NSObject {
                 identifier: UUID().uuidString, content: content, trigger: nil,
             )
             UNUserNotificationCenter.current().add(request) { error in
-                if let e = error { debugLog("[Notify] Post failed: \(e)") }
+                if let e = error {
+                    debugLog("[Notify] Post failed: \(e)")
+                } else {
+                    debugLog("[Notify] queued title=\(title)")
+                }
             }
         #endif
     }

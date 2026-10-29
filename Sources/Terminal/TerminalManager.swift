@@ -13,6 +13,7 @@ final class TerminalManager {
     private var didRestore = false
     private var isShuttingDown = false
     private var didReportMissingTmux = false
+    private var pathTimer: Timer?
     /// Some prompts emit the same notification twice; keep one banner per burst.
     private var lastNotification: (sessionID: String, at: Date)?
 
@@ -51,6 +52,7 @@ final class TerminalManager {
         // a later resize makes screen shift the whole buffer.
         controller.window?.layoutIfNeeded()
         restoreIfNeeded()
+        startPathPolling()
         // An empty panel has nothing to type into; open a session right away.
         if sessions.isEmpty {
             createSession()
@@ -187,9 +189,10 @@ final class TerminalManager {
             // Give the view its final size before the pty is created.
             session.view.frame = NSRect(origin: .zero, size: contentSize)
             do {
-                try session.start(launch: backend.launch(
-                    id: item.id, cwd: item.cwd, shell: session.shell,
-                ))
+                try session.start(
+                    launch: backend.launch(
+                        id: item.id, cwd: item.cwd, shell: session.shell,
+                    ))
                 sessions.append(session)
             } catch {
                 debugLog("[Terminal] restore failed id=\(item.id): \(error)")
@@ -211,10 +214,6 @@ final class TerminalManager {
     // MARK: - Session events
 
     private func wire(_ session: TerminalSession) {
-        session.onOutput = { [weak self] session in
-            guard let self else { return }
-            session.markOutput(seen: isFocused(session))
-        }
         session.onNotification = { [weak self] session, title, body in
             self?.handleNotification(session, title: title, body: body)
         }
@@ -235,18 +234,16 @@ final class TerminalManager {
         return selectedID == session.id
     }
 
-    /// Forward explicit OSC notifications as-is. Skip only when the user is
-    /// watching, or already watched the newest output before stepping away.
+    /// Forward explicit OSC notifications as-is. Skip only the session the user
+    /// is currently looking at; other sessions still notify.
     private func handleNotification(_ session: TerminalSession, title: String, body: String) {
-        let focused = isFocused(session)
-        let seen = session.hasSeenLatestOutput
-        guard !focused, !seen else {
-            debugLog("[Terminal] notify suppressed focused=\(focused) seen=\(seen) title=\(title)")
+        guard !isFocused(session) else {
+            debugLog("[Terminal] notify suppressed focused=true title=\(title)")
             return
         }
         let now = Date()
         if let last = lastNotification, last.sessionID == session.id,
-           now.timeIntervalSince(last.at) < 3
+            now.timeIntervalSince(last.at) < 3
         {
             debugLog("[Terminal] notify deduplicated title=\(title) body=\(body)")
             return
@@ -271,7 +268,7 @@ final class TerminalManager {
         persist()
         windowController?.reload(sessions: sessions, selectedID: selectedID)
         if let selectedID,
-           let next = sessions.first(where: { $0.id == selectedID })
+            let next = sessions.first(where: { $0.id == selectedID })
         {
             windowController?.showTerminal(next.view)
         } else {
@@ -280,6 +277,24 @@ final class TerminalManager {
     }
 
     // MARK: - Helpers
+
+    /// tmux keeps the shell's OSC 7 to itself, so the pane path is polled instead.
+    private func startPathPolling() {
+        guard pathTimer == nil else { return }
+        pathTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshWorkingDirectories() }
+        }
+    }
+
+    private func refreshWorkingDirectories() {
+        guard let backend, windowController?.window?.isVisible == true else { return }
+        let paths = backend.currentPaths()
+        for session in sessions {
+            guard let path = paths[session.id], path != session.cwd else { continue }
+            session.cwd = path
+            windowController?.reloadRow(session: session)
+        }
+    }
 
     private func resolvedBackend() -> TmuxBackend? {
         if let backend { return backend }
@@ -298,15 +313,16 @@ final class TerminalManager {
     }
 
     private func persist() {
-        store.save(sessions.map {
-            StoredTerminalSession(
-                id: $0.id,
-                title: $0.title,
-                cwd: $0.cwd,
-                backend: TmuxBackend.storageName,
-                createdAt: $0.createdAt,
-            )
-        })
+        store.save(
+            sessions.map {
+                StoredTerminalSession(
+                    id: $0.id,
+                    title: $0.title,
+                    cwd: $0.cwd,
+                    backend: TmuxBackend.storageName,
+                    createdAt: $0.createdAt,
+                )
+            })
     }
 
     private func notify(title: String, body: String, sessionID: String? = nil) {

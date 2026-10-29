@@ -1,26 +1,6 @@
 import Cocoa
 import SwiftTerm
 
-/// Coalesces high-frequency PTY output into one main-thread callback per burst.
-private final class TerminalActivityFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending = false
-
-    func take() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !pending else { return false }
-        pending = true
-        return true
-    }
-
-    func reset() {
-        lock.lock()
-        pending = false
-        lock.unlock()
-    }
-}
-
 @MainActor
 final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let id: String
@@ -31,24 +11,11 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let view: LocalProcessTerminalView
     var isRunning = true
 
-    /// Wall clock of the last PTY output burst and of the last burst seen while focused.
-    private(set) var lastOutputAt: Date?
-    /// Burst before `lastOutputAt`: an OSC notification arrives as output too,
-    /// so the notification itself must not count as fresh activity.
-    private(set) var previousOutputAt: Date?
-    private(set) var lastSeenOutputAt: Date?
-
-    var onOutput: ((TerminalSession) -> Void)?
     /// Fired for OSC 9 / 777 sent by the program in the terminal.
     var onNotification: ((TerminalSession, String, String) -> Void)?
     var onExit: ((TerminalSession) -> Void)?
     var onTitleChange: ((TerminalSession) -> Void)?
 
-    /// Throttles output timestamps to one main-thread hop per burst.
-    private static let activityWindow: TimeInterval = 1.0
-
-    private let activity = TerminalActivityFlag()
-    private var activityWork: DispatchWorkItem?
     private var oscObservation: TerminalOscObservation?
 
     init(
@@ -73,13 +40,6 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         // Keep mouse reporting on: Claude's fullscreen TUI only scrolls when
         // the terminal forwards wheel events. Shift+drag still selects locally.
         view.processDelegate = self
-        let activity = activity
-        view.setProcessOutputHandler { [weak self, activity] in
-            guard activity.take() else { return }
-            DispatchQueue.main.async {
-                self?.noteOutput()
-            }
-        }
         // Without mouse reporting SwiftTerm turns the wheel into ↑/↓ in the
         // alternate buffer, which prompts read as input history. Programs that
         // want wheel scrolling (Claude fullscreen) enable mouse reporting and
@@ -90,9 +50,11 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         oscObservation = view.observeOscEvents { [weak self] event in
             guard event.code == 777 || event.code == 9 else { return }
             let text = String(decoding: event.payload, as: UTF8.self)
-            guard let message = TerminalNotificationParser.parse(
-                payload: "\(event.code);\(text)",
-            ) else { return }
+            guard
+                let message = TerminalNotificationParser.parse(
+                    payload: "\(event.code);\(text)",
+                )
+            else { return }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.isRunning else { return }
@@ -100,20 +62,6 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
                 }
             }
         }
-    }
-
-    /// Records one output burst; `seen` means the user was watching this session.
-    func markOutput(seen: Bool) {
-        let now = Date()
-        previousOutputAt = lastOutputAt
-        lastOutputAt = now
-        if seen { lastSeenOutputAt = now }
-    }
-
-    /// True when the output before the notification burst was already watched.
-    var hasSeenLatestOutput: Bool {
-        guard let lastSeenOutputAt else { return false }
-        return lastSeenOutputAt >= (previousOutputAt ?? lastOutputAt ?? lastSeenOutputAt)
     }
 
     func start(launch: TerminalLaunch) throws {
@@ -127,24 +75,14 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
             environment: launch.environment,
             currentDirectory: launch.workingDirectory,
         )
-        if case let .failure(error) = result {
+        if case .failure(let error) = result {
             throw error
         }
     }
 
     func terminate() {
-        activityWork?.cancel()
         isRunning = false
         view.process.terminate()
-    }
-
-    /// Called on the main thread at most once per activity window.
-    private func noteOutput() {
-        onOutput?(self)
-        activityWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.activity.reset() }
-        activityWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.activityWindow, execute: work)
     }
 
     // MARK: - LocalProcessTerminalViewDelegate

@@ -12,8 +12,8 @@
 | Swift | 6.4 (swiftlang-6.4.0.34.1) | 可用 |
 | git | 2.55.0 | 可用 |
 | tmux | 3.8（/opt/homebrew/bin） | 可用，终端功能必需 |
-| swift-format | 缺失 | 不可执行；格式门暂缺 |
-| swiftlint | 缺失 | 不可执行；静态检查门暂缺 |
+| swift-format | 可用（`xcrun swift-format`，Xcode 27 内置） | 格式门；项目内 `.swift-format` 定义 120 列、4 空格 |
+| swiftlint | 缺失 | 静态检查门暂缺 |
 
 ## 可脚本化驱动方式
 
@@ -39,6 +39,6 @@
 
 | 缺失项 | 替代 | 影响 |
 | --- | --- | --- |
-| swift-format / swiftlint | `swift build` 作为编译门 | 格式与风格问题不会被自动发现 |
+| swiftlint | `swift build` + `swift-format lint` | 无独立静态检查，规则覆盖弱于 swiftlint |
 | UI 自动化入口 | 热键 + 截图 + 日志断言 | 端到端验证需要人参与；详见 TST-09 |
 | CI | 本地 `run-tests.sh` | 无远程回归记录 |

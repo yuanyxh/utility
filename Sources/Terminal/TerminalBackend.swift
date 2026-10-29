@@ -12,7 +12,7 @@ enum TmuxBackendError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .commandFailed(message): message
+        case .commandFailed(let message): message
         }
     }
 }
@@ -40,7 +40,8 @@ enum TerminalShell {
         let raw = configured.isEmpty ? homeDirectory : NSString(string: configured).expandingTildeInPath
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: raw, isDirectory: &isDirectory),
-              isDirectory.boolValue else { return homeDirectory }
+            isDirectory.boolValue
+        else { return homeDirectory }
         return raw
     }
 
@@ -119,11 +120,13 @@ final class TmuxBackend: Sendable {
 
     func prepare(id: String, cwd: String, shell: String) throws {
         if liveIDs().contains(id) { return }
+        // tmux rewrites TERM_PROGRAM to "tmux" inside the pane; Claude only
+        // emits OSC 777 for known terminals, so the value must be restored.
         let result = TerminalShell.run(
             "/usr/bin/env",
             [
                 "tmux", "-L", socket, "-f", "/dev/null", "new-session",
-                "-d", "-s", name(id), "-c", cwd, shell,
+                "-d", "-s", name(id), "-c", cwd, "env", "TERM_PROGRAM=ghostty", shell,
             ],
         )
         guard result.status == 0 else {
@@ -158,13 +161,30 @@ final class TmuxBackend: Sendable {
         _ = tmux(["kill-session", "-t", name(id)])
     }
 
+    /// tmux consumes the shell's OSC 7 itself, so pane paths are the only source.
+    func currentPaths() -> [String: String] {
+        let result = tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}"])
+        guard result.status == 0 else { return [:] }
+        var paths: [String: String] = [:]
+        for line in result.output.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2, parts[0].hasPrefix(TerminalShell.sessionPrefix) else {
+                continue
+            }
+            let id = String(parts[0].dropFirst(TerminalShell.sessionPrefix.count))
+            paths[id] = String(parts[1])
+        }
+        return paths
+    }
+
     func liveIDs() -> Set<String> {
         let result = tmux(["list-sessions", "-F", "#{session_name}"])
         guard result.status == 0 else { return [] }
-        return Set(result.output.split(separator: "\n").compactMap { line in
-            let name = String(line)
-            guard name.hasPrefix(TerminalShell.sessionPrefix) else { return nil }
-            return String(name.dropFirst(TerminalShell.sessionPrefix.count))
-        })
+        return Set(
+            result.output.split(separator: "\n").compactMap { line in
+                let name = String(line)
+                guard name.hasPrefix(TerminalShell.sessionPrefix) else { return nil }
+                return String(name.dropFirst(TerminalShell.sessionPrefix.count))
+            })
     }
 }
