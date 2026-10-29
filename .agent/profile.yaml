@@ -1,0 +1,88 @@
+project:
+  name: utility
+  one_liner: macOS 菜单栏工具箱：剪贴板、翻译、OCR、Stage 暂存、多终端、RSS、定时任务与本地 AI 层
+  type: desktop
+  domain:
+    - macos-desktop-app
+    - terminal-integration
+  scale: production
+  team: solo
+
+stack:
+  language: swift
+  framework: AppKit
+  package_manager: SwiftPM
+  runtime: "Swift 6.4 / macOS 14+"
+  python_side: agent-gateway（随 app 分发 wheel，Python 源码不在本仓）
+
+ui:
+  has_ui: true
+  design_system: none（自绘 VSTheme）
+  i18n: true
+  a11y: standard
+
+data:
+  storage: sqlite
+  auth: none
+  files: local
+  external_services:
+    - agent-gateway
+    - upstream-llm-providers
+    - tmux
+
+delivery:
+  vcs: git
+  repo_host: local
+  branch_strategy: trunk
+  ci: none
+  deploy_target: none
+  environments:
+    - dev
+    - local
+  note: 本地产物：swift build → scripts/package-utility.sh → /Applications/Utility.app
+
+quality:
+  test_level: basic
+  security_level: standard
+  format: none
+  lint: none
+  typecheck: none
+  perf_budget: ""
+  compliance: []
+
+verify:
+  install: swift package resolve
+  build: swift build
+  format: ""
+  lint: ""
+  typecheck: ""
+  test: bash scripts/run-tests.sh
+  run: SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh
+
+dev:
+  editors: []
+  toolchain_managers: []
+  task_entry: ""
+  containerized: false
+  env_files: false
+
+target:
+  platforms:
+    - macOS（arm64）
+  versions:
+    macOS: "14.0"
+  constraints:
+    - LSUIElement 菜单栏应用，无 Dock 图标
+    - 需要辅助功能与屏幕录制权限才能验证交互
+    - 终端功能依赖 tmux 3.8（brew），缺失时提示且不降级
+    - 不能硬编码个人目录
+
+governance:
+  openness: private
+  license: internal
+  contribution: direct
+  security_contact: ""
+
+agent:
+  platform: claude-code
+  rules_scope: core+type+concern

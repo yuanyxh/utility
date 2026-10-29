@@ -129,6 +129,16 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - git 记录看不出来时问用户，不要自己假设
 - Bug 修复依赖现实调试信息，禁止靠猜测修改
 
+## Agent 基座
+- 状态：`.agent/status.md`（每次任务开始读一次，只读目标与阻塞）
+- 决策与教训：`.agent/decisions.md`、`.agent/lessons.md`
+- 环境与驱动方式：`.agent/environment.md`（含可脚本化入口与已知缺口）
+- 领域：`.agent/domains/macos-desktop-app.md`、`.agent/domains/terminal-integration.md`
+- 规则（由技能读取）：`.agent/rules/{testing,engineering,design,vcs,ui,observability,documentation}.md`
+- 技能：`.claude/skills/{build,hunt,review,learn,upgrade}/SKILL.md`
+- 知识索引：`.agent/knowledge/README.md`
+- 证据分级（TST-07）：L1 存在性（构建/符号/路径可达）、L2 行为（脚本或日志断言）、L3 端到端（真实交互/截图）。汇报必须标注级别，未达 L3 时列出待验项
+
 ## 未来规划
 - **仓边界（2026-10-26 定）**：Python 能力层迁往独立仓 `agent-gateway`（随 app 分发 wheel，首启装 venv）；
   服务端与 RN/Expo 在独立 workspace 仓（Node/TS）。**禁止在本仓新增服务端、Agent、移动端代码**，
