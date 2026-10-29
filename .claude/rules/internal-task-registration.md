@@ -1,7 +1,6 @@
 ---
-description: TaskScheduler 内部任务注册约定 — 添加内置定时任务时使用
-globs: ["Sources/**/*.swift"]
-triggers: ["registerInternalTask", "internal-task", "内置任务", "mcp-summary"]
+paths:
+  - "Sources/**/*.swift"
 ---
 
 ## TaskScheduler 内部任务

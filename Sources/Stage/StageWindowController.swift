@@ -26,6 +26,9 @@ public final class StageWindowController: NSWindowController {
         panel.collectionBehavior = [.transient, .ignoresCycle]
 
         super.init(window: panel)
+        MainActor.assumeIsolated {
+            AppWindowRegistry.register(panel)
+        }
         setupUI()
         addVisualEffectView()
         NotificationCenter.default.addObserver(

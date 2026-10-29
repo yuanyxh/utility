@@ -260,7 +260,10 @@ final class KnowledgeService: NSObject {
             return
         }
 
-        panel.showAuto()
+        EventBus.shared.publish(
+            PanelEvent.requestShow,
+            payload: ["panel": panel, "auto": true],
+        )
         UserDefaults.standard.set(Date(), forKey: UDKey.knowledgeLastAutoShow)
         if panel.hasCard {
             debugLog("[Knowledge] auto show panel")

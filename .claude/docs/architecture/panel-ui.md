@@ -10,6 +10,8 @@
 - dispatchKey：栈顶→底遍历，handleKeyEvent 对自己关心的键全 return true 阻断下层
 - didResignKey：用 DispatchQueue.main.async 等通知链完再读 NSApp.keyWindow（不用 didResignActive）
 - Stage 独立不入栈
+- **自动弹出也必须走 requestShow**（context 带 `auto`），不能直接 `orderFront`：直接显示的面板不在栈里，`dispatchKey` 分发不到，ESC 失效，`hasVisiblePanel` 也会漏判（2026-10-29 知识面板 showAuto 修复）
+- **常驻窗口必须注册 `AppWindowRegistry`**（终端 / 配置 / Stage）：`hideIfEmpty` 用 `hasVisibleWindow` 决定是否 `NSApp.hide`，漏注册会让常驻窗口在最后一个面板关闭时被连带隐藏（2026-10-29 Stage 修复）
 
 ### EventBus
 - 线程安全 pub/sub，枚举 key 对应多 handler

@@ -875,7 +875,11 @@ extension KnowledgePanelController: PanelProtocol {
         false
     }
 
-    func showPanel(context _: [String: Any]?) {
+    func showPanel(context: [String: Any]?) {
+        if context?["auto"] as? Bool == true {
+            showAuto()
+            return
+        }
         autoCloseEligible = false
         disarmAutoClose()
         if !isPanelVisible { positionWindow() }
