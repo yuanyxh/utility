@@ -29,5 +29,5 @@
 - **禁止无用、一次性、大段注释，自检：紧连超过两行即禁止写入**
 - **文件操作一律绝对路径**；不确定位置先 project_search/Glob 定位
 - 读取文件优先一次读足(offset/limit 覆盖所需范围)
-  同文件二次读取前先 project_search/project_exports 定位，**禁止整文件重读**
+  同文件二次读取前先 project_search 定位，**禁止整文件重读**
   改前先 git diff 看现状

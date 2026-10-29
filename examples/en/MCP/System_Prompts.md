@@ -29,5 +29,5 @@
 - **No useless, one-off, or long block comments. Self-check: more than two consecutive lines is forbidden**
 - **Always use absolute paths for file operations**; when unsure of a location, locate it with project_search / Glob first
 - Prefer reading a file in one pass (offset / limit covering the needed range)
-  Before reading the same file a second time, locate it with project_search / project_exports; **do not re-read the whole file**
+  Before reading the same file a second time, locate it with project_search; **do not re-read the whole file**
   Check `git diff` for the current state before editing

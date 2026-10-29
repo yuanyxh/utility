@@ -31,3 +31,17 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 **决策**：为 utility 生成 `.agent/` 基座，`quality.test_level = basic`。
 
 **理由**：此前只有 `.claude/`，没有 lessons/status/environment 可沉淀，验证能力也无处声明。
+
+## 2026-10-29 MCP 工具面收敛
+
+**决策**：移除 `project_dependencies` / `project_exports` / `summarize` 三个 MCP 工具；`summarize` 只保留 REST；项目扫描完成后 best-effort 调用 `/api/project/notes/prewarm` 预热文档向量。
+
+**理由**：前两者低频且可被 `project_search` / 读取替代；`summarize` 模型可直答，宿主业务仍走 REST；`project_notes` 首查冷启动曾达 58.5s，需要扫描后预热。
+
+## 2026-10-29 project_notes 缓存陈旧与短段落丢失
+
+**问题**：增量缓存只增不删，项目迁移后旧绝对路径残留 133 个文件、2728/5332 个分块（51%）；`_chunk_md_text` 逐段丢弃 <50 字段落，规则清单类文档 0 分块且每次重扫。
+
+**决策**：扫描后删除不在当前扫描集合或不在项目根内的缓存行；连续短段落累积到阈值再成块，块索引统一重排。
+
+**验证**：unittest 189 通过；真实缓存预热后 5332→2630 分块、173 文件、0 越界路径，`.agent/rules/engineering.md` 可被检索命中。

@@ -37,10 +37,23 @@ final class MCPClient {
         return try await post("/api/project/structure", body: body)
     }
 
-    /// Get exported symbols for a file or directory.
-    func exports(dbPath: String, path: String) async throws -> ExportsResult {
-        let body = RequestBody(dbPath: dbPath, path: path)
-        return try await post("/api/project/exports", body: body)
+    /// Best-effort note-vector prewarm after a project scan. The request is
+    /// fire-and-forget: the server schedules the embedding work and returns.
+    func prewarmNotes(dbPath: String, timeout: TimeInterval = 1.5) {
+        guard let url = URL(string: baseURL + "/api/project/notes/prewarm") else {
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONEncoder().encode(RequestBody(dbPath: dbPath))
+        req.timeoutInterval = timeout
+
+        let semaphore = DispatchSemaphore(value: 0)
+        let task = session.dataTask(with: req) { _, _, _ in semaphore.signal() }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + timeout)
+        task.cancel()
     }
 
     // MARK: - Gateway capabilities
@@ -180,26 +193,6 @@ struct StructureResult: Decodable {
     struct FileNode: Decodable {
         let path: String
         let ext: String
-    }
-}
-
-struct ExportsResult: Decodable {
-    let path: String
-    let isDirectory: Bool
-    let symbols: [ExportSymbol]?
-    let files: [ExportFile]?
-    let total: Int?
-
-    struct ExportSymbol: Decodable {
-        let name: String
-        let kind: String
-        let signature: String?
-        let visibility: String?
-    }
-
-    struct ExportFile: Decodable {
-        let path: String
-        let symbols: [ExportSymbol]
     }
 }
 

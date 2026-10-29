@@ -35,5 +35,5 @@
 - **AST 成功按结果 key 是否存在判断**，不能用 `symbols.isEmpty`：只有 import、没有符号的文件不能被误判为 AST 失败；imports 的 AST 输出与 symbols 同批返回
 - **新增语种只加两样**：`SymbolExtractor.imports(...)` + `LanguageImportResolver`，在 `ProjectScanner.init()` 与 `ImportResolverRegistry` 注册；需要 AST 时再加 parser 分支。DB / FileWatcher / MCP 查询不改
 - 全量 `replaceScanResults(..., imports:)` 与增量 `replaceFileExtraction` 都把 symbols/files/imports/failed_files 放在同一事务；`deletePathSubtree` 删出边、入边保留 raw 并置 `resolver='stale'`
-- MCP `project_dependencies` 只做 1 跳（outgoing/incoming/both）；旧库缺 `imports` 表时返回 `degraded`，不抛错
+- `imports` 表只由 Scanner 写入；MCP 已移除 `project_dependencies` 工具，不再有 1 跳查询入口
 - **向量检索的符号缓存键必须用业务字段，不能用 `symbols.id`**：全量扫描 `replaceScanResults()` 先整体 `DELETE FROM symbols` 再重插、`FileWatcher` 增量路径（`Sources/CLI/FileWatcher.swift`）先 `DELETE FROM symbols WHERE file_path = ?` 再 `insertSymbols` —— **两条写入路径都「先删后插」**，同一符号每次重扫都拿到新自增 id；以 id 为键的 `symbol_embeddings` 会全部失效（曾 67438 行 0 行有效、占 132MB），下次向量检索重算全部符号（实测 349s）。现键 = `sha1(file_path|name|kind|signature|doc_comment)` = embedding 输入字段本身，**改这条必须保证键覆盖全部输入字段**

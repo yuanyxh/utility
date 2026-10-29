@@ -279,7 +279,7 @@ bash scripts/run-tests.sh
 - **AST 成功按结果 key 是否存在判断**，不能用 `symbols.isEmpty`：只有 import、没有符号的文件（如 `__init__.py`）不能被误判为 AST 失败
 - 全量 `replaceScanResults` 与增量 `replaceFileExtraction` 都把 symbols/files/imports/failed_files 放在同一事务；删除子树时出边删除、入边保留 raw 并置 `resolver='stale'`
 - **新增语言只改两处**：提取器（`imports`）+ 解析器（`LanguageImportResolver`）；DB、FileWatcher、MCP 查询不用动
-- MCP `project_dependencies` 只做 1 跳：`outgoing` / `incoming` / `both`，缺 `imports` 表返回 `degraded` 而不是报错
+- `imports` 表由 Scanner 维护，供依赖图分析使用；MCP 已不再暴露 `project_dependencies` 工具
 - **提取流水线（三项优化）**：
   1. **A — 批量 AST**：扫描前统一调用 `ast_extractor.py --batch`，单次 subprocess 处理所有 AST 文件（Python ast + @babel/parser），避免逐文件启动子进程
   2. **C — 并发提取**：`DispatchQueue.concurrentPerform` 并行执行正则提取，NSLock 保护结果收集

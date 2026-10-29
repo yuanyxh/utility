@@ -472,9 +472,7 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `set_memory_processed` | read/write the processed bit |
 | `project_search` | multi-layer codebase search |
 | `project_structure` | project directory structure |
-| `project_exports` | a file's or directory's public interface |
-| `project_dependencies` | one-hop file imports and importers |
-| `project_notes` | search project-local notes |
+| `project_notes` | search project-local Markdown docs |
 | `tool_resource` | read a skill's companion resources |
 | `websearch_engine` | multi-engine search (Google via offscreen WKWebView) with optional page Markdown |
 | `read_url` | fetch a URL as Markdown; local-only unless `use_proxy=true` |

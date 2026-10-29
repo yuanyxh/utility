@@ -36,6 +36,12 @@ enum AgentRunner {
             print("   Found \(s)")
         }
 
+        // Warm note vectors off the main thread; the agent session keeps the
+        // process alive, so this finishes while the user works.
+        Thread.detachNewThread {
+            MCPClient.shared.prewarmNotes(dbPath: dbPath)
+        }
+
         // 3. Start file watcher
         let watcher = FileWatcher(projectPath: projectPath)
         watcher.start()

@@ -27,6 +27,8 @@ struct InitCommand: ParsableCommand {
         print("Scanning project: \(projectPath)")
         let summary = try ProjectScanner.shared.scan(projectPath: projectPath)
         print(summary)
-        print("Written: \((projectPath as NSString).appendingPathComponent(".utility/deps.sqlite"))")
+        let dbPath = (projectPath as NSString).appendingPathComponent(".utility/deps.sqlite")
+        print("Written: \(dbPath)")
+        MCPClient.shared.prewarmNotes(dbPath: dbPath)
     }
 }

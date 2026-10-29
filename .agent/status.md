@@ -10,6 +10,9 @@
 
 ## 最近完成（2026-10-29）
 
+- 重新部署 gateway wheel 并复验：合成项目触发 `pruned 1 stale files`，真实项目二次查询 73ms 无重嵌入
+- 修复 project_notes：扫描后清理陈旧缓存行；短段落累积成块，规则清单类文档可检索
+- MCP 工具面收敛：移除 `project_dependencies` / `project_exports` / `summarize`；`MCPClient` 移除 exports；扫描完成后 best-effort 调用 notes 预热
 - 删除 ScreenBackend / LocalBackend / screen 日志 tap，终端只走 tmux
 - tmux 缺失时窗口内空状态提示 + 一次系统通知，禁止降级
 - `TerminalSession` 与 backend 解耦，`TmuxBackend` 为唯一实现
