@@ -66,8 +66,6 @@ public struct AppConfig: Codable {
 public struct TerminalConfig: Codable {
     var enabled: Bool = true
     var hotkey: String = "option+space"
-    /// auto | tmux | screen | local
-    var backend: String = "auto"
     /// Empty = $SHELL
     var shell: String = ""
     /// Empty = home directory
@@ -75,6 +73,8 @@ public struct TerminalConfig: Codable {
     var fontSize: Double = 12
     var maxSessions: Int = 20
     var restoreSessions: Bool = true
+    /// Keep the window above other apps' windows instead of a normal level.
+    var alwaysOnTop: Bool = false
 
     public init() {}
 
@@ -82,12 +82,12 @@ public struct TerminalConfig: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? "option+space"
-        backend = try c.decodeIfPresent(String.self, forKey: .backend) ?? "auto"
         shell = try c.decodeIfPresent(String.self, forKey: .shell) ?? ""
         workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory) ?? ""
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? 12
         maxSessions = try c.decodeIfPresent(Int.self, forKey: .maxSessions) ?? 20
         restoreSessions = try c.decodeIfPresent(Bool.self, forKey: .restoreSessions) ?? true
+        alwaysOnTop = try c.decodeIfPresent(Bool.self, forKey: .alwaysOnTop) ?? false
     }
 }
 

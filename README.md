@@ -308,13 +308,18 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 
 | Action | Effect |
 |---|---|
+| Menu bar → Terminal | Open the window; the first open creates a session when there is none |
 | `+` (top-left) | New terminal |
-| Click a row | Switch session |
+| Click a row / `↑` `↓` | Switch session |
+| `⌘←` / `⌘→` | Jump to the start / end of the line (`⇧` extends) |
+| Drag | Select text; the wheel still reaches TUIs that grab the mouse (Claude Code) |
 | `×` on a row | Close the session and end its process |
 | Process exit | Row is removed |
-| Unread badge | Red count on the right; clicking the notification jumps to that session |
+| Notification | OSC 9 / 777 is forwarded as a system notification (click it to open that session); skipped while you are watching, or when you already watched the newest output |
 
-Backend defaults to `auto`: tmux first, then the system screen, then plain PTY. With tmux/screen, sessions keep running after the app quits and reattach on the next open; `local` ends them with the app.
+The terminal requires tmux (`brew install tmux`); without it the window notifies you and creates nothing. Sessions keep running after the app quits and reattach on the next open.
+
+`terminal.alwaysOnTop: true` keeps the window above other apps' windows (useful if clicking the menu bar leaves it covered); it requires a restart.
 
 ### Menu bar
 

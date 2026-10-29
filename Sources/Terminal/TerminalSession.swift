@@ -28,10 +28,15 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     var title: String
     var cwd: String
     let shell: String
-    let backend: TerminalBackend
     let view: LocalProcessTerminalView
-    var unread = 0
     var isRunning = true
+
+    /// Wall clock of the last PTY output burst and of the last burst seen while focused.
+    private(set) var lastOutputAt: Date?
+    /// Burst before `lastOutputAt`: an OSC notification arrives as output too,
+    /// so the notification itself must not count as fresh activity.
+    private(set) var previousOutputAt: Date?
+    private(set) var lastSeenOutputAt: Date?
 
     var onOutput: ((TerminalSession) -> Void)?
     /// Fired for OSC 9 / 777 sent by the program in the terminal.
@@ -39,29 +44,22 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     var onExit: ((TerminalSession) -> Void)?
     var onTitleChange: ((TerminalSession) -> Void)?
 
-    /// Minimum spacing between unread bumps while output keeps streaming.
+    /// Throttles output timestamps to one main-thread hop per burst.
     private static let activityWindow: TimeInterval = 1.0
 
     private let activity = TerminalActivityFlag()
     private var activityWork: DispatchWorkItem?
-    private var notificationTap: TerminalNotificationTap?
-    private var isStartingTap = false
-    private var isHandingOff = false
-    private var isReattaching = false
-    private var ignoredTerminations = 0
-    private var attachRetries = 0
-    private var attachCheckWork: DispatchWorkItem?
+    private var oscObservation: TerminalOscObservation?
 
     init(
         id: String, title: String, cwd: String, shell: String,
-        backend: TerminalBackend, fontSize: Double, createdAt: Date = Date(),
+        fontSize: Double, createdAt: Date = Date(),
     ) {
         self.id = id
         self.createdAt = createdAt
         self.title = title
         self.cwd = cwd
         self.shell = shell
-        self.backend = backend
         view = TerminalDropView(
             frame: NSRect(x: 0, y: 0, width: 760, height: 520),
         )
@@ -72,23 +70,54 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeForegroundColor = VSTheme.terminalForeground
         view.caretColor = VSTheme.terminalCaret
         view.selectedTextBackgroundColor = VSTheme.terminalSelection
+        // Keep mouse reporting on: Claude's fullscreen TUI only scrolls when
+        // the terminal forwards wheel events. Shift+drag still selects locally.
         view.processDelegate = self
         let activity = activity
         view.setProcessOutputHandler { [weak self, activity] in
             guard activity.take() else { return }
             DispatchQueue.main.async {
-                self?.markOutput()
+                self?.noteOutput()
+            }
+        }
+        // Without mouse reporting SwiftTerm turns the wheel into ↑/↓ in the
+        // alternate buffer, which prompts read as input history. Programs that
+        // want wheel scrolling (Claude fullscreen) enable mouse reporting and
+        // take the `.mouse` route instead.
+        view.feed(text: "\u{1B}[?1007l")
+        // tmux forwards OSC notifications to the attached client, so read them
+        // straight from the parser.
+        oscObservation = view.observeOscEvents { [weak self] event in
+            guard event.code == 777 || event.code == 9 else { return }
+            let text = String(decoding: event.payload, as: UTF8.self)
+            guard let message = TerminalNotificationParser.parse(
+                payload: "\(event.code);\(text)",
+            ) else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.isRunning else { return }
+                    self.onNotification?(self, message.title, message.body)
+                }
             }
         }
     }
 
+    /// Records one output burst; `seen` means the user was watching this session.
+    func markOutput(seen: Bool) {
+        let now = Date()
+        previousOutputAt = lastOutputAt
+        lastOutputAt = now
+        if seen { lastSeenOutputAt = now }
+    }
+
+    /// True when the output before the notification burst was already watched.
+    var hasSeenLatestOutput: Bool {
+        guard let lastSeenOutputAt else { return false }
+        return lastSeenOutputAt >= (previousOutputAt ?? lastOutputAt ?? lastSeenOutputAt)
+    }
+
     func start(launch: TerminalLaunch) throws {
         try launchProcess(launch)
-        if launch.createsSession {
-            scheduleClientHandoff()
-        } else {
-            scheduleAttachCheck()
-        }
     }
 
     private func launchProcess(_ launch: TerminalLaunch) throws {
@@ -103,137 +132,19 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         }
     }
 
-    /// Exit the creating screen client so its server reparents to launchd;
-    /// app-owned servers lose local-network access (empty arp table).
-    private func scheduleClientHandoff() {
-        isHandingOff = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self, isRunning, isHandingOff else { return }
-            view.process.terminate()
-        }
-    }
-
-    private func reattach(attempt: Int = 0) {
-        guard isRunning else { return }
-        if !backend.liveIDs().contains(id), attempt < 10 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.reattach(attempt: attempt + 1)
-            }
-            return
-        }
-        isReattaching = true
-        do {
-            try launchProcess(backend.launch(id: id, cwd: cwd, shell: shell))
-            isReattaching = false
-            scheduleAttachCheck()
-        } catch {
-            guard attempt < 10 else {
-                isReattaching = false
-                debugLog("[Terminal] reattach failed: \(error)")
-                backend.kill(id: id)
-                isRunning = false
-                onExit?(self)
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.reattach(attempt: attempt + 1)
-            }
-        }
-    }
-
-    /// A screen client can hang before attaching; drop it and attach again.
-    private func scheduleAttachCheck() {
-        guard backend.kind != .local else { return }
-        attachCheckWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.verifyAttached() }
-        attachCheckWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
-    }
-
-    private func verifyAttached() {
-        guard isRunning, !isHandingOff, backend.liveIDs().contains(id) else { return }
-        if backend.isAttached(id: id) {
-            startNotificationTap()
-            return
-        }
-        guard attachRetries < 2, view.process.running else { return }
-        attachRetries += 1
-        debugLog("[Terminal] attach stalled, reattaching id=\(id)")
-        // The stalled client must not be reported as a session exit.
-        ignoredTerminations += 1
-        view.process.terminate()
-        relaunchWhenIdle(attempt: 0)
-    }
-
-    private func relaunchWhenIdle(attempt: Int) {
-        guard isRunning else { return }
-        guard view.process.running else {
-            reattach()
-            return
-        }
-        guard attempt < 20 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.relaunchWhenIdle(attempt: attempt + 1)
-        }
-    }
-
     func terminate() {
-        attachCheckWork?.cancel()
         activityWork?.cancel()
-        // Still attached here, so `-X log off` lands in the safe window.
-        backend.stopNotificationLog(id: id)
-        notificationTap?.stop()
-        notificationTap = nil
         isRunning = false
-        isHandingOff = false
-        isReattaching = false
         view.process.terminate()
-    }
-
-    /// Screen hides OSC from the client; tail its raw log instead.
-    private func startNotificationTap() {
-        guard notificationTap == nil, !isStartingTap else { return }
-        isStartingTap = true
-        let backend = backend
-        let id = id
-        // Several screen round-trips: never run them on the main thread.
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let path = backend.startNotificationLog(id: id)
-            // `-X` sent as a client dies can wedge the server; verify after.
-            let attached = path == nil || backend.isAttached(id: id)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.isStartingTap = false
-                guard self.isRunning, self.notificationTap == nil else { return }
-                guard let path else { return }
-                guard attached else {
-                    self.scheduleAttachCheck()
-                    return
-                }
-                let tap = TerminalNotificationTap(path: path)
-                tap.onNotification = { [weak self] title, body in
-                    DispatchQueue.main.async {
-                        guard let self, self.isRunning else { return }
-                        self.onNotification?(self, title, body)
-                    }
-                }
-                tap.start()
-                self.notificationTap = tap
-            }
-        }
     }
 
     /// Called on the main thread at most once per activity window.
-    private func markOutput() {
+    private func noteOutput() {
         onOutput?(self)
         activityWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.activity.reset() }
         activityWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.activityWindow, execute: work)
-    }
-
-    deinit {
-        notificationTap?.stop()
     }
 
     // MARK: - LocalProcessTerminalViewDelegate
@@ -253,23 +164,13 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
 
     func processTerminated(source _: TerminalView, exitCode _: Int32?) {
         guard isRunning else { return }
-        if isHandingOff {
-            isHandingOff = false
-            reattach()
-            return
-        }
-        if ignoredTerminations > 0 {
-            ignoredTerminations -= 1
-            return
-        }
-        guard !isReattaching else { return }
         isRunning = false
         onExit?(self)
     }
 
     func processFailedToStart(source _: TerminalView, error: LocalProcessError) {
         debugLog("[Terminal] launch failed: \(error)")
-        guard !isReattaching else { return }
+        guard isRunning else { return }
         isRunning = false
         onExit?(self)
     }

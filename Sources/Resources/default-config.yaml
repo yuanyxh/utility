@@ -289,16 +289,17 @@ tasks: []
 
 # ---------- Terminal ----------
 # Hotkey toggles the terminal window; changes require an app restart.
+# Requires tmux (brew install tmux); sessions keep running after the app quits.
 terminal:
   enabled: true
   hotkey: option+space
-  # auto = tmux > screen > local; local sessions end when the app quits.
-  backend: auto
   shell: ''            # empty = $SHELL
   workingDirectory: '' # empty = home directory
   fontSize: 12
   maxSessions: 20
   restoreSessions: true
+  # Keep the window above other apps' windows; restart required.
+  alwaysOnTop: false
 
 # ---------- RSS ----------
 rss:

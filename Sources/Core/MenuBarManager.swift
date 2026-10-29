@@ -11,6 +11,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var proxyMenuItem: NSMenuItem!
     private var tasksMenuItem: NSMenuItem!
     private var knowledgeMenuItem: NSMenuItem!
+    private var terminalItem: NSMenuItem!
     private var clearItem: NSMenuItem!
     private var quitItem: NSMenuItem!
     private var rssFetchTask: Task<Void, Never>?
@@ -92,6 +93,15 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // ── Terminal ──
+        terminalItem = NSMenuItem(
+            title: L10n.Terminal.title, action: #selector(showTerminal), keyEquivalent: "",
+        )
+        terminalItem.target = self
+        menu.addItem(terminalItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // ── Knowledge ──
         knowledgeMenuItem = NSMenuItem(title: L10n.Knowledge.title, action: nil, keyEquivalent: "")
         knowledgeMenuItem.submenu = NSMenu()
@@ -137,6 +147,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         refreshProxyItem()
         refreshTasksItem()
         refreshKnowledgeItem()
+        terminalItem.isHidden = !ConfigManager.shared.config.terminal.enabled
+    }
+
+    @objc private func showTerminal() {
+        Task { @MainActor in TerminalManager.shared.showWindow() }
     }
 
     private func refreshKnowledgeItem() {
@@ -577,6 +592,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         mcpMenuItem.title = mcpTitleText(MCPProcessManager.shared.state)
         proxyMenuItem.title = proxyTitleText()
         tasksMenuItem.title = L10n.Menu.tasks
+        terminalItem.title = L10n.Terminal.title
         clearItem.title = L10n.Menu.clearClipboard
         quitItem.title = L10n.Menu.quit
     }

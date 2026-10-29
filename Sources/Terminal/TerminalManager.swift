@@ -8,10 +8,13 @@ final class TerminalManager {
     private(set) var selectedID: String?
 
     private let store = TerminalSessionStore()
-    private var backend: TerminalBackend?
+    private var backend: TmuxBackend?
     private var windowController: TerminalWindowController?
     private var didRestore = false
     private var isShuttingDown = false
+    private var didReportMissingTmux = false
+    /// Some prompts emit the same notification twice; keep one banner per burst.
+    private var lastNotification: (sessionID: String, at: Date)?
 
     private var config: TerminalConfig {
         ConfigManager.shared.config.terminal
@@ -27,8 +30,13 @@ final class TerminalManager {
     // MARK: - Window
 
     func toggleWindow() {
-        guard let window = ensureWindow().window else { return }
+        let controller = ensureWindow()
+        guard let window = controller.window else { return }
         if window.isVisible, window.isKeyWindow {
+            controller.wantsVisible = false
+            debugLog(
+                "[Terminal] window hidden by hotkey responder=\(String(describing: window.firstResponder))",
+            )
             window.orderOut(nil)
         } else {
             showWindow()
@@ -37,12 +45,20 @@ final class TerminalManager {
 
     func showWindow() {
         let controller = ensureWindow()
+        controller.wantsVisible = true
         controller.window?.makeKeyAndOrderFront(nil)
         // Lay out first so restored views start at the size they will keep;
         // a later resize makes screen shift the whole buffer.
         controller.window?.layoutIfNeeded()
         restoreIfNeeded()
+        // An empty panel has nothing to type into; open a session right away.
+        if sessions.isEmpty {
+            createSession()
+        }
         controller.reload(sessions: sessions, selectedID: selectedID)
+        if sessions.isEmpty, backend == nil, !TmuxBackend.isAvailable() {
+            controller.showEmptyState(message: L10n.Terminal.tmuxMissingBody)
+        }
         NSApplication.shared.activate(ignoringOtherApps: true)
         if let selectedID, let session = sessions.first(where: { $0.id == selectedID }) {
             controller.showTerminal(session.view)
@@ -56,7 +72,6 @@ final class TerminalManager {
         controller.onNew = { [weak self] in self?.createSession() }
         controller.onSelect = { [weak self] id in self?.selectSession(id: id) }
         controller.onClose = { [weak self] id in self?.closeSession(id: id) }
-        controller.onActivate = { [weak self] in self?.clearSelectedUnread() }
         windowController = controller
         return controller
     }
@@ -73,7 +88,11 @@ final class TerminalManager {
             return
         }
 
-        let backend = resolvedBackend()
+        guard let backend = resolvedBackend() else {
+            windowController?.showEmptyState(message: L10n.Terminal.tmuxMissingBody)
+            reportMissingTmux()
+            return
+        }
         let id = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
             .lowercased()
         let cwd = TerminalShell.resolvedWorkingDirectory(configured: cfg.workingDirectory)
@@ -95,7 +114,6 @@ final class TerminalManager {
             title: title.isEmpty ? L10n.Terminal.title : title,
             cwd: cwd,
             shell: shell,
-            backend: backend,
             fontSize: cfg.fontSize,
         )
         wire(session)
@@ -122,14 +140,13 @@ final class TerminalManager {
     func selectSession(id: String) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         selectedID = id
-        session.unread = 0
         windowController?.reload(sessions: sessions, selectedID: id)
         windowController?.showTerminal(session.view)
     }
 
     func closeSession(id: String) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
-        session.backend.kill(id: id)
+        backend?.kill(id: id)
         session.terminate()
         remove(session)
     }
@@ -145,11 +162,8 @@ final class TerminalManager {
         guard !didRestore else { return }
         didRestore = true
 
-        let backend = resolvedBackend()
-        guard config.restoreSessions, backend.kind != .local else {
-            if backend.kind == .local { store.save([]) }
-            return
-        }
+        guard config.restoreSessions else { return }
+        guard let backend = resolvedBackend() else { return }
 
         let live = backend.liveIDs()
         let stored = store.load()
@@ -166,14 +180,12 @@ final class TerminalManager {
                 title: item.title,
                 cwd: item.cwd,
                 shell: TerminalShell.resolvedShell(configured: config.shell),
-                backend: backend,
                 fontSize: config.fontSize,
                 createdAt: item.createdAt,
             )
             wire(session)
             // Give the view its final size before the pty is created.
             session.view.frame = NSRect(origin: .zero, size: contentSize)
-            backend.prepareAttach(id: item.id)
             do {
                 try session.start(launch: backend.launch(
                     id: item.id, cwd: item.cwd, shell: session.shell,
@@ -187,15 +199,12 @@ final class TerminalManager {
         persist()
     }
 
-    /// Keeps screen/tmux sessions alive by only detaching their clients.
+    /// Keeps tmux sessions alive by only detaching their clients.
     func shutdown() {
         isShuttingDown = true
         persist()
         for session in sessions {
             session.terminate()
-        }
-        if resolvedBackend().kind == .local {
-            store.save([])
         }
     }
 
@@ -203,7 +212,8 @@ final class TerminalManager {
 
     private func wire(_ session: TerminalSession) {
         session.onOutput = { [weak self] session in
-            self?.handleOutput(session)
+            guard let self else { return }
+            session.markOutput(seen: isFocused(session))
         }
         session.onNotification = { [weak self] session, title, body in
             self?.handleNotification(session, title: title, body: body)
@@ -216,33 +226,32 @@ final class TerminalManager {
         }
     }
 
-    private func clearSelectedUnread() {
-        guard let selectedID,
-              let session = sessions.first(where: { $0.id == selectedID }),
-              session.unread > 0 else { return }
-        session.unread = 0
-        windowController?.reloadRow(session: session)
-    }
-
+    /// `isKeyWindow` cannot be used here: the IME candidate window takes key
+    /// status while the user types, which would mark visible output as unseen.
     private func isFocused(_ session: TerminalSession) -> Bool {
-        let window = windowController?.window
-        return window?.isVisible == true
-            && window?.isKeyWindow == true
-            && selectedID == session.id
+        guard NSApp.isActive, let window = windowController?.window, window.isVisible else {
+            return false
+        }
+        return selectedID == session.id
     }
 
-    /// Output only raises the dot; counts come from explicit notifications.
-    private func handleOutput(_ session: TerminalSession) {
-        guard !isFocused(session), session.unread == 0 else { return }
-        session.unread = 1
-        windowController?.reloadRow(session: session)
-    }
-
-    /// Explicit OSC notifications: no guessing from output patterns.
+    /// Forward explicit OSC notifications as-is. Skip only when the user is
+    /// watching, or already watched the newest output before stepping away.
     private func handleNotification(_ session: TerminalSession, title: String, body: String) {
-        guard !isFocused(session) else { return }
-        session.unread = min(session.unread + 1, 99)
-        windowController?.reloadRow(session: session)
+        let focused = isFocused(session)
+        let seen = session.hasSeenLatestOutput
+        guard !focused, !seen else {
+            debugLog("[Terminal] notify suppressed focused=\(focused) seen=\(seen) title=\(title)")
+            return
+        }
+        let now = Date()
+        if let last = lastNotification, last.sessionID == session.id,
+           now.timeIntervalSince(last.at) < 3
+        {
+            debugLog("[Terminal] notify deduplicated title=\(title) body=\(body)")
+            return
+        }
+        lastNotification = (session.id, now)
         notify(
             title: title.isEmpty ? L10n.Terminal.notifyTitle : title,
             body: body.isEmpty ? L10n.Terminal.notifyBody(title: session.title) : body,
@@ -251,7 +260,7 @@ final class TerminalManager {
     }
 
     private func remove(_ session: TerminalSession) {
-        // Detach on quit must not prune screen/tmux metadata.
+        // Detach on quit must not prune tmux metadata.
         guard !isShuttingDown else { return }
         guard sessions.contains(where: { $0.id == session.id }) else { return }
         sessions.removeAll { $0.id == session.id }
@@ -272,12 +281,20 @@ final class TerminalManager {
 
     // MARK: - Helpers
 
-    private func resolvedBackend() -> TerminalBackend {
+    private func resolvedBackend() -> TmuxBackend? {
         if let backend { return backend }
-        let resolved = TerminalBackends.make(preference: config.backend)
-        debugLog("[Terminal] backend=\(resolved.kind.rawValue)")
+        guard let resolved = TmuxBackend.makeIfAvailable() else {
+            debugLog("[Terminal] tmux unavailable")
+            return nil
+        }
         backend = resolved
         return resolved
+    }
+
+    private func reportMissingTmux() {
+        guard !didReportMissingTmux else { return }
+        didReportMissingTmux = true
+        notify(title: L10n.Terminal.tmuxMissingTitle, body: L10n.Terminal.tmuxMissingBody)
     }
 
     private func persist() {
@@ -286,7 +303,7 @@ final class TerminalManager {
                 id: $0.id,
                 title: $0.title,
                 cwd: $0.cwd,
-                backend: $0.backend.kind.rawValue,
+                backend: TmuxBackend.storageName,
                 createdAt: $0.createdAt,
             )
         })

@@ -7,7 +7,6 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     var onNew: (() -> Void)?
     var onSelect: ((String) -> Void)?
     var onClose: ((String) -> Void)?
-    var onActivate: (() -> Void)?
 
     private let tableView = NSTableView()
     private let terminalContainer = NSView()
@@ -17,6 +16,9 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     private var selectedID: String?
     private var currentView: NSView?
     private var isUpdatingSelection = false
+    /// Whether the user expects this window on screen; survives focus changes
+    /// so a window dropped while the app loses focus can be restored.
+    var wantsVisible = false
 
     init() {
         let window = NSWindow(
@@ -29,6 +31,11 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         window.backgroundColor = VSTheme.windowBackground
         window.minSize = NSSize(width: 760, height: 480)
         window.isReleasedWhenClosed = false
+        // An accessory app must keep its window on screen without focus.
+        window.hidesOnDeactivate = false
+        // Clicking a menu-bar item activates that app. `alwaysOnTop` keeps this
+        // window above its windows instead of letting it be covered.
+        window.level = ConfigManager.shared.config.terminal.alwaysOnTop ? .floating : .normal
 
         super.init(window: window)
         AppWindowRegistry.register(window)
@@ -40,6 +47,10 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(didResignActive),
+            name: NSApplication.didResignActiveNotification, object: nil,
         )
     }
 
@@ -101,9 +112,10 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         window?.makeFirstResponder(view)
     }
 
-    func showEmptyState() {
+    func showEmptyState(message: String? = nil) {
         currentView?.removeFromSuperview()
         currentView = nil
+        emptyLabel.stringValue = message ?? L10n.Terminal.empty
         emptyLabel.isHidden = false
     }
 
@@ -149,7 +161,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         tableView.focusRingType = .none
         tableView.intercellSpacing = .zero
         tableView.selectionHighlightStyle = .regular
-        tableView.allowsEmptySelection = true
+        tableView.allowsEmptySelection = false
         tableView.dataSource = self
         tableView.delegate = self
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -234,12 +246,60 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     // MARK: - NSWindowDelegate
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        debugLog("[Terminal] window closed by user")
+        wantsVisible = false
         sender.orderOut(nil)
         return false
     }
 
+    /// Diagnostics only: tells whether losing focus also drops the window.
+    func windowDidResignKey(_: Notification) {
+        let newKey = NSApp.keyWindow.map { "\(type(of: $0)) '\($0.title)'" } ?? "nil"
+        debugLog(
+            "[Terminal] resigned key visible=\(window?.isVisible == true) appHidden=\(NSApp.isHidden) active=\(NSApp.isActive) newKey=\(newKey)",
+        )
+        scheduleRestoreCheck(after: 0.4)
+    }
+
     func windowDidBecomeKey(_: Notification) {
-        onActivate?()
+        let responder = window?.firstResponder.map { "\(type(of: $0))" } ?? "nil"
+        debugLog("[Terminal] became key responder=\(responder)")
+    }
+
+    func windowDidChangeOcclusionState(_: Notification) {
+        guard window?.occlusionState.contains(.visible) != true else { return }
+        debugLog(
+            "[Terminal] lost occlusion visible=\(window?.isVisible == true) appHidden=\(NSApp.isHidden)",
+        )
+    }
+
+    /// Losing focus can drop the window from the screen; put it back without
+    /// stealing focus.
+    @objc private func didResignActive() {
+        scheduleRestoreCheck(after: 0.3)
+        scheduleRestoreCheck(after: 1.0)
+        // Who took activation: nothing else in the log can name it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            let front = NSWorkspace.shared.frontmostApplication
+            debugLog(
+                "[Terminal] app deactivated frontmost=\(front?.localizedName ?? "nil") bundle=\(front?.bundleIdentifier ?? "nil")",
+            )
+        }
+    }
+
+    /// The first open after launch can lose the window slightly after the
+    /// focus notifications, so re-check instead of trusting one deadline.
+    /// `isVisible` stays true for a hidden app, hence the `NSApp.isHidden` test.
+    private func scheduleRestoreCheck(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, wantsVisible, let window else { return }
+            guard !window.isVisible || NSApp.isHidden else { return }
+            debugLog(
+                "[Terminal] restoring after focus loss isVisible=\(window.isVisible) appHidden=\(NSApp.isHidden)",
+            )
+            NSApp.unhideWithoutActivation()
+            window.orderFront(nil)
+        }
     }
 
     // MARK: - NSTableViewDataSource / Delegate
@@ -272,6 +332,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         let row = tableView.selectedRow
         guard sessions.indices.contains(row) else { return }
         onSelect?(sessions[row].id)
+        keepSidebarFocus()
     }
 }
 
@@ -297,7 +358,6 @@ private final class TerminalSessionRowView: NSTableCellView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let badge = TerminalUnreadBadge()
     private let closeButton = NSButton()
 
     override init(frame frameRect: NSRect) {
@@ -312,7 +372,6 @@ private final class TerminalSessionRowView: NSTableCellView {
     func configure(with session: TerminalSession) {
         titleLabel.stringValue = session.title
         subtitleLabel.stringValue = session.cwd
-        badge.count = session.unread
         closeButton.toolTip = L10n.Terminal.close
     }
 
@@ -329,9 +388,6 @@ private final class TerminalSessionRowView: NSTableCellView {
             addSubview(label)
         }
 
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(badge)
-
         closeButton.image = NSImage(
             systemSymbolName: "xmark", accessibilityDescription: L10n.Terminal.close,
         )
@@ -345,16 +401,16 @@ private final class TerminalSessionRowView: NSTableCellView {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8,
+            ),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            subtitleLabel.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -6),
+            subtitleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8,
+            ),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-
-            badge.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -6),
-            badge.centerYAnchor.constraint(equalTo: centerYAnchor),
-            badge.heightAnchor.constraint(equalToConstant: 16),
 
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -368,45 +424,13 @@ private final class TerminalSessionRowView: NSTableCellView {
     }
 }
 
-// MARK: - Unread badge
+// MARK: - Sidebar selection
 
 @MainActor
-private final class TerminalUnreadBadge: NSView {
-    var count: Int = 0 {
-        didSet {
-            isHidden = count == 0
-            label.stringValue = count > 99 ? "99+" : "\(count)"
-            invalidateIntrinsicContentSize()
-            needsLayout = true
-        }
-    }
-
-    private let label = NSTextField(labelWithString: "")
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = VSTheme.badge.cgColor
-        layer?.cornerRadius = 8
-        label.font = .systemFont(ofSize: 10, weight: .semibold)
-        label.textColor = .white
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        isHidden = true
-    }
-
-    required init?(coder _: NSCoder) {
-        nil
-    }
-
-    override var intrinsicContentSize: NSSize {
-        let width = max(16, label.intrinsicContentSize.width + 10)
-        return NSSize(width: width, height: 16)
+private extension TerminalWindowController {
+    /// Keep ↑/↓ in the sidebar after a row click; the terminal view would
+    /// otherwise take first responder and swallow them.
+    func keepSidebarFocus() {
+        window?.makeFirstResponder(tableView)
     }
 }

@@ -49,9 +49,11 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
     private static let editorFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
     private let textView = EditorTextView(frame: .zero)
+    private let scrollView = NSScrollView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
     private var highlightWork: DispatchWorkItem?
+    private var scrollHighlightWork: DispatchWorkItem?
     /// Last loaded/saved text; keeps unsaved edits on re-show.
     private var lastLoadedText = ""
     private let onApplied: () -> Void
@@ -112,7 +114,6 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
     private func setupUI() {
         guard let contentView = window?.contentView else { return }
 
-        let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -148,6 +149,12 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         textView.usesFindBar = true
         textView.delegate = self
         scrollView.documentView = textView
+        // Highlighting only covers visible lines, so scrolling must refresh it.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onScrollChanged),
+            name: NSView.boundsDidChangeNotification, object: scrollView.contentView,
+        )
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = VSTheme.secondaryText
@@ -216,7 +223,10 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
 
     private func applyHighlight() {
         guard !textView.hasMarkedText(), let storage = textView.textStorage else { return }
-        let text = storage.string
+        let source = storage.string as NSString
+        let range = visibleLineRange(in: source)
+        guard range.length > 0 else { return }
+        let slice = source.substring(with: range)
         let base: [NSAttributedString.Key: Any] = [
             .font: Self.editorFont,
             .foregroundColor: VSTheme.editorText,
@@ -226,15 +236,57 @@ final class ConfigEditorWindowController: NSWindowController, NSTextViewDelegate
         let suspendUndo = !(undo?.isUndoing ?? false) && !(undo?.isRedoing ?? false)
         if suspendUndo { undo?.disableUndoRegistration() }
         storage.beginEditing()
-        storage.setAttributes(
-            base, range: NSRange(location: 0, length: (text as NSString).length),
-        )
-        for token in YAMLSyntax.tokens(in: text) {
-            storage.addAttribute(.foregroundColor, value: color(for: token.kind), range: token.range)
+        // `setAttributes` drops paragraph styles and other model attributes,
+        // which leaves runs laid out against stale metrics; set only colors.
+        storage.addAttribute(.font, value: Self.editorFont, range: range)
+        storage.addAttribute(.foregroundColor, value: VSTheme.editorText, range: range)
+        for token in YAMLSyntax.tokens(in: slice) {
+            let tokenRange = NSRange(
+                location: token.range.location + range.location, length: token.range.length,
+            )
+            storage.addAttribute(
+                .foregroundColor, value: color(for: token.kind), range: tokenRange,
+            )
         }
         storage.endEditing()
+        invalidateVisibleLayout()
         if suspendUndo { undo?.enableUndoRegistration() }
         textView.typingAttributes = base
+    }
+
+    /// Highlighting the whole file on every keystroke is what made typing
+    /// stall; only the lines on screen are tokenized.
+    private func visibleLineRange(in source: NSString) -> NSRange {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else {
+            return NSRange(location: 0, length: source.length)
+        }
+        let glyphs = layout.glyphRange(forBoundingRect: textView.visibleRect, in: container)
+        let chars = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        guard chars.length > 0 else { return NSRange(location: 0, length: 0) }
+        return source.lineRange(for: chars)
+    }
+
+    @objc private func onScrollChanged() {
+        scrollHighlightWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyHighlight() }
+        scrollHighlightWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
+    /// Attribute edits can leave the visible runs unrendered until the next
+    /// scroll; refresh layout and display for what is on screen only, since a
+    /// full re-layout on every keystroke is what makes typing stutter.
+    private func invalidateVisibleLayout() {
+        let visible = textView.visibleRect
+        guard let layout = textView.layoutManager, let container = textView.textContainer else {
+            textView.needsDisplay = true
+            return
+        }
+        let glyphs = layout.glyphRange(forBoundingRect: visible, in: container)
+        let chars = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        layout.invalidateLayout(forCharacterRange: chars, actualCharacterRange: nil)
+        layout.invalidateDisplay(forCharacterRange: chars)
+        textView.setNeedsDisplay(visible)
     }
 
     private func color(for kind: YAMLTokenKind) -> NSColor {

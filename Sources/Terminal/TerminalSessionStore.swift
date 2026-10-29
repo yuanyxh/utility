@@ -4,11 +4,29 @@ struct StoredTerminalSession: Codable {
     let id: String
     var title: String
     var cwd: String
+    /// Older builds decode this as required; keep writing it.
     let backend: String
     let createdAt: Date
+
+    init(id: String, title: String, cwd: String, backend: String, createdAt: Date) {
+        self.id = id
+        self.title = title
+        self.cwd = cwd
+        self.backend = backend
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        cwd = try c.decode(String.self, forKey: .cwd)
+        backend = try c.decodeIfPresent(String.self, forKey: .backend) ?? TmuxBackend.storageName
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+    }
 }
 
-/// Metadata only; terminal state lives in tmux/screen or dies with the app.
+/// Metadata only; the terminal state itself lives in tmux.
 final class TerminalSessionStore {
     private let fileURL: URL
 
