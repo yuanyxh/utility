@@ -72,6 +72,13 @@ modelProxy:
   # new session (0 = never suggest). 300000 is an empirical threshold where reply latency
   # starts to climb; tune it for the actual model and machine.
   contextWarnTokens: 300000
+  # Rule injection strategy. `full` writes the whole rule file into every user turn
+  # (historical behavior). `progressive` writes it on the first turn and a short marker
+  # reminder afterwards, keeping the prompt-cache prefix stable across turns.
+  # fullEvery: 0 = first turn only; N = re-inject the full block every N user turns.
+  ruleInjection:
+    mode: progressive
+    fullEvery: 0
   # Shell tool output slimming: trim head/tail of overlong output (with a self-evident
   # marker) + lossless JSON minify. Only applies to shell-like tools — Read/Edit etc.
   # return file content the model explicitly asked for, truncating it is corruption.

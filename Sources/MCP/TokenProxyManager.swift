@@ -149,6 +149,23 @@ final class TokenProxyManager {
     /// Env name for the response annotation switch (same value as Python `proxy_response_note.RESPONSE_NOTE_ENV_KEY`)
     static let responseNoteEnvKey = "MODEL_PROXY_RESPONSE_NOTE"
     static let contextWarnEnvKey = "MODEL_PROXY_CONTEXT_WARN"
+    /// Env name for the rule injection strategy (same value as Python `proxy_protocol`)
+    static let ruleInjectionEnvKey = "MODEL_PROXY_RULE_INJECTION"
+
+    /// Rule injection strategy. **Always injected** so the Python side does not depend on
+    /// its own default -- same reasoning as the skill dedup switch.
+    private func ruleInjectionJSON() -> String? {
+        let cfg = proxyConfig?.ruleInjection ?? RuleInjectionConfig()
+
+        struct Payload: Encodable {
+            let mode: String
+            let fullEvery: Int
+        }
+        guard let data = try? JSONEncoder().encode(
+            Payload(mode: cfg.mode, fullEvery: cfg.fullEvery),
+        ) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 
     /// Shell tool output slimming config. **Always injected** (except when proxyConfig is nil), so the Python
     /// side does not depend on its own default -- same reasoning as the skill dedup switch.
@@ -214,6 +231,9 @@ final class TokenProxyManager {
         // skill full-text dedup switch: always injected ("1"/"0"), so the Python side does not depend on its own default
         overrides["MODEL_PROXY_SKILL_DEDUP"] =
             (proxyConfig?.skillDedupEnabled ?? true) ? "1" : "0"
+        if let ruleInjectionJSON = ruleInjectionJSON() {
+            overrides[Self.ruleInjectionEnvKey] = ruleInjectionJSON
+        }
         if let outputFilterJSON = outputFilterJSON() {
             overrides[Self.outputFilterEnvKey] = outputFilterJSON
         }

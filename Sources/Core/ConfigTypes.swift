@@ -285,6 +285,8 @@ public struct ModelProxyConfig: Codable {
     var contextWarnTokens: Int = 300_000
     /// Shell tool output slimming: trim head/tail of overly long output + lossless JSON minify (on by default)
     var outputFilter: OutputFilterConfig = OutputFilterConfig()
+    /// Rule injection strategy: full rules once, then a short reminder (on by default)
+    var ruleInjection: RuleInjectionConfig = RuleInjectionConfig()
 
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -305,6 +307,10 @@ public struct ModelProxyConfig: Codable {
         outputFilter = decodeAny(
             decoder, OutputFilterConfig.self, keys: ["outputFilter", "output_filter"],
         ) ?? OutputFilterConfig()
+        ruleInjection = decodeAny(
+            decoder, RuleInjectionConfig.self,
+            keys: ["ruleInjection", "rule_injection"],
+        ) ?? RuleInjectionConfig()
         clientAccel = decodeAny(
             decoder, ClientAccelConfig.self, keys: ["clientAccel", "client_accel"],
         )
@@ -396,6 +402,26 @@ public struct ClientTextConfig: Codable {
     enum CodingKeys: String, CodingKey {
         case continuationPrefixes, summaryPrefixes, injectedTags
     }
+}
+
+/// Rule injection strategy (config.yaml `modelProxy.ruleInjection`).
+///
+/// `full` writes the whole rule file into every user turn (historical behavior). `progressive`
+/// writes it on the first turn and a short marker reminder afterwards: the proxy re-injects into
+/// the client's original history on every request, so a position-only rule keeps each historical
+/// message byte-identical and the upstream prompt-cache prefix stable. `fullEvery` re-injects the
+/// full block every N user turns (0 = first turn only).
+public struct RuleInjectionConfig: Codable {
+    var mode: String = "progressive"
+    var fullEvery: Int = 0
+
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        mode = decodeAny(decoder, String.self, keys: ["mode"]) ?? "progressive"
+        fullEvery = decodeAny(decoder, Int.self, keys: ["fullEvery", "full_every"]) ?? 0
+    }
+
+    enum CodingKeys: String, CodingKey { case mode, fullEvery }
 }
 
 /// Shell tool output slimming (config.yaml `modelProxy.outputFilter`).
