@@ -153,7 +153,7 @@ final class RSSDigestService {
         cfg: RSSDailyConfig,
         filtered: inout [RSSDigestRender.Filtered]
     ) async -> [RSSDigestRender.Article] {
-        let bodies = await fetchPages(
+        let fetched = await fetchPages(
             entries.map(\.link),
             maxChars: cfg.articleMaxChars,
             timeout: TimeInterval(cfg.fetchTimeout),
@@ -161,8 +161,10 @@ final class RSSDigestService {
         )
         var ready: [Entry] = []
         for var entry in entries {
-            guard let text = bodies[entry.link], text.count >= 50 else {
-                filtered.append(filteredEntry(entry, L10n.RSS.filterFetchFailed))
+            guard let text = fetched.bodies[entry.link], text.count >= 50 else {
+                filtered.append(filteredEntry(
+                    entry, Self.fetchFailureText(fetched.failures[entry.link]),
+                ))
                 continue
             }
             entry.text = text
@@ -250,8 +252,12 @@ final class RSSDigestService {
         return results
     }
 
-    /// Summarize one batch; a failed batch is split in half so one bad entry cannot drop the rest.
-    private func summarizeChunk(_ chunk: [Entry], cfg: RSSDailyConfig) async -> [String: SummaryPayload] {
+    /// Summarize one batch; entries the model skipped are re-requested in halves.
+    private func summarizeChunk(
+        _ chunk: [Entry],
+        cfg: RSSDailyConfig,
+        depth: Int = 0
+    ) async -> [String: SummaryPayload] {
         guard !chunk.isEmpty else { return [:] }
         let blocks = chunk.enumerated().map { index, entry in
             "[\(index)] 标题：\(entry.title)\n"
@@ -278,15 +284,22 @@ final class RSSDigestService {
                     .trimmingCharacters(in: .whitespaces)
             )
         }
-        guard results.isEmpty else { return results }
-        guard chunk.count > 1 else {
-            debugLog("[RSS] summary failed for \(chunk[0].link)")
-            return [:]
+        // A rejected batch can return fewer items than requested; retry only those.
+        let missing = chunk.filter { results[$0.link] == nil }
+        if missing.isEmpty { return results }
+        if missing.count == 1 {
+            debugLog("[RSS] summary missing for \(missing[0].link)")
+            return results
         }
-        let mid = chunk.count / 2
-        var split = await summarizeChunk(Array(chunk[..<mid]), cfg: cfg)
-        split.merge(await summarizeChunk(Array(chunk[mid...]), cfg: cfg)) { _, new in new }
-        return split
+        guard depth < 2 else {
+            debugLog("[RSS] summary still missing \(missing.count) entries at depth \(depth)")
+            return results
+        }
+        let mid = missing.count / 2
+        var split = await summarizeChunk(Array(missing[..<mid]), cfg: cfg, depth: depth + 1)
+        split.merge(await summarizeChunk(Array(missing[mid...]), cfg: cfg, depth: depth + 1)) { _, new in new }
+        results.merge(split) { _, new in new }
+        return results
     }
 
     private func chatJSON(
@@ -337,7 +350,7 @@ final class RSSDigestService {
         let digestEntries = selected.filter { $0.kind == "digest" }
         guard !digestEntries.isEmpty else { return selected }
 
-        let pages = await fetchPages(
+        let fetched = await fetchPages(
             digestEntries.map(\.link),
             maxChars: max(cfg.articleMaxChars, 30000),
             timeout: TimeInterval(cfg.fetchTimeout),
@@ -349,7 +362,7 @@ final class RSSDigestService {
                 expanded.append(entry)
                 continue
             }
-            guard let page = pages[entry.link] else {
+            guard let page = fetched.bodies[entry.link] else {
                 filtered.append(filteredEntry(entry, L10n.RSS.filterWeeklyFetchFailed))
                 continue
             }
@@ -409,35 +422,75 @@ final class RSSDigestService {
         return links
     }
 
+    private struct FetchedPages {
+        var bodies: [String: String] = [:]
+        /// HTTP status per failed URL; 0 means no response at all.
+        var failures: [String: Int] = [:]
+    }
+
+    private static let browserUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+
     private func fetchPages(
         _ urls: [String],
         maxChars: Int,
         timeout: TimeInterval,
         width: Int
-    ) async -> [String: String] {
+    ) async -> FetchedPages {
         let unique = Array(Set(urls.filter { !$0.isEmpty }))
-        var results: [String: String] = [:]
+        var pages = FetchedPages()
         let limit = max(1, width)
         var start = 0
         while start < unique.count {
             let chunk = Array(unique[start ..< min(start + limit, unique.count)])
-            await withTaskGroup(of: (String, String?).self) { group in
+            await withTaskGroup(of: (String, String?, Int?).self) { group in
                 for url in chunk {
                     group.addTask { [client] in
-                        guard let page = try? await client.readMarkdown(url: url, maxChars: maxChars, timeout: timeout),
-                              page.ok,
-                              let markdown = page.markdown
-                        else { return (url, nil) }
-                        return (url, markdown.trimmingCharacters(in: .whitespacesAndNewlines))
+                        guard let page = try? await client.readMarkdown(
+                            url: url, maxChars: maxChars, timeout: timeout,
+                        ), page.ok, let markdown = page.markdown else {
+                            return (url, nil, await Self.probeStatus(url))
+                        }
+                        let text = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else {
+                            return (url, nil, await Self.probeStatus(url))
+                        }
+                        return (url, text, nil)
                     }
                 }
-                for await (url, text) in group {
-                    if let text, !text.isEmpty { results[url] = text }
+                for await (url, text, status) in group {
+                    if let text {
+                        pages.bodies[url] = text
+                    } else {
+                        pages.failures[url] = status ?? 0
+                    }
                 }
             }
             start += limit
         }
-        return results
+        return pages
+    }
+
+    /// The reader reports no status code, so one HEAD request classifies the failure.
+    private static func probeStatus(_ url: String) async -> Int? {
+        guard let target = URL(string: url) else { return nil }
+        var request = URLRequest(url: target)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 6
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return nil }
+        return http.statusCode
+    }
+
+    private static func fetchFailureText(_ status: Int?) -> String {
+        guard let status else { return L10n.RSS.filterNetwork }
+        switch status {
+        case 404, 410: return L10n.RSS.filterLinkGone
+        case 401, 403, 429: return L10n.RSS.filterBlocked
+        default: return L10n.RSS.filterFetchFailed
+        }
     }
 
     // MARK: - Helpers
