@@ -34,6 +34,12 @@
   - **schema 的 `default` 与 handler 兜底必须同源**：`DEFAULT_RECALL_LIMIT` / `DEFAULT_PROJECT_SEARCH_LIMIT` / `DEFAULT_PROJECT_STRUCTURE_LIMIT` 全部取自 `arg_default()`，两处各写一份字面量会漂移成「schema 声明 6、实际取 8」（recall 上次 10→8 踩过这个坑）
   - **`project_search` / `project_structure` 原先没有 limit 参数**：内部分别硬编码 `[:15]`/`[:10]`/全量 与 `MAX_ITEMS=200`，本次新增 `limit` 形参接入配置面。**`project_search` 的 exact 分支此前返回全量 `all_found`**（可达数百条），是输出膨胀的主因
   - **整数参数一律经 `_int_arg`**：客户端显式传 `null` 时 `arguments.get` 返回 None，直接切片 `all_found[:None]` 是**不截断**——静默把 token 治理关掉
+- **检索层参数在根级 `retrieval` 段**（2026-10-31）：`services/retrieval/config.py` 读 `retrieval.gate`、`retrieval.notesSemantic`、`retrieval.plans.<profile>.<stage>.<name>`，取值顺序 **env → `config.yaml` → 内置默认**（env 形如 `RETRIEVAL_RECALL_SEMANTIC_MIN_HITS`）。数值不进代码是因为合适阈值取决于部署持有的数据。Swift 侧 `RetrievalConfig` 必须建模该段：`ConfigManager.save()` 用 `YAMLEncoder` **全量重写**配置，未建模的段会在「设为默认 provider」这类操作时被抹掉
+- **检索分阶段回退**：`Stage` 按 `arms + min_hits + accept` 描述一层，命中数不足 `min_hits` 视为未命中继续向下；`accept` 缺省表示「非空即停」，松层会因此掩盖紧层，需要质量判据时必须显式传入。`recall` 目前是两段：`semantic`（向量臂）→ `fallback`（词法臂）。`retrieval.plans.recall.run_all: true` 合并为单段（不早停），仅用于对比实验：实测 25 条 known-item 上 hit 不变、p50 353→700ms，且词法臂产出 0 条——跨层排序前必须先统一分数尺度
+- **关键词只做融合后加权**：`Query.keywords` / `keyword_weight` 由调用方传入，`boost.py` 对命中词的行乘权重后重排，**不参与取候选**。实测关键词当子查询会拉低 hit@1（0.80→0.58）
+  - 两者都**可选**：`required` 只有 `query`；不传 `keywords` 时 `keyword_boost` 直接返回，候选与顺序都不变
+  - booster 之后的重新排序必须用 fusion 的 `rank_key`，**不能用 `item.score`**——纯分数排序会把 `HeatWeightedFusion` 的热权重整个抹掉，即使没传关键词
+  - 热权重 `retrieval.plans.recall.fusion.heat_weight` 默认 `0`（纯分数）：实测 0.2 让 25 条 known-item 的 hit@1 从 0.80 掉到 0.68
 - **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `UTILITY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
 ### 记忆生命周期（2026-10-23）
 

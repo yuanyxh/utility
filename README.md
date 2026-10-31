@@ -589,6 +589,9 @@ Restart the service after adding or changing a skill.
 | `mcp.embedderModel` | `""` | embedding model; empty uses `sentence-transformers/all-MiniLM-L6-v2` |
 | `mcp.fastembedCacheDir` | `""` | model cache; empty uses `~/.cache/utility/fastembed/` |
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
+| `retrieval.gate` | `layer` | relevance gate: `layer` (presence) or `relative` (top1/median margin) |
+| `retrieval.notesSemantic` | — | semantic re-check floor for lexical note hits; `0` disables |
+| `retrieval.plans` | — | per-stage knobs `profile → stage → name → value`, e.g. `recall.semantic.min_hits` |
 
 Restart from **menu bar → MCP** after changing any of these.
 

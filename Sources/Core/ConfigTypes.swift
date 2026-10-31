@@ -39,6 +39,7 @@ public struct AppConfig: Codable {
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
     var terminal: TerminalConfig = .init()
+    var retrieval: RetrievalConfig? = nil
 
     public init() {}
 
@@ -58,6 +59,31 @@ public struct AppConfig: Codable {
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
         terminal = (try? c.decodeIfPresent(TerminalConfig.self, forKey: .terminal)) ?? .init()
+        retrieval = try? c.decodeIfPresent(RetrievalConfig.self, forKey: .retrieval)
+    }
+}
+
+// MARK: - Retrieval
+
+/// Retrieval knobs consumed by the agent-gateway MCP service (config.yaml `retrieval`).
+///
+/// The values live in config because the right number depends on the data a deployment
+/// holds, not on the algorithm; they are read by `services/retrieval/config.py`.
+public struct RetrievalConfig: Codable {
+    /// Matching mode for the relevance gate: `layer` (presence) or `relative` (margin).
+    var gate: String = ""
+    /// Semantic re-check floor for lexical note hits; `nil` = built-in per-model value.
+    var notesSemantic: Double? = nil
+    /// Per-profile stage knobs: profile → stage → name → value.
+    var plans: [String: [String: [String: Double]]] = [:]
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        gate = (try? c.decodeIfPresent(String.self, forKey: .gate)) ?? ""
+        notesSemantic = try? c.decodeIfPresent(Double.self, forKey: .notesSemantic)
+        plans = (try? c.decodeIfPresent([String: [String: [String: Double]]].self, forKey: .plans)) ?? [:]
     }
 }
 
