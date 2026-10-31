@@ -36,7 +36,10 @@
   - **整数参数一律经 `_int_arg`**：客户端显式传 `null` 时 `arguments.get` 返回 None，直接切片 `all_found[:None]` 是**不截断**——静默把 token 治理关掉
 - **检索层参数在根级 `retrieval` 段**（2026-10-31）：`services/retrieval/config.py` 读 `retrieval.gate`、`retrieval.notesSemantic`、`retrieval.plans.<profile>.<stage>.<name>`，取值顺序 **env → `config.yaml` → 内置默认**（env 形如 `RETRIEVAL_RECALL_SEMANTIC_MIN_HITS`）。数值不进代码是因为合适阈值取决于部署持有的数据。Swift 侧 `RetrievalConfig` 必须建模该段：`ConfigManager.save()` 用 `YAMLEncoder` **全量重写**配置，未建模的段会在「设为默认 provider」这类操作时被抹掉
 - **检索分阶段回退**：`Stage` 按 `arms + min_hits + accept + subqueries + fusion` 描述一层，命中数不足 `min_hits` 视为未命中继续向下；`accept` 缺省表示「非空即停」，松层会因此掩盖紧层，需要质量判据时必须显式传入。`recall` 目前是两段：`semantic`（向量臂）→ `fallback`（词法臂）。`retrieval.plans.recall.run_all: true` 合并为单段（不早停），仅用于对比实验：实测 25 条 known-item 上 hit 不变、p50 353→700ms，且词法臂产出 0 条——跨层排序前必须先统一分数尺度
-- **关键词三种模式**（`retrieval.recallKeywordMode`）：`off`（默认，只对已返回结果加权重排）、`first`（每个关键词各自检索成层，置于原查询之上）、`merge`（关键词与原查询同一排序累加计分）。实测 25 条 known-item 的 hit@1：off 0.83 / first 0.50 / merge 0.75；错误关键词下 off 0.24、first 与 merge 均为 0.00。`first` 只有加语义地板（`retrieval.plans.recall.keyword.min_score`，默认 hot 地板 0.62）才能回到 0.83，但 24 次关键词检索**无一达到地板**，等于每次白跑一次检索（p50 273→396ms）。结论：关键词独立检索在当前语料上没有收益，默认保持 `off`
+- **关键词四种模式**（`retrieval.recallKeywordMode`）：`off`（默认，只对已返回结果加权重排）、`scope`（关键词限定结果集，query 在其中排序）、`first`（每个关键词各自检索成层）、`merge`（关键词与原查询同一排序累加计分）
+  - 实测 hit@1：`off` 0.83 / `first` 0.50 / `merge` 0.75；`first` 加 0.62 语义地板后回到 0.83，但 24 次关键词检索**无一达到地板**（短关键词的向量召回极差，项目名甚至检索不到以它开头的记忆），等于每次白跑一次检索
+  - `scope` 只在**所有关键词都字面出现在候选里**时过滤，取交集；任一关键词无法锚定或交集为空都不过滤。12 条「项目+维度」样本：正确关键词 0.92（基线 0.83）、错误维度 0.83（不受伤害）、同义非字面 0.75（少数关键词字面命中了非目标记录，范围被压到一条）
+  - 结论：关键词的收益完全依赖「关键词是否字面命中所属记录」；默认保持 `off`，`scope` 供关键词质量有保证的调用方选用
 - **YAML `off` 是布尔值**：`keyword_mode` 读配置时先做布尔归一（`False → "off"`），否则裸写 `off` 会被解析成 false，整项静默回落到默认值
 - **关键词只做融合后加权**：`Query.keywords` / `keyword_weight` 由调用方传入，`boost.py` 对命中词的行乘权重后重排，**不参与取候选**。实测关键词当子查询会拉低 hit@1（0.80→0.58）
   - 两者都**可选**：`required` 只有 `query`；不传 `keywords` 时 `keyword_boost` 直接返回，候选与顺序都不变
