@@ -218,6 +218,14 @@ retrieval:
   gate: layer
   # Semantic re-check floor for lexical note hits; 0 disables the check.
   notesSemantic:
+  # How caller keywords take part in recall:
+  #   off   = re-rank already-retrieved hits only (default)
+  #   first = each keyword is retrieved on its own, above the raw-query tier
+  #   merge = keywords and the raw query scored in one ranking
+  # Measured on 25 known items (hit@1): off 0.83, first 0.50 (0.83 with the
+  # quality gate, at 45% more latency), merge 0.75. Keep `off` unless the data
+  # shows otherwise. Quote the value: bare `off` is YAML boolean false.
+  recallKeywordMode: "off"
   # Per-stage knobs: profile -> stage -> name -> value.
   # recall stages: semantic (vector arms) then fallback (lexical arms).
   # A stage with fewer hits than min_hits falls through to the next stage.

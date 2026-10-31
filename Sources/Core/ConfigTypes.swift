@@ -74,6 +74,9 @@ public struct RetrievalConfig: Codable {
     var gate: String = ""
     /// Semantic re-check floor for lexical note hits; `nil` = built-in per-model value.
     var notesSemantic: Double? = nil
+    /// Keyword handling for recall: `off` / `first` / `merge`. String, so it
+    /// lives at the root: `plans` leaves are numbers and cannot hold it.
+    var recallKeywordMode: String? = nil
     /// Per-profile stage knobs: profile → stage → name → value.
     var plans: [String: [String: [String: Double]]] = [:]
 
@@ -83,6 +86,7 @@ public struct RetrievalConfig: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         gate = (try? c.decodeIfPresent(String.self, forKey: .gate)) ?? ""
         notesSemantic = try? c.decodeIfPresent(Double.self, forKey: .notesSemantic)
+        recallKeywordMode = try? c.decodeIfPresent(String.self, forKey: .recallKeywordMode)
         plans = (try? c.decodeIfPresent([String: [String: [String: Double]]].self, forKey: .plans)) ?? [:]
     }
 }
