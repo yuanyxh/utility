@@ -158,7 +158,12 @@ final class TmuxBackend: Sendable {
     }
 
     func kill(id: String) {
-        _ = tmux(["kill-session", "-t", name(id)])
+        let result = tmux(["kill-session", "-t", name(id)])
+        guard result.status != 0 else { return }
+        guard !result.output.contains("can't find session"),
+              !result.output.contains("no server running")
+        else { return }
+        debugLog("[Terminal] kill-session failed id=\(id): \(result.output)")
     }
 
     /// tmux consumes the shell's OSC 7 itself, so pane paths are the only source.

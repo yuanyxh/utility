@@ -162,10 +162,13 @@ final class TerminalManager {
 
     private func restoreIfNeeded() {
         guard !didRestore else { return }
-        didRestore = true
-
-        guard config.restoreSessions else { return }
+        guard config.restoreSessions else {
+            didRestore = true
+            return
+        }
+        // Leave didRestore false so a later open retries once tmux is available.
         guard let backend = resolvedBackend() else { return }
+        didRestore = true
 
         let live = backend.liveIDs()
         let stored = store.load()
@@ -218,7 +221,12 @@ final class TerminalManager {
             self?.handleNotification(session, title: title, body: body)
         }
         session.onExit = { [weak self] session in
-            self?.remove(session)
+            guard let self else { return }
+            // An unexpected client exit must not leave the tmux session running.
+            if !isShuttingDown {
+                backend?.kill(id: session.id)
+            }
+            remove(session)
         }
         session.onTitleChange = { [weak self] session in
             self?.windowController?.reloadRow(session: session)
@@ -313,16 +321,21 @@ final class TerminalManager {
     }
 
     private func persist() {
-        store.save(
-            sessions.map {
-                StoredTerminalSession(
-                    id: $0.id,
-                    title: $0.title,
-                    cwd: $0.cwd,
-                    backend: TmuxBackend.storageName,
-                    createdAt: $0.createdAt,
-                )
-            })
+        var entries = sessions.map {
+            StoredTerminalSession(
+                id: $0.id,
+                title: $0.title,
+                cwd: $0.cwd,
+                backend: TmuxBackend.storageName,
+                createdAt: $0.createdAt,
+            )
+        }
+        // Restore has not run: preserve stored entries instead of overwriting.
+        if !didRestore {
+            let ids = Set(entries.map(\.id))
+            entries += store.load().filter { !ids.contains($0.id) }
+        }
+        store.save(entries)
     }
 
     private func notify(title: String, body: String, sessionID: String? = nil) {

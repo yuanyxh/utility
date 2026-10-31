@@ -28,6 +28,7 @@ final class TerminalDropView: LocalProcessTerminalView {
     /// held back so drags can select text locally; a click with no drag is then
     /// replayed to the TUI, keeping its buttons and options usable.
     override func mouseDown(with event: NSEvent) {
+        debugLog("[Terminal] mouseDown clicks=\(event.clickCount) reporting=\(allowMouseReporting)")
         window?.makeFirstResponder(self)
         pendingDown = event
         pendingDownPoint = event.locationInWindow
@@ -48,15 +49,24 @@ final class TerminalDropView: LocalProcessTerminalView {
         super.mouseDragged(with: event)
     }
 
-    /// Diagnostics for ⌘C: tells whether the selection reached the pasteboard.
+    /// A double-click on punctuation selects nothing, and `copy` clears the
+    /// pasteboard before writing; keep the previous contents so the TUI's own
+    /// copy-on-select survives.
     override func copy(_ sender: Any) {
+        let pasteboard = NSPasteboard.general
+        let previous = pasteboard.string(forType: .string)
         super.copy(sender)
-        let length = NSPasteboard.general.string(forType: .string)?.count ?? -1
+        let length = pasteboard.string(forType: .string)?.count ?? -1
         debugLog("[Terminal] copy pasteboardLength=\(length)")
+        if length == 0, let previous {
+            pasteboard.clearContents()
+            pasteboard.setString(previous, forType: .string)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
         let dragged = didDragSelect
+        debugLog("[Terminal] mouseUp clicks=\(event.clickCount) dragged=\(dragged)")
         super.mouseUp(with: event)
         if mouseReportingSuspended {
             allowMouseReporting = true

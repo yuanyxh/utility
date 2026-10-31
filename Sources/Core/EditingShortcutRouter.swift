@@ -16,6 +16,14 @@ enum EditingShortcutRouter {
 
     private static func handle(_ event: NSEvent) -> NSEvent? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "c"
+        {
+            let responder = NSApp.keyWindow?.firstResponder
+            debugLog(
+                "[Shortcut] copy-key flags=\(flags.rawValue) keyWindow=\(NSApp.keyWindow != nil) responder=\(responder.map { "\(type(of: $0))" } ?? "nil") control=\(flags.contains(.control)) option=\(flags.contains(.option))",
+            )
+        }
         guard flags.contains(.command),
               !flags.contains(.control),
               !flags.contains(.option),
