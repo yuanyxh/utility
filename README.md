@@ -437,8 +437,6 @@ flowchart TD
 | `modelProxy.outputFilter.maxBytes` | `12000` | only outputs above this size are trimmed |
 | `modelProxy.responseAnnotationEnabled` | `true` | append `model \| rewrote: …` to final replies |
 | `modelProxy.contextWarnTokens` | `300000` | context size above which the appended line suggests a new session (`0` = never) |
-| `modelProxy.ruleInjection.mode` | `progressive` | `full` injects the whole rule block every turn; `progressive` injects it on the first turn and a short reminder afterwards |
-| `modelProxy.ruleInjection.fullEvery` | `0` | with `progressive`, re-inject the full block every N user turns (`0` = first turn only) |
 | `modelProxy.clientAccel` | `{enabled: true, clients: []}` | clients that get classifier acceleration |
 | `modelProxy.clientText` | — | client-injected continuation/summary text and tags |
 | `modelProxy.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
