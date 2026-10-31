@@ -218,28 +218,15 @@ retrieval:
   gate: layer
   # Semantic re-check floor for lexical note hits; 0 disables the check.
   notesSemantic:
-  # How caller keywords take part in recall:
-  #   off   = re-rank already-retrieved hits only (default)
-  #   scope = keywords bound the result set, the query ranks inside it
-  #   first = each keyword is retrieved on its own, above the raw-query tier
-  #   merge = keywords and the raw query scored in one ranking
-  # Measured hit@1: off 0.83, first 0.50, merge 0.75. scope reaches 0.92 when
-  # every keyword quotes the target record, and drops to 0.83 when it does not.
-  # Keep `off` unless the data shows otherwise. Quote the value: bare `off` is
-  # YAML boolean false.
-  recallKeywordMode: "off"
   # Per-stage knobs: profile -> stage -> name -> value.
   # recall stages: semantic (vector arms) then fallback (lexical arms).
   # A stage with fewer hits than min_hits falls through to the next stage.
-  # keyword_weight scales hits that contain a caller-supplied keyword; 1.0 disables it.
   plans:
     recall:
       semantic:
         min_hits: 1
       fallback:
         min_hits: 1
-      boost:
-        keyword_weight: 2.0
       # Heat multiplier in the fusion order. 0 = pure score order (default);
       # measured on 25 known items, 0.2 dropped hit@1 from 0.80 to 0.68.
       fusion:
