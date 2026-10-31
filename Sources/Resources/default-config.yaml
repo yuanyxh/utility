@@ -209,29 +209,6 @@ mcp:
   maxRestarts: 3
   restartDelayMs: 2000
 
-# ---------- Retrieval ----------
-# Consumed by the agent-gateway MCP service (agent-gateway 仓 services/retrieval/config.py).
-# Env wins over this file, this file wins over built-in defaults.
-# Only list what you want to change: a missing key falls back to the built-in value.
-retrieval:
-  # Relevance gate: "layer" = presence of a hit in the layer; "relative" = top1/median margin.
-  gate: layer
-  # Semantic re-check floor for lexical note hits; 0 disables the check.
-  notesSemantic:
-  # Per-stage knobs: profile -> stage -> name -> value.
-  # recall stages: semantic (vector arms) then fallback (lexical arms).
-  # A stage with fewer hits than min_hits falls through to the next stage.
-  plans:
-    recall:
-      semantic:
-        min_hits: 1
-      fallback:
-        min_hits: 1
-      # Heat multiplier in the fusion order. 0 = pure score order (default);
-      # measured on 25 known items, 0.2 dropped hit@1 from 0.80 to 0.68.
-      fusion:
-        heat_weight: 0
-
 clipboard:
   maxDays: 3
   excludeApps:

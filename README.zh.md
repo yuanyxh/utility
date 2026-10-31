@@ -541,9 +541,6 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 | `mcp.embedderModel` | `""` | 嵌入模型；留空用 `sentence-transformers/all-MiniLM-L6-v2` |
 | `mcp.fastembedCacheDir` | `""` | 模型缓存；留空用 `~/.cache/utility/fastembed/` |
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | 崩溃后的重启策略 |
-| `retrieval.gate` | `layer` | 相关性门控：`layer`（存在性）或 `relative`（top1/中位数间距） |
-| `retrieval.notesSemantic` | — | 词法笔记命中的语义复核下限；`0` 关闭复核 |
-| `retrieval.plans` | — | 分阶段参数 `profile → stage → name → value`，如 `recall.semantic.min_hits` |
 
 改动后从**菜单栏 → MCP** 重启服务。
 
