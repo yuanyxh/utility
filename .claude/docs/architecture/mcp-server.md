@@ -38,6 +38,8 @@
 - **检索分阶段回退**：`Stage` 按 `arms + min_hits + accept` 描述一层，命中数不足 `min_hits` 视为未命中继续向下；`accept` 缺省表示「非空即停」，松层会因此掩盖紧层，需要质量判据时必须显式传入。`recall` 目前是两段：`semantic`（向量臂）→ `fallback`（词法臂）。`retrieval.plans.recall.run_all: true` 合并为单段（不早停），仅用于对比实验：实测 25 条 known-item 上 hit 不变、p50 353→700ms，且词法臂产出 0 条——跨层排序前必须先统一分数尺度
 - **关键词只做融合后加权**：`Query.keywords` / `keyword_weight` 由调用方传入，`boost.py` 对命中词的行乘权重后重排，**不参与取候选**。实测关键词当子查询会拉低 hit@1（0.80→0.58）
   - 两者都**可选**：`required` 只有 `query`；不传 `keywords` 时 `keyword_boost` 直接返回，候选与顺序都不变
+  - 传了 keywords 时返回体带 `keyword_hits`：列出实际命中已返回结果的关键词，**不在列表里的词对本次调用零作用**，调用方可据此决定是否重查；不传 keywords 时该字段不出现
+  - schema 文案必须说清「只重排、不检索」：原文案写成 “each is searched separately”，模拟测试里调用方据此传入 87% 的关键词，而有效改善仅 1.6%
   - booster 之后的重新排序必须用 fusion 的 `rank_key`，**不能用 `item.score`**——纯分数排序会把 `HeatWeightedFusion` 的热权重整个抹掉，即使没传关键词
   - 热权重 `retrieval.plans.recall.fusion.heat_weight` 默认 `0`（纯分数）：实测 0.2 让 25 条 known-item 的 hit@1 从 0.80 掉到 0.68
 - **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `UTILITY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
