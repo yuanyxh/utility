@@ -35,7 +35,9 @@
   - **`project_search` / `project_structure` 原先没有 limit 参数**：内部分别硬编码 `[:15]`/`[:10]`/全量 与 `MAX_ITEMS=200`，本次新增 `limit` 形参接入配置面。**`project_search` 的 exact 分支此前返回全量 `all_found`**（可达数百条），是输出膨胀的主因
   - **整数参数一律经 `_int_arg`**：客户端显式传 `null` 时 `arguments.get` 返回 None，直接切片 `all_found[:None]` 是**不截断**——静默把 token 治理关掉
 - **检索行为固定在代码中（2026-10-31）**：不再有 `retrieval.*` 配置段。调用方与部署都不需要调阈值——每模型的相关性地板在 `gate/thresholds.py` 的 `floors_for(tag)` 里按模型标定，其余（分层、`min_hits`、融合权重、门控类型）都是代码常量。实测表明这些旋钮除了让行为可漂移之外没有带来质量收益：相对门控未被启用、heat 权重必须为 0 才不退步、`run_all` 每次只增加延迟
-- **检索分阶段回退**：`recall` 两段——`semantic`（向量臂）→ `fallback`（词法臂）。`Stage` 的 `min_hits` 缺省 1，`accept` 缺省表示非空即停
+- **分数地板自动标定（2026-10-31）**：新模型没有内置表时不再报错。启动后台任务采样热/冷层各 100 条记忆，用自身开头 20 字当查询，取「命中自己」的语义分**中位数**作为地板，写入 `<数据目录>/retrieval_thresholds.json`。实测 jinazh768：hot 0.616（人工标定 0.62）、cold 0.569（人工 0.55），耗时 23 秒。取 5% 分位会低约 0.2（hot 0.321），放行大量无关记录。标定完成前用 `PROVISIONAL_FLOORS` 临时值，不阻塞调用；`POST /api/retrieval/calibrate` 可手动触发（`{"write": false}` 只试算）
+  - 笔记层的 `notes_semantic` 按冷层地板 × 0.65 推导（两个模型的实测比值 0.64–0.71）；`notes_coverage` 是词项占比而非相似度，固定 0.50
+- - **检索分阶段回退**：`recall` 两段——`semantic`（向量臂）→ `fallback`（词法臂）。`Stage` 的 `min_hits` 缺省 1，`accept` 缺省表示非空即停
 - **关键词参数已移除（2026-10-31）**：`recall` 不再接受 `keywords` / `keyword_weight`，调用方传了也会被忽略。三轮实测结论：模型 77% 会传关键词，但只有 7% 带来改善、7% 反而变差；42/55 的关键词本就出现在基线 top3 里。四种策略都不成立——`first`（关键词独立检索）与 `merge`（合并累加）因短词向量召回极差而归零，`scope`（字面范围约束）在真实关键词上盲评 8 差 2 好。**短标识符（项目名/模块名）作为向量查询检索不到以它开头的记忆**，这条事实决定了所有「用关键词再查一次」的方案都会失败
   - 保留的教训：schema 文案必须与实际行为一致（原文案写 “each is searched separately”，实测 87% 的调用因此传入关键词）；YAML 裸写 `off` 会被解析成布尔 false；`Stage` 若允许自带 `subqueries`/`fusion`/`scope`，就必须保证融合能读到过滤后的结果
 - **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `UTILITY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
