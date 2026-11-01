@@ -470,7 +470,8 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `catch_up` | pull recent memories |
 | `forget` | delete a memory |
 | `set_memory_processed` | read/write the processed bit |
-| `project_search` | multi-layer codebase search |
+| `project_lookup` | locate a symbol or file in the dependency graph |
+| `project_impact` | callers/callees of a symbol, multi-hop |
 | `project_structure` | project directory structure |
 | `project_notes` | search project-local Markdown docs |
 | `tool_resource` | read a skill's companion resources |

@@ -192,7 +192,7 @@ mcp:
     - consolidated
 
   # Search synonym expansion: expand Chinese query terms into the matching English terms,
-  # used by full-text search such as project_search.
+  # used by full-text search.
   # **Incremental** semantics — same key overrides a built-in, new keys append; write only
   # what you want to add, no need to copy the whole built-in table (it lives in
   # agent-gateway 仓 src/agent_gateway/core/synonyms.py). Restart the MCP service for changes to take effect.
@@ -207,8 +207,11 @@ mcp:
   toolDefaults:
     recall:
       limit: 6
-    project_search:
-      limit: 15
+    project_lookup:
+      limit: 50
+    project_impact:
+      limit: 30
+      depth: 2
     project_structure:
       limit: 15
     websearch_engine:
@@ -221,6 +224,15 @@ mcp:
   # Process supervision
   maxRestarts: 3
   restartDelayMs: 2000
+
+# ---------- Project graph ----------
+# Dependency graph built into <project>/.utility/graph.sqlite in `utility -a` mode.
+# If graphIndexer is unavailable the agent still starts and the graph is skipped.
+graph:
+  enabled: true
+  # Languages to index. Empty = all built-in parsers
+  # (swift, python, typescript, javascript, vue, java, kotlin, objc).
+  languages: []
 
 clipboard:
   maxDays: 3

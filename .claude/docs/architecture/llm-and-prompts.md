@@ -36,9 +36,9 @@
 
 ### 工具描述与参数描述（固定英文，tool_text.py）
 - **工具描述**：`server.TOOL_DESCRIPTIONS` 是唯一来源，固定英文、无外部覆盖渠道（`DESCRIPTIONS.md` 机制已移除）
-- **参数描述**：`tool_text.PARAM_DESCRIPTIONS` 固定英文，按语义键（`param.<name>`）定义；同一文案被多个工具复用时只写一份（`param.memory_content` ×2、`param.db_path` ×3、`param.max_results` ×4）
+- **参数描述**：`tool_text.PARAM_DESCRIPTIONS` 固定英文，按语义键（`param.<name>`）定义；同一文案被多个工具复用时只写一份（`param.memory_content` ×2、`param.db_path` ×1、`param.max_results` ×7）
 - 两者都不进 `Sources/Resources/<lang>.json`，`UTILITY_LANG` 只影响提示词与用户界面，MCP 层不随语言切换
-- 工具描述只写**触发条件与用途**；参数级说明放在参数描述里（如 `project_search` 的同义词能力归 `param.search_keyword`，`project_structure` 的 subpath 语义归 `param.subpath`）
+- 工具描述只写**触发条件与用途**；参数级说明放在参数描述里（如 `project_lookup` 的查询语义归 `param.graph_query`，`project_structure` 的 subpath 语义归 `param.subpath`）
 - `param_text(key)` 查表；未登记的键抛 `MissingParamText`（`MissingText` 的别名），不回退成键名——静默回退会把内部标识当文案发给模型
 - **契约第 6 组**（静态 AST，不 import server.py——它导入即拉起 mem0/qdrant）：`handle_list_tools()` 内所有 `"description"` 必须经 `param_text(...)` 取，裸字面量与「无法判定的形式」都算违反；引用的键必须存在、表中不得有孤儿键。看的是 dict 的 `"description"` 键，工具级 `Tool(description=...)` 是关键字参数、天然在范围外
 - **`param.memory_content` 与 `TOOL_DESCRIPTIONS["remember"]` 必须同为三要素口径**（场景/决策/演进）：两处描述的是同一段模型行为，分叉时模型收到两套要求

@@ -79,6 +79,7 @@ enum GatewayEntry {
     static let summarize = "agent_gateway.services.summarize.summarize"
     static let astExtractor = "agent_gateway.scanner.ast_extractor"
     static let knowledgeRefill = "agent_gateway.services.knowledge.knowledge_refill"
+    static let graphIndexer = "agent_gateway.services.graph.indexer"
 }
 
 // MARK: - Python Subprocess Environment Variable Names

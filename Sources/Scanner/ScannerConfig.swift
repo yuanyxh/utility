@@ -30,7 +30,7 @@ final class ScannerConfig {
         resolvedIncludes = config.includes ?? ["**/*.swift", "**/*.ts", "**/*.tsx", "**/*.js",
                                                "**/*.jsx", "**/*.vue", "**/*.mjs", "**/*.cjs",
                                                "**/*.py",
-                                               "**/*.java", "**/*.kt", "**/*.m", "**/*.h"]
+                                               "**/*.java", "**/*.kt", "**/*.kts", "**/*.m", "**/*.h"]
         resolvedExcludes = config.excludes ?? [".build/**", "node_modules/**", "dist/**",
                                                ".git/**", ".utility/**", "Pods/**", ".venv/**"]
     }

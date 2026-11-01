@@ -11,6 +11,7 @@ import Foundation
 final class FileWatcher {
     private let projectPath: String
     private let scanner: ProjectScanner
+    private let graphScanner: GraphScanner?
     private var stream: FSEventStreamRef?
 
     /// Serial queue for FSEventStream delivery (FSEventStream requires serial).
@@ -22,8 +23,9 @@ final class FileWatcher {
     private var isScanning = false
     private var timerScheduled = false
 
-    init(projectPath: String) {
+    init(projectPath: String, graphScanner: GraphScanner?) {
         self.projectPath = projectPath
+        self.graphScanner = graphScanner
         scanner = ProjectScanner.shared
         eventQueue = DispatchQueue(label: "com.utility.filewatcher.events", qos: .utility)
         debugLog("[Watcher] Init: \(projectPath)")
@@ -123,6 +125,11 @@ final class FileWatcher {
                 continue
             }
             if isFile, !config.shouldInclude(relPath) {
+                continue
+            }
+            // Full scans use .skipsHiddenFiles; keep the incremental path aligned.
+            if isFile,
+               relPath.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
                 continue
             }
             if relPath.hasPrefix(".utility/") || relPath == ".utility" {
@@ -313,6 +320,27 @@ final class FileWatcher {
         }
 
         debugLog("[Watcher] Scan result: \(updated) indexed, \(failed) failed, \(paths.count) total")
+
+        processGraphChanges(deleted: deleted, existing: existing)
+    }
+
+    /// Mirrors file events into the graph engine. Failures are logged, never fatal.
+    private func processGraphChanges(deleted: Set<String>, existing: Set<String>) {
+        guard let graphScanner else { return }
+        for relPath in deleted.sorted() {
+            do {
+                try graphScanner.removeFile(relPath: relPath)
+            } catch {
+                debugLog("[Watcher] Graph delete failed: \(relPath): \(error.localizedDescription)")
+            }
+        }
+        for relPath in existing.sorted() {
+            do {
+                _ = try graphScanner.indexFile(relPath: relPath)
+            } catch {
+                debugLog("[Watcher] Graph update failed: \(relPath): \(error.localizedDescription)")
+            }
+        }
     }
 
     private func updateDirFileCount(db: ProjectDatabase, dirPath: String) {

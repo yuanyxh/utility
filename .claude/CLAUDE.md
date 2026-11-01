@@ -38,6 +38,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | llm_client / 提示词 / MCP 描述文案 | `.claude/docs/architecture/llm-and-prompts.md` |
 | 知识面板 | `.claude/docs/architecture/knowledge-panel.md` |
 | MCP 服务 server.py | `.claude/docs/architecture/mcp-server.md` |
+| 项目依赖图 graph.sqlite / graphIndexer | `.claude/docs/architecture/project-graph.md` |
 | Orchestrate 设计沉淀 / Claude CLI 标志 | `.claude/docs/architecture/design-notes.md` |
 
 以下只列**每次改动都必须遵守的不变量**；原因与历史案例在文档里。

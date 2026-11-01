@@ -293,7 +293,7 @@ bash scripts/run-tests.sh
 - `JavaExtractor` 提取 class/interface/enum/@interface + record + method + field，带关键字过滤和行内注解消耗
 - `KotlinExtractor` 提取 fun/suspend fun + class/object/companion + val/var + typealias + fun interface/data object/annotation class，修饰符贪心通用匹配
 - FTS5 + 同义词扩展：中文搜索先转同义词再 MATCH，降级到 LIKE
-- MCP `project_search` 三状态响应：`exact`（自动选中）、`ambiguous`（同名多文件引导）、`no_match`（无结果）
+- MCP 项目图工具：`project_lookup` 定位符号/文件并附一跳调用方，`project_impact` 按 callers/callees/both 多跳遍历
 - **符号向量缓存必须用稳定业务键，不能用 `symbols.id`**（2026-09-11 根治）：`symbols.id` 是
   GRDB AUTOINCREMENT，而 `ProjectScanner.scan()` 经 `replaceScanResults()` 先整体
   `DELETE FROM symbols` 再重插、`FileWatcher` 增量路径先 `DELETE FROM symbols WHERE

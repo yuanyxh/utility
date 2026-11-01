@@ -39,6 +39,7 @@ public struct AppConfig: Codable {
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
     var terminal: TerminalConfig = .init()
+    var graph: GraphConfig = .init()
 
     public init() {}
 
@@ -58,6 +59,24 @@ public struct AppConfig: Codable {
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
         terminal = (try? c.decodeIfPresent(TerminalConfig.self, forKey: .terminal)) ?? .init()
+        graph = (try? c.decodeIfPresent(GraphConfig.self, forKey: .graph)) ?? .init()
+    }
+}
+
+// MARK: - Project graph
+
+public struct GraphConfig: Codable {
+    /// Enable graph building in agent mode.
+    var enabled: Bool = true
+    /// Empty = all built-in parsers.
+    var languages: [String] = []
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        languages = try c.decodeIfPresent([String].self, forKey: .languages) ?? []
     }
 }
 

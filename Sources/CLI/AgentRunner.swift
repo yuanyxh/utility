@@ -12,6 +12,9 @@ enum AgentRunner {
     /// Current Agent child process PID (used by signal handling for cleanup)
     static var childPID: Int32 = 0
 
+    /// Cached PID for signal context; reading a Swift object there is not signal-safe.
+    private static var graphIndexerPID: Int32 = 0
+
     /// Entry point called from UtilityCLI.run().
     static func run(agentCommand: String, projectDir: String?) throws {
         let projectPath = projectDir.map { ($0 as NSString).expandingTildeInPath }
@@ -25,15 +28,14 @@ enum AgentRunner {
         let dbPath = try prepareDatabase(projectPath: projectPath)
         let isFirstInit = !FileManager.default.fileExists(atPath: dbPath)
 
-        // 2. Scan (first init or full re-sync)
+        // 2. Scan only on first init; later runs reuse deps.sqlite.
+        //    The graph below is the live index; `utility init` rebuilds deps.
         if isFirstInit {
             print("📦 No dependency graph found, scanning project...")
             let s = try ProjectScanner.shared.scan(projectPath: projectPath)
             print("   \(s)")
         } else {
-            print("📦 Full project scan, syncing changes...")
-            let s = try ProjectScanner.shared.scan(projectPath: projectPath)
-            print("   Found \(s)")
+            print("📦 Reusing .utility/deps.sqlite (run `utility init` to rebuild)")
         }
 
         // Warm note vectors off the main thread; the agent session keeps the
@@ -42,10 +44,15 @@ enum AgentRunner {
             MCPClient.shared.prewarmNotes(dbPath: dbPath)
         }
 
+        // 2b. Project graph: rebuild only when meta is missing or engine/schema/root differ.
+        let graph = prepareGraph(projectPath: projectPath)
+        // Crash restarts change the PID, so refresh the signal-context copy.
+        graph?.onIndexerPIDChange = { pid in graphIndexerPID = pid }
+        graphIndexerPID = graph?.indexerProcessIdentifier ?? 0
+
         // 3. Start file watcher
-        let watcher = FileWatcher(projectPath: projectPath)
+        let watcher = FileWatcher(projectPath: projectPath, graphScanner: graph)
         watcher.start()
-        defer { watcher.stop() }
 
         // 4. Print banner
         print("╔══════════════════════════════════════╗")
@@ -61,9 +68,47 @@ enum AgentRunner {
         // 4. Spawn agent
         let exitCode = spawnAgent(command: agentCommand, projectPath: projectPath, dbPath: dbPath)
 
+        // Darwin.exit skips defer; stop the watcher and indexer explicitly.
+        watcher.stop()
+        graph?.stop()
+        graphIndexerPID = 0
+
         print()
         print("✅ Agent exited (exit code: \(exitCode))")
         Darwin.exit(exitCode)
+    }
+
+    // MARK: - Project graph
+
+    /// Best-effort graph setup: an unavailable engine warns and leaves agent mode running.
+    private static func prepareGraph(projectPath: String) -> GraphScanner? {
+        let config = ConfigManager.shared.config.graph
+        guard config.enabled else { return nil }
+        do {
+            let scanner = try GraphScanner(
+                projectPath: projectPath,
+                languages: config.languages,
+            )
+            if try scanner.isUpToDate() {
+                let summary = try scanner.syncScan()
+                printGraphBanner(stats: summary.stats, elapsedMs: summary.elapsedMs)
+                return scanner
+            }
+            print("📊 Building project graph...")
+            let summary = try scanner.fullScan()
+            printGraphBanner(stats: summary.stats, elapsedMs: summary.elapsedMs)
+            return scanner
+        } catch {
+            print("⚠️ Graph engine unavailable: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private static func printGraphBanner(stats: GraphStats, elapsedMs: Int) {
+        print(
+            "📊 Graph: \(stats.nodes) nodes / \(stats.edges) edges"
+                + " / \(stats.stale) stale / \(elapsedMs) ms"
+        )
     }
 
     // MARK: - Database
@@ -140,6 +185,11 @@ enum AgentRunner {
     }
 
     private static func terminateChildAndExit(_ sig: Int32) {
+        // Signal context: only async-signal-safe calls. The indexer also exits on
+        // stdin EOF, which closing this process's pipe end produces.
+        if graphIndexerPID > 0 {
+            kill(graphIndexerPID, SIGTERM)
+        }
         if childPID > 0 {
             kill(childPID, SIGTERM)
             usleep(200_000) // give the child time to exit, force-kill as a backstop
@@ -168,6 +218,7 @@ enum AgentRunner {
         var env = ProcessInfo.processInfo.environment
         env["UTILITY_PROJECT_DIR"] = projectPath
         env["UTILITY_PROJECT_DB"] = dbPath
+        env["UTILITY_GRAPH_DB"] = GraphDatabase.databasePath(projectPath: projectPath)
         if let port = ConfigManager.shared.config.mcp?.port {
             env["MCP_PORT"] = String(port)
         }
