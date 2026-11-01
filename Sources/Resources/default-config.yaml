@@ -168,8 +168,10 @@ mcp:
   summaryHour: 17
 
   # Summary exclude tags: memories carrying these tags do not sediment into the knowledge
-  # base (workflow/format-ish, not technical knowledge)
+  # base (workflow/format-ish, not technical knowledge). Consolidation summaries carry
+  # the "consolidated" tag; excluding it stops summary-of-summary loops.
   excludeTags:
+    - consolidated
 
   # Search synonym expansion: expand Chinese query terms into the matching English terms,
   # used by full-text search such as project_search.

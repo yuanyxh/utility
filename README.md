@@ -463,8 +463,10 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 
 | Tool | Purpose |
 |---|---|
-| `remember` / `remember_batch` | write memories (hot layer) |
+| `remember` / `remember_batch` | write memories (fact + context, optional importance/protected) |
 | `recall` | three-layer joint retrieval |
+| `memory_get` | full body and lifecycle state for any id, including archived entries |
+| `memory_graph` | follow one edge type (version chain, episode, sources, disputes) |
 | `catch_up` | pull recent memories |
 | `forget` | delete a memory |
 | `set_memory_processed` | read/write the processed bit |

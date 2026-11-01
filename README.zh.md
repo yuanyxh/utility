@@ -421,8 +421,10 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 
 | 工具 | 作用 |
 |---|---|
-| `remember` / `remember_batch` | 写入记忆(热层) |
+| `remember` / `remember_batch` | 写入记忆(事实 + 情境，可选 importance/protected) |
 | `recall` | 三层联合检索 |
+| `memory_get` | 任意 id 的完整正文与生命周期状态，含已归档条目 |
+| `memory_graph` | 沿单一关系遍历（版本链 / 事件组 / 来源 / 矛盾） |
 | `catch_up` | 拉取近期记忆 |
 | `forget` | 删除记忆 |
 | `set_memory_processed` | 读写记忆 processed 位 |
