@@ -92,6 +92,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 
 ### MCP 服务（server.py）
 - 记忆覆盖必须「先 add 成功后软标记旧条」，禁止先 delete；禁止原地更新正文；消费方用 `processed & (bit0|bit1)` 跳过已沉淀/已作废条目
+- 图节点 metadata 由 `link.record_hot_memory` 的 `node_meta` 白名单**整块覆盖**：新增要持久化的节点字段必须同时进白名单（`level`/`importance`/`protected` 已加），否则下一次写入即丢
+- 摘要折叠：`_write_memory` 去重命中时返回既有节点 id，折叠方必须把它排除出归档名单；层级上限 3，达顶的节点不再折叠但仍占预算名额
 - 冷层集合维度不一致：`logger.error` + **禁用冷层**，不拒绝启动
 - 同义词 / 工具默认值 = 内置默认 + 用户增量；对应 env 不进 `config.py`，由契约脚本单独交叉断言
 - schema 的 `default` 与 handler 兜底必须同源（`arg_default()`）
