@@ -131,6 +131,20 @@ public struct MCPConfig: Codable {
     var hotRetentionDays: Int = 180
     var archiveDays: Int = 90
 
+    /// Importance at or above which contradiction checks and archiving skip a memory (0 = disabled)
+    var memoryProtectImportance: Int = 0
+    /// Soft limit on one memory's length in characters (0 = unlimited, warning only)
+    var memoryMaxContentChars: Int = 0
+    /// Global cap on active consolidation summaries (0 = no folding)
+    var memoryMaxSummaries: Int = 0
+    /// Per-episode cap on active consolidation summaries (0 = no folding)
+    var memoryMaxSummariesPerEpisode: Int = 0
+
+    /// Optional ranking signals blended into retrieval order; all zero = plain score order
+    var rankSignalRecency: Double = 0
+    var rankSignalAccess: Double = 0
+    var rankSignalQuality: Double = 0
+
     // Daily summary
     var summaryEnabled: Bool = true
     var summaryHour: Int = 17
@@ -166,6 +180,16 @@ public struct MCPConfig: Codable {
         embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? ""
         hotRetentionDays = try c.decodeIfPresent(Int.self, forKey: .hotRetentionDays) ?? 180
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
+        memoryProtectImportance =
+            try c.decodeIfPresent(Int.self, forKey: .memoryProtectImportance) ?? 0
+        memoryMaxContentChars =
+            try c.decodeIfPresent(Int.self, forKey: .memoryMaxContentChars) ?? 0
+        memoryMaxSummaries = try c.decodeIfPresent(Int.self, forKey: .memoryMaxSummaries) ?? 0
+        memoryMaxSummariesPerEpisode =
+            try c.decodeIfPresent(Int.self, forKey: .memoryMaxSummariesPerEpisode) ?? 0
+        rankSignalRecency = try c.decodeIfPresent(Double.self, forKey: .rankSignalRecency) ?? 0
+        rankSignalAccess = try c.decodeIfPresent(Double.self, forKey: .rankSignalAccess) ?? 0
+        rankSignalQuality = try c.decodeIfPresent(Double.self, forKey: .rankSignalQuality) ?? 0
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
         synonyms = try c.decodeIfPresent([String: String].self, forKey: .synonyms) ?? [:]

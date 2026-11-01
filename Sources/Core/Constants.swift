@@ -119,6 +119,17 @@ enum EnvKeys {
     /// Log rotation shared by Swift `debug.log` and every Python logger (`general.log*`).
     static let logMaxSize = "UTILITY_LOG_MAX_SIZE"
     static let logBackupCount = "UTILITY_LOG_BACKUP_COUNT"
+
+    /// Memory write and consolidation budgets, from `mcp.memory*` (0 = feature off).
+    static let memoryProtectImportance = "MEMORY_PROTECT_IMPORTANCE"
+    static let memoryMaxContentChars = "MEMORY_MAX_CONTENT_CHARS"
+    static let memoryMaxSummaries = "MEMORY_MAX_SUMMARIES"
+    static let memoryMaxSummariesPerEpisode = "MEMORY_MAX_SUMMARIES_PER_EPISODE"
+
+    /// Optional ranking signals, from `mcp.rankSignal*` (all zero = plain score order).
+    static let rankSignalRecency = "RANK_SIGNAL_RECENCY"
+    static let rankSignalAccess = "RANK_SIGNAL_ACCESS"
+    static let rankSignalQuality = "RANK_SIGNAL_QUALITY"
 }
 
 // MARK: - Shared Pasteboard Types

@@ -581,6 +581,10 @@ Restart the service after adding or changing a skill.
 | `mcp.summaryEnabled` | `true` | run the daily summary pipeline |
 | `mcp.summaryHour` | `17` | hour of day it runs |
 | `mcp.excludeTags` | — | memories carrying these tags skip the knowledge-base pipeline |
+| `mcp.memoryProtectImportance` | `0` | memories with importance (1–10) at or above this are never archived or superseded; `0` disables |
+| `mcp.memoryMaxContentChars` | `0` | soft length limit per memory in characters, warns but never rejects; `0` unlimited |
+| `mcp.memoryMaxSummaries` / `memoryMaxSummariesPerEpisode` | `0` | budgets for active consolidation summaries; over budget the oldest fold into one higher-level summary (max 3 levels); `0` disables folding |
+| `mcp.rankSignalRecency` / `rankSignalAccess` / `rankSignalQuality` | `0` | optional ranking signals; benchmark each on the evaluator set before enabling, all `0` keeps plain score order |
 | `mcp.synonyms` | `{}` | search synonyms, an increment over the built-in table |
 | `mcp.toolDefaults` | e.g. `recall: 6` | default result caps per tool |
 | `mcp.qdrantPath` / `knowledgeBasePath` | `""` | storage paths; empty uses the default paths |

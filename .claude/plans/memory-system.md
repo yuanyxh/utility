@@ -501,10 +501,30 @@ PYTHONPATH=src .venv/bin/python scripts/known_item_eval.py
 | 写入长度 | `MEMORY_MAX_CONTENT_CHARS` 超限返回 warning，不拒绝 | 留空不限制 |
 | 图库维护 | 周任务成功后 `VACUUM` | 无行为变化 |
 | 死代码 | 删除 `HOT_RETENTION_DAYS`、`SUPERSEDED_RETENTION_DAYS` | — |
+| 摘要合并 | 日任务末尾按预算折叠：保留最新 `cap-1`，其余合并为一条 `level+1` 摘要，旧摘要软归档并写 `derived_from` | `MEMORY_MAX_SUMMARIES` / `MEMORY_MAX_SUMMARIES_PER_EPISODE` 为 0 时不折叠 |
 
-**配置说明**：新增开关目前只读环境变量，尚未接入 utility 的 `config.yaml` → Swift 注入链。启用时按宿主规则同时修改 `baseEnvironment()` 与 `taskEnvironmentOverrides()`，两处缺一不可。
+**摘要合并设计**：预算是唯一的触发条件，不做相似度聚类——摘要本就同质，聚类只会引入新的拟合阈值。层级上限 3，达到上限后继续在 3 层内折叠，不再加深；被折叠的原摘要只归档不删除，`derived_from` 保证可回溯到原始热记忆。合并本身要一次 LLM 压缩，因此只在超预算时发生，稳态下不产生额外调用。
 
-**验证**：agent-gateway 全量 369 例通过（1 skipped），`ruff` 通过；生产部署后需复验近邻候选耗时、dry-run 不落盘、归档过滤后的召回数量。
+**配置说明**：上述开关均已接入 `config.yaml` → Swift 注入链（`MCPConfig` 新增 `memoryProtectImportance` / `memoryMaxContentChars` / `memoryMaxSummaries` / `memoryMaxSummariesPerEpisode` / `rankSignal{Recency,Access,Quality}`，由 `memoryEnvironment()` 统一生成，同时注入 `baseEnvironment()` 与 `taskEnvironmentOverrides()`；`runtime.selfManaged` 下回退到 `_YAML_FALLBACKS`）。默认值全为 0，即全部关闭。
+
+**验证**：agent-gateway 全量 379 例通过（1 skipped），`ruff` 通过，`swift build` 通过；生产部署后需复验近邻候选耗时、dry-run 不落盘、归档过滤后的召回数量、超预算时的折叠结果。
+
+## 待办：归档条目物理迁出热层
+
+**现状**：归档只写 `archived=true` / `status=archived`，点仍留在热 collection；检索与日/周任务已排除，但存储与索引仍占热层。
+
+**触发条件**：归档占比或热层总量达到用户设定的阈值时再做；阈值进配置，不在代码里固化。
+
+**步骤**
+1. 把归档点的 payload 与向量复制到独立的归档 collection（或冷层）
+2. 校验复制数量与正文完整
+3. 从热 collection 删除这些点
+4. `memory_get` 增加归档层读取路径（热层查不到时回退归档层）
+5. 恢复流程：把点搬回热 collection 并重建索引
+
+**风险**：删除不可逆，必须先复制成功再删；与 mem0 内部管理耦合；恢复需要重建向量索引。
+
+**状态**：未开始。当前归档 184 / 4560（约 4%），收益不足以抵消风险。
 
 ## 不做的内容
 

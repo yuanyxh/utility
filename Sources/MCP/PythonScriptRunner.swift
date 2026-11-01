@@ -150,6 +150,9 @@ enum PythonScriptRunner {
             for (key, value) in noteEnvironment() {
                 env[key] = value
             }
+            for (key, value) in memoryEnvironment() {
+                env[key] = value
+            }
             for (key, value) in logEnvironment() {
                 env[key] = value
             }
@@ -261,6 +264,31 @@ enum PythonScriptRunner {
         return env
     }
 
+    /// Memory lifecycle budgets and ranking signals (`mcp.memory*` / `mcp.rankSignal*`).
+    /// Zero means "off", and zero is not injected -- the Python accessors treat a missing key the same way.
+    static func memoryEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        guard let mcp = ConfigManager.shared.config.mcp else { return env }
+        let budgets = [
+            (EnvKeys.memoryProtectImportance, mcp.memoryProtectImportance),
+            (EnvKeys.memoryMaxContentChars, mcp.memoryMaxContentChars),
+            (EnvKeys.memoryMaxSummaries, mcp.memoryMaxSummaries),
+            (EnvKeys.memoryMaxSummariesPerEpisode, mcp.memoryMaxSummariesPerEpisode),
+        ]
+        for (key, value) in budgets where value > 0 {
+            env[key] = String(value)
+        }
+        let signals = [
+            (EnvKeys.rankSignalRecency, mcp.rankSignalRecency),
+            (EnvKeys.rankSignalAccess, mcp.rankSignalAccess),
+            (EnvKeys.rankSignalQuality, mcp.rankSignalQuality),
+        ]
+        for (key, value) in signals where value > 0 {
+            env[key] = String(value)
+        }
+        return env
+    }
+
     /// Log rotation limits, same source as `DebugLogRotate` (`general.logMaxSize` / `logBackupCount`).
     static func logEnvironment() -> [String: String] {
         let general = ConfigManager.shared.config.general
@@ -316,6 +344,9 @@ enum PythonScriptRunner {
                 overrides[key] = value
             }
             for (key, value) in noteEnvironment() {
+                overrides[key] = value
+            }
+            for (key, value) in memoryEnvironment() {
                 overrides[key] = value
             }
             for (key, value) in logEnvironment() {

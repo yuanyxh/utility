@@ -163,6 +163,24 @@ mcp:
   hotRetentionDays: 180
   archiveDays: 90
 
+  # Importance (1-10) at or above which a memory is never archived or superseded. 0 = disabled.
+  memoryProtectImportance: 0
+  # Soft length limit for one memory, in characters. 0 = unlimited. Over the limit the
+  # write still succeeds and carries a warning; the fix is to split the fact.
+  memoryMaxContentChars: 0
+  # Caps on active consolidation summaries. 0 = no folding (summaries accumulate).
+  # Over budget the oldest summaries fold into one higher-level summary (max level 3);
+  # folded originals are archived, never deleted, and stay linked via derived_from.
+  memoryMaxSummaries: 0
+  memoryMaxSummariesPerEpisode: 0
+
+  # Optional ranking signals blended into retrieval order, each 0-1. All 0 = plain score order.
+  # Enable one at a time and compare hit@1 against the evaluator first; the defaults stay off
+  # because no signal has shown a stable gain yet.
+  rankSignalRecency: 0
+  rankSignalAccess: 0
+  rankSignalQuality: 0
+
   # Daily summary (triggered by TaskScheduler, runs summarize.py)
   summaryEnabled: true
   summaryHour: 17
