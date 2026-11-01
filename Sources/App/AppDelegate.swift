@@ -62,8 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
 
     func applicationWillTerminate(_: Notification) {
-        MCPProcessManager.shared.stop()
-        TokenProxyManager.shared.stop()
+        // Stop in parallel and wait: the async stop() returns immediately, and an app that
+        // exits first leaves the children reparented to launchd holding the port and store.
+        let group = DispatchGroup()
+        DispatchQueue.global(qos: .userInitiated).async(group: group) {
+            MCPProcessManager.shared.stopAndWait()
+        }
+        DispatchQueue.global(qos: .userInitiated).async(group: group) {
+            TokenProxyManager.shared.stopAndWait()
+        }
+        _ = group.wait(timeout: .now() + 6)
         menuBar.terminateAllTasks()
         MainActor.assumeIsolated {
             TerminalManager.shared.shutdown()

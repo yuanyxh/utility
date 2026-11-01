@@ -133,6 +133,22 @@ final class PythonDaemon: @unchecked Sendable {
         }
     }
 
+    /// Blocking stop for app termination.
+    ///
+    /// `stop()` only enqueues the work: if the app exits first, the child is reparented to
+    /// launchd and keeps the port and the Qdrant files open -- it also survives SIGTERM,
+    /// so nothing later reaps it. This waits for the whole terminate→kill sequence instead.
+    func stopAndWait(timeout: TimeInterval = 4.0) {
+        let done = DispatchSemaphore(value: 0)
+        lifecycleQueue.async { [weak self] in
+            self?.stopSync()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            debugLog("[\(config.logTag)] Stop did not finish within \(timeout)s")
+        }
+    }
+
     /// Force restart (called on config reload): stop the old process -> wait for it to die -> spawn for real.
     ///
     /// If this process is an external healthy process (orphan) "reused" on cold start, `process` is nil,
@@ -186,7 +202,19 @@ final class PythonDaemon: @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.1)
         }
         if proc.isRunning {
+            // The Python service ignores SIGTERM while its shutdown path hangs; without the
+            // fallback the child outlives the app and holds the store.
+            debugLog(
+                "[\(config.logTag)] PID \(proc.processIdentifier) ignored SIGTERM, sending SIGKILL"
+            )
             kill(proc.processIdentifier, SIGKILL)
+            let killDeadline = DispatchTime.now() + 2.0
+            while proc.isRunning, .now() < killDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if proc.isRunning {
+                debugLog("[\(config.logTag)] PID \(proc.processIdentifier) survived SIGKILL")
+            }
         }
         if process?.processIdentifier == proc.processIdentifier {
             process = nil

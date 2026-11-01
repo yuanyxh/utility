@@ -65,6 +65,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `terminationHandler` 的身份判断 `process !== p` 必须放在 `isStopping` 之前；崩溃判据包含非零退出码
 - 健康检查必须 `async/await` + `@MainActor`，禁止 `DispatchSemaphore`（阻塞主线程导致回调死锁）
 - 崩溃重启前先探测端口，健康则认领而不是再 spawn
+- 应用退出必须走 `stopAndWait()`（并发等子进程死亡，整体 6s 上限）；异步 `stop()` 之后进程立即退出会把子进程过继给 launchd——它连 SIGTERM 都不响应，会继续占端口与 Qdrant 存储
 - 跨语言契约由 gateway 仓导出 `contracts/env.json`；本仓不再扫 Python 源码
 - 进程按**模块名**启动（`GatewayEntry`），宿主侧不得出现 `.py` 路径；资源定位只经 `GatewayResources`
 - `GatewayEntry` 必须与 gateway 的 `contracts/entries.json` 一致（`scripts/check-gateway-entries.py`，打包与 run-tests 都跑）

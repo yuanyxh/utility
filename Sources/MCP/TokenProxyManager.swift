@@ -251,6 +251,11 @@ final class TokenProxyManager {
         daemon?.stop()
     }
 
+    /// App termination only: waits for the child to die so it is not reparented to launchd.
+    func stopAndWait() {
+        daemon?.stopAndWait()
+    }
+
     func forceRestart() {
         guard proxyConfig?.enabled == true else { return }
         guard !upstreamURL.isEmpty else { return }
