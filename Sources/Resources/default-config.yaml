@@ -212,8 +212,6 @@ mcp:
     project_impact:
       limit: 30
       depth: 2
-    project_structure:
-      limit: 15
     websearch_engine:
       limit: 5
       fetch_top: 0

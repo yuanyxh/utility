@@ -472,7 +472,6 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `set_memory_processed` | read/write the processed bit |
 | `project_lookup` | locate a symbol or file in the dependency graph |
 | `project_impact` | callers/callees of a symbol, multi-hop |
-| `project_structure` | project directory structure |
 | `project_notes` | search project-local Markdown docs |
 | `tool_resource` | read a skill's companion resources |
 | `websearch_engine` | multi-engine search (Google via offscreen WKWebView) with optional page Markdown |
@@ -665,7 +664,7 @@ flowchart LR
     A["ensure deps.sqlite<br/>auto-init when missing"] --> B["full scan<br/>catch changes outside the watcher's lifetime"] --> C["start FSEvents watcher"] --> D["spawn the Agent CLI<br/>stdin / stdout / stderr passthrough"] --> E["Agent exits → stop watcher → exit"]
 ```
 
-Environment injected into the Agent subprocess: `UTILITY_PROJECT_DIR` (project root), `UTILITY_PROJECT_DB` (index path), `MCP_PORT` / `MINO_BRAIN_MCP_PORT` (MCP service port).
+Environment injected into the Agent subprocess: `MCP_PORT` / `MINO_BRAIN_MCP_PORT` (MCP service port).
 
 ```bash
 utility -a "claude -p 'analyze this module'"

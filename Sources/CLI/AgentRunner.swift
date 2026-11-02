@@ -216,9 +216,6 @@ enum AgentRunner {
 
         // Set environment for the agent
         var env = ProcessInfo.processInfo.environment
-        env["UTILITY_PROJECT_DIR"] = projectPath
-        env["UTILITY_PROJECT_DB"] = dbPath
-        env["UTILITY_GRAPH_DB"] = GraphDatabase.databasePath(projectPath: projectPath)
         if let port = ConfigManager.shared.config.mcp?.port {
             env["MCP_PORT"] = String(port)
         }

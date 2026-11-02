@@ -1,6 +1,7 @@
 # 项目依赖图（graph.sqlite）
 
 `utility -a` 在项目根写 `.utility/graph.sqlite`，MCP 工具 `project_lookup` / `project_impact` 读它。
+两个工具与 `project_notes` 一样必传项目根 `path`，图库由 `<path>/.utility/graph.sqlite` 派生，不读环境变量，因此可查询任意已扫描项目。
 与旧 `.utility/deps.sqlite` 完全独立，互不读取。
 
 ## 组件

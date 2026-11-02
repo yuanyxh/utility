@@ -429,7 +429,6 @@ claude mcp add --transport http mino-brain http://127.0.0.1:[PORT]
 | `forget` | 删除记忆 |
 | `set_memory_processed` | 读写记忆 processed 位 |
 | `project_search` | 代码库多层级检索 |
-| `project_structure` | 项目目录结构 |
 | `project_notes` | 项目本地 Markdown 文档检索 |
 | `tool_resource` | 读取 skill 附属资源 |
 | (动态) | `MCP/Skills` 下每个 skill 注册为一个工具 |
@@ -616,7 +615,7 @@ flowchart LR
     A["确保 deps.sqlite<br/>缺失则自动 init"] --> B["全量扫描<br/>补齐 watcher 生命周期外的变更"] --> C["启动 FSEvents 文件监听"] --> D["子进程拉起 Agent CLI<br/>stdin / stdout / stderr 全透传"] --> E["Agent 退出 → 停监听 → 退出"]
 ```
 
-注入 Agent 子进程的环境:`UTILITY_PROJECT_DIR`(项目根)、`UTILITY_PROJECT_DB`(索引路径)、`MCP_PORT` / `MINO_BRAIN_MCP_PORT`(MCP 服务端口)。
+注入 Agent 子进程的环境：`MCP_PORT` / `MINO_BRAIN_MCP_PORT`（MCP 服务端口）。
 
 ```bash
 utility -a "claude -p '分析这个模块'"
