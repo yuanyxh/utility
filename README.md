@@ -53,7 +53,7 @@ The AI layer also needs Python 3.12. Its runtime comes from the separate
 | Tool output | `~/.config/utility/tool_output.sqlite` | full tool-output log | — |
 | Model cache | `~/.cache/utility/fastembed/` | embedding model | `mcp.fastembedCacheDir` |
 | Logs | `~/.cache/utility/` | per-process logs | — |
-| Project index | `<project root>/.utility/deps.sqlite` | data source for `project_*` | — |
+| Project graph | `<project root>/.utility/graph.sqlite` | data source for `project_lookup` / `project_impact` | — |
 
 ```bash
 tail -f ~/.cache/utility/debug.log         # runtime trace
@@ -648,20 +648,17 @@ Reminders do not fire while the app is not running; on launch it replays those w
 
 ### 6. Project index and Agent parasitic mode
 
-The data behind the `project_*` tools comes from `ProjectScanner` (full scan) + `FileWatcher` (incremental), which write to `.utility/deps.sqlite` under the project root. Multi-language extractors register by extension (Swift / JS-TS / Python / Vue / Java / Kotlin); extraction precedence is AST script → regex fallback. Symbols carry `start_line`/`end_line`.
-
-File-level imports live in the `imports` table. Extractors emit raw specifiers; resolvers map them to project-relative `to_path` when the target file exists, and mark bare packages as external. Unresolved targets keep their raw specifier instead of inventing an edge. Adding a language means implementing a `SymbolExtractor` with `imports(...)` plus a `LanguageImportResolver`.
+The data behind `project_lookup` / `project_impact` comes from `GraphScanner` (full or incremental scan), which writes `.utility/graph.sqlite` under the project root. The graph stores files, symbols, call/type/import edges and unresolved references; `FileWatcher` mirrors file events into it incrementally.
 
 | Command | Purpose |
 |---|---|
-| `utility init [--path <dir>]` | scan the project (default: CWD) and generate `.utility/deps.sqlite` |
-| `utility -a "<agent command>" [--dir <dir>]` | Agent parasitic mode: build the index, start the file watcher, launch the Agent |
+| `utility -a "<agent command>" [--dir <dir>]` | Agent parasitic mode: build the graph, start the file watcher, launch the Agent |
 
 What `utility -a` does:
 
 ```mermaid
 flowchart LR
-    A["ensure deps.sqlite<br/>auto-init when missing"] --> B["full scan<br/>catch changes outside the watcher's lifetime"] --> C["start FSEvents watcher"] --> D["spawn the Agent CLI<br/>stdin / stdout / stderr passthrough"] --> E["Agent exits → stop watcher → exit"]
+    A["build or sync graph.sqlite"] --> B["start FSEvents watcher"] --> C["spawn the Agent CLI<br/>stdin / stdout / stderr passthrough"] --> D["Agent exits → stop watcher → exit"]
 ```
 
 Environment injected into the Agent subprocess: `MCP_PORT` / `MINO_BRAIN_MCP_PORT` (MCP service port).

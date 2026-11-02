@@ -172,8 +172,6 @@
     "cli.root_abstract": "macOS desktop toolkit CLI",
     "cli.agent_help": "Agent command, e.g. \"claude -p 'analyze module'\" or \"aider --model sonnet\"",
     "cli.project_help": "Project directory path (default: current directory)",
-    "cli.init_abstract": "Scan the project and generate a dependency graph (.utility/deps.sqlite)",
-    "cli.init_path_help": "Project path (default: current directory)",
     "cli.websearch_abstract": "Run a Google search through an offscreen WKWebView",
     "cli.websearch_query_help": "Search query",
     "cli.websearch_limit_help": "Maximum number of results",

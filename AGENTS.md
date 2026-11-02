@@ -92,12 +92,8 @@
 | `PythonDaemon` | 参数化常驻 Python 进程守护：启动/崩溃重启/健康检查/停止（`MCPProcessManager` 与 `TokenProxyManager` 共用） |
 | `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
-| `ASTExtractorRunner` | AST 批量提取调度（`ast_extractor.py --batch` + 单文件兜底，经 `PythonScriptRunner.runCaptureOutput` 边读边存防 pipe 阻塞） |
-| `ProjectScanner` | 多语言符号 + import 提取器注册 → 批量 AST → 并发正则 → 顺序解析依赖边 → 批量 SQLite ↔ FTS5 |
-| `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` `VueExtractor` / `JavaExtractor` / `KotlinExtractor` | 各语言 SymbolExtractor 实现，正则提取函数/类/常量/注解 + `imports(...)` 兜底 |
-| `ImportResolverRegistry` | 按扩展名把 raw import 解析为项目相对 `to_path`；未命中不造边 |
-| `ManifestParser` | Package.swift / package.json / pyproject.toml 依赖解析 |
-| `FileWatcher` | FSEvents 文件监控 + 3s 防抖增量更新（symbols/files/imports 同一事务） |
+| `GraphScanner` / `GraphDatabase` | 项目调用图全量/增量扫描与 `.utility/graph.sqlite` 写入 |
+| `FileWatcher` | FSEvents 文件监控 + 3s 防抖，把变更镜像到图库 |
 | `NotificationManager` | 本地通知 |
 | `Translator` | OpenAI 兼容 API 翻译 |
 | `OCRService` | Vision 帧捕获 + 文本识别 |
@@ -250,7 +246,7 @@ bash scripts/run-tests.sh
 - server.py 只保留入口 / HTTP endpoints / 项目与网页工具；记忆子系统在 `server_memory.py`，工具 schema 在 `server_tool_schema.py`，归档在 `server_archive.py`，技能扫描在 `server_skills.py`，共享常量/状态/工具在 `server_constants.py` / `server_state.py` / `server_utils.py`。`hot_memory` / `qdrant` 一律经 `server_state` 存取，禁止再引入模块级全局
 - `token_proxy.handle_proxy` 只做编排：`_prepare_request` → `_apply_rewrites` → `_forward`，共享字段放在 `_ProxyState`
 - 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
-- 一次性执行（ast_extractor.py batch/单文件）走 `PythonScriptRunner.runCaptureOutput`（边读边存避免 pipe buffer 阻塞 + 超时 kill）
+- 一次性执行走 `PythonScriptRunner.runCaptureOutput`（边读边存避免 pipe buffer 阻塞 + 超时 kill）
 - **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
   - ⚠️ **只传 `reuseIfHealthy: false` 不够**（2026-09-21 修复）：**复用路径不设置 `process`**（保持 nil），`stopSync()` 的 `guard let proc = process` 因此直接 return，孤儿照常占着端口，新 spawn 仍旧绑定失败（uvicorn 报 `Errno 48` → exit 3），服务静默挂掉且不会自愈。现 `forceRestart()` 在 `process == nil`（即复用场景）时调 `terminatePortOccupant()` 按端口清理监听者。清理用 `/usr/sbin/lsof -ti:<port> -sTCP:LISTEN` —— **`-sTCP:LISTEN` 绝不能省**，不带时 `lsof -ti:<port>` 会连「连接该端口的客户端」一并返回（实测 8613 上返回正在走代理的 Clash Verge），照此 kill 即误杀。清理**只放在 `forceRestart()`，不进 `stopSync()`**——后者被 `stop()` 共用（app 退出 / 配置 disabled 两条路径），放进去会带来跨实例误杀
 - **崩溃判据必须覆盖非零退出码**（2026-09-21 修复）：原先只看 `reason == .uncaughtSignal`，而 Python 未捕获异常、端口绑定失败、外部 kill 都退化为 `.exit`（非零退出码被忽略）→ 被当作正常退出静默置 `.stopped`，永不重试也不通知，「崩溃自动重启」实际只对 SIGKILL/SIGSEGV 生效。现改为 `reason == .uncaughtSignal || terminationStatus != 0`（主动停止仍由 `isStopping` 提前 return，不会误触发重启）
@@ -273,42 +269,12 @@ bash scripts/run-tests.sh
   - 契约：`_gen_merge` 正常返回 `{title,content,supersedes}` **不带 action**，仅 no_increment 带 `{"action":"no_increment","reason":...}`——防 `results.append({..., **item})` 中 action 覆盖局部变量污染 fallback_merge
   - 纯 ratio 阈值不可分：真重复（0.55-0.75）与正常段（README 模板 0.7-1.0）区间重叠 → 覆盖率 + LLM 语义双判定
 
-### 项目扫描
-- 新增语言支持：实现 `SymbolExtractor` 协议（含 `imports(from:filePath:)`）+ 一个 `LanguageImportResolver`，在 `ProjectScanner.init()` 与 `ImportResolverRegistry` 注册；AST 语种再加 parser 分支
-- **`imports` 表是文件级依赖边**：`from_path / raw_target / to_path / is_external / kind / line / confidence / resolver`。提取器只产出 raw，`ResolutionContextBuilder` + `ImportResolverRegistry` 统一解析；解析不到时 `to_path=NULL`，绝不猜路径
-- **AST 成功按结果 key 是否存在判断**，不能用 `symbols.isEmpty`：只有 import、没有符号的文件（如 `__init__.py`）不能被误判为 AST 失败
-- 全量 `replaceScanResults` 与增量 `replaceFileExtraction` 都把 symbols/files/imports/failed_files 放在同一事务；删除子树时出边删除、入边保留 raw 并置 `resolver='stale'`
-- **新增语言只改两处**：提取器（`imports`）+ 解析器（`LanguageImportResolver`）；DB、FileWatcher、MCP 查询不用动
-- `imports` 表由 Scanner 维护，供依赖图分析使用；MCP 已不再暴露 `project_dependencies` 工具
-- **提取流水线（三项优化）**：
-  1. **A — 批量 AST**：扫描前统一调用 `ast_extractor.py --batch`，单次 subprocess 处理所有 AST 文件（Python ast + @babel/parser），避免逐文件启动子进程
-  2. **C — 并发提取**：`DispatchQueue.concurrentPerform` 并行执行正则提取，NSLock 保护结果收集
-  3. **D — 单事务原子替换**：`replaceScanResults()` 一次 `dbQueue.write` 内完成「清空全部表 → 写目录/文件/符号/包 → 重建 FTS」（2026-09-21 由 `clearAll()` + `batchWriteFiles()` 合并而来）
-- **写入必须原子，清空与写入不能分开提交**：分开时遍历 + 提取期间（大项目数十秒）库对 MCP 读者是空的，检索一律返回「什么都没有」，模型会据此重复实现已有功能；中途被打断还会留下空库。**`clearAll()` 已删除，勿重新引入**——单独暴露可外部调用的清库方法会诱导后来者在扫描开头清库
-- **模块根标记 `has_package_manifest` 的判定要在 includes 过滤之前**（清单文件不匹配任何 include 模式，放后面永远标不上），且**统一在遍历结束后回填**，不依赖枚举顺序；不要拿目录名比对清单文件名（恒为 false）
-- 提取优先级：AST 脚本优先 → 正则提取器兜底 → 都失败则计数
-- AST 连续 3 次失败后跳过（`failed_files` 表跨扫描计数），文件修改后自动重置
-- `SwiftExtractor` / `JSTSExtractor` / `PythonExtractor` / `VueExtractor` / `JavaExtractor` / `KotlinExtractor` 用正则 + brace-depth tracking
-- `.js` 文件始终启用 `@babel/parser` 的 `jsx` plugin 以支持 React Native/Expo
-- `JavaExtractor` 提取 class/interface/enum/@interface + record + method + field，带关键字过滤和行内注解消耗
-- `KotlinExtractor` 提取 fun/suspend fun + class/object/companion + val/var + typealias + fun interface/data object/annotation class，修饰符贪心通用匹配
-- FTS5 + 同义词扩展：中文搜索先转同义词再 MATCH，降级到 LIKE
+### 项目图扫描
+- 全量/增量入口是 `GraphScanner.fullScan()` / `syncScan()`；`FileWatcher` 用 `indexFile` / `removeFile` 做增量镜像
+- 图库 schema 唯一所有者是 `GraphDatabase` 的迁移（files / symbols / edges / unresolved / diagnostics），**不要另建表**
+- 边保留 provenance（`resolver` / `confidence` / `status`），无法解析的引用留在 `unresolved`，不造假边
 - MCP 项目图工具：`project_lookup` 定位符号/文件并附一跳调用方，`project_impact` 按 callers/callees/both 多跳遍历
-- **符号向量缓存必须用稳定业务键，不能用 `symbols.id`**（2026-09-11 根治）：`symbols.id` 是
-  GRDB AUTOINCREMENT，而 `ProjectScanner.scan()` 经 `replaceScanResults()` 先整体
-  `DELETE FROM symbols` 再重插、`FileWatcher` 增量路径先 `DELETE FROM symbols WHERE
-  file_path = ?` 再 `insertSymbols` —— **两条写入路径都会让同一符号拿到新 id**。
-  边表 `symbol_embeddings` 曾以 id 为键，每次全量重扫即全部失效（实测 67438 行、
-  有效 0 行、占 132MB），下一次向量检索被迫重算全部符号（实测 349s）。
-  现键 = `sha1(file_path|name|kind|signature|doc_comment)`，即 **embedding 输入字段本身**：
-  符号没变则重扫不重算，字段变了则键变、自然重算（键即输入，不存在脏读）。
-  改这条务必守住：**键必须覆盖 embedding 的全部输入字段**，否则会返回陈旧向量
-- 边表随查询做孤儿清理（`_prune_symbol_embeddings`），行数恒等于存活符号数；符号查询被
-  `_MAX_VECTOR_ROWS` 截断时**必须跳过清理**，否则会误删没读到的那些行
-- **内存向量缓存必须带 DB 变更指纹**（`_symbols_signature` = `(COUNT(*), MAX(id))`）：
-  只按 db_path 缓存会让进程在 DB 被重扫后继续返回**已删符号的陈旧路径**、且新符号搜不到，
-  直到进程重启。判据**不能用 DB 文件的 mtime/size** —— 库跑 WAL 模式，提交只写 `-wal`
-  文件、主库文件纹丝不动（实测确认），mtime 判据会永远认为「没变」
+- 旧的 `deps.sqlite` 扫描链（ProjectScanner / ProjectDatabase / 各语言 extractor / import resolver / FTS5 符号索引）已于 2026-11-02 移除，勿重新引入
 
 ### 检索性能约定（2026-09-11）
 - **notes 关键词搜索禁止 subprocess**：`search_cold_layer` 曾对 notes 目录「每个文件 × 每个

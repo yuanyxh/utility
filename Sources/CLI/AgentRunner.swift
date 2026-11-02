@@ -3,11 +3,10 @@ import Foundation
 /// Implements `utility -a <cmd>`: agent parasitic mode.
 ///
 /// Flow:
-/// 1. Ensure `.utility/deps.sqlite` exists → auto-init if missing
-/// 2. Full scan → catch changes outside watcher lifetime
-/// 3. Start FSEvents file watcher (background, stack-based coalescing)
-/// 4. Spawn agent subprocess with stdin/stdout/stderr passthrough
-/// 5. On agent exit → stop watcher → exit
+/// 1. Build or sync the project call graph (`.utility/graph.sqlite`)
+/// 2. Start FSEvents file watcher (background, stack-based coalescing)
+/// 3. Spawn agent subprocess with stdin/stdout/stderr passthrough
+/// 4. On agent exit → stop watcher → exit
 enum AgentRunner {
     /// Current Agent child process PID (used by signal handling for cleanup)
     static var childPID: Int32 = 0
@@ -24,49 +23,34 @@ enum AgentRunner {
         try cleanupStaleAgents()
         installSignalHandlers()
 
-        // 1. Ensure deps.sqlite exists
-        let dbPath = try prepareDatabase(projectPath: projectPath)
-        let isFirstInit = !FileManager.default.fileExists(atPath: dbPath)
-
-        // 2. Scan only on first init; later runs reuse deps.sqlite.
-        //    The graph below is the live index; `utility init` rebuilds deps.
-        if isFirstInit {
-            print("📦 No dependency graph found, scanning project...")
-            let s = try ProjectScanner.shared.scan(projectPath: projectPath)
-            print("   \(s)")
-        } else {
-            print("📦 Reusing .utility/deps.sqlite (run `utility init` to rebuild)")
-        }
-
         // Warm note vectors off the main thread; the agent session keeps the
         // process alive, so this finishes while the user works.
         Thread.detachNewThread {
-            MCPClient.shared.prewarmNotes(dbPath: dbPath)
+            MCPClient.shared.prewarmNotes(projectPath: projectPath)
         }
 
-        // 2b. Project graph: rebuild only when meta is missing or engine/schema/root differ.
+        // 1. Project graph: rebuild only when meta is missing or engine/schema/root differ.
         let graph = prepareGraph(projectPath: projectPath)
         // Crash restarts change the PID, so refresh the signal-context copy.
         graph?.onIndexerPIDChange = { pid in graphIndexerPID = pid }
         graphIndexerPID = graph?.indexerProcessIdentifier ?? 0
 
-        // 3. Start file watcher
+        // 2. Start file watcher
         let watcher = FileWatcher(projectPath: projectPath, graphScanner: graph)
         watcher.start()
 
-        // 4. Print banner
+        // 3. Print banner
         print("╔══════════════════════════════════════╗")
         print("║   Utility Agent Mode                ║")
         print("╠══════════════════════════════════════╣")
         print("║  📁 Project: \(projectPath.padding(toLength: 28, withPad: " ", startingAt: 0))║")
-        print("║  🗄️  Deps: \(FileManager.default.fileExists(atPath: dbPath) ? "✓" : "✗")                   ║")
         print("║  🤖 Agent: \(agentCommand.prefix(30))║")
         print("╚══════════════════════════════════════╝")
         print()
         fflush(stdout)
 
         // 4. Spawn agent
-        let exitCode = spawnAgent(command: agentCommand, projectPath: projectPath, dbPath: dbPath)
+        let exitCode = spawnAgent(command: agentCommand)
 
         // Darwin.exit skips defer; stop the watcher and indexer explicitly.
         watcher.stop()
@@ -109,19 +93,6 @@ enum AgentRunner {
             "📊 Graph: \(stats.nodes) nodes / \(stats.edges) edges"
                 + " / \(stats.stale) stale / \(elapsedMs) ms"
         )
-    }
-
-    // MARK: - Database
-
-    /// Ensure `.utility` directory exists and return the DB path.
-    @discardableResult
-    private static func prepareDatabase(projectPath: String) throws -> String {
-        let utilityDir = (projectPath as NSString).appendingPathComponent(".utility")
-        let dbPath = (utilityDir as NSString).appendingPathComponent(ProjectDatabase.depsFilename)
-        if !FileManager.default.fileExists(atPath: utilityDir) {
-            try FileManager.default.createDirectory(atPath: utilityDir, withIntermediateDirectories: true)
-        }
-        return dbPath
     }
 
     // MARK: - Duplicate prevention and signal handling
@@ -201,7 +172,7 @@ enum AgentRunner {
     // MARK: - Agent spawn
 
     /// Spawn agent as a child process with full TUI passthrough.
-    private static func spawnAgent(command: String, projectPath: String, dbPath: String) -> Int32 {
+    private static func spawnAgent(command: String) -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-c", command]

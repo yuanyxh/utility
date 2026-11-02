@@ -32,7 +32,6 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 |---|---|
 | Python 层位置 / 模块入口 / wheel 安装 / prompts 定位 | `.claude/docs/architecture/python-layout.md` |
 | 面板 / EventBus / 热键 / Stage / OCR / 内存诊断 | `.claude/docs/architecture/panel-ui.md` |
-| 符号提取 Scanner | `.claude/docs/architecture/scanner.md` |
 | PythonScriptRunner / PythonDaemon / 日志 | `.claude/docs/architecture/python-runtime.md` |
 | Token Proxy | `.claude/docs/architecture/token-proxy.md` |
 | llm_client / 提示词 / MCP 描述文案 | `.claude/docs/architecture/llm-and-prompts.md` |
@@ -55,10 +54,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - Python 侧语言包由 agent-gateway 自持（`src/agent_gateway/locales/*.json`），本仓不生成、不校验
 
 ### 符号提取（Scanner）
-- 全量扫描写入必须是**单事务原子替换**（`replaceScanResults()`）；`clearAll()` 已删除，**禁止重新引入**
-- 模块根标记 `has_package_manifest` 的判定必须在 includes 过滤**之前**，遍历结束后统一回填
-- 向量检索的符号缓存键必须是业务字段 `sha1(file_path|name|kind|signature|doc_comment)`，**不能用 `symbols.id`**（两条写入路径都先删后插，id 每次都变）
-- 提取优先级 AST 脚本 → regex 兜底 → 失败计数；AST 连续 3 次失败跳过，`failed_files` 跨扫描保留
+- 旧的 `.utility/deps.sqlite` 扫描链已于 2026-11-02 移除，**禁止重新引入**；项目索引只有 `graph.sqlite`，见 `project-graph.md`
 
 ### Python 运行时
 - **新增跨语言 env 必须同时加两个注入点**：`baseEnvironment()` 与 `taskEnvironmentOverrides()`（`.sh` 任务），漏一个会「服务里生效、定时任务静默回退默认」

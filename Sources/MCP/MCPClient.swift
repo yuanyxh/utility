@@ -4,10 +4,6 @@ import Foundation
 final class MCPClient {
     static let shared = MCPClient()
 
-    /// Local loopback query timeout (seconds). The service runs on the same
-    /// machine, so normal responses arrive in milliseconds.
-    private static let requestTimeout: TimeInterval = 5
-
     private let session = URLSessionManager.shared.directSession
     private let decoder = JSONDecoder()
 
@@ -25,28 +21,18 @@ final class MCPClient {
 
     // MARK: - Tools
 
-    /// Search project symbols via FTS5 + synonym expansion.
-    func search(query: String, dbPath: String) async throws -> SearchResult {
-        let body = RequestBody(dbPath: dbPath, query: query)
-        return try await post("/api/project/search", body: body)
-    }
-
-    /// Get directory/file tree structure.
-    func structure(dbPath: String, subpath: String = "") async throws -> StructureResult {
-        let body = RequestBody(dbPath: dbPath, path: subpath)
-        return try await post("/api/project/structure", body: body)
-    }
-
-    /// Best-effort note-vector prewarm after a project scan. The request is
-    /// fire-and-forget: the server schedules the embedding work and returns.
-    func prewarmNotes(dbPath: String, timeout: TimeInterval = 1.5) {
+    /// Best-effort note-vector prewarm for a project. Fire-and-forget: the
+    /// server schedules the embedding work and returns.
+    func prewarmNotes(projectPath: String, timeout: TimeInterval = 1.5) {
         guard let url = URL(string: baseURL + "/api/project/notes/prewarm") else {
             return
         }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONEncoder().encode(RequestBody(dbPath: dbPath))
+        req.httpBody = try? JSONSerialization.data(
+            withJSONObject: ["project_path": projectPath]
+        )
         req.timeoutInterval = timeout
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -115,14 +101,6 @@ final class MCPClient {
         )
     }
 
-    private func post<T: Decodable>(_ endpoint: String, body: RequestBody) async throws -> T {
-        try await send(
-            endpoint,
-            data: JSONEncoder().encode(body),
-            timeout: Self.requestTimeout
-        )
-    }
-
     private func send<T: Decodable>(
         _ endpoint: String,
         data: Data,
@@ -153,48 +131,7 @@ final class MCPClient {
     }
 }
 
-// MARK: - Request body
-
-private struct RequestBody: Codable {
-    var dbPath: String = ""
-    var query: String = ""
-    var path: String = ""
-}
-
 // MARK: - Response types
-
-struct SearchResult: Decodable {
-    let query: String
-    let expandedQuery: String
-    let results: [SearchHit]
-    let total: Int
-}
-
-struct SearchHit: Decodable {
-    let name: String
-    let kind: String
-    let signature: String?
-    let file: String
-    let visibility: String?
-}
-
-struct StructureResult: Decodable {
-    let directories: [DirectoryNode]
-    let files: [FileNode]
-    let totalDirs: Int
-
-    struct DirectoryNode: Decodable {
-        let path: String
-        let name: String?
-        let fileCount: Int
-        let isManifest: Bool
-    }
-
-    struct FileNode: Decodable {
-        let path: String
-        let ext: String
-    }
-}
 
 struct ReadResult: Decodable {
     let ok: Bool

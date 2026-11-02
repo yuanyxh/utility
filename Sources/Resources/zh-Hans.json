@@ -172,8 +172,6 @@
     "cli.root_abstract": "macOS 桌面工具箱 CLI",
     "cli.agent_help": "Agent 命令，例如 \"claude -p 'analyze module'\" 或 \"aider --model sonnet\"",
     "cli.project_help": "项目目录路径（默认当前目录）",
-    "cli.init_abstract": "扫描项目并生成依赖图（.utility/deps.sqlite）",
-    "cli.init_path_help": "项目路径（默认当前目录）",
     "cli.websearch_abstract": "通过离屏 WKWebView 执行一次 Google 搜索",
     "cli.websearch_query_help": "搜索关键词",
     "cli.websearch_limit_help": "返回结果条数上限",

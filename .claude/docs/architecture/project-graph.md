@@ -2,7 +2,7 @@
 
 `utility -a` 在项目根写 `.utility/graph.sqlite`，MCP 工具 `project_lookup` / `project_impact` 读它。
 两个工具与 `project_notes` 一样必传项目根 `path`，图库由 `<path>/.utility/graph.sqlite` 派生，不读环境变量，因此可查询任意已扫描项目。
-与旧 `.utility/deps.sqlite` 完全独立，互不读取。
+旧 `.utility/deps.sqlite` 扫描链已于 2026-11-02 移除，图库是唯一的项目索引。
 
 ## 组件
 
@@ -21,6 +21,16 @@
 3. 全量：分批 `index_batch`（每批 50），宿主单事务 `replaceGraph`。
 4. 增量：watcher 调 `indexFile`，宿主 `replaceFile`；删除请求仍走 `remove_file`，语义为**路径子树**，目录删除会清掉其下全部文件。
 5. 启动对账 `syncScan`：先按 `size + mtime` 快速跳过未变文件；仅 stat 变化的文件读到 hash 后只刷新元数据；真正变化的文件分批 `index_batch`，统一建名称索引后再逐个 `replaceFile`。
+
+## 检索层接入（2026-11-02）
+
+`project_lookup` 走 `Pipeline("project_lookup")`：单臂 `ProjectLookupArm` + `MaxScoreFusion` + `PassThroughGate`。
+
+- 打分是**位次分** `1/(rank+1)`（`score_kind="rank"`），不引入拟合权重；图查询本身已按精确/路径优先级排序
+- `kind` / `file_path` 固定在 arm 构造器，不走 filters
+- 空 query overview、目录缺失、图库缺失在 handler 短路，保持原响应
+- 响应条目仍是 `name/kind/file/startLine/endLine/callerCount/topCallers/resolver`；`trace_id` 前缀由 `gl_` 变为 Pipeline 的 `rt_`
+- `project_impact` 仍是确定性图遍历，不接 Pipeline
 
 ## 不变量
 

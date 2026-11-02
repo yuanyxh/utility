@@ -3,7 +3,7 @@ import GRDB
 
 /// Owns `.utility/graph.sqlite`: schema, atomic full replacement, incremental writes and queries.
 ///
-/// The graph is independent from the legacy `.utility/deps.sqlite`; neither side reads the other.
+/// This is the only project index written by the host; no other index is read.
 final class GraphDatabase {
     static let graphFilename = "graph.sqlite"
 

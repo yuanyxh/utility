@@ -4,7 +4,6 @@ import Foundation
 /// Root CLI entry point.
 /// Usage: utility <subcommand> [options]
 ///   utility rss --fetch
-///   utility init --path <path>
 ///   utility -a "claude -p 'analyze this module'"
 ///   utility --dir ~/myapp -a claude
 struct UtilityCLI: ParsableCommand {
@@ -13,7 +12,6 @@ struct UtilityCLI: ParsableCommand {
         abstract: L10n.CLI.rootAbstract,
         subcommands: [
             RSSCommand.self,
-            InitCommand.self,
             WebSearchCommand.self,
             NoticeCommand.self,
         ],
