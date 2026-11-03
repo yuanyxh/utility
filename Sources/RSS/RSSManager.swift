@@ -77,8 +77,9 @@ public final class RSSManager {
             for item in items {
                 let exists =
                     try Int.fetchOne(
-                        db, sql: "SELECT COUNT(*) FROM rss_item WHERE id = ?",
-                        arguments: [item.id],
+                        db,
+                        sql: "SELECT COUNT(*) FROM rss_item WHERE id = ? OR (? <> '' AND link = ?)",
+                        arguments: [item.id, item.link, item.link],
                     ) ?? 0
                 if exists == 0 {
                     try item.insert(db)
@@ -92,9 +93,8 @@ public final class RSSManager {
     // MARK: - Query
 
     /// Unread items, optionally limited by publication window (0 = no limit).
-    /// Rows whose pub_date failed to parse (stored as the epoch) bypass the window.
+    /// Rows whose pub_date failed to parse carry `RSSItem.unknownDate` and bypass the window.
     public func unread(maxAgeDays: Int = 0) throws -> [RSSItem] {
-        let unknownDate = Date(timeIntervalSince1970: 946_684_800)
         let cutoff = maxAgeDays > 0
             ? Calendar.current.date(byAdding: .day, value: -maxAgeDays, to: Date())
             : nil
@@ -102,8 +102,8 @@ public final class RSSManager {
             var request = RSSItem.filter(Column("is_read") == false)
             if let cutoff {
                 request = request.filter(
-                    sql: "pub_date >= ? OR pub_date < ?",
-                    arguments: [cutoff, unknownDate],
+                    sql: "pub_date >= ? OR pub_date <= ?",
+                    arguments: [cutoff, RSSItem.unknownDate],
                 )
             }
             return try request.order(Column("pub_date").desc).fetchAll(db)

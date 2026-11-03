@@ -69,7 +69,11 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     ) {
         guard isItem, elementName == "item" || elementName == "entry" else { return }
 
-        let date = parseDate(currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines))
+        let rawDate = currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let date = parseDate(rawDate)
+        if date == nil {
+            debugLog("[RSS] unparseable pubDate feed=\(feedName) raw=\(rawDate.isEmpty ? "<empty>" : rawDate)")
+        }
         let guid = currentGUID.isEmpty ? currentLink : currentGUID
 
         items.append(
@@ -78,7 +82,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
                 title: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                 link: currentLink.trimmingCharacters(in: .whitespacesAndNewlines),
                 itemDescription: currentDesc.trimmingCharacters(in: .whitespacesAndNewlines),
-                pubDate: date,
+                pubDate: date ?? RSSItem.unknownDate,
                 feedName: feedName,
             ),
         )
@@ -87,7 +91,7 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
     // MARK: - Date Parsing
 
-    private func parseDate(_ str: String) -> Date {
+    private func parseDate(_ str: String) -> Date? {
         let posix = Locale(identifier: "en_US_POSIX")
         let formatters: [DateFormatter] = [
             {
@@ -131,6 +135,6 @@ public final class RSSParser: NSObject, XMLParserDelegate {
         for f in formatters {
             if let date = f.date(from: str) { return date }
         }
-        return Date(timeIntervalSince1970: 0)
+        return nil
     }
 }

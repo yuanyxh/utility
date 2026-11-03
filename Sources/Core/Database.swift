@@ -78,6 +78,20 @@ public final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v3") { db in
+            // Cross-feed duplicates share link but have different guids.
+            try db.execute(
+                literal: """
+                    DELETE FROM rss_item
+                    WHERE link <> ''
+                      AND rowid NOT IN (
+                          SELECT COALESCE(MAX(CASE WHEN is_read = 0 THEN rowid END), MIN(rowid))
+                          FROM rss_item WHERE link <> '' GROUP BY link
+                      )
+                    """,
+            )
+        }
+
         return migrator
     }
 }

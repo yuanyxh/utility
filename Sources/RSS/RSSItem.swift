@@ -13,6 +13,9 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
 
     public static let databaseTableName = "rss_item"
 
+    /// Sentinel stored when a feed item has no parsable publication date.
+    public static let unknownDate = Date(timeIntervalSince1970: 0)
+
     enum CodingKeys: String, CodingKey {
         case id, title, link
         case itemDescription = "item_description"
