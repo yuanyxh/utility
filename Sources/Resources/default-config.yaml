@@ -158,6 +158,9 @@ mcp:
   fastembedCacheDir: ''
   # Empty string = use the built-in default model sentence-transformers/all-MiniLM-L6-v2
   embedderModel: ''
+  # Release the embedding model after this many seconds without a request.
+  # 0 = keep it resident. The first query after release reloads it (1-2 s).
+  embedderIdleUnloadSeconds: 600
 
   # Memory lifecycle
   hotRetentionDays: 180

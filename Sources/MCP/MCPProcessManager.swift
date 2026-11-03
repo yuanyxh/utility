@@ -109,6 +109,10 @@ final class MCPProcessManager {
             if !mcp.embedderModel.isEmpty {
                 overrides["EMBEDDER_MODEL"] = mcp.embedderModel
             }
+            if mcp.embedderIdleUnloadSeconds > 0 {
+                overrides["EMBEDDER_IDLE_UNLOAD_SECONDS"] =
+                    String(mcp.embedderIdleUnloadSeconds)
+            }
 
             // Search synonym expansion table: both keys and values are user-defined
             // and cannot be modelled by a fixed struct, so the whole thing is

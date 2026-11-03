@@ -145,6 +145,8 @@ public struct MCPConfig: Codable {
     var fastembedCacheDir: String = ""
     /// Empty string = use the built-in default model
     var embedderModel: String = ""
+    /// Release the embedding model after this many idle seconds (0 = keep resident)
+    var embedderIdleUnloadSeconds: Int = 0
 
     // Memory lifecycle
     var hotRetentionDays: Int = 180
@@ -197,6 +199,8 @@ public struct MCPConfig: Codable {
         noteExtensions = try c.decodeIfPresent([String].self, forKey: .noteExtensions) ?? []
         fastembedCacheDir = try c.decodeIfPresent(String.self, forKey: .fastembedCacheDir) ?? ""
         embedderModel = try c.decodeIfPresent(String.self, forKey: .embedderModel) ?? ""
+        embedderIdleUnloadSeconds =
+            try c.decodeIfPresent(Int.self, forKey: .embedderIdleUnloadSeconds) ?? 0
         hotRetentionDays = try c.decodeIfPresent(Int.self, forKey: .hotRetentionDays) ?? 180
         archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 90
         memoryProtectImportance =
