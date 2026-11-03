@@ -594,6 +594,7 @@ Restart the service after adding or changing a skill.
 | `mcp.embedderIdleUnloadSeconds` | `600` | release the embedding model after this many idle seconds; `0` keeps it resident |
 | `mcp.fastembedCacheDir` | `""` | model cache; empty uses `~/.cache/utility/fastembed/` |
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
+| `search.runtime` | `timeoutSeconds: 25` | cascade hard timeout; optional `parallel` / `concurrency` |
 
 Restart from **menu bar → MCP** after changing any of these.
 

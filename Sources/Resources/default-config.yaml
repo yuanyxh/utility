@@ -226,6 +226,19 @@ mcp:
   maxRestarts: 3
   restartDelayMs: 2000
 
+# ---------- Web search ----------
+search:
+  # Cascade-wide limits. Every engine and provider obeys the same deadline;
+  # no engine is special-cased.
+  runtime:
+    # Hard ceiling for the whole search cascade, in seconds. Engines still
+    # running at the deadline are dropped and partial results are returned.
+    timeoutSeconds: 25
+    # Fan out engines concurrently instead of cascading in order.
+    parallel: false
+    # Maximum engines running at once when parallel is true (1-8).
+    concurrency: 4
+
 # ---------- Project graph ----------
 # Dependency graph built into <project>/.utility/graph.sqlite in `utility -a` mode.
 # If graphIndexer is unavailable the agent still starts and the graph is skipped.
