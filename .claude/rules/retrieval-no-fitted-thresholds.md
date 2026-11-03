@@ -1,3 +1,9 @@
+---
+paths:
+  - "Sources/**"
+  - "scripts/**"
+---
+
 # 检索排序禁止拟合阈值
 
 > 适用范围：agent-gateway 的检索、记忆排序与召回质量调参。

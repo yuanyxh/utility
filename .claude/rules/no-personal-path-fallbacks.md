@@ -1,3 +1,10 @@
+---
+paths:
+  - "Sources/**"
+  - "scripts/**"
+  - "Sources/Resources/default-config.yaml"
+---
+
 # 禁止个人化路径回退
 
 - 代码与默认配置不得硬编码个人目录（如 `~/Documents/selfdata/...`）。

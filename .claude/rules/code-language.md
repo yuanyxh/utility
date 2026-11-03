@@ -1,3 +1,10 @@
+---
+paths:
+  - "Sources/**"
+  - "scripts/**"
+  - "tests/**"
+---
+
 # 代码内文本语言
 
 > 规范源：`AGENTS.md` → 「代码内文本语言」。

@@ -1,347 +1,116 @@
 # AGENTS.md — Utility Project
 
-> 为 Agent/CLI 提供项目上下文、开发约定、内存数据参考。每次会话自动注入。
-
-**必须基于事实而不是猜测**
-
----
+> 启动契约：只放常驻约束、加载策略与入口索引；实现细节在链接文档里，不在此复制。
+> **必须基于事实而不是猜测**
 
 ## 项目概述
 
 **utility** — macOS 菜单栏工具，Swift + AppKit + SPM，Python 子进程扩展。
-- LSUIElement（无 Dock 图标）
-- NSStatusItem 菜单栏入口
-- NSPanel floating 面板：剪贴板管理、翻译、Stage 暂存
+
+- LSUIElement（无 Dock 图标），NSStatusItem 菜单栏入口
+- NSPanel floating 面板：剪贴板、翻译、Stage 暂存、知识卡片、终端
 - Carbon EventHotKey 全局快捷键
-- GRDB 本地 SQLite 存储
-- Vision OCR 屏幕区域识别
-- **MCP 记忆服务**：Mem0 + Qdrant 冷热双层记忆，通过 Python 子进程提供 MCP Tools
-- **项目符号扫描**：Swift/JS-TS/Python AST + 正则提取 + FTS5 索引 + 文件监控（符号含起止行号）
+- GRDB 本地 SQLite 存储；Vision OCR 屏幕区域识别
+- MCP 记忆服务：Mem0 + Qdrant 冷热双层，Python 侧在 `agent-gateway` 仓
+- 项目索引：`GraphScanner` 写入 `.utility/graph.sqlite`
 
----
+## 开始任何任务前
 
-## 参考方针
+1. 读一次 `.agent/status.md` 的当前目标与阻塞；有链接计划时先读该计划。不要遍历 `.agent/`。
+2. 按下方加载策略取用本次任务命中的内容，未命中的不读。
+3. 技术选型、升级或引入依赖前，读 `.agent/research.md` 与 `.agent/upgrades.md`。
+4. 修改某个模块前，先读「模块文档索引」里对应的架构文档。
 
-> 以下约定覆盖所有开发活动。
+## 常驻约束
 
-1. **提交时机**：用户明确功能正常后，再提交代码。不要自己 commit。
-   - 只提交暂存区代码（`git commit` 不加 `-a`）
-   - 提交前检查 `default-config.yaml`、`README.md`、`AGENTS.md` 是否需要同步更新
-   - 如需更新，更新后等用户确认，不继续提交动作
-2. **排查策略**：2-3 轮对话后仍无法解决问题，搜索网络相关资料。
-3. **Bug 修复**：依赖现实调试信息，禁止靠猜测修改。先给出明确的调试方案——如何获取必要信息。
-   - **禁止猜测代码用途**：看不懂某段代码为什么那样写时，先查 git log 看提交记录和 commit message
-   - git 记录看不出来时，问用户，不要自己假设
-4. **大改动审批**：代码改动过大时，先询问，确认后再修改。
+<!-- core:start -->
+1. **提交时机**：用户明确功能正常后才提交；只提交暂存区（`git commit` 不加 `-a`）。提交前检查 `default-config.yaml`、`README.md`、`AGENTS.md` 是否需同步；如需更新，改后等用户确认，不继续提交动作。
+2. **授权边界**：提交、推送、发布、删除、产生费用或外发数据前必须取得明确授权；所有删除改为移动到废纸篓。
+3. **事实优先**：代码、测试、日志与官方资料高于记忆和猜测；问题先排查事实，方案必须可验证。
+4. **排查策略**：2-3 轮对话后仍无解，搜索网络资料；Bug 修复依赖现实调试信息，禁止靠猜测修改。
+5. **拒绝猜测**：看不懂代码为何那样写时先查 `git log`；仍看不出来就问用户，不要假设。
+6. **大改动审批**：代码改动过大时先询问，确认后再修改。
+7. **文件操作**：一律绝对路径；一次读足所需范围；改前先 `git diff` 看现状；禁止整文件重读。
+8. **注释**：只写必要信息，禁止无用、一次性、大段注释；超过 80 字即禁止写入。
+9. **语言与时区**：对话与输出用中文，以上海时区为准；代码内非用户可感知文本用英文。
+10. **设计原则**：最小暴露（private 优先）、视图与逻辑解耦、跨模块走 EventBus、核心逻辑可无头调用、复用优先于重复。
+11. **用户修正优先**：记忆内容不得覆盖用户后续修正；冲突时立即停止并确认。
+12. **阶段自检**：阶段完成不重复执行；阶段失败先排查原因再重试，禁止无排查直接重试。
+<!-- core:end -->
 
----
+## 加载策略
 
-## 设计原则
+| 内容 | 触发 | 位置 |
+| --- | --- | --- |
+| 本契约与常驻约束 | 每次会话 | 平台自动加载 |
+| 模块架构与实现细节 | 修改对应模块 | `.claude/docs/architecture/` |
+| 领域关注点 | 涉及该领域 | `.agent/domains/` |
+| 工程/测试/设计/协作规则 | 交付与审查 | `.agent/rules/` |
+| 路径规则 | 触及相关文件 | `.claude/rules/` |
+| 当前目标与阻塞 | 每次任务开始 | `.agent/status.md` |
+| 任务计划 | 恢复当前任务 | `.agent/plans/` |
+| 未排期工作 | 选择下一项任务 | `.agent/backlog.md` |
+| 依赖升级 | 升级或发布 | `.agent/upgrades.md` |
+| 历史依据与复盘 | 需要历史或教训 | `.agent/decisions.md`、`.agent/lessons.md` |
+| 环境与验证入口 | 安装、构建失败 | `.agent/environment.md` |
+| 技术选型结论 | 选型、升级、新依赖 | `.agent/research.md` |
+| 跨会话结论 | 需要长期事实 | `.agent/memory/INDEX.md` |
 
-> 所有代码必须遵循。
+## 模块文档索引
 
-### 最小暴露
-- 类的内部实现用 `private` / `fileprivate`，仅对外暴露必要的 `public` / `internal` API
-- 不在 `AppDelegate` 暴露内部属性供外部调用（如 `clipboardWatcher`）——自管生命周期
-- 单一入口、单一出口
+| 模块 | 文档 |
+|---|---|
+| 组件总览 / 并发 / 内存基线 | `.claude/docs/architecture/overview.md` |
+| 面板 / EventBus / 热键 / Stage / OCR | `.claude/docs/architecture/panel-ui.md` |
+| 多终端（tmux / SwiftTerm） | `.claude/docs/architecture/terminal.md` |
+| 配置加载（Yams / decodeIfPresent） | `.claude/docs/architecture/config.md` |
+| 构建、验证与 scripts 目录 | `.claude/docs/architecture/build.md` |
+| Python 运行时 / 守护 / 日志 | `.claude/docs/architecture/python-runtime.md` |
+| Python 层位置 / 模块入口 / wheel | `.claude/docs/architecture/python-layout.md` |
+| Token Proxy | `.claude/docs/architecture/token-proxy.md` |
+| LLM 调用与提示词 | `.claude/docs/architecture/llm-and-prompts.md` |
+| 知识面板 | `.claude/docs/architecture/knowledge-panel.md` |
+| MCP 服务 server.py | `.claude/docs/architecture/mcp-server.md` |
+| RSS 采集 / 解析 / 日报 | `.claude/docs/architecture/rss.md` |
+| 项目依赖图 graph.sqlite | `.claude/docs/architecture/project-graph.md` |
+| 检索性能约定 | `.claude/docs/architecture/retrieval.md` |
+| Orchestrate 设计沉淀 | `.claude/docs/architecture/design-notes.md` |
 
-### 解耦
-- 视图与逻辑分离：Service/Manager 不依赖 NSView/NSWindow/NSViewController
-- `PasteHelper`、`SelectedTextService`、`Translator`、`OCRService` 全部无视图依赖
-- 跨模块通信走 `EventBus` pub/sub，禁止直接持有对方引用
-- 单向依赖使用枚举 key 事件，一个 key 可多个 handler
+## 技能索引
 
-### 复用
-- 相同逻辑只写一次，不重复造轮子
-- `Constants.swift` 集中管理共享类型（如 `PasteboardImageTypes.all`）
-- `PasteHelper.schedulePaste(to:)` 供剪贴板和翻译面板共用
-- `SelectedTextService` 封装 AX + 剪贴板兜底两路径，所有调用方统一入口
+| 技能 | 触发 |
+| --- | --- |
+| `build` | 实现需求、继续开发、修复小问题 |
+| `review` | 审查变更、合并前检查 |
+| `hunt` | 报错、崩溃、回归 |
+| `learn` | 沉淀经验、复盘 |
+| `upgrade` | 依赖与运行时升级 |
 
-### 可单独调用
-- 核心逻辑不依赖 UI 上下文，可直接从 CLI 或无头模式调用
-- 例如：`Translator.translate()` 可独立调用于脚本，`OCRService.recognize()` 可仅返回文本
+## 工作循环
 
-### 架构意识
-- 设计模式优先：pub/sub、单例、策略、门面
-- 优先组合而非继承
-- 避免到处散落的外部引用——代之以依赖注入或 EventBus 通信
+计划 → 实现 → 自测 → 审查 → 对账 → 更新状态 → 发布 → 观察。多步骤任务写入 `.agent/plans/`，逐步更新证据；未排期工作写入 `.agent/backlog.md`。
 
----
+## 提交规范
 
-## 核心架构
+- 一个提交只做一件事；信息格式 `类型(范围): 摘要`，类型限定 feat / fix / refactor / test / docs / chore / perf / build。
+- 提交、推送、合并与改写历史均需用户明确授权；未授权时只给建议与命令。
+- 不提交生成物、依赖目录、本地配置、凭据与验证数据。
 
-| 组件 | 职责 |
-|------|------|
-| `AppDelegate` | 入口：注册 hotkey、初始化管理器 |
-| `EventBus` | 线程安全 pub/sub（枚举 key 对应多 handler） |
-| `ConfigManager` | YAML 配置加载/热重载 |
-| `MenuBarManager` | NSStatusItem + NSMenu |
-| `HotkeyManager` | Carbon RegisterEventHotKey |
-| `PanelManager` | 栈结构面板生命周期：注册/弹出/关闭/焦点追踪 |
-| `KeyDispatcher` | 责任链键盘事件派发：栈顶→栈底→系统 |
-| `PanelProtocol` | 面板统一协议：panelID / showPanel / closePanel / handleKeyEvent |
-| `SSEParser` | SSE 帧解析器：`data:` 行 → content delta 回调 |
-| `ClipboardPanelController` | 剪贴板面板 + clipboardStorage + clipboardWatcher（自管生命周期） |
-| `TranslationPanelController` | 翻译面板 + 选中文本获取 |
-| `StageWindowController` | Stage 暂存窗口 + StageDropMonitor（自管注册） |
-| `TaskScheduler` | Timer + cron + 系统唤醒检测（含内部任务注册） |
-| `TaskExecutor` | 外部脚本执行（sh/js/py） |
-| `TaskStateDB` | GRDB 任务状态持久化 |
-| `MCPProcessManager` | Python server.py 服务编排：State 语义/EventBus 广播/端口复用探测/python 预检；进程生命周期委托 `PythonDaemon` |
-| `PythonScriptRunner` | py 脚本统一入口：venv 路径 / 脚本定位（bundle→dev fallback）/ env 构造（baseEnvironment+overrides）/ shell 命令 / 一次性执行（runCaptureOutput） |
-| `PythonDaemon` | 参数化常驻 Python 进程守护：启动/崩溃重启/健康检查/停止（`MCPProcessManager` 与 `TokenProxyManager` 共用） |
-| `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
-| `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
-| `GraphScanner` / `GraphDatabase` | 项目调用图全量/增量扫描与 `.utility/graph.sqlite` 写入 |
-| `FileWatcher` | FSEvents 文件监控 + 3s 防抖，把变更镜像到图库 |
-| `NotificationManager` | 本地通知 |
-| `Translator` | OpenAI 兼容 API 翻译 |
-| `OCRService` | Vision 帧捕获 + 文本识别 |
-| `Database` | GRDB DatabaseQueue 单例 |
-| `PasteHelper` | 粘贴到目标 app（osascript 子进程 + CGEventPost fallback） |
-| `SelectedTextService` | AX Accessibility + 剪贴板兜底选中文本获取 |
+## 断点规则
 
----
+只有四种情况暂停等待用户：不可逆操作、产生费用、涉及隐私或合规、目标之间冲突。其余按默认值推进并记入 `.agent/decisions.md`。
 
-## 关键技术约定
+## 验证命令
 
-### Build
-- Clean build: `rm -rf .build && swift build`
-- 二进制：`.build/debug/utility`、release 为 `.build/release/utility`（SwiftPM 维护的符号链接）
-- 实际产物目录随 SwiftPM 版本变化（旧 `.build/arm64-apple-macosx/{debug,release}`，新 `.build/out/Products/{Debug,Release}`）——**脚本中禁止硬编码，用 `swift build -c <config> --show-bin-path` 查询**
-- 验证改动进二进制：`strings .build/debug/utility | grep keyword`
-- ⚠️ `package-utility.sh` 曾硬编码 `.build/arm64-apple-macosx/release/utility_utility.bundle` 且包在 `if [ -d ]` 里，新版布局下该目录不存在 → 资源 bundle 被**静默漏拷**（app 18M→9.8M），启动即 `Fatal error: unable to find bundle named utility_utility`（`resource_bundle_accessor.swift`）。资源缺失一律硬失败，不做条件跳过
-- 版本唯一来源是仓库根 `VERSION`：`package-utility.sh` 每次打包自增 patch 并写回，无文件时以 `INITIAL_VERSION=1.0.93` 起步
-- macOS 26 起 `hdiutil create` 弃用，打包改用 `diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"`（目标已存在时自动覆盖）
-- ⚠️ **bash 3.2 会把紧跟 `$VAR` 的全角字符并入变量名**（`$VERSION（` → `VERSION<乱码>: unbound variable`，`set -u` 下直接退出）：变量后接中文/全角标点必须写 `${VAR}`
+| 用途 | 命令 |
+| --- | --- |
+| 构建 | `swift build` |
+| 格式化 / 静态检查 | `xcrun swift-format lint --recursive --configuration .swift-format Sources` |
+| 测试与契约 | `bash scripts/run-tests.sh` |
+| i18n | `python3 scripts/gen-l10n.py --check` + `python3 scripts/check-l10n-contract.py` |
+| 示例一致性 | `python3 scripts/check-examples-parity.py` |
+| 入口契约 | `python3 scripts/check-gateway-entries.py --entries ../agent-gateway/contracts/entries.json` |
+| 打包 | `SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh` |
+| 基座校验 | `bash ../agent-vibe/scripts/verify-instantiation.sh .` |
 
-### Verification
-交付前必须实跑（行为约束见 `.claude/rules/verification-before-completion.md`）：
-```bash
-swift build
-python3 scripts/gen-l10n.py --check
-python3 scripts/check-l10n-contract.py          # 加 --python-root ../agent-gateway/src/agent_gateway 连 Python 侧一起查
-python3 scripts/check-examples-parity.py
-python3 scripts/check-gateway-entries.py --entries ../agent-gateway/contracts/entries.json
-bash scripts/run-tests.sh
-```
-
-打包产物验证（本地不打包也能跑 wheel 路径）：`UTILITY_GATEWAY_USE_WHEEL=1 .build/debug/utility`。
-干净 clone 直接 `swift build` 不含 wheel、也没有同级仓时 AI 功能不可用——发包必须走 `package-utility.sh`。
-**Python 侧验证在 `agent-gateway` 仓内做**（unittest、向量缓存不变式、web-search）：`PYTHONPATH=src ~/.config/utility/mcp-venv/bin/python3 -m unittest discover -s tests -t .`。
-本仓已无 Python 源码，`Sources/MCPScripts` 于 2026-10-26 删除。
-
-### scripts 目录
-- `scripts/` 根只放可执行入口（`check-*.py`、`gen-l10n.py`、`package-utility.sh`、`run-tests.sh`），这些路径被文档与 `run-tests.sh` 引用，**不得移动**
-- 校验器实现放子包；新增校验脚本同样建包，根部入口只做 import + `main()`
-- 子包内路径常量：`SCRIPTS_DIR = dirname(dirname(__file__))`、`ROOT = dirname(SCRIPTS_DIR)`
-- 引用 Python 源码的校验（`router_contract`、`config_parity`、web-search、向量缓存不变式）已随源码迁往 `agent-gateway` 仓的 `scripts/`
-- `gen-l10n.py` 只写 `L10nKeys.swift`；Python 侧语言包由 agent-gateway 自持（`locales/*.json`），本仓不再生成
-
-### i18n
-- 唯一源 `Sources/Resources/<lang>.json`；`L10nKeys.swift` 由 `scripts/gen-l10n.py` 生成，禁止手改
-- 占位符 `{name}` / `{name:d}` / `{name:.Nf}`，按名一次性替换
-- Python 侧自持 `locales/<lang>.json`，由 `l10n.py` 加载；`refreshAllTitles()` 模式刷新运行时语言
-- 本仓 JSON 只保留 Swift 用到的键；`mcp` / `proxy` 已随 RSS 上移全部迁到 gateway
-- 语言无关的路径/默认值常量（季度目录名、知识卡片目录名、Clash 节点名）两语言取同值，避免切换语言后路径漂移
-
-### 代码内文本语言
-- 非用户可感知文本一律英文：注释、docstring、日志、内部错误消息、调试输出、测试名与断言消息
-- 用户可感知文本按既有约定：UI 文案走 `Resources/<lang>.json`，提示词放 `prompts/<lang>/`，配置注释与 README 保持现有语言
-- 新增内容不因周围历史中文注释而改用中文；历史中文注释不强制批量翻译，只在修改到的代码块内对齐
-
-### 并发
-- `Task?.cancel()` + `guard isCancelled` 模式
-- 翻译用序列计数器（`translationSeq`）拒绝 stale 回调
-
-### 面板管理
-- 面板零引用 PanelManager，仅通过 EventBus 发 `PanelEvent.requestShow`/`requestClose` 事件
-- PanelManager 唯一订阅 + 唯一调 `showPanel`/`closePanel`
-- 栈结构 = 激活面板序，后入栈顶；同 ID 去重
-- `dispatchKey`：栈顶→底遍历可见面板，`handleKeyEvent` 返回 true 阻断下层
-- 失焦关闭：`didResignKeyNotification` → `DispatchQueue.main.async` 延迟到通知链完成再读 `NSApp.keyWindow`（防中间状态）
-- 栈空 → `NSApplication.shared.hide(nil)`
-- Stage 独立不入栈
-
-### 知识面板
-- 卡片池 = `~/.config/utility/knowledge.sqlite`，schema 所有者是 Python（`knowledge_pool.py`）；Swift 侧（`KnowledgeStore`）**只做裸 SQL 读写、绝不建表**，且每个方法都容忍「表不存在」
-- 补货 = `knowledge_refill.py` 子进程，由 `KnowledgeService` 自建 Timer 驱动（面板只读池子，秒开）
-  - ⚠️ **不能走 TaskScheduler**：`handleMissed()` 以「今天 00:00 后的第一个 cron 点」为基准，任何 sub-daily 的 cron 都静默退化成每天一次（`*/30 * * * *` 实测一天只跑一次且无报错）
-  - ⚠️ **`runCaptureOutput` 默认不传 environment**，子进程继承 launchd 启动的 GUI 进程环境（无 `AI_API_KEY` / `UTILITY_DATA_DIR`）→ 脚本「成功」但一张卡都出不来。必须显式传 `PythonScriptRunner.environment(overrides: [:])`
-- ⚠️ **Markdown 不能直接塞 `AttributedString(markdown:)`**：它只给 `presentationIntent` 语义属性、**不带任何字体**，结果是标题与正文一样大、加粗不变粗、列表没有项目符号，而且**不报错**。`KnowledgeMarkdownView` 逐 run 翻译 intent
-  - 新 SDK 的 `intent.components` 元素是 `IntentType` 包装，枚举在它的 `.kind` 上（直接当 `Kind` 用会编译失败）
-- ⚠️ **跨进程 WAL**：Python 子进程与 Swift 面板同时打开同一个文件，两侧都要 WAL + busy timeout（只设一侧会回落 delete 模式互相阻塞）；「读 + UPDATE」放同一事务，失败必须 `debugLog`
-- 卡片生成的失败源**几乎全是上游 LLM 超时/断连**，不是内容判据：`knowledge_card` 曾带 thinking 生成 8k，单次 60~180s；现关思考 + `max_tokens=4096`
-- `knowledge_engine._llm_json` 把「调用没返回内容」与「返回了但解析不出」分成两条日志 —— 混在一起会让上游超时看起来像提示词问题
-- ⚠️ **主题必须带 `scope` / `exclude`**：只给主题名时「下一个自然概念」会无限外溢（实测 TCP/IP 协议栈从 SDN 滑到 AI 驱动、服务网格、eBPF、容器网络）。两者同时喂 `knowledge_expand` / `knowledge_gate` / `knowledge_card`；`seed_from_config()` 对已存在主题也同步 scope
-- **选题闸门是独立的一次 LLM 判断**（`knowledge_gate`，零温度 256 token），不让 expand 自评。拒绝的概念落 `rejected` 且不计 `fail_streak`；上游不可用（含 `gate_unavailable`）同样不计
-- **赞与踩都只标记并停留当前卡**，不调用 `advance()`；换卡只由定时自动弹出与补货后的 `reloadCurrent()` 触发。面板没有「已知」按钮。踩过的标题经 `disliked_titles()` 作为 `{disliked}` 负反馈喂给 expand（不要选相邻话题）与 gate（第 5 条判据）
-- **自检的证据必须给全文,不能截断**（自检步骤后因长输入必断连已移除，重建时必须遵守）：实测把 10469 字截到 6000 字,模型立刻把后半段的真实内容逐条判成「卡片自行添加」,同一张卡从 `ok` 翻成 `not ok` —— 截断在这里是批量制造假阳性
-- **系统休眠不执行**：`willSleep` 置 `suspended` 并停掉两个 timer；已在跑的补货子进程由 `runCaptureOutput` 的 `shouldCancel` 闭包中止（否则它被冻结后一直挂着,唤醒时立刻撞上 wall-clock 超时）。`didWake` 清标志 + `rearm()` + 立刻补一轮
-- 菜单栏「任务」里有一条知识补货（显示未读卡数量 / 上次结果 / 运行中打勾），但它**不注册进 TaskScheduler** —— 只借子菜单做入口，起进程仍走 `KnowledgeService` 的闸门（交给 `TaskExecutor` 会多出一个不受防重保护的补货进程）
-- **补货判据是「未读卡」而非池总量**：`unseenCount(kind:)` 只数 `shown_count = 0` 的池中卡。旧卡复习由 `showReviewedCards` 控制，默认关闭；按池总量判断会让补货永远「充足」
-- **自动关闭只属于定时弹出的卡**：`showAuto()` 置 `autoCloseEligible`，手动打开清掉；窗口成为 key 时停表，失焦（含 app 失活）后从 0 重新计时
-
-### 全局热键
-- `HotkeyManager.keyCodeMap` 必须完整（26 字母 + 常用符号），与 `kVK_ANSI_*` 一致：缺哪个键，配了它的热键就静默 `parse` 失败并弹「热键解析失败」——**只影响用户自己配的那个键**，看起来像配置写错了（`option+k` 就这么栽过：表里只有 14 个字母）
-- `parse` 的 keyCode 必须用 `Optional`：`a` 的 ANSI 键码是 0，拿 0 当「未匹配」会让 `cmd+a` 解析失败
-- 热键只在启动时注册一次，配置重载不重注册，改热键要重启 app
-
-### NSTableView
-- `selectionHighlightStyle = .none` + manual frame + cell 子类 layout
-- 避免 NSTableView 缓存 rowView 导致无限内存
-
-### 粘贴
-- osascript 子进程（避免 NSAppleScript 运行时内存泄漏）
-- 浏览器 120ms / 原生 50ms 延迟
-- CGEventPost fallback 双路保障
-- `didActivateApplicationNotification` 激活检测
-
-### Stage Drop
-- `NSPasteboard(name: .drag)` cc 检测新拖拽
-- `mouseDown` 快照 changeCount → `mouseUp` 对比
-- `PasteboardImageTypes.all` 集中定义图片类型
-
-### 多终端
-- **只保留 tmux 后端**（`-L utility` 私有 socket、`-f /dev/null`），`TmuxBackend` 是唯一实现；screen/local 已删除，**禁止再加降级**
-- tmux 未安装时：`resolvedBackend()` 只返回 nil（无副作用），由 `createSession` / `showWindow` 显示窗口内空状态文案 + 一次系统通知（`didReportMissingTmux` 去重）；空状态文案由 `showEmptyState(message:)` 传入，`reload()` 会重置为默认文案，所以提示必须在 `reload` 之后设
-- `terminal-sessions.json` 的 `backend` 字段**必须继续写**（`TmuxBackend.storageName`）：旧版结构把它当必填，缺键会让旧版整数组解码失败、静默丢会话恢复；新版解码用 `decodeIfPresent ?? "tmux"`
-- 会话用 `new-session -d` 建好，窗口只做 `attach-session -d -t`；App 退出等于 detach，重开按 `terminal-sessions.json` 恢复
-- 恢复会话先 `window.layoutIfNeeded()` 并把视图预置为目标尺寸再 attach，避免首帧按默认尺寸渲染后再缩放
-- 通知只认程序显式发出的 OSC（Claude Code 在 `TERM_PROGRAM=ghostty` 下发 OSC 777），**不要按输出静默推断任务结束**：长时间 Bash 误报，TUI 流式输出刷屏
-- ⚠️ **tmux 3.8 会把 pane 内的 `TERM_PROGRAM` 改写成 `tmux`**（`TERM_PROGRAM_VERSION=3.8`），即使 server 环境是 ghostty；Claude 不认识 `tmux` 就不发 OSC 777，通知整条链路静默失效。`new-session` 必须用 `env TERM_PROGRAM=ghostty <shell>` 启动，已有会话不会自动修复，需重建或手动 export
-- 不做未读计数与侧栏角标：OSC 原样转发（同 Ghostty）。只在两种情况下抑制——通知到达时用户正在看该会话，或最后一段输出是在聚焦状态下到达的（`lastSeenOutputAt >= lastOutputAt`，即离开前已看过，覆盖 Claude Code 延迟 60s 发出的通知）。输出时间戳只用于这个判据，不代表任务结束
-- **必须保留 SwiftTerm 默认的 mouse reporting**：Claude 全屏 TUI 的滚轮滚动依赖终端转发鼠标事件（官方 issue #75143）；关掉后滚轮会被编码成 ↑/↓（`alternateScrollMode`），被 TUI 当成输入历史。拖选冲突用 `TerminalDropView.mouseDown` 临时挂起 `allowMouseReporting`（mouseUp 恢复，滚轮事件带自愈）解决——按下即本地选择，滚轮仍转发
-- 会话创建时喂 `ESC[?1007l` 关掉 alternate scroll：程序没开 mouse reporting 时滚轮不再变 ↑/↓（不会污染输入历史）；代价是 alternate screen 本身没有本地历史，滚轮保持无效
-- 非精确滚轮每 notch SwiftTerm 只发 **1 个** mouse report（`WheelReportBudget.requestedReports`），全屏 TUI 滚得极慢；`TerminalDropView` 的本地 scrollWheel 监听（`scrollWheel` 非 `open`，无法覆写）对非精确事件重复转发 `reportsPerNotch = 3` 次（预算 burst 6 / 100 reports/s）
-- 应用没有主菜单，⌘←/⌘→ 由 `EditingShortcutRouter` 直接路由到 `moveToBeginningOfLine:` / `moveToEndOfLine:`（⇧ 用 `…AndModifySelection:`）；**方向键判断必须放在 `charactersIgnoringModifiers` 之前**（输入法下可能为 nil）；`TerminalDropView` 覆写这两个方法转给 SwiftTerm 的 `doCommand(by:)` 发 Home/End，路由前先 `responds(to:)` 否则 `sendAction` 直接抛异常
-- **窗口「自己隐藏」的日志证据是热键**：实测 debug.log 里每次 `resigned key visible=false` 都紧跟 `window hidden by hotkey`，没有任何系统隐藏路径。默认热键按用户偏好保持 `option+space`——该组合与输入法/不间断空格冲突，输入时可能被 Carbon 全局热键截获导致窗口收起；排查先 grep `hidden by hotkey`，不要臆测系统行为
-- **点击顶部菜单栏不是窗口隐藏**：accessory app 没有主菜单，激活时菜单栏仍显示上一个 app（访达等）的菜单，点击菜单栏任意区域/图标会激活对应 app；日志表现为 `active=false` + `frontmost=<该 app>`，窗口本身 `visible=true`，只是被该 app 的窗口盖住。`terminal.alwaysOnTop`（默认 false）控制窗口是否用 `.floating` 层级避免被盖住；改它需要重启
-- 终端窗口失活后的兜底：`wantsVisible` 意图标志（`showWindow` 置 true，热键隐藏/用户关闭置 false），`windowDidResignKey` 0.4s、`didResignActive` 0.3s/1.0s 各检查一次，命中 `wantsVisible && (!isVisible || NSApp.isHidden)` 就 `unhideWithoutActivation` + `orderFront`（不抢焦点）
-- 面板显示时若一个会话都没有，`showWindow` 直接 `createSession()`，避免空面板无输入对象；侧栏 `allowsEmptySelection = false`，点空白不会丢选中样式
-- 同一会话 3 秒内最多弹一条系统通知（`lastNotification`）：prompt 可能把同一事件发两遍，终端会看到两个横幅
-- **tmux 3.8 会把 OSC 777 转发给客户端**（实测），通知直接走 SwiftTerm 的 `observeOscEvents`，不要再用 `pipe-pane`（否则一次事件弹两条）；`set -g mouse on` 让普通 shell 滚轮进 copy-mode，`terminal-features xterm-256color:RGB` 开真彩，`allow-passthrough on` 留给支持 DCS 透传的程序
-
-### Config YAML
-- 所有字段 `decodeIfPresent`（避免缺少 key 导致 crash）
-- YAML key 必须与 struct property 名完全相同
-  - ⚠️ **Yams 的 `YAMLDecoder` 不做键名转换**（源码核实：无 `keyDecodingStrategy`，`_KeyedDecodingContainer` 直接用 `key.stringValue` 查表）。写成 snake_case 的 key **不会报错，只会静默回退到默认值**——历史上 `max_retries`/`retry_delay_ms`/`timeout_ms`/`default_tier` 四个键因此从未生效（默认值恰好相同所以没暴露）。新增配置项后要确认它真的进了二进制：`strings .build/debug/utility | grep <propertyName>`
-  - `modelProxy.clientAccel` / `clientText` 段例外：解码走 `ConfigTypes.decodeAny`（用 `Decoder.container(keyedBy: AnyKey.self)` 另开任意键名容器），每个键**同时登记 camelCase 与 snake_case 两种拼写**（修复上述历史失效且不破坏既有配置）
-    - ⚠️ 不要用 `K(stringValue:)` 去试探键名：合成 CodingKeys 的 `init?(stringValue:)` 只认 case 名，传 snake_case 恒返回 nil，回退分支会变成死代码（实测过）
-
-### RSS 内置日报
-
-- 采集与编排同在宿主：`RSSManager.fetchAll()` 抓取，`RSSDigestService`（CLI `utility rss --digest`）跑完整日报，Python 侧不再有 `rss_daily`
-- 日报由内部任务 `rss-daily` 驱动（`AppDelegate.updateRSSDailyTask()`），cmd 直接执行宿主二进制 `rss --digest --fetch`；`cron` 为空时注册 `manual` 模式；启用时直接 register，禁止先 unregister
-- 抓正文与摘要走 gateway `/api/read`、`/api/summarize`；筛选、周刊拆解走 `/api/llm/chat`，提示词在 `Sources/Resources/prompts/<feature>.<lang>.md`（业务层持有，SwiftPM 会扁平化资源目录，语言写在文件名里）
-- 三次 LLM 调用必须 `disableThinking` + `extra_body={"thinking":{"type":"disabled"}}`：不关闭思考会耗尽 `max_tokens`
-- LLM 只返回 JSON；标题格式、来源方括号、归档路径由 `RSSDigestRender` 确定性拼装
-- 同一天重跑按去重键**追加**到当天归档（`mergeWithExisting`）：文章用 URL 归一化，过滤项用 URL（无 URL 时用标题）；空结果不会清空已有日报与过滤记录
-- 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报
-
-### MCP 服务
-- 入口模块全部在 `agent-gateway` 仓（`agent_gateway.services.{mcp.server,summarize.summarize,proxy.token_proxy}` 等），宿主按模块名 `-c "from <module> import main; main()"` 启动；模块名常量见 `Sources/Core/Constants.swift` 的 `GatewayEntry`，启动参数与 venv 定位统一由 `PythonScriptRunner` 提供
-- 资源定位唯一入口 `Sources/Core/GatewayResources.swift`（bundle `Gateway/` → 本仓 `Sources/Gateway/` → 同级 `../agent-gateway/src/agent_gateway`）；首启安装 wheel 见 `Sources/MCP/GatewayInstaller.swift`
-- 打包脚本先用 gateway 仓构建 wheel + 拷 prompts 到 `Sources/Gateway/`，再 `swift build`；缺任何一项硬失败
-- server.py 只保留入口 / HTTP endpoints / 项目与网页工具；记忆子系统在 `server_memory.py`，工具 schema 在 `server_tool_schema.py`，归档在 `server_archive.py`，技能扫描在 `server_skills.py`，共享常量/状态/工具在 `server_constants.py` / `server_state.py` / `server_utils.py`。`hot_memory` / `qdrant` 一律经 `server_state` 存取，禁止再引入模块级全局
-- `token_proxy.handle_proxy` 只做编排：`_prepare_request` → `_apply_rewrites` → `_forward`，共享字段放在 `_ProxyState`
-- 常驻进程（server.py / token_proxy.py）生命周期统一由 `PythonDaemon` 守护（启动/崩溃重启/健康检查/停止），`MCPProcessManager` / `TokenProxyManager` 负责业务决策（State 语义、EventBus 广播、复用探测、通知）
-- 一次性执行走 `PythonScriptRunner.runCaptureOutput`（边读边存避免 pipe buffer 阻塞 + 超时 kill）
-- **冷启动端口复用**（2026-08-21）：`start()` 默认先探测 `:port/health`（`status==ok` 且 `service==mino-brain` 才命中），已有健康 server（如历史孤儿进程 reparent 到 launchd 仍监听端口）则复用不重复 spawn，避免新 spawn 绑定失败触发端口竞争；`forceRestart()` 传 `reuseIfHealthy: false` 强制真正重启——若复用旧进程，新配置（port/qdrantPath/apiKey）会静默不生效
-  - ⚠️ **只传 `reuseIfHealthy: false` 不够**（2026-09-21 修复）：**复用路径不设置 `process`**（保持 nil），`stopSync()` 的 `guard let proc = process` 因此直接 return，孤儿照常占着端口，新 spawn 仍旧绑定失败（uvicorn 报 `Errno 48` → exit 3），服务静默挂掉且不会自愈。现 `forceRestart()` 在 `process == nil`（即复用场景）时调 `terminatePortOccupant()` 按端口清理监听者。清理用 `/usr/sbin/lsof -ti:<port> -sTCP:LISTEN` —— **`-sTCP:LISTEN` 绝不能省**，不带时 `lsof -ti:<port>` 会连「连接该端口的客户端」一并返回（实测 8613 上返回正在走代理的 Clash Verge），照此 kill 即误杀。清理**只放在 `forceRestart()`，不进 `stopSync()`**——后者被 `stop()` 共用（app 退出 / 配置 disabled 两条路径），放进去会带来跨实例误杀
-- **崩溃判据必须覆盖非零退出码**（2026-09-21 修复）：原先只看 `reason == .uncaughtSignal`，而 Python 未捕获异常、端口绑定失败、外部 kill 都退化为 `.exit`（非零退出码被忽略）→ 被当作正常退出静默置 `.stopped`，永不重试也不通知，「崩溃自动重启」实际只对 SIGKILL/SIGSEGV 生效。现改为 `reason == .uncaughtSignal || terminationStatus != 0`（主动停止仍由 `isStopping` 提前 return，不会误触发重启）
-- server.py 所有配置从环境变量读取（`PythonScriptRunner.baseEnvironment()` 提供公共 AI/路径配置，脚本专属变量经 `environment(overrides:)` 注入——如 MCP_PORT/QDRANT_PATH/FASTEMBED_CACHE_PATH），实时构建，不解析 sys.argv；`QDRANT_PATH` 必须由 Swift 注入，Python 侧不再提供个人路径默认值
-- 端口仅通过 `MCP_PORT` 环境变量传递（config mcp.port → env）
-- 工具参数默认值经 `MCP_TOOL_DEFAULTS` 注入（config `mcp.toolDefaults` → env → `tool_defaults.load_defaults()` 合并内置表，**同名覆盖**）。默认值与工具 schema 的 `default` 同源（都取自 `arg_default()`），改了需重启 MCP 服务才生效——脚本专属 env 不走 `config.py`，两侧 env 名由契约脚本交叉断言
-- skill 全文去重（`proxy_skill_dedup.py`，`modelProxy.skillDedupEnabled` → `MODEL_PROXY_SKILL_DEDUP`）：代理转发前把**逐字节相同**的 tool_result 文本第二份起换成 i18n 短提示、保留第一次——本项目 MCP skill 不是 Claude Code 原生 skill，吃不到官方那套去重。插入点在 `record_request_body` 之后、协议转换之前（记录层必须留原样，否则 `tool_output_log` 的度量标尺被自己毁掉）
-- 响应注记（`proxy_response_note.py`，`modelProxy.responseAnnotationEnabled` → `MODEL_PROXY_RESPONSE_NOTE`）：代理在响应末尾追加一行 `{model} | 上下文 34.3 万 | 已执行: Bash 过滤/Skill 短提示`（模型名取自 message_start.message.model，清单由请求侧 output_filter/skill_dedup 统计生成；上下文取自上游 usage = input + cache_read + cache_creation，超 `modelProxy.contextWarnTokens`（默认 300000，`0` = 不提示）追加「建议新开会话」）。**注记会被模型复述**：它注入在 assistant 的 text block 内部、因而进历史，模型会自己生成出同样一行（铁证：`output_preview` 取自只收上游字节的 `collected_body`，里面却含注记行）→ 请求侧由 `strip_notes_from_messages()` 剥掉 assistant 里的注记行（挂 `modelProxy.responseAnnotationEnabled`，位置在 output filter 之后、协议转换之前；只动 assistant，判据由 `NOTE_APPLIED`/`NOTE_EMPTY` 派生）。`_injected` 硬闸仍保留，但只防「代理自己注两次」。**只加在最终文本回复上**——判据是最后一个 content block 的类型（`text` 才加），不取 stop_reason（那时 block 已 stop，来不及补 delta）；SSE 注入用「延迟 `content_block_stop`」：先缓存 stop，等下一个事件确认它是否最后一个，是则在前面补一个 delta（复用 index，不新建 block）。**无改写时也加**（显示 `{model} | 无改写`）——模型名才是这行的主信息，新会话头几轮不触发任何改写
-- shell 工具输出瘦身（`proxy_output_filter.py`，`modelProxy.outputFilter` → `MODEL_PROXY_OUTPUT_FILTER`）：超长砍头尾（带自证标记）+ JSON 无损 minify，只对 shell 类工具生效（Read/Edit 是模型点名要的文件内容，截断等于损坏）。识别用**结构判据**（input 含 `command`）而非硬编码工具名——跨客户端名字各不相同（Gemini=`run_shell_command`、Cursor=`run_terminal_cmd`、Codex=`local_shell`），名单外的名字靠结构命中时记 `shell_tool_unlisted` 以便发现。插入点与 skill 去重同处、排其后
-- summarize.py 作为内部任务注册到 TaskScheduler，以 `.sh(cmd)` 方式执行，所有 env 通过内联命令传入
-- summarize.py 防重复触发：单实例文件锁 + 距上次完整总结 < 6h 跳过；mcp-summary 注册时
-  enabled 直接 register（不先 unregister，避免清 last_fire 后 handleMissed 每天重复补触发）
-- MEMORY_SERVER_URL 从配置 mcp.port 动态计算，确保总结流水线连对端口
-- summarize.py 输入侧质量门（方案 E v5，细节见 notes 分类文章/工具使用/总结流水线审计与质量门方案.md §五）：规则层零 LLM 过滤低质记忆（截断占位/半词/过短等）+ LLM 3 票复核（3 全 drop 才 drop + fail-open），丢弃不标记 processed 保留下轮重评估
-- summarize.py 输出侧主题归属过滤（2026-08-18，根治「正文偶然命中导致错位归并」）：`_file_topic_feature`（文件主题特征=相对路径+所有 H1 标题+首段）+ `_hit_topic_relevant`（组关键词 ≥1 命中主题特征才算相关，正文命中不算）→ `_decide_merge` 前过滤 hits，无主题相关候选判定新建；fallback_merge 用过滤后 hits；检索加权 `title_matched`（路径+首段命中优先）+ `_gen_new` 复用目录优先 + `_sanitize_new_dir` 共享主题词回退
-- summarize.py 输出侧 merge 去重三层防线（2026-08-07 修复，真实跑 11 处重复段根因）：
-  1. **上下文**：`SUMMARY_MERGE_LOOKBACK_CHARS=8000` + `_relevant_segments`（按 facts 与段体 difflib ratio 排序取 top 段，兜底文件头）——防大文件前 2K 截断看不到文件尾既有段，LLM 无从判断重复
-  2. **机械兜底**：`_max_segment_similarity` 多级标题 `#{1,6}` 切段 + **覆盖率指标**（SequenceMatcher matched/len(new_content)），`SUMMARY_DUP_SIM_THRESHOLD=0.7` 超值判无增量跳过（0.8 ratio→0.7 覆盖率，实测 ScanTextUtil 重复 0.767）
-  3. **LLM 语义判定**：`_gen_merge` prompt 第 8 条 no_increment——改写式重复（措辞不同但信息已被既有段覆盖）拦截
-  - 契约：`_gen_merge` 正常返回 `{title,content,supersedes}` **不带 action**，仅 no_increment 带 `{"action":"no_increment","reason":...}`——防 `results.append({..., **item})` 中 action 覆盖局部变量污染 fallback_merge
-  - 纯 ratio 阈值不可分：真重复（0.55-0.75）与正常段（README 模板 0.7-1.0）区间重叠 → 覆盖率 + LLM 语义双判定
-
-### 项目图扫描
-- 全量/增量入口是 `GraphScanner.fullScan()` / `syncScan()`；`FileWatcher` 用 `indexFile` / `removeFile` 做增量镜像
-- 图库 schema 唯一所有者是 `GraphDatabase` 的迁移（files / symbols / edges / unresolved / diagnostics），**不要另建表**
-- 边保留 provenance（`resolver` / `confidence` / `status`），无法解析的引用留在 `unresolved`，不造假边
-- MCP 项目图工具：`project_lookup` 定位符号/文件并附一跳调用方，`project_impact` 按 callers/callees/both 多跳遍历
-- 旧的 `deps.sqlite` 扫描链（ProjectScanner / ProjectDatabase / 各语言 extractor / import resolver / FTS5 符号索引）已于 2026-11-02 移除，勿重新引入
-
-### 检索性能约定（2026-09-11）
-- **notes 关键词搜索禁止 subprocess**：`search_cold_layer` 曾对 notes 目录「每个文件 × 每个
-  token」各起一个 `grep` 子进程 —— notes 有 454 个 .md，实测 2.4s(N=1) / 4.5s(N=2) /
-  7.5s(N=4)，**随 token 数线性放大**，是 `recall` 的最大单项开销。改为 Python 原生
-  `str.lower()` + `in` 一次读文件匹配全部 token；snippet 由 `_notes_snippet` 复刻
-  `grep -inF -m 3` 的输出格式（`行号:行内容`）。等价性已对拍验证（文件集合 100% 一致，
-  仅保留源行尾部空格的差异）
-- **`_ensure_note_cache` 不做目录 mtime 快速跳过**：曾用「项目**根目录** mtime ≤ 缓存中
-  .md 的**最大** mtime」判断，两者语义不同（根目录 mtime 只在直接子项增删时变化）——
-  改深层已有文件会被漏判为「未变」而**返回陈旧结果**（正确性缺陷），根目录有增删则触发
-  全量重扫。现始终 walk + 逐文件 diff（实测 453 个 .md 仅 7ms），只对真正变更的文件做
-  embedding，且待嵌入文本合批推理（`_embed_in_batches`）；单文件的「删旧行 + 插新行」
-  在同一事务内提交以保证原子性
-- **查询嵌入走 `server_embed.embed_query` 共享 LRU**（容量 `EMBED_QUERY_CACHE_SIZE`，默认
-  64，`0` 关闭缓存）：同一轮 agent 常对同一 query 并行调用多个检索工具，此前各自独立嵌入
-  （单条约 45ms）。返回的 ndarray **就是缓存对象本身，调用方只读**
-- mem0 内部使用它自己的 embedder，不经过 `embed_query`，那一路无法共享
-- `recall` / `_contradiction_check_hot` 不再传 `rerank=True`：`MEM0_CONFIG` 未配置
-  RerankerFactory 所需的 `reranker` 段，mem0 内部条件 `if rerank and self.reranker` 恒假，
-  该参数是空操作，留着只会误导后来的读者
-
-### 文件删除
-- 重要文件：`osascript Finder delete` 移废纸篓
-- 临时/自建文件：`rm`
-- 删除后记录到 `~/.hermes/edit_history/[YYYY-MM-DD].md`
-
----
-
-## 内存基线
-
-| 指标 | 值 |
-|------|-----|
-| RSS（空闲） | ~76 MB |
-| Physical footprint（空闲） | ~22.5 MB |
-| Physical footprint（回收后） | ~18.9 MB |
-| Heap nodes | ~44,770 / ~6.8 MB |
-| 粘贴后稳定 | ~30.4 MB（不再增长） |
-| 粘贴方案 | NSTask + osascript，零 NSAppleScript 内存分配 |
-
----
-
-## 相关技能
-
-- `macos-menu-bar-app` — 完整 macOS 菜单栏应用开发指南
-- `macos-swift-appkit` — AppKit 模式与陷阱（NSTableView、pasteboard、CGEventTap 等）
-- `macos-native-dev` — Swift + AppKit 基础开发模式
-
----
-
-## MCP 进程 pipe buffer 阻塞事故（2026-07-25）
-
-**现象**：MCP server.py 运行 4 天后 "失联"，端口 LISTEN 但 HTTP 请求全部超时。
-**根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（`PythonDaemon`，重构前为 MCPProcessManager 内联逻辑）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
-
-**修复**：
-- `agent-gateway` 仓的 `services/mcp/server.py` / `services/summarize/summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
-- `Sources/MCP/PythonDaemon.swift`：就绪信号检测通过后继续读取 pipe 并丢弃数据（双重保险）
-
-**症状识别**：
-- 进程旧（数天）、pipe stderr 有大量积压（`lsof -p PID` 看 SIZE/OFF 列）
-- `sample PID` 显示主线程卡在 `write (libsystem_kernel.dylib)`
-- 同一问题的 summarize.py 定时任务会永远不退出的挂起
-
-**排查命令**：
-```bash
-lsof -p PID -a -d 2        # 看 stderr pipe 的积压字节数
-sample PID 3 -file /dev/stdout | head -40  # 看调用栈
-lsof -i :9001 -P           # 检查 MCP 端口
-```
+完整命令与踩坑见 `.claude/docs/architecture/build.md`。Python 侧（unittest / 向量缓存 / web-search）在 `agent-gateway` 仓内验证，本仓已无 Python 源码。

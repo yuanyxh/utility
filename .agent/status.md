@@ -2,32 +2,27 @@
 
 ## 当前目标
 
-终端模块已收敛为 tmux 单一后端（commit 61bf360），等待后续需求。
+1.1.42 基线整理：RSS 解析与去重、配置键对齐、基座按 agent-vibe 1.4.0 对齐。
 
 ## 进行中
 
 - 无
 
-## 最近完成（2026-10-29）
+## 最近完成（2026-11-03）
 
-- 重新部署 gateway wheel 并复验：合成项目触发 `pruned 1 stale files`，真实项目二次查询 73ms 无重嵌入
-- 修复 project_notes：扫描后清理陈旧缓存行；短段落累积成块，规则清单类文档可检索
-- MCP 工具面收敛：移除 `project_dependencies` / `project_exports` / `summarize`；`MCPClient` 移除 exports；扫描完成后 best-effort 调用 notes 预热
-- 删除 ScreenBackend / LocalBackend / screen 日志 tap，终端只走 tmux
-- tmux 缺失时窗口内空状态提示 + 一次系统通知，禁止降级
-- `TerminalSession` 与 backend 解耦，`TmuxBackend` 为唯一实现
-- `terminal-sessions.json` 继续写 `backend` 字段，兼容旧版本解码
-- 合入窗口失焦兜底、⌘←/→、滚轮加速、配置编辑器按可见行高亮
+- RSS：解析失败返回 nil 并记录 feed/原始串；落库统一 `RSSItem.unknownDate`；迁移 v3 清理 17 组重复链接
+- 配置：用户 `config.yaml` 与 `default-config.yaml` 键集合对齐（121/121），删除 `project_search.limit`、`terminal.backend`
+- 基座：`seed_version: 1.4.0`、`.githooks/{pre-commit,commit-msg}`、backlog/upgrades/plans 模板、`memory/INDEX.md`、4 条 `.claude/rules` 补 `paths:`、`AGENTS.md` 收缩到 116 行
+- 清理：7 个 `.DS_Store` 与 0 B `deps.sqlite` 已移废纸篓
 
 ## 阻塞
 
 - 无
 
-## 基座生成记录（2026-10-29）
+## 验证（2026-11-03）
 
-已生成：`profile.yaml`、`status.md`、`decisions.md`、`lessons.md`、`memory/README.md`、
-`environment.md`、`research.md`、`domains/`、`knowledge/README.md`、`.agent/rules/`、`.claude/skills/`。
-
-未生成：无。领域最低必问项已按现有仓库事实覆盖。
-
-外部事实来源与查询时间：见 `research.md`（2026-10-29，本机命令输出）。
+- `swift build` 通过；`bash scripts/run-tests.sh` 全过；`verify-instantiation.sh` 0 errors / 0 warnings
+- 已部署 `/Applications/Utility.app` 1.1.42，二进制含新日志串
+- 迁移 v3 已执行：`rss_item` 4795→4778，重复链接组 0
+- `rss --fetch` 实测：新增 32 条；31 条 `GitHub Trending Weekly` 无日期条目按预期记日志并使用哨兵；重复组仍为 0
+- 证据级别：L2（真实库迁移 + 抓取日志断言）；配置热重载与日报渲染待下次定时任务验证（L3 待验）

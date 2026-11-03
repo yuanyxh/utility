@@ -49,4 +49,18 @@
 ### 内存诊断
 - `ps -p PID -o rss` → `leaks PID` → `vmmap --summary PID | grep "Physical footprint"`
 - 多快照对比找增长趋势，heap 定位具体类
-- utility 进程空闲时 physical footprint ~17MB baseline（AGENTS.md 有最新数据）
+- utility 进程空闲时 physical footprint ~17MB baseline（`overview.md` 有最新数据）
+
+### NSTableView
+- `selectionHighlightStyle = .none` + manual frame + cell 子类 layout
+- 避免 NSTableView 缓存 rowView 导致无限内存
+
+### 粘贴
+- osascript 子进程（避免 NSAppleScript 运行时内存泄漏）
+- 浏览器 120ms / 原生 50ms 延迟
+- CGEventPost fallback 双路保障
+- `didActivateApplicationNotification` 激活检测
+
+### i18n 补充
+- 本仓 JSON 只保留 Swift 用到的键；`mcp` / `proxy` 已随 RSS 上移全部迁到 gateway
+- 语言无关的路径/默认值常量（季度目录名、知识卡片目录名、Clash 节点名）两语言取同值，避免切换语言后路径漂移

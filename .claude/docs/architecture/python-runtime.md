@@ -26,3 +26,24 @@
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`
 - 禁止 StreamHandler（pipe buffer 死锁），TimedRotatingFileHandler midnight 轮转 30 天
 - `services/mcp/server.py` 和 `services/summarize/summarize.py` 已替换为使用此模块
+
+## MCP 进程 pipe buffer 阻塞事故（2026-07-25）
+
+**现象**：MCP server.py 运行 4 天后 "失联"，端口 LISTEN 但 HTTP 请求全部超时。
+**根因**：`_setup_logging()` 添加了 `StreamHandler(sys.stderr)`，但父进程（`PythonDaemon`，重构前为 MCPProcessManager 内联逻辑）在启动检测通过后停止读取 stderr pipe。几天后 pipe buffer 积满 64KB，任何 `logging.info()` 触发 `write()` 阻塞，uvicorn 主线程卡死，无法响应新连接。
+
+**修复**：
+- `agent-gateway` 仓的 `services/mcp/server.py` / `services/summarize/summarize.py`：移除 `StreamHandler()`，仅保留 `TimedRotatingFileHandler` 写文件日志
+- `Sources/MCP/PythonDaemon.swift`：就绪信号检测通过后继续读取 pipe 并丢弃数据（双重保险）
+
+**症状识别**：
+- 进程旧（数天）、pipe stderr 有大量积压（`lsof -p PID` 看 SIZE/OFF 列）
+- `sample PID` 显示主线程卡在 `write (libsystem_kernel.dylib)`
+- 同一问题的 summarize.py 定时任务会永远不退出的挂起
+
+**排查命令**：
+```bash
+lsof -p PID -a -d 2        # 看 stderr pipe 的积压字节数
+sample PID 3 -file /dev/stdout | head -40  # 看调用栈
+lsof -i :9001 -P           # 检查 MCP 端口
+```

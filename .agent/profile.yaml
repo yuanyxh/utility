@@ -1,3 +1,4 @@
+seed_version: 1.4.0
 project:
   name: utility
   one_liner: macOS 菜单栏工具箱：剪贴板、翻译、OCR、Stage 暂存、多终端、RSS、定时任务与本地 AI 层
@@ -12,6 +13,7 @@ stack:
   language: swift
   framework: AppKit
   package_manager: SwiftPM
+  lockfile: Package.resolved
   runtime: "Swift 6.4 / macOS 14+"
   python_side: agent-gateway（随 app 分发 wheel，Python 源码不在本仓）
 
@@ -34,6 +36,7 @@ delivery:
   vcs: git
   repo_host: local
   branch_strategy: trunk
+  trunk_branch: master
   ci: none
   deploy_target: none
   environments:
@@ -53,9 +56,11 @@ quality:
 verify:
   install: swift package resolve
   build: swift build
-  format: xcrun swift-format lint --configuration .swift-format Sources
-  lint: xcrun swift-format lint --configuration .swift-format Sources
+  format: xcrun swift-format lint --recursive --configuration .swift-format Sources
+  lint: xcrun swift-format lint --recursive --configuration .swift-format Sources
   typecheck: ""
+  outdated: none
+  audit: none
   test: bash scripts/run-tests.sh
   run: SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh
 
