@@ -155,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let cmd = PythonScriptRunner.shellCommand(
             entry: GatewayEntry.summarize,
             // Values come from the **same source** as the MCP service process (`PythonScriptRunner.taskEnvironmentOverrides`).
-            // This used to keep its own whitelist, so newly added `AI_LLM_TIMEOUT` / `UTILITY_LANG` were only added on
+            // This used to keep its own whitelist, so newly added `AI_LLM_TIMEOUT` / `GATEWAY_LANG` were only added on
             // the service-process side, making the scheduled summary always use a 120s timeout and still use the Chinese prompt under an English UI.
             environmentOverrides: PythonScriptRunner.taskEnvironmentOverrides(
                 memoryServerURL: serverURL,

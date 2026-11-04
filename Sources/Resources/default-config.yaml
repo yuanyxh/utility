@@ -60,10 +60,11 @@ modelProxy:
   # Max restarts after the proxy process crashes / delay in ms before restarting (same as the mcp section)
   maxRestarts: 3
   restartDelayMs: 2000
-  # Full-text skill dedup: when the same skill is called repeatedly, the second copy
-  # onward is replaced with a short notice (the first full text is kept).
+  # Identical tool_result dedup: when the same output is returned repeatedly, the second
+  # byte-identical copy onward becomes a short notice (the first full text is kept).
+  # It is content-based, not skill-specific; two identical `ls` results are also collapsed.
   # The notice language follows general.language (shared catalog: zh-Hans / en).
-  skillDedupEnabled: true
+  toolOutputDedup: true
   # Append one line at the end of the response showing what the proxy rewrote this round,
   # e.g. `your-model | context 120K | applied: shell filter / skill short notice`. Added only to final
   # text replies, not to tool-call turns.
@@ -240,7 +241,7 @@ search:
     concurrency: 4
 
 # ---------- Project graph ----------
-# Dependency graph built into <project>/.utility/graph.sqlite in `utility -a` mode.
+# Dependency graph built into <project>/.agent-gateway/graph.sqlite in `utility -a` mode.
 # If graphIndexer is unavailable the agent still starts and the graph is skipped.
 graph:
   enabled: true

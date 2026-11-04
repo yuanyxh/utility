@@ -324,8 +324,8 @@ public struct ModelProxyConfig: Codable {
     var maxRestarts: Int = 3
     /// Milliseconds to wait before restarting after a crash (same meaning as the mcp section)
     var restartDelayMs: Int = 2000
-    /// Full-text skill dedup: when the same skill is called repeatedly, the second copy onward is replaced with a short notice (on by default)
-    var skillDedupEnabled: Bool = true
+    /// Identical tool_result dedup: the second and later byte-identical copies become a short notice (on by default)
+    var toolOutputDedup: Bool = true
     /// Append "what the proxy rewrote this round" at the end of the response (on by default)
     var responseAnnotationEnabled: Bool = true
     /// Context-size threshold in tokens: above it the appended line suggests starting a new session (0 = never suggest)
@@ -342,7 +342,9 @@ public struct ModelProxyConfig: Codable {
         providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? []
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
-        skillDedupEnabled = try c.decodeIfPresent(Bool.self, forKey: .skillDedupEnabled) ?? true
+        toolOutputDedup = decodeAny(
+            decoder, Bool.self, keys: ["toolOutputDedup", "skillDedupEnabled"],
+        ) ?? true
         responseAnnotationEnabled = try c.decodeIfPresent(
             Bool.self, forKey: .responseAnnotationEnabled,
         ) ?? true

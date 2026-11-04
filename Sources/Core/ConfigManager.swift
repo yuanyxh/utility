@@ -26,6 +26,7 @@ public final class ConfigManager {
         let data = try Data(contentsOf: configFile)
         let decoder = YAMLDecoder()
         config = try decoder.decode(AppConfig.self, from: data)
+        try? GatewayConfigWriter.write(config)
         L10n.setup()
         EventBus.shared.publish(AppEvent.configDidLoad)
     }
@@ -54,6 +55,7 @@ public final class ConfigManager {
         \(yaml)
         """
         try content.write(to: configFile, atomically: true, encoding: .utf8)
+        try? GatewayConfigWriter.write(config)
     }
 
     /// Moves the specified provider to the front of the array as the default (default = providers[0]) and persists it.

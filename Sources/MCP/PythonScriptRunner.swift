@@ -114,11 +114,9 @@ enum PythonScriptRunner {
         // Forbid writing __pycache__: scripts ship inside the .app bundle and are signed; generating .pyc at
         // runtime adds files inside the bundle, breaking the signature seal (codesign reports sealed resource missing)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["UTILITY_DATA_DIR"] = AppPaths.configDir.path
-
         // Current system username (passed to the Python layer's DEFAULT_USER_ID)
         let username = NSUserName()
-        if !username.isEmpty { env["UTILITY_USER_ID"] = username }
+        if !username.isEmpty { env["GATEWAY_USER_ID"] = username }
 
         // Timeout config (read from GeneralConfig)
         let general = ConfigManager.shared.config.general
@@ -199,7 +197,7 @@ enum PythonScriptRunner {
     /// goes through `baseEnvironment()`, while the internal `.sh` scheduled tasks go through
     /// `shellCommand(environmentOverrides:)`. When the value logic is written twice, a newly added env only
     /// lands in one of the two, showing up as "config takes effect in the service process, but scheduled tasks
-    /// silently fall back to the default" -- `AI_LLM_TIMEOUT` and `UTILITY_LANG` leaked exactly like this once:
+    /// silently fall back to the default" -- `AI_LLM_TIMEOUT` and `GATEWAY_LANG` leaked exactly like this once:
     /// scheduled summaries always used a 120s timeout (and `ai.llmTimeout`'s consumers happen to all be on the
     /// summarize path), and the English UI still used Chinese prompts.
     static func aiEnvironment() -> [String: String] {
@@ -221,7 +219,7 @@ enum PythonScriptRunner {
     /// side cannot resolve "follow the system" from `general.language` alone.
     static func languageEnvironment() -> [String: String] {
         var env: [String: String] = [:]
-        env[EnvKeys.utilityLang] = L10n.resolvedLanguage(
+        env[EnvKeys.gatewayLang] = L10n.resolvedLanguage(
             configured: ConfigManager.shared.config.general.language,
         )
         return env
@@ -312,7 +310,7 @@ enum PythonScriptRunner {
         [
             "GATEWAY_HOME": AppPaths.configDir.path,
             "GATEWAY_CACHE": AppPaths.cacheDir.path,
-            "GATEWAY_CONFIG": AppPaths.configFile.path,
+            "GATEWAY_CONFIG": GatewayConfigWriter.activeConfigFile.path,
         ]
     }
 
@@ -359,7 +357,6 @@ enum PythonScriptRunner {
             overrides[key] = value
         }
         overrides["PYTHONDONTWRITEBYTECODE"] = "1" // same as baseEnvironment: do not write .pyc inside the signed bundle
-        overrides["UTILITY_DATA_DIR"] = AppPaths.configDir.path
         for (key, value) in gatewayPathEnvironment() {
             overrides[key] = value
         }
@@ -438,7 +435,7 @@ enum PythonScriptRunner {
         proc.executableURL = URL(fileURLWithPath: pythonPath)
         proc.arguments = bootstrapArguments(for: module) + arguments
         // Without this the child inherits the GUI process's launchd environment, which has no
-        // AI_API_KEY / UTILITY_DATA_DIR — the script then runs "successfully" and produces nothing.
+        // AI_API_KEY / GATEWAY_HOME — the script then runs "successfully" and produces nothing.
         if let environment {
             proc.environment = environment
         }

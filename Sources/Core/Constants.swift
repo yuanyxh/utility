@@ -102,7 +102,7 @@ enum EnvKeys {
 
     /// UI/prompt language (`zh-Hans` / `en`), from `general.language` (empty = system preference).
     /// The Python side uses this to pick prompts under `prompts/<lang>/` — same source of truth as `L10n.resolvedLanguage`.
-    static let utilityLang = "UTILITY_LANG"
+    static let gatewayLang = "GATEWAY_LANG"
 
     /// Knowledge panel seeds (JSON arrays) and pool budgets (numbers), from `knowledge.*`.
     /// Consumed by `knowledge_refill.py`; when the seeds are missing the Python side reads empty lists
@@ -117,9 +117,9 @@ enum EnvKeys {
     static let noteExcludeDirs = "NOTE_EXCLUDE_DIRS"
     static let noteExtensions = "NOTE_EXTENSIONS"
 
-    /// Log rotation shared by Swift `debug.log` and every Python logger (`general.log*`).
-    static let logMaxSize = "UTILITY_LOG_MAX_SIZE"
-    static let logBackupCount = "UTILITY_LOG_BACKUP_COUNT"
+    /// Log rotation shared by Swift `debug.log` and every Python logger (`logging.*`).
+    static let logMaxSize = "GATEWAY_LOG_MAX_SIZE"
+    static let logBackupCount = "GATEWAY_LOG_BACKUP_COUNT"
 
     /// Memory write and consolidation budgets, from `mcp.memory*` (0 = feature off).
     static let memoryProtectImportance = "MEMORY_PROTECT_IMPORTANCE"

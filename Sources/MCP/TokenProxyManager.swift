@@ -211,9 +211,9 @@ final class TokenProxyManager {
         if let clientTextJSON = clientTextJSON() {
             overrides["MODEL_PROXY_CLIENT_TEXT"] = clientTextJSON
         }
-        // skill full-text dedup switch: always injected ("1"/"0"), so the Python side does not depend on its own default
-        overrides["MODEL_PROXY_SKILL_DEDUP"] =
-            (proxyConfig?.skillDedupEnabled ?? true) ? "1" : "0"
+        // identical tool_result dedup switch: always injected ("1"/"0"), so Python does not use its default
+        overrides["MODEL_PROXY_TOOL_OUTPUT_DEDUP"] =
+            (proxyConfig?.toolOutputDedup ?? true) ? "1" : "0"
         if let outputFilterJSON = outputFilterJSON() {
             overrides[Self.outputFilterEnvKey] = outputFilterJSON
         }

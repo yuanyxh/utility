@@ -120,7 +120,7 @@ public final class PromptManager {
         return candidates
     }
 
-    /// Current language: same source as the `UTILITY_LANG` injected to Python (`L10n` is the sole criterion).
+    /// Current language: same source as the `GATEWAY_LANG` injected to Python (`L10n` is the sole criterion).
     private static func currentLanguage() -> String {
         L10n.resolvedLanguage(configured: ConfigManager.shared.config.general.language)
     }

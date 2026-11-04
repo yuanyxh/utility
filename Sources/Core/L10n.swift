@@ -66,7 +66,7 @@ enum L10n {
 
     /// Currently effective language: config takes priority; empty follows the system preference.
     ///
-    /// This is the **single cross-language source of truth** — L10n itself, and the `UTILITY_LANG`
+    /// This is the **single cross-language source of truth** — L10n itself, and the `GATEWAY_LANG`
     /// injected into Python both go through here. The default parameter does not read
     /// `ConfigManager`: `_ready` may fire before config load, and reading config then would crash.
     static func resolvedLanguage(configured: String = "") -> String {
