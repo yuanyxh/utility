@@ -125,9 +125,8 @@ final class FileWatcher {
             if isFile, !config.shouldInclude(relPath) {
                 continue
             }
-            // Full scans use .skipsHiddenFiles; keep the incremental path aligned.
-            if isFile,
-               relPath.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
+            // Full scans use .skipsHiddenFiles; apply to dirs too (.git/objects leaked).
+            if relPath.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
                 continue
             }
             let stateDirs = [".agent-gateway", ".utility"]
