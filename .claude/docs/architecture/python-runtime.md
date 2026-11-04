@@ -20,7 +20,7 @@
 - 无启动超时杀进程——`terminationHandler` 处理真实崩溃，`isStopping` 标志防止 stop() 误触重启
 - Python venv 路径 `~/.config/utility/mcp-venv/bin/python3`
 - **健康检查必须 `async/await` + `@MainActor`**，不能用 `DispatchSemaphore`（阻塞主线程导致 URLSession 回调死锁）
-- ⚠️ **env 有两个注入点，新增跨语言 env 必须两处都加**：一是 `baseEnvironment()`（MCP 服务与 token 代理进程消费），二是 `AppDelegate.updateMCPSummaryTask()` 里 `.sh` 任务的白名单（经 `shellCommand(environmentOverrides:)`）——后者**刻意不消费 `baseEnvironment()`**（`.sh` 走 `/bin/bash -c`，把继承环境与代理设置内联进命令串既污染又可能因值含空格而截断）。取值逻辑因此抽到 `aiEnvironment()` / `resolvedNotesDir()`，`.sh` 侧由 `taskEnvironmentOverrides()` 组装。漏掉第二处的症状是「服务进程里配置生效、定时任务里静默回退默认」：`AI_LLM_TIMEOUT` 与 `UTILITY_LANG` 就这样漏过一次（定时总结恒用 120s 超时——而 `ai.llmTimeout` 的消费方恰好全在 summarize；英文界面下仍走中文提示词，且因 `current_lang()` 已等于基线**连 warning 都不记**）
+- ⚠️ **env 有两个注入点，新增跨语言 env 必须两处都加**：一是 `baseEnvironment()`（MCP 服务与 token 代理进程消费），二是 `AppDelegate.updateMCPSummaryTask()` 里 `.sh` 任务的白名单（经 `shellCommand(environmentOverrides:)`）——后者**刻意不消费 `baseEnvironment()`**（`.sh` 走 `/bin/bash -c`，把继承环境与代理设置内联进命令串既污染又可能因值含空格而截断）。取值逻辑因此抽到 `aiEnvironment()` / `resolvedNotesDir()`，`.sh` 侧由 `taskEnvironmentOverrides()` 组装。漏掉第二处的症状是「服务进程里配置生效、定时任务里静默回退默认」：`AI_LLM_TIMEOUT` 与 `GATEWAY_LANG` 就这样漏过一次（定时总结恒用 120s 超时——而 `ai.llmTimeout` 的消费方恰好全在 summarize；英文界面下仍走中文提示词，且因 `current_lang()` 已等于基线**连 warning 都不记**）
 - **契约脚本第 3 组断言的是「实际注入点」而非「源码里出现过这个名字」**（`env["NAME"] = …` / `env[EnvKeys.xxx] = …`）：后者会被 `EnvKeys` 的声明本身满足，判据恒真——它看不见「漏了一个注入点」这类集合覆盖问题，而上面那次事故正是这样溜过去的。同组还有：脚本专属 env 的直读断言（覆盖 `MODEL_PROXY_*` 等不经 `config.py` 的名字，不再只兜 `MCP_SYNONYMS`）与一份**每条都必须写明理由**的豁免表 `_SCRIPT_ENV_EXEMPT`（`PATH` 系统提供；`EMBED_QUERY_CACHE_SIZE` 是有内置默认的内部调优值，非用户配置面）
 ### 共享 Python 日志模块（log_utils.py）
 - `setup_logging(name)` 输出到 `~/.cache/utility/[name].log`

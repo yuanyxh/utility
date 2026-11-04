@@ -7,7 +7,7 @@
 - 从互联网取用户没想到过的新内容：**主题卡片**沿主线逐个概念推进，使用 `knowledge_engine.advance()`。碎片标签页与生成链路已移除
 - **补货与显示分离**：`knowledge_refill.py` 后台按间隔补货入池，面板弹出直接从池读（秒开）。生成一张卡要 1~2 分钟（3 次 LLM 调用 + 检索），不能放在弹窗路径上
 - ⚠️ **补货不能走 TaskScheduler**：`handleMissed()` 以「今天 00:00 后第一个 cron 点」为基准，`lastFire >= todayPoint` 即跳过 → 任何 sub-daily 的 cron 都静默退化成每天一次（`*/30 * * * *` 实测一天只跑一次，无任何报错）。改用 `KnowledgeService` 自建 Timer：「间隔」只是唤醒节拍，真正的开关是池容量
-- ⚠️ **`runCaptureOutput` 默认不传 environment**：子进程继承 Utility.app（launchd 启动的 GUI 进程）环境，没有 `AI_API_KEY` / `UTILITY_DATA_DIR` → Python 侧 `default_target().ready == false`，静默返回 None、一张卡都出不来。已加可选参数 `environment:`，`KnowledgeService` 显式传 `PythonScriptRunner.environment(overrides: [:])`
+- ⚠️ **`runCaptureOutput` 默认不传 environment**：子进程继承 Utility.app（launchd 启动的 GUI 进程）环境，没有 `AI_API_KEY` / `GATEWAY_HOME` → Python 侧 `default_target().ready == false`，静默返回 None、一张卡都出不来。已加可选参数 `environment:`，`KnowledgeService` 显式传 `PythonScriptRunner.environment(overrides: [:])`
 - **Markdown 渲染 = WKWebView + 内嵌 marked.js**（`Sources/Resources/markdown/marked.umd.js`，v18.1.1，MIT）：GFM 表格/删除线/自动链接开箱可用，选中/复制/右键菜单由 WebKit 提供，链接点击经 `WKNavigationDelegate` 交给系统浏览器。资源被 `.process` 扁平化到 bundle 根，加载时同时尝试 `markdown/` 子目录与根目录；缺失则页面用 `textContent` 降级纯文本。**旧的 `AttributedString` 逐 run 字体映射已移除**——它不解析 GFM 表格，且 260 行映射表是纯手工维护成本
 - ⚠️ **CJK 强调需扩展**（2026-10-24 实测）：CommonMark 的强调定界符是标点敏感的，`**邻居发现协议（NDP）**对自身` 这类「闭合 `**` 紧跟全角括号」默认不解析、原样输出星号。页面加载时注册 marked inline 扩展 `cjkStrong` / `cjkDel` 放宽闭合条件；围栏代码与行内代码不受影响（code token 先于 inline tokenizer）
 - **样式覆盖全部节点**：`::selection` 自定义高亮（亮/暗两套）、`body/a/li/td` 统一 `overflow-wrap: anywhere` 防长 URL 裁切、`pre` 用 `pre-wrap` 换行、滚动条隐藏但可滚

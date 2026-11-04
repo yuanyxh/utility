@@ -25,6 +25,7 @@ python3 scripts/check-l10n-contract.py          # 加 --python-root ../agent-gat
 python3 scripts/check-examples-parity.py
 python3 scripts/check-gateway-entries.py --entries ../agent-gateway/contracts/entries.json
 bash scripts/run-tests.sh
+bash scripts/e2e-isolated.sh                    # 临时 HOME 跑真实 agent 模式 + 图库增量
 ```
 
 打包产物验证（本地不打包也能跑 wheel 路径）：`UTILITY_GATEWAY_USE_WHEEL=1 .build/debug/utility`。
@@ -34,7 +35,8 @@ bash scripts/run-tests.sh
 
 ## scripts 目录
 
-- `scripts/` 根只放可执行入口（`check-*.py`、`gen-l10n.py`、`package-utility.sh`、`run-tests.sh`），这些路径被文档与 `run-tests.sh` 引用，**不得移动**
+- `scripts/` 根只放可执行入口（`check-*.py`、`gen-l10n.py`、`package-utility.sh`、`run-tests.sh`、`e2e-isolated.sh`），这些路径被文档与 `run-tests.sh` 引用，**不得移动**
+- `e2e-isolated.sh`：`HOME`/`CFFIXED_USER_HOME` 指向临时目录，软链 gateway `.venv`，真实跑 `utility -a`；断言首建、watcher 增量、`project_lookup`/`project_impact`。`KEEP_TEMP=1` 保留现场，`GATEWAY_REPO`/`PYTHON` 可覆盖路径，失败自动保留并打印日志尾部
 - 校验器实现放子包；新增校验脚本同样建包，根部入口只做 import + `main()`
 - 子包内路径常量：`SCRIPTS_DIR = dirname(dirname(__file__))`、`ROOT = dirname(SCRIPTS_DIR)`
 - 引用 Python 源码的校验（`router_contract`、`config_parity`、web-search、向量缓存不变式）已随源码迁往 `agent-gateway` 仓的 `scripts/`

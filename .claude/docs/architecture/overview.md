@@ -27,7 +27,7 @@
 | `PythonDaemon` | 参数化常驻 Python 进程守护：启动/崩溃重启/健康检查/停止（`MCPProcessManager` 与 `TokenProxyManager` 共用） |
 | `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
-| `GraphScanner` / `GraphDatabase` | 项目调用图全量/增量扫描与 `.utility/graph.sqlite` 写入 |
+| `GraphScanner` | 项目调用图客户端：启动 `sync` 对账、文件事件增量、`.agent-gateway/graph.sqlite` 由 gateway 写入 |
 | `FileWatcher` | FSEvents 文件监控 + 3s 防抖，把变更镜像到图库 |
 | `NotificationManager` | 本地通知 |
 | `Translator` | OpenAI 兼容 API 翻译 |

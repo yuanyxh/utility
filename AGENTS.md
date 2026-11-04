@@ -12,7 +12,7 @@
 - Carbon EventHotKey 全局快捷键
 - GRDB 本地 SQLite 存储；Vision OCR 屏幕区域识别
 - MCP 记忆服务：Mem0 + Qdrant 冷热双层，Python 侧在 `agent-gateway` 仓
-- 项目索引：`GraphScanner` 写入 `.utility/graph.sqlite`
+- 项目索引：`GraphScanner` 写入 `.agent-gateway/graph.sqlite`
 
 ## 开始任何任务前
 
@@ -110,6 +110,7 @@
 | i18n | `python3 scripts/gen-l10n.py --check` + `python3 scripts/check-l10n-contract.py` |
 | 示例一致性 | `python3 scripts/check-examples-parity.py` |
 | 入口契约 | `python3 scripts/check-gateway-entries.py --entries ../agent-gateway/contracts/entries.json` |
+| 隔离 E2E | `bash scripts/e2e-isolated.sh`（临时 HOME，不碰真实配置与运行中实例） |
 | 打包 | `SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh` |
 | 基座校验 | `bash ../agent-vibe/scripts/verify-instantiation.sh .` |
 

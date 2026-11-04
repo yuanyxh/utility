@@ -53,7 +53,7 @@ The AI layer also needs Python 3.12. Its runtime comes from the separate
 | Tool output | `~/.config/utility/tool_output.sqlite` | full tool-output log | — |
 | Model cache | `~/.cache/utility/fastembed/` | embedding model | `mcp.fastembedCacheDir` |
 | Logs | `~/.cache/utility/` | per-process logs | — |
-| Project graph | `<project root>/.utility/graph.sqlite` | data source for `project_lookup` / `project_impact` | — |
+| Project graph | `<project root>/.agent-gateway/graph.sqlite` | data source for `project_lookup` / `project_impact` | — |
 
 ```bash
 tail -f ~/.cache/utility/debug.log         # runtime trace
@@ -404,7 +404,7 @@ flowchart TD
 
 | Mechanism | Toggle | Effect |
 |---|---|---|
-| Full-text de-dup | `skillDedupEnabled` | a short note replaces duplicated content |
+| Tool-output de-dup | `toolOutputDedup` | a short note replaces byte-identical tool results |
 | Shell output trimming | `outputFilter.enabled` | shell output filtered, JSON losslessly minified |
 | Classifier acceleration | `clientAccel` | disables thinking for safety-classifier requests |
 
@@ -432,7 +432,7 @@ flowchart TD
 | `modelProxy.providers[].apiFormat` | — | `anthropic` or `openai`; differing from the client's protocol converts both ways |
 | `modelProxy.providers[].apiKey` | `""` | key substituted when forwarding; empty passes the client's key through |
 | `modelProxy.providers[].models` | — | model IDs routed to this provider |
-| `modelProxy.skillDedupEnabled` | `true` | collapse duplicated content |
+| `modelProxy.toolOutputDedup` | `true` | collapse byte-identical tool results |
 | `modelProxy.outputFilter.enabled` | `true` | trim oversized shell output |
 | `modelProxy.outputFilter.maxBytes` | `12000` | only outputs above this size are trimmed |
 | `modelProxy.responseAnnotationEnabled` | `true` | append `model \| rewrote: …` to final replies |
@@ -650,7 +650,7 @@ Reminders do not fire while the app is not running; on launch it replays those w
 
 ### 6. Project index and Agent parasitic mode
 
-The data behind `project_lookup` / `project_impact` comes from `GraphScanner` (full or incremental scan), which writes `.utility/graph.sqlite` under the project root. The graph stores files, symbols, call/type/import edges and unresolved references; `FileWatcher` mirrors file events into it incrementally.
+The data behind `project_lookup` / `project_impact` lives in `.agent-gateway/graph.sqlite` under the project root. The gateway owns scanning and writes (`sync` reconciles the tree on start; `FileWatcher` mirrors file events incrementally), while `GraphScanner` only sends protocol requests. The graph stores files, symbols, call/type/import edges and unresolved references.
 
 | Command | Purpose |
 |---|---|

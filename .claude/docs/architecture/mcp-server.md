@@ -33,7 +33,7 @@
 - **检索同义词表 = 内置默认 + 用户增量**：`synonyms.py` 的 `SYNONYM_MAP` 是内置，`config.yaml` 的 `mcp.synonyms` 是用户增量（**同名覆盖、异名追加**，只写要加的、不必抄回整张表）。Swift `MCPProcessManager.synonymsJSON()` 把用户表序列化后按 `synonymsEnvKey`（`MCP_SYNONYMS`）注入，Python 侧 `load_synonyms()` 合并并缓存（env 在进程启动时固定，改配置要重启服务）。**该 env 不进 `config.py`**（脚本专属 env 的既有约定），故契约第 3 组的「Python 读了 Swift 必须注入」覆盖不到它——脚本单独交叉断言两侧常量同值（`find_synonym_env_violations`），否则改名后内置表照常工作、**用户配的同义词静默失效**（无任何报错）。**不迁入 notes**：检索质量不该成为可被静默改坏的变量，改坏了的表现是「搜不到」，与「这条记录本来就不存在」无法区分
 - **工具参数默认值 = 内置默认 + 用户增量**（2026-10-10）：`tool_defaults.py` 的 `TOOL_ARG_DEFAULTS` 是内置，`config.yaml` 的 `mcp.toolDefaults` 是用户增量（**同名覆盖**，键结构 **tool name → args name → 值**）。Swift `MCPProcessManager.toolDefaultsJSON()` 序列化后按 `toolDefaultsEnvKey`（`MCP_TOOL_DEFAULTS`）注入，Python `load_defaults()` 合并缓存。**该 env 不进 `config.py`**，契约第 3 组同样覆盖不到——单独交叉断言（`find_tool_defaults_env_violations`）。默认值直接决定每次调用的**返回量即 token 消耗**，故做成配置面：`recall.limit=6`、`project_lookup.limit=50`、`project_impact.limit=30` / `depth=2`、`project_notes.limit=5`、`websearch_engine.limit=5` / `fetch_top=0` / `max_chars=6000`、`read_url.max_chars=6000`
   - **schema 的 `default` 与 handler 兜底必须同源**：`DEFAULT_RECALL_LIMIT` / `LOOKUP_DEFAULT_LIMIT` / `IMPACT_DEFAULT_LIMIT` / `IMPACT_DEFAULT_DEPTH` 全部取自 `arg_default()`，两处各写一份字面量会漂移成「schema 声明 6、实际取 8」（recall 上次 10→8 踩过这个坑）
-  - **项目图工具取代 `project_search`**：`project_lookup` / `project_impact` 必传项目根 `path`，读 `<path>/.utility/graph.sqlite`（不读环境变量，可查任意已扫描项目）；`project_search` 的 MCP/REST 入口、retrieval arm 与底层实现已于 2026-11-02 全部移除
+  - **项目图工具取代 `project_search`**：`project_lookup` / `project_impact` 必传项目根 `path`，读 `<path>/.agent-gateway/graph.sqlite`（不读环境变量，可查任意已扫描项目）；`project_search` 的 MCP/REST 入口、retrieval arm 与底层实现已于 2026-11-02 全部移除
   - `project_lookup` 已接入通用检索层：`Pipeline("project_lookup")` 单臂 + 位次分 + `PassThroughGate`，详见 `project-graph.md`
   - **整数参数一律经 `_int_arg`**：客户端显式传 `null` 时 `arguments.get` 返回 None，直接切片 `all_found[:None]` 是**不截断**——静默把 token 治理关掉
 - **检索行为固定在代码中（2026-10-31）**：不再有 `retrieval.*` 配置段。调用方与部署都不需要调阈值——代码里**没有任何模型专属数字**，地板由自动标定写入数据目录；分层、`min_hits`、融合权重、门控类型都是代码常量。实测表明这些旋钮除了让行为可漂移之外没有带来质量收益：相对门控未被启用、heat 权重必须为 0 才不退步、`run_all` 每次只增加延迟
@@ -49,7 +49,7 @@
   - 重排后**丢弃非正分**：交叉编码器输出的是相关性 logit，负分即「不是这条查询的段落」，留着只烧 token
 - **笔记向量缓存带模型身份（2026-10-31）**：`note_vectors.sqlite` 的 `chunks` 表配 `meta` 表存 `embedder_tag` / `embedder_dims`。但**判定以向量 blob 长度为准**，不信 meta——换模型后旧向量不会失效（`_ensure_note_cache` 只重嵌 mtime/size 变了的文件），混维矩阵会让 `np.array` 直接抛错。实测三项目全中：agent-gateway 405 条 384 维 + 3133 条 768 维、utility 2287 + 476、generate-app 全 384 维，向量检索全部静默降级成关键词。发现混维即整表作废重嵌
   - 向量阶段失败现在记 `logger.error` 并写明「本次查询降级为关键词」，不再是容易被忽略的 warning
-- **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `UTILITY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
+- **MCP 层文案统一英文，重复的收敛为常量**：这一层（工具返回、HTTP 端点、`logger.*`）面向**模型与开发者**，不与 `GATEWAY_LANG` 联动——面向终端用户的文案在 Swift 侧由 `L10n` 覆盖。盘点时发现 `'Hot layer not initialized'` 硬编码了 **6 处**，`set_memory_processed` 的 3 条参数校验在 MCP handler 与 HTTP 端点**各写一份**且是中文（与其余英文错误混着）——现收敛为 `ERR_*` 常量与 `err_bit_out_of_range()` 共用。判定口径：**重复出现的文案必须走常量**（单处出现的抽常量没有收益，重复的才有漂移风险；同一状态在两条入口提示不同，调用方无从归纳怎么改参数）
 ### 记忆生命周期（2026-10-23）
 
 - `status` 是生命周期的唯一来源：`active` / `superseded` / `deleted`，缺省视为 `active`；`disputed` 仍只表达事实矛盾，不复用为生命周期

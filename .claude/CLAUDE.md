@@ -90,7 +90,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `LLMTarget.ready` 与 `configured` 别混；**api_key 为空是合法的**（表示透传客户端 key）
 - 提示词在 gateway 仓的 `prompts/<lang>/<feature>.md`，打包时拷到 `Sources/Gateway/prompts/`；目录优先级：用户覆盖（`~/.config/utility/prompts/`，语言无关）→ 内置（当前语言 → `zh-Hans` 基线）
 - 渲染**禁用** `str.format` / 逐 key 替换，必须按名字**一次性**替换
-- 语言唯一判据 `L10n.resolvedLanguage()` / `UTILITY_LANG`
+- 语言唯一判据 `L10n.resolvedLanguage()` / `GATEWAY_LANG`
 - 工具描述与参数描述固定英文，不进语言目录；参数描述只做 `inputSchema.description`，未登记的键抛 `MissingParamText`
 - `param.memory_content` 与 `TOOL_DESCRIPTIONS["remember"]` 必须同为三要素口径
 
