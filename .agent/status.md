@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- 无
+- GUI 化重构：T1-T6 代码完成，`swift build` 与 `run-tests.sh` 通过；待用户 L3 手测（Dock、主菜单、设置保存、面板键盘、OCR 退出）
 
 ## 最近完成（2026-11-03）
 
@@ -41,6 +41,9 @@
 - 1.1.49 部署复验：安装包与随包 wheel 含 `SIG_IGN`；真实 `utility -a` 登记 live、退出后为空；MCP 缺失图库 35 秒后重建并命中
 - 1.1.50 部署复验：安装包与随包 wheel 含 TZ / Overflow / 延迟导入修复；索引器登记 UTC 时间、退出后为空；MCP 缺失图库 35 秒后重建并命中
 - 证据级别：L3（真实部署 MCP + 30 秒刷新；真实二进制 + 隔离 HOME 登记 live/stopped）；GUI 面板未验证；旧 agent 会话 41753/41760 需重启才用 1.1.50 索引器
+- 1.1.56 打包验证：`Info.plist` 无 `LSUIElement`、签名有效、资源 bundle 完整（18M）、二进制含新功能标记；DMG 根目录是 `Contents` 而非 `Utility.app`，拖拽安装不可用
+- 打包脚本已修并验证：1.1.58 DMG 卷根为 `Utility.app` + `Applications` 软链，含 `Cmd+M` 修复；该包不含动态激活策略
+- 动态激活策略 L3 通过（1.1.59）：`Cmd+W` 关窗 → `accessory mainWindowActive=false`，热键重开 → `regular mainWindowActive=true`；最小化无 `restoring after focus loss`；GUI 手测项全部完成，待提交
 
 ## 阻塞
 

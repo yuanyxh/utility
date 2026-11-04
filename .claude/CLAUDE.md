@@ -4,7 +4,7 @@
 
 ## 项目概述
 macOS 菜单栏工具，Swift + AppKit + SPM。
-- LSUIElement（无 Dock 图标）
+- 默认 regular 应用（Dock 图标 + 主菜单），终端窗口为主窗口；`app.hideDockIcon: true` 切回纯菜单栏
 - NSStatusItem 菜单栏入口
 - NSPanel floating 面板：剪贴板管理、翻译、Stage 暂存
 - Carbon EventHotKey 全局快捷键

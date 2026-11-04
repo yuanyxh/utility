@@ -40,6 +40,7 @@ public struct AppConfig: Codable {
     var modelProxy: ModelProxyConfig? = nil
     var terminal: TerminalConfig = .init()
     var graph: GraphConfig = .init()
+    var app: AppBehaviorConfig = .init()
 
     public init() {}
 
@@ -60,6 +61,7 @@ public struct AppConfig: Codable {
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
         terminal = (try? c.decodeIfPresent(TerminalConfig.self, forKey: .terminal)) ?? .init()
         graph = (try? c.decodeIfPresent(GraphConfig.self, forKey: .graph)) ?? .init()
+        app = (try? c.decodeIfPresent(AppBehaviorConfig.self, forKey: .app)) ?? .init()
     }
 }
 

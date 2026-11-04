@@ -2,7 +2,7 @@
 
 macOS 菜单栏工具：剪切板历史、AI 翻译、OCR 区域翻译、拖拽暂存、RSS、定时任务、网速监控，以及本地 AI 层。
 
-无 Dock 图标、无主窗口。
+默认以 regular 应用运行：有 Dock 图标与主菜单，终端窗口作为主窗口。设置 `app.hideDockIcon: true` 后，终端窗口关闭时隐藏 Dock 图标；窗口打开期间仍保持 regular，菜单栏与 Cmd+Tab 可用。
 
 [English](README.md)
 

@@ -12,13 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applicationDidFinishLaunching(_: Notification) {
         debugLog("[Utility] Starting up...")
 
-        NSApplication.shared.setActivationPolicy(.accessory)
-
         do { try ConfigManager.shared.load() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                 title: L10n.Notify.configLoadFailed, body: error.localizedDescription,
             ))
         }
+        applyActivationPolicy()
+        MainActor.assumeIsolated { AppMainMenu.install() }
         do { try AppDatabase.shared.setup() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                 title: L10n.Notify.dbInitFailed, body: error.localizedDescription,
@@ -57,6 +57,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         registerAllHotkeys()
         installEventHandler()
+
+        if ConfigManager.shared.config.app.showTerminalOnLaunch,
+           ConfigManager.shared.config.terminal.enabled
+        {
+            MainActor.assumeIsolated { TerminalManager.shared.showWindow() }
+        }
 
         debugLog("[Utility] Ready")
     }
@@ -131,6 +137,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
         // RSS daily: re-evaluate the built-in task against the new config
         updateRSSDailyTask()
+
+        // App shape: hideDockIcon takes effect without a restart
+        applyActivationPolicy()
+    }
+
+    /// Delegates to `AppActivation`, which keeps the app regular while the main window is open.
+    private func applyActivationPolicy() {
+        MainActor.assumeIsolated { AppActivation.apply() }
+    }
+
+    /// Dock icon click: bring the main window back when nothing is visible.
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        MainActor.assumeIsolated {
+            if ConfigManager.shared.config.terminal.enabled {
+                TerminalManager.shared.showWindow()
+            } else if let window = AppWindowRegistry.frontmostWindow {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        return true
     }
 
     /// Register/unregister the built-in memory summary task. Idempotent: unregister when disabled; register directly when enabled.

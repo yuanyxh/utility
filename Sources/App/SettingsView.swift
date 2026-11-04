@@ -1,0 +1,180 @@
+import AppKit
+import SwiftUI
+
+struct SettingsView: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                Section(L10n.Settings.groupApp) {
+                    Toggle(
+                        L10n.Settings.fieldHideDockIcon,
+                        isOn: $model.config.app.hideDockIcon,
+                    )
+                    Toggle(
+                        L10n.Settings.fieldShowTerminalOnLaunch,
+                        isOn: $model.config.app.showTerminalOnLaunch,
+                    )
+                }
+
+                Section(L10n.Settings.groupGeneral) {
+                    Picker(
+                        L10n.Settings.fieldLanguage,
+                        selection: $model.config.general.language,
+                    ) {
+                        Text(L10n.Settings.languageSystem).tag("")
+                        Text(L10n.Settings.languageZh).tag("zh")
+                        Text(L10n.Settings.languageEn).tag("en")
+                    }
+                    TextField(
+                        L10n.Settings.fieldHttpTimeout,
+                        value: $model.config.general.httpTimeout,
+                        format: .number,
+                    )
+                    TextField(
+                        L10n.Settings.fieldAiTimeout,
+                        value: $model.config.general.aiTimeout,
+                        format: .number,
+                    )
+                }
+
+                Section(L10n.Settings.groupClipboard) {
+                    TextField(
+                        L10n.Settings.fieldClipboardMaxDays,
+                        value: $model.config.clipboard.maxDays,
+                        format: .number,
+                    )
+                    TextField(
+                        L10n.Settings.fieldClipboardPollInterval,
+                        value: $model.config.clipboard.pollInterval,
+                        format: .number,
+                    )
+                    hotkeyField(
+                        L10n.Settings.fieldClipboardHotkey,
+                        text: $model.config.clipboard.hotkey,
+                    )
+                }
+
+                Section(L10n.Settings.groupTranslation) {
+                    hotkeyField(
+                        L10n.Settings.fieldTranslationHotkey,
+                        text: $model.config.translation.hotkey,
+                    )
+                    hotkeyField(
+                        L10n.Settings.fieldTranslationHotkeyOcr,
+                        text: $model.config.translation.hotkeyOCR,
+                    )
+                    TextField(
+                        L10n.Settings.fieldSourceLang,
+                        text: $model.config.translation.sourceLang,
+                    )
+                    TextField(
+                        L10n.Settings.fieldTargetLang,
+                        text: $model.config.translation.targetLang,
+                    )
+                }
+
+                Section(L10n.Settings.groupKnowledge) {
+                    Toggle(
+                        L10n.Settings.fieldKnowledgeEnabled,
+                        isOn: $model.config.knowledge.enabled,
+                    )
+                    Toggle(
+                        L10n.Settings.fieldKnowledgeAutoShow,
+                        isOn: $model.config.knowledge.autoShowEnabled,
+                    )
+                    TextField(
+                        L10n.Settings.fieldRefillInterval,
+                        value: $model.config.knowledge.refillIntervalMinutes,
+                        format: .number,
+                    )
+                    hotkeyField(
+                        L10n.Settings.fieldKnowledgeHotkey,
+                        text: $model.config.knowledge.hotkey,
+                    )
+                }
+
+                Section(L10n.Settings.groupTerminal) {
+                    Toggle(
+                        L10n.Settings.fieldTerminalEnabled,
+                        isOn: $model.config.terminal.enabled,
+                    )
+                    TextField(
+                        L10n.Settings.fieldFontSize,
+                        value: $model.config.terminal.fontSize,
+                        format: .number,
+                    )
+                    Toggle(
+                        L10n.Settings.fieldAlwaysOnTop,
+                        isOn: $model.config.terminal.alwaysOnTop,
+                    )
+                    TextField(L10n.Settings.fieldShell, text: $model.config.terminal.shell)
+                    TextField(
+                        L10n.Settings.fieldWorkingDirectory,
+                        text: $model.config.terminal.workingDirectory,
+                    )
+                }
+
+                Section(L10n.Settings.groupRss) {
+                    Toggle(
+                        L10n.Settings.fieldRssDailyEnabled,
+                        isOn: $model.config.rss.daily.enabled,
+                    )
+                    TextField(
+                        L10n.Settings.fieldRssDailyCron,
+                        text: $model.config.rss.daily.cron,
+                    )
+                    TextField(
+                        L10n.Settings.fieldMaxAgeDays,
+                        value: $model.config.rss.daily.maxAgeDays,
+                        format: .number,
+                    )
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                statusText
+                Spacer()
+                Button(L10n.Settings.reload) { model.reload() }
+                Button(L10n.Settings.save) {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    model.save()
+                }
+                .keyboardShortcut("s", modifiers: .command)
+            }
+            .padding(12)
+
+            Text(L10n.Settings.backupHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
+        .frame(minWidth: 620, minHeight: 460)
+    }
+
+    private func hotkeyField(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            TextField(title, text: text)
+            Text(L10n.Settings.fieldRestartHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var statusText: some View {
+        switch model.status {
+        case .idle:
+            EmptyView()
+        case .saved:
+            Text(L10n.Settings.saved).foregroundStyle(.green)
+        case .failed(let message):
+            Text(message).foregroundStyle(.red).lineLimit(3)
+        }
+    }
+}

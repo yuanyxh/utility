@@ -13,6 +13,15 @@
 - **自动弹出也必须走 requestShow**（context 带 `auto`），不能直接 `orderFront`：直接显示的面板不在栈里，`dispatchKey` 分发不到，ESC 失效，`hasVisiblePanel` 也会漏判（2026-10-29 知识面板 showAuto 修复）
 - **常驻窗口必须注册 `AppWindowRegistry`**（终端 / 配置 / Stage）：`hideIfEmpty` 用 `hasVisibleWindow` 决定是否 `NSApp.hide`，漏注册会让常驻窗口在最后一个面板关闭时被连带隐藏（2026-10-29 Stage 修复）
 
+### 应用形态与主窗口
+- 默认 regular（Dock 图标 + 主菜单）；`app.hideDockIcon: true` 时终端窗口关闭后切 `.accessory`（移除 Dock 图标与应用菜单栏），窗口打开或最小化时切回 regular，保证菜单栏与 Cmd+Tab 可用
+- `AppActivation` 是激活策略唯一入口：`mainWindowActive` 由 `TerminalManager.showWindow` 置 true、热键隐藏与 `windowShouldClose` 置 false；改策略一律走 `AppActivation.apply()`
+- 主菜单由 `AppMainMenu.install()` 构建，语言切换时 `rebuild()`；`Cmd+,` 与菜单栏「设置…」都打开 `SettingsWindowController.shared`
+- 启动按 `app.showTerminalOnLaunch && terminal.enabled` 展示终端窗口；点 Dock 图标走 `applicationShouldHandleReopen` 恢复终端或前置已有窗口
+- regular 下 `TerminalWindowController` 不再在失焦后自动恢复窗口，否则 `Cmd+H` 会被 1 s 后弹回；终端窗口 styleMask 含 `.miniaturizable`
+- 设置窗口是常驻窗口，必须注册 `AppWindowRegistry`，否则最后一个面板关闭时会被 `hideIfEmpty` 连带隐藏
+- 设置保存走 `ConfigManager.apply(_:)`：重编码整份 YAML、写 `config.yaml.bak`、超过 1 MB 或会丢未知顶层键时拒绝写入；YAML 注释会丢失
+
 ### EventBus
 - 线程安全 pub/sub，枚举 key 对应多 handler
 - 跨模块通信走 EventBus，禁止直接持有对方引用

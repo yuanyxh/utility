@@ -4,6 +4,7 @@ import ServiceManagement
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var reloadItem: NSMenuItem!
+    private var settingsItem: NSMenuItem!
     private var openConfigItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
@@ -60,6 +61,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         )
         reloadItem.target = self
         menu.addItem(reloadItem)
+
+        settingsItem = NSMenuItem(
+            title: L10n.Menu.settings, action: #selector(openSettings), keyEquivalent: "",
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         openConfigItem = NSMenuItem(
             title: L10n.Menu.openConfig, action: #selector(openConfigEditor), keyEquivalent: "",
@@ -586,6 +593,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
 
     func refreshAllTitles() {
         reloadItem.title = L10n.Menu.reloadConfig
+        settingsItem.title = L10n.Menu.settings
         openConfigItem.title = L10n.Menu.openConfig
         launchAtLoginItem.title = L10n.Menu.launchAtLogin
         rssMenuItem.title = L10n.Menu.rss
@@ -607,6 +615,10 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
                 title: L10n.Notify.configReloadFailed, body: error.localizedDescription,
             ))
         }
+    }
+
+    @objc private func openSettings() {
+        MainActor.assumeIsolated { SettingsWindowController.shared.show() }
     }
 
     @objc private func openConfigEditor() {

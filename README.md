@@ -2,7 +2,7 @@
 
 A macOS menu-bar tool: clipboard history, AI translation, OCR capture, drag-and-drop staging, RSS, scheduled tasks, network monitor, plus a local AI layer.
 
-No Dock icon, no main window.
+Runs as a regular app by default: Dock icon, main menu, and the terminal window as the main window. Set `app.hideDockIcon: true` in the config to hide the Dock icon while the terminal window is closed; with the window open the app stays regular so the menu bar and Cmd+Tab keep working.
 
 [中文说明](README.zh.md)
 

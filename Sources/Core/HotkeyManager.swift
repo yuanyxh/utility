@@ -11,7 +11,7 @@ public final class HotkeyManager {
 
     @discardableResult
     public func register(hotkey: String, id: String, handler: @escaping () -> Void) -> Bool {
-        guard let (keyCode, flags) = parse(hotkey: hotkey) else {
+        guard let (keyCode, flags) = Self.parse(hotkey: hotkey) else {
             let msg = "[Hotkey] Failed to parse: \(hotkey)"
             fputs("\(msg)\n", stderr)
             debugLog(msg)
@@ -68,7 +68,12 @@ public final class HotkeyManager {
         return code
     }
 
-    private func parse(hotkey: String) -> (keyCode: UInt16, flags: UInt32)? {
+    /// Shared with the settings window so validation matches registration.
+    static func isValid(_ hotkey: String) -> Bool {
+        parse(hotkey: hotkey) != nil
+    }
+
+    static func parse(hotkey: String) -> (keyCode: UInt16, flags: UInt32)? {
         let parts = hotkey.lowercased().split(separator: "+").map(String.init)
         // keyCode 用 Optional:`a` 的 ANSI 键码就是 0,拿 0 当「还没匹配到」会让 `cmd+a` 解析失败
         var keyCode: UInt16?

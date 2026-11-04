@@ -1,6 +1,17 @@
 import Foundation
 import Yams
 
+public enum ConfigApplyError: LocalizedError {
+    case fileTooLarge(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .fileTooLarge(let bytes):
+            "Config file too large: \(bytes) bytes (limit 1048576)"
+        }
+    }
+}
+
 public final class ConfigManager {
     public static let shared = ConfigManager()
     public private(set) var config: AppConfig = .init()
@@ -33,6 +44,49 @@ public final class ConfigManager {
 
     public func reload() throws {
         try load()
+    }
+
+    /// Encodes the full config, validates it, then replaces the file.
+    /// Backs up the previous file and keeps top-level keys the Swift model does not own.
+    public func apply(_ newConfig: AppConfig) throws {
+        let encoded = try YAMLEncoder().encode(newConfig)
+        let yaml = try mergedWithUnknownKeys(encoded)
+        let content = "\(L10n.Config.headerComment)\n\(yaml)"
+        let data = Data(content.utf8)
+        guard data.count <= Self.maxConfigBytes else {
+            throw ConfigApplyError.fileTooLarge(data.count)
+        }
+        _ = try YAMLDecoder().decode(AppConfig.self, from: data)
+        if let existing = try? Data(contentsOf: configFile) {
+            try existing.write(to: backupFile, options: .atomic)
+        }
+        try content.write(to: configFile, atomically: true, encoding: .utf8)
+        try load()
+    }
+
+    /// Decodes the file without publishing `configDidLoad`.
+    public func readConfigFromDisk() throws -> AppConfig {
+        let data = try Data(contentsOf: configFile)
+        return try YAMLDecoder().decode(AppConfig.self, from: data)
+    }
+
+    private static let maxConfigBytes = 1_048_576
+
+    private var backupFile: URL {
+        configDir.appendingPathComponent("config.yaml.bak")
+    }
+
+    /// Keys such as `search` have no Swift model but still belong to the host config.
+    /// Top-level only: nested drift is out of scope for the settings window.
+    private func mergedWithUnknownKeys(_ encoded: String) throws -> String {
+        guard let originalText = try? String(contentsOf: configFile, encoding: .utf8),
+            let original = (try? Yams.load(yaml: originalText)) as? [String: Any],
+            var updated = (try? Yams.load(yaml: encoded)) as? [String: Any]
+        else { return encoded }
+        for (key, value) in original where updated[key] == nil {
+            updated[key] = value
+        }
+        return try Yams.dump(object: updated, allowUnicode: true, sortKeys: true)
     }
 
     /// Validates `rawText` as a complete config, writes it verbatim, then reloads.

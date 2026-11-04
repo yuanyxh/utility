@@ -1,6 +1,14 @@
 # Utility configuration file
 # Apply changes via the menu bar's "Reload config" or a restart
 
+# ---------- Application ----------
+app:
+  # true = hide the Dock icon while the terminal window is closed.
+  # While the window is open the app stays regular (menu bar + Cmd+Tab).
+  hideDockIcon: false
+  # Open the terminal window after launch.
+  showTerminalOnLaunch: true
+
 # ---------- Notifications ----------
 notifications:
   enabled: true

@@ -39,12 +39,15 @@ final class TerminalManager {
                 "[Terminal] window hidden by hotkey responder=\(String(describing: window.firstResponder))",
             )
             window.orderOut(nil)
+            AppActivation.setMainWindowActive(false)
         } else {
             showWindow()
         }
     }
 
     func showWindow() {
+        // The open main window needs a menu bar and Cmd+Tab entry even when hideDockIcon is set.
+        AppActivation.setMainWindowActive(true)
         let controller = ensureWindow()
         controller.wantsVisible = true
         controller.window?.makeKeyAndOrderFront(nil)

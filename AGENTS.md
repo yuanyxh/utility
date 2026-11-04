@@ -7,7 +7,7 @@
 
 **utility** — macOS 菜单栏工具，Swift + AppKit + SPM，Python 子进程扩展。
 
-- LSUIElement（无 Dock 图标），NSStatusItem 菜单栏入口
+- 默认 regular 应用（Dock 图标 + 主菜单），终端窗口为主窗口；`app.hideDockIcon: true` 切回纯菜单栏；NSStatusItem 菜单栏入口
 - NSPanel floating 面板：剪贴板、翻译、Stage 暂存、知识卡片、终端
 - Carbon EventHotKey 全局快捷键
 - GRDB 本地 SQLite 存储；Vision OCR 屏幕区域识别

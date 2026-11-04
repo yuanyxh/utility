@@ -126,8 +126,6 @@ cat > "$APP/Contents/Info.plist" << EOF
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
-    <key>LSUIElement</key>
-    <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIconFile</key>
@@ -147,7 +145,17 @@ echo ""
 echo "=== 6/6 Package .dmg ==="
 DMG="${APP_NAME}-${VERSION}.dmg"
 rm -f "$DMG"
-diskutil image create from --format UDZO --volumeName "$APP_NAME" "$APP" "$DMG"
+# The image copies the source directory's contents to the volume root. Pointing it at the
+# .app itself flattens the bundle (Contents/ at root); stage the app so it drags to /Applications.
+DMG_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/utility-dmg.XXXXXX")"
+DMG_MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/utility-dmg-mount.XXXXXX")"
+trap 'hdiutil detach "$DMG_MOUNT" >/dev/null 2>&1 || true; rm -rf "$DMG_STAGE" "$DMG_MOUNT"' EXIT
+cp -R "$APP" "$DMG_STAGE/"
+ln -s /Applications "$DMG_STAGE/Applications"
+diskutil image create from --format UDZO --volumeName "$APP_NAME" "$DMG_STAGE" "$DMG" >/dev/null
+hdiutil attach -nobrowse -readonly "$DMG" -mountpoint "$DMG_MOUNT" >/dev/null
+[ -d "$DMG_MOUNT/$APP" ] || { echo "错误: DMG 根目录缺少 $APP: $DMG"; exit 1; }
+hdiutil detach "$DMG_MOUNT" >/dev/null
 
 echo ""
 echo "=== Done ==="

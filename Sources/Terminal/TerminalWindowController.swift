@@ -23,7 +23,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1000, height: 680),
-            styleMask: [.titled, .closable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false,
         )
         window.title = L10n.Terminal.title
@@ -249,6 +249,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         debugLog("[Terminal] window closed by user")
         wantsVisible = false
         sender.orderOut(nil)
+        AppActivation.setMainWindowActive(false)
         return false
     }
 
@@ -258,7 +259,9 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
         debugLog(
             "[Terminal] resigned key visible=\(window?.isVisible == true) appHidden=\(NSApp.isHidden) active=\(NSApp.isActive) newKey=\(newKey)",
         )
-        scheduleRestoreCheck(after: 0.4)
+        if window?.isMiniaturized != true {
+            scheduleRestoreCheck(after: 0.4)
+        }
     }
 
     func windowDidBecomeKey(_: Notification) {
@@ -276,6 +279,8 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     /// Losing focus can drop the window from the screen; put it back without
     /// stealing focus.
     @objc private func didResignActive() {
+        // A regular app hides its windows on Cmd+H; restoring would undo that.
+        guard NSApp.activationPolicy() == .accessory else { return }
         scheduleRestoreCheck(after: 0.3)
         scheduleRestoreCheck(after: 1.0)
         // Who took activation: nothing else in the log can name it.
@@ -292,7 +297,10 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate,
     /// `isVisible` stays true for a hidden app, hence the `NSApp.isHidden` test.
     private func scheduleRestoreCheck(after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard NSApp.activationPolicy() == .accessory else { return }
             guard let self, wantsVisible, let window else { return }
+            // A miniaturized window reports isVisible=false; restoring it would undo Cmd+M.
+            guard !window.isMiniaturized else { return }
             guard !window.isVisible || NSApp.isHidden else { return }
             debugLog(
                 "[Terminal] restoring after focus loss isVisible=\(window.isVisible) appHidden=\(NSApp.isHidden)",
