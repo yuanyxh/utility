@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-run() {
-  local command="$1"
-  if [ -z "$command" ] || [ "$command" = "none" ]; then
-    return 0
-  fi
-  echo "==> $command"
-  bash -c "$command"
-}
+# Lint only Swift files staged for this commit: the full tree has legacy warnings
+# that would otherwise block every commit.
+swift_files=()
+while IFS= read -r file; do
+  [ -n "$file" ] && swift_files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -- '*.swift')
 
-run "xcrun swift-format lint --recursive --configuration .swift-format Sources"
+if [ ${#swift_files[@]} -eq 0 ]; then
+  echo "==> swift-format: no staged Swift files"
+  exit 0
+fi
+
+echo "==> swift-format lint --strict (${#swift_files[@]} staged file(s))"
+xcrun swift-format lint --strict --configuration .swift-format "${swift_files[@]}"
