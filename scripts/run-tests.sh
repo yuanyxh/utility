@@ -30,5 +30,17 @@ else
     echo "跳过入口契约（未找到 entries.json）"
 fi
 
+GRAPH_CONTRACT=""
+if [ -f Sources/Gateway/graph.json ]; then
+    GRAPH_CONTRACT="Sources/Gateway/graph.json"
+elif [ -f "${GATEWAY_REPO:-$(cd .. && pwd)/agent-gateway}/contracts/graph.json" ]; then
+    GRAPH_CONTRACT="${GATEWAY_REPO:-$(cd .. && pwd)/agent-gateway}/contracts/graph.json"
+fi
+if [ -n "$GRAPH_CONTRACT" ]; then
+    python3 scripts/check-graph-contract.py --contract "$GRAPH_CONTRACT"
+else
+    echo "跳过图库契约（未找到 graph.json）"
+fi
+
 echo ""
 echo "=== All checks passed ==="

@@ -30,6 +30,7 @@ ls Sources/Gateway/*.whl >/dev/null 2>&1 || { echo "错误: wheel 构建失败: 
 # 入口契约/环境契约从 gateway 源现导，不依赖对方仓的提交状态
 PYTHONPATH="$GATEWAY_REPO/src" "$PYTHON" -m agent_gateway.cli.minod --export-contracts --contracts-out "$PWD/Sources/Gateway" >/dev/null
 python3 scripts/check-gateway-entries.py --entries Sources/Gateway/entries.json
+python3 scripts/check-graph-contract.py --contract Sources/Gateway/graph.json
 # 依赖快照：首启按这份 constraints 装，上游发新版也不会改掉已发布 app 的依赖树
 "$PYTHON" -m pip freeze --exclude-editable | grep -vi '^agent[-_]gateway' > Sources/Gateway/constraints.txt
 [ -s Sources/Gateway/constraints.txt ] || { echo "错误: constraints 快照为空"; exit 1; }
