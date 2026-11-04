@@ -3,9 +3,7 @@ import ServiceManagement
 
 public final class MenuBarManager: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
-    private var reloadItem: NSMenuItem!
     private var settingsItem: NSMenuItem!
-    private var openConfigItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var rssMenuItem: NSMenuItem!
     private var mcpMenuItem: NSMenuItem!
@@ -32,6 +30,12 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
         )
+        EventBus.shared.subscribe(AppEvent.openConfigEditor) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openConfigEditor() }
+        }
+        EventBus.shared.subscribe(AppEvent.configReloaded) { [weak self] _ in
+            MainActor.assumeIsolated { self?.finishConfigReload() }
+        }
     }
 
     @objc private func onLanguageChanged() {
@@ -56,23 +60,11 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        reloadItem = NSMenuItem(
-            title: L10n.Menu.reloadConfig, action: #selector(reloadConfig), keyEquivalent: "r",
-        )
-        reloadItem.target = self
-        menu.addItem(reloadItem)
-
         settingsItem = NSMenuItem(
             title: L10n.Menu.settings, action: #selector(openSettings), keyEquivalent: "",
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
-
-        openConfigItem = NSMenuItem(
-            title: L10n.Menu.openConfig, action: #selector(openConfigEditor), keyEquivalent: "",
-        )
-        openConfigItem.target = self
-        menu.addItem(openConfigItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -592,9 +584,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     // MARK: - Title Refresh
 
     func refreshAllTitles() {
-        reloadItem.title = L10n.Menu.reloadConfig
         settingsItem.title = L10n.Menu.settings
-        openConfigItem.title = L10n.Menu.openConfig
         launchAtLoginItem.title = L10n.Menu.launchAtLogin
         rssMenuItem.title = L10n.Menu.rss
         mcpMenuItem.title = mcpTitleText(MCPProcessManager.shared.state)
@@ -603,18 +593,6 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
         terminalItem.title = L10n.Terminal.title
         clearItem.title = L10n.Menu.clearClipboard
         quitItem.title = L10n.Menu.quit
-    }
-
-    @objc private func reloadConfig() {
-        do {
-            try ConfigManager.shared.reload()
-            finishConfigReload()
-        } catch {
-            debugLog("[MenuBar] Reload failed: \(error)")
-            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Notify.configReloadFailed, body: error.localizedDescription,
-            ))
-        }
     }
 
     @objc private func openSettings() {

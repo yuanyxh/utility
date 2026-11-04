@@ -326,8 +326,7 @@ The terminal requires tmux (`brew install tmux`); without it the window notifies
 ```mermaid
 flowchart TD
   menu["Menu bar"]
-  menu --> reload["Reload Config ⌘R"]
-  menu --> open["Open Config"]
+  menu --> settings["Settings"]
   menu --> login["Launch at Login"]
   menu --> rss["RSS (3 unread)"]
   rss --> fetch["Fetch RSS"]
@@ -674,7 +673,7 @@ utility --dir ~/myapp -a claude
 
 ## Configuration
 
-Config lives in `~/.config/utility/config.yaml`, written with defaults on first launch. **Open Config** in the menu bar edits it in place; `⌘↩` validates and saves (nothing is written when validation fails). Alternatively edit the file and pick **Reload Config** (`⌘R`). Changes to `mcp.*` or `modelProxy.*` need the matching service restarted from the menu bar.
+Config lives in `~/.config/utility/config.yaml`, written with defaults on first launch. **Settings → Open Config** edits it in place; `⌘↩` validates and saves (nothing is written when validation fails). **Reload** in the settings window rereads the file from disk and applies it at runtime. Changes to `mcp.*` or `modelProxy.*` need the matching service restarted from the menu bar.
 
 ### Global
 

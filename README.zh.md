@@ -281,8 +281,7 @@ tasks:
 ```mermaid
 flowchart TD
   menu["菜单栏"]
-  menu --> reload["重载配置 ⌘R"]
-  menu --> open["打开配置"]
+  menu --> settings["设置"]
   menu --> login["开机启动"]
   menu --> rss["RSS (3 未读)"]
   rss --> fetch["拉取 RSS"]
@@ -626,7 +625,7 @@ utility --dir ~/myapp -a claude
 
 ## 配置
 
-配置文件在 `~/.config/utility/config.yaml`，首次启动写入默认值。菜单栏**打开配置**可直接编辑，`⌘↩` 校验并保存（校验失败不写入）。也可改文件后选**重载配置**(`⌘R`)生效。改动 `mcp.*` 或 `modelProxy.*` 后需从菜单栏重启对应服务。
+配置文件在 `~/.config/utility/config.yaml`，首次启动写入默认值。**设置 → 打开配置文件**可直接编辑，`⌘↩` 校验并保存（校验失败不写入）。设置窗口的**重新加载**会从磁盘重读并立即生效。改动 `mcp.*` 或 `modelProxy.*` 后需从菜单栏重启对应服务。
 
 ### 全局
 

@@ -109,10 +109,15 @@ struct SettingsView: View {
                         L10n.Settings.fieldAlwaysOnTop,
                         isOn: $model.config.terminal.alwaysOnTop,
                     )
-                    TextField(L10n.Settings.fieldShell, text: $model.config.terminal.shell)
-                    TextField(
+                    pathField(
+                        L10n.Settings.fieldShell,
+                        text: $model.config.terminal.shell,
+                        choose: chooseFile,
+                    )
+                    pathField(
                         L10n.Settings.fieldWorkingDirectory,
                         text: $model.config.terminal.workingDirectory,
+                        choose: chooseDirectory,
                     )
                 }
 
@@ -139,7 +144,10 @@ struct SettingsView: View {
             HStack(spacing: 12) {
                 statusText
                 Spacer()
-                Button(L10n.Settings.reload) { model.reload() }
+                Button(L10n.Menu.openConfig) {
+                    EventBus.shared.publish(AppEvent.openConfigEditor)
+                }
+                Button(L10n.Settings.reload) { model.reloadFromDisk() }
                 Button(L10n.Settings.save) {
                     NSApp.keyWindow?.makeFirstResponder(nil)
                     model.save()
@@ -164,6 +172,54 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func pathField(
+        _ title: String,
+        text: Binding<String>,
+        choose: @escaping (Binding<String>) -> Void,
+    ) -> some View {
+        HStack(spacing: 8) {
+            TextField(title, text: text)
+            Button(L10n.Settings.choose) { choose(text) }
+        }
+    }
+
+    private func chooseDirectory(_ binding: Binding<String>) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = initialDirectory(binding.wrappedValue)
+        if panel.runModal() == .OK, let url = panel.url {
+            binding.wrappedValue = url.path
+        }
+    }
+
+    private func chooseFile(_ binding: Binding<String>) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL =
+            initialDirectory((binding.wrappedValue as NSString).deletingLastPathComponent)
+            ?? URL(fileURLWithPath: "/bin")
+        if panel.runModal() == .OK, let url = panel.url {
+            binding.wrappedValue = url.path
+        }
+    }
+
+    /// Start browsing from an existing path; nil means the panel picks its default.
+    private func initialDirectory(_ raw: String) -> URL? {
+        let expanded = (raw as NSString).expandingTildeInPath
+        guard !expanded.isEmpty else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) else {
+            return nil
+        }
+        let directory =
+            isDir.boolValue ? expanded : (expanded as NSString).deletingLastPathComponent
+        return URL(fileURLWithPath: directory)
     }
 
     @ViewBuilder

@@ -13,6 +13,8 @@ enum AppEvent: String, Hashable, CaseIterable {
     case notify // payload: NotificationPayload
     case networkSpeedUpdated
     case terminalOpenSession // payload: session id
+    case openConfigEditor
+    case configReloaded
 }
 
 /// Panel events — pub/sub string keys, the payload carries parameters

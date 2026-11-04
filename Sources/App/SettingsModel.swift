@@ -22,6 +22,13 @@ final class SettingsModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
+        EventBus.shared.subscribe(AppEvent.configDidLoad) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.config = ConfigManager.shared.config
+                self.status = .idle
+            }
+        }
     }
 
     func reload() {
@@ -29,6 +36,18 @@ final class SettingsModel: ObservableObject {
             (try? ConfigManager.shared.readConfigFromDisk())
             ?? ConfigManager.shared.config
         status = .idle
+    }
+
+    /// Reloads the runtime config from disk, then refreshes the form.
+    func reloadFromDisk() {
+        do {
+            try ConfigManager.shared.reload()
+            config = ConfigManager.shared.config
+            status = .idle
+            EventBus.shared.publish(AppEvent.configReloaded)
+        } catch {
+            status = .failed(L10n.Settings.reloadFailed(message: error.localizedDescription))
+        }
     }
 
     func save() {
