@@ -371,7 +371,9 @@ final class GraphIndexerClient {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: python)
-        proc.arguments = PythonScriptRunner.bootstrapArguments(for: GatewayEntry.graphIndexer)
+        proc.arguments =
+            PythonScriptRunner.bootstrapArguments(for: GatewayEntry.graphIndexer)
+            + [config.root]
         proc.environment = PythonScriptRunner.environment(overrides: [:])
 
         let input = Pipe()

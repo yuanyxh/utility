@@ -12,6 +12,7 @@
 | 服务 | agent-gateway `services/graph/indexer.py` | JSON-Lines 协议；解析、绑定、写库 |
 | 扫描 | `services/graph/project_scan.py` | walk、include/exclude、stat/hash 对账、全量重建 |
 | 存储 | `services/graph/store.py` | 唯一 schema 所有者；原子替换、增量写、stale 回收 |
+| 刷新 | `services/graph/refresh.py` | 查询触发 30 秒后台重建；每项目一个任务 |
 | 查询 | `services/mcp/graph_tools.py` | 只读 SQLite，返回 provenance |
 
 ## 数据流
@@ -21,6 +22,14 @@
 3. 有任何变化或版本不一致时，gateway 全量解析并单事务 `replaceGraph`；无变化直接返回 stats。
 4. 增量：watcher 调 `indexFile`，gateway 读文件、校验 hash、解析并 `replaceFile`；`force=false` 且 hash 未变时返回 `unchanged`。
 5. 删除走 `remove_file`，语义为**路径子树**，目录删除会清掉其下全部文件并把入边标 stale。
+
+## 查询触发刷新（2026-11-04）
+
+索引器启动时把 PID、进程启动时间和项目根写入 `<root>/.agent-gateway/indexer.json`；索引器正常退出时从列表移除自己，崩溃留下的条目由下一次查询用 `ps` 状态和启动时间清理。
+
+`project_lookup` / `project_impact` 先读登记表。有活索引器直接返回当前结果；没有则安排一个 30 秒后执行的后台任务。任务再查一次登记表，拿不到 `<root>/.agent-gateway/refresh.lock` 就说明另一个 gateway 进程正在刷新，直接结束；拿到锁后调用 `project_scan.sync()`。`sync` 自己判断图库版本、根目录、文件增删和 `size + mtime`，没有变化时立即返回。
+
+查询不等待扫描：第一次仍是旧结果，下一次查询才是新结果。刷新与索引器启动的短窗口不加跨进程图库写锁，依靠 SQLite 写事务串行和下一次扫描纠正。
 
 ## 检索层接入（2026-11-02）
 
@@ -42,7 +51,7 @@
 - **扩展名唯一源**：python `services/graph/constants.py` 是扩展名/语言族唯一表；Swift 侧对应 `GraphProtocol.languagesByExtension`，只用于 watcher 事件过滤，并由契约脚本断言一致。
 - **解析器独立降级**：`parsers/__init__.py` 逐语言 try-import，缺一个 grammar 只禁用该语言，ping 仍可用。
 - **常驻进程单线程**：stdin 请求串行处理；DB 写与解析在同一线程。
-- **退出**：`Darwin.exit` 跳过 defer，`AgentRunner` 必须显式 `watcher.stop()` → `graph.stop()`；PID 由 `onProcessChange` 回填供信号处理使用。
+- **退出**：`Darwin.exit` 跳过 defer，`AgentRunner` 必须显式 `watcher.stop()` → `graph.stop()`；PID 由 `onProcessChange` 回填供信号处理使用。索引器 `main()` 的 `finally` 把自己从 `indexer.json` 移除。
 
 ## 验证
 

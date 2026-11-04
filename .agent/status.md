@@ -20,6 +20,10 @@
 - 解耦：项目图库改由 gateway 写入 `.agent-gateway/graph.sqlite`，Swift 删除 `GraphDatabase`，`GraphScanner` 只发 `sync` 与文件事件
 - 配置：`GatewayConfigWriter` 生成 `agent-gateway.yaml`；env 改为 `GATEWAY_*`，旧 `UTILITY_*` 保留一个发布周期；`skillDedupEnabled` → `toolOutputDedup`
 - 新增 `scripts/e2e-isolated.sh`：临时 HOME 跑真实 `utility -a`，断言首建 4 符号 / 2 边、watcher 增量到 6 符号、lookup / impact 命中
+- 图库刷新：`GraphIndexerClient.launch()` 把项目根传给索引器；索引器启动后在 `.agent-gateway/indexer.json` 登记，退出时注销；e2e 增加 live/stopped 断言
+- 1.1.48 部署：MCP `project_lookup` 缺失图库与旧图库都在 30 秒后重建，第二次查询命中；部署版索引器被连续 SIGTERM 时注销会被中断，下一次查询会清理
+- 1.1.49 部署：安装包与随包 wheel 均含 `SIG_IGN` 修复；真实 `utility -a` 索引器登记 live，退出后直接为空；MCP 缺失图库 35 秒后重建并命中；旧 agent 会话 30624/30631 仍运行 1.1.48 索引器，重启会话后才会登记
+- 1.1.50 部署：安装包与随包 wheel 含 TZ / Overflow / 延迟导入修复；索引器登记 UTC 时间、退出后为空；MCP 缺失图库 35 秒后重建并命中；旧 agent 会话 41753/41760 仍是 1.1.49 索引器，需重启
 
 ## 验证（2026-11-04）
 
@@ -31,7 +35,12 @@
 - 审查修复：`GatewayConfigWriter` 保留 `search` 段（隔离 HOME 验证 `parallel=true` 不丢）；gateway 侧修 WAL 迁移、扫描链合并、idle env、契约；两仓 526 例 + run-tests + e2e 全过
 - 1.1.47 部署复验：生成配置含 `search.parallel=true` 与 idle=600；含 `build/` 的临时项目全量 sync 只收 2 文件；旧会话 18693/18700 仍在跑旧索引器（日志可见扫描 `Utility.app/`），重启会话后由新 SKIP_DIRS 排除
 - 13:53 重启复验：新会话 30624 + 索引器 30631（wheel 模式），旧进程已退出；图库 118 文件/4547 符号；新 `ping` 之后无 `Utility.app/` 或 `build/` 索引记录
-- 证据级别：L3（真实二进制 + 隔离 HOME，含 watcher 增量）；GUI 面板未验证
+- 15:40 重启复验：旧 30624/30631 已退出；新会话 41753 + 索引器 41760，索引器命令带项目根；`indexer.json` 登记 live；`project_lookup` 后未生成 `refresh.lock`，说明活索引器跳过刷新
+- 图库刷新：`swift build` 通过；`e2e-isolated.sh` 登记 live → stopped；`run-tests.sh` 全过；后台重建定时器由 gateway 集成测试覆盖（L2）
+- 1.1.48 部署复验：安装 wheel 含 `indexer_marker.py` / `refresh.py`；MCP `project_lookup` 缺失图库第一次 error、35 秒后 ok；旧图库第一次 no_match、35 秒后命中 `added`；部署版索引器退出条目残留，下一次查询清理
+- 1.1.49 部署复验：安装包与随包 wheel 含 `SIG_IGN`；真实 `utility -a` 登记 live、退出后为空；MCP 缺失图库 35 秒后重建并命中
+- 1.1.50 部署复验：安装包与随包 wheel 含 TZ / Overflow / 延迟导入修复；索引器登记 UTC 时间、退出后为空；MCP 缺失图库 35 秒后重建并命中
+- 证据级别：L3（真实部署 MCP + 30 秒刷新；真实二进制 + 隔离 HOME 登记 live/stopped）；GUI 面板未验证；旧 agent 会话 41753/41760 需重启才用 1.1.50 索引器
 
 ## 阻塞
 

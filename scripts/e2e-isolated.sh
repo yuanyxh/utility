@@ -42,6 +42,7 @@ WORK="$(mktemp -d "$TMP_BASE/utility-e2e.XXXXXX")"
 HOME_DIR="$WORK/home"
 PROJECT="$WORK/project"
 DB="$PROJECT/.agent-gateway/graph.sqlite"
+MARKER="$PROJECT/.agent-gateway/indexer.json"
 LOG="$WORK/agent.log"
 RUNNER=""
 
@@ -110,6 +111,19 @@ wait_for_count "files" 2 "select count(*) from files"
 wait_for_count "symbols" 4 "select count(*) from symbols"
 wait_for_count "edges" 2 "select count(*) from edges"
 wait_for_count "unresolved" 0 "select count(*) from unresolved"
+for _ in $(seq 1 40); do
+    [ -f "$MARKER" ] && break
+    sleep 0.25
+done
+[ -f "$MARKER" ] || { echo "indexer marker missing"; false; }
+"$PYTHON" - "$MARKER" <<'PY'
+import json, os, sys
+entries = json.load(open(sys.argv[1], encoding="utf-8"))["indexers"]
+assert entries, "indexer marker is empty"
+for entry in entries:
+    os.kill(int(entry["pid"]), 0)
+print("indexer registry: live")
+PY
 [ -f "$HOME_DIR/.config/utility/agent-gateway.yaml" ] || { echo "isolated config missing"; false; }
 [ -f "$HOME_DIR/.config/utility/data.sqlite" ] || { echo "isolated app database missing"; false; }
 [ ! -e "$PROJECT/.utility" ] || { echo "legacy .utility directory created"; false; }
@@ -158,6 +172,14 @@ set -e
 RUNNER=""
 [ "$RC" -eq 0 ] || { echo "agent mode exited with $RC"; false; }
 grep -q "Agent exited (exit code: 0)" "$LOG" || { echo "missing agent exit banner"; false; }
+"$PYTHON" - "$MARKER" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+if os.path.exists(path):
+    entries = json.load(open(path, encoding="utf-8"))["indexers"]
+    assert entries == [], entries
+print("indexer registry: stopped")
+PY
 
 echo ""
 echo "=== E2E passed ==="
