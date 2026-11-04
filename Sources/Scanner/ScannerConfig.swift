@@ -1,6 +1,6 @@
 import Foundation
 
-/// Loads `.utility/config.json` from the project root.
+/// Loads `.agent-gateway/config.json` from the project root (legacy `.utility/config.json` fallback).
 final class ScannerConfig {
     struct Config: Codable {
         var includes: [String]?
@@ -17,7 +17,9 @@ final class ScannerConfig {
 
     init(projectPath: String) {
         self.projectPath = projectPath
-        let configPath = (projectPath as NSString).appendingPathComponent(".utility/config.json")
+        let current = (projectPath as NSString).appendingPathComponent(".agent-gateway/config.json")
+        let legacy = (projectPath as NSString).appendingPathComponent(".utility/config.json")
+        let configPath = FileManager.default.fileExists(atPath: current) ? current : legacy
 
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
            let decoded = try? JSONDecoder().decode(Config.self, from: data)
@@ -32,7 +34,8 @@ final class ScannerConfig {
                                                "**/*.py",
                                                "**/*.java", "**/*.kt", "**/*.kts", "**/*.m", "**/*.h"]
         resolvedExcludes = config.excludes ?? [".build/**", "node_modules/**", "dist/**",
-                                               ".git/**", ".utility/**", "Pods/**", ".venv/**"]
+                                               ".git/**", ".agent-gateway/**", ".utility/**",
+                                               "Pods/**", ".venv/**"]
     }
 
     /// Build/cache directory names — the **single source of truth** for both
@@ -47,8 +50,9 @@ final class ScannerConfig {
     /// Adding one entry to `resolvedExcludes` only fixes the moment; the two
     /// lists would drift again, so they are consolidated here.
     static let skippedDirNames: Set<String> = [
-        ".build", "node_modules", "dist", ".git", ".utility", "Pods", ".venv",
-        "__pycache__", ".svn", ".hg", ".gradle", "build", "DerivedData", "Utility.app",
+        ".build", "node_modules", "dist", ".git", ".agent-gateway", ".utility",
+        "Pods", ".venv", "__pycache__", ".svn", ".hg", ".gradle", "build",
+        "DerivedData", "Utility.app",
     ]
 
     /// Returns true if a file with the given relative path should be processed.

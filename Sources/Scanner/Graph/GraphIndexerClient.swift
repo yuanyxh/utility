@@ -52,7 +52,12 @@ final class GraphIndexerClient {
 
     // MARK: - Public operations
 
-    func indexFile(path: String, contentHash: String, lang: String) throws -> GraphIndexResponse {
+    func indexFile(
+        path: String,
+        contentHash: String? = nil,
+        lang: String? = nil,
+        force: Bool = false,
+    ) throws -> GraphIndexResponse {
         let request = GraphIndexRequest(
             op: .indexFile,
             root: config.root,
@@ -61,6 +66,7 @@ final class GraphIndexerClient {
             lang: lang,
             files: nil,
             paths: nil,
+            force: force,
         )
         let responses = try perform(request, expected: 1, timeout: config.requestTimeout)
         guard let first = responses.first else {
@@ -112,6 +118,40 @@ final class GraphIndexerClient {
             throw GraphIndexerError.protocolViolation(
                 "remove_file failed for \(path)",
             )
+        }
+        return first
+    }
+
+    func sync() throws -> GraphIndexResponse {
+        let request = GraphIndexRequest(
+            op: .sync,
+            root: config.root,
+            path: nil,
+            contentHash: nil,
+            lang: nil,
+            files: nil,
+            paths: nil,
+        )
+        let responses = try perform(request, expected: 1, timeout: config.batchTimeout)
+        guard let first = responses.first, first.ok else {
+            throw GraphIndexerError.protocolViolation("sync failed")
+        }
+        return first
+    }
+
+    func status() throws -> GraphIndexResponse {
+        let request = GraphIndexRequest(
+            op: .status,
+            root: config.root,
+            path: nil,
+            contentHash: nil,
+            lang: nil,
+            files: nil,
+            paths: nil,
+        )
+        let responses = try perform(request, expected: 1, timeout: config.requestTimeout)
+        guard let first = responses.first, first.ok else {
+            throw GraphIndexerError.protocolViolation("status failed")
         }
         return first
     }

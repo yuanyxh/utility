@@ -130,7 +130,10 @@ final class FileWatcher {
                relPath.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
                 continue
             }
-            if relPath.hasPrefix(".utility/") || relPath == ".utility" {
+            let stateDirs = [".agent-gateway", ".utility"]
+            if stateDirs.contains(where: {
+                relPath == $0 || relPath.hasPrefix($0 + "/")
+            }) {
                 continue
             }
 

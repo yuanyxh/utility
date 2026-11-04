@@ -44,6 +44,8 @@ struct GraphIndexRequest: Codable {
         case prepare
         case removeFile = "remove_file"
         case ping
+        case sync
+        case status
     }
 
     var op: Op
@@ -53,9 +55,10 @@ struct GraphIndexRequest: Codable {
     var lang: String?
     var files: [GraphBatchFile]?
     var paths: [String]?
+    var force: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case op, root, path, lang, files, paths
+        case op, root, path, lang, files, paths, force
         case contentHash = "content_hash"
     }
 }
@@ -83,11 +86,17 @@ struct GraphIndexResponse: Codable {
     var reason: String?
     var engineVersion: String?
     var schemaVersion: String?
+    var stats: GraphStats?
+    var dbPath: String?
+    var upToDate: Bool?
+    var unchanged: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case ok, path, symbols, edges, unresolved, error, reason
+        case ok, path, symbols, edges, unresolved, error, reason, stats, unchanged
         case engineVersion = "engine_version"
         case schemaVersion = "schema_version"
+        case dbPath = "db_path"
+        case upToDate = "up_to_date"
     }
 
     init(from decoder: Decoder) throws {
@@ -101,6 +110,10 @@ struct GraphIndexResponse: Codable {
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         engineVersion = try c.decodeIfPresent(String.self, forKey: .engineVersion)
         schemaVersion = try c.decodeIfPresent(String.self, forKey: .schemaVersion)
+        stats = try c.decodeIfPresent(GraphStats.self, forKey: .stats)
+        dbPath = try c.decodeIfPresent(String.self, forKey: .dbPath)
+        upToDate = try c.decodeIfPresent(Bool.self, forKey: .upToDate)
+        unchanged = try c.decodeIfPresent(Bool.self, forKey: .unchanged)
     }
 }
 
@@ -192,13 +205,13 @@ enum GraphKey {
 
 // MARK: - Query results
 
-struct GraphStats {
-    var nodes: Int
-    var edges: Int
-    var stale: Int
-    var files: Int
-    var symbols: Int
-    var unresolved: Int
+struct GraphStats: Codable {
+    var nodes: Int = 0
+    var edges: Int = 0
+    var stale: Int = 0
+    var files: Int = 0
+    var symbols: Int = 0
+    var unresolved: Int = 0
 }
 
 // MARK: - Logging

@@ -3,7 +3,7 @@ import Foundation
 /// Implements `utility -a <cmd>`: agent parasitic mode.
 ///
 /// Flow:
-/// 1. Build or sync the project call graph (`.utility/graph.sqlite`)
+/// 1. Sync the project call graph (`.agent-gateway/graph.sqlite`, written by the gateway)
 /// 2. Start FSEvents file watcher (background, stack-based coalescing)
 /// 3. Spawn agent subprocess with stdin/stdout/stderr passthrough
 /// 4. On agent exit → stop watcher → exit
