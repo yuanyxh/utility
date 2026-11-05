@@ -18,6 +18,14 @@ enum VSTheme {
     static let terminalCaret = color(0xAFAFAD)
     static let terminalSelection = color(0x264F78)
 
+    static let editorBackground = color(0x1E1E1E)
+    static let gutterBackground = color(0x1E1E1E)
+    static let gutterText = color(0x858585)
+
+    static func editorFont(size: Double) -> NSFont {
+        .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
     static let syntaxComment = color(0x6A9955)
     static let syntaxKey = color(0x9CDCFE)
     static let syntaxString = color(0xCE9178)

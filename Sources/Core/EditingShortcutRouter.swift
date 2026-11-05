@@ -32,8 +32,20 @@ enum EditingShortcutRouter {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
         switch key {
         case "z":
-            guard let undo = responder.undoManager else { return event }
-            if flags.contains(.shift) { undo.redo() } else { undo.undo() }
+            guard let undo = responder.undoManager ?? NSApp.keyWindow?.undoManager else {
+                debugLog("[Shortcut] undo manager missing responder=\(type(of: responder))")
+                return event
+            }
+            let redo = flags.contains(.shift)
+            // Leave the key to AppKit when there is nothing to undo; swallowing
+            // it would make ⌘Z silently do nothing.
+            guard redo ? undo.canRedo : undo.canUndo else { return event }
+            let before = (responder as? NSTextView)?.string.count ?? -1
+            if redo { undo.redo() } else { undo.undo() }
+            let after = (responder as? NSTextView)?.string.count ?? -1
+            debugLog(
+                "[Shortcut] undo responder=\(type(of: responder)) len=\(before)->\(after)",
+            )
             return nil
         case "x":
             return send(#selector(NSText.cut(_:)), to: responder) ? nil : event

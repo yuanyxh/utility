@@ -354,6 +354,17 @@ terminal:
   # Keep the window above other apps' windows; restart required.
   alwaysOnTop: false
 
+# ---------- Workspace ----------
+workspace:
+  # Show dotfiles in the file tree.
+  showHiddenFiles: true
+  # Files larger than this open read-only with a notice.
+  maxFileSizeMB: 5
+  # Images larger than this are not previewed.
+  imagePreviewMaxSizeMB: 20
+  # Extra directory names hidden from the file tree; built-in ignores always apply.
+  ignoredDirectories: []
+
 # ---------- RSS ----------
 rss:
   feeds: []

@@ -302,20 +302,25 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 | menu bar | shows up/down throughput for active interfaces (`0.00M` when offline) |
 | `Cmd`-drag | reposition |
 
-### Multi-terminal
+### Terminal workspace
 
-`option+space` shows or hides the terminal window (change `terminal.hotkey`; restart required).
+`option+space` shows or hides the workspace window (change `terminal.hotkey`; restart required).
 
 | Action | Effect |
 |---|---|
-| Menu bar → Terminal | Open the window; the first open creates a session when there is none |
-| `+` (top-left) | New terminal |
-| Click a row / `↑` `↓` | Switch session |
-| `⌘←` / `⌘→` | Jump to the start / end of the line (`⇧` extends) |
-| Drag | Select text; the wheel still reaches TUIs that grab the mouse (Claude Code) |
+| Activity bar | Switch between the file tree and git status |
+| Single-click a folder | Expand / collapse |
+| Double-click a file | Open it in the editor on the right |
+| `+` in the sub-terminal panel | New sub terminal |
 | `×` on a row | Close the session and end its process |
 | Process exit | Row is removed |
-| Notification | OSC 9 / 777 is forwarded as a system notification (click it to open that session); skipped while you are watching, or when you already watched the newest output |
+| `⌘←` / `⌘→` | Jump to the start / end of the line (`⇧` extends) |
+| Drag / wheel | Select text; the wheel still reaches TUIs that grab the mouse |
+| Notification | OSC 9 / 777 is forwarded as a system notification; click it to open that session |
+| `⌘S` / `⌘⇧S` in the editor | Save / save as |
+| Icons at the editor's top-right | Toggle Markdown preview / source |
+
+A workspace combines a main terminal, sub terminals and a file pane; the split layout is saved as you drag. The file tree follows directory changes and shows new or deleted entries within about 0.4 s. The editor provides syntax highlighting, external-change warnings and crash-draft recovery. The git pane lists staged, unstaged and untracked files with diffs. Markdown and common image files render in place.
 
 The terminal requires tmux (`brew install tmux`); without it the window notifies you and creates nothing. Sessions keep running after the app quits and reattach on the next open.
 

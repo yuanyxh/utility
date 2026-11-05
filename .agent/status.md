@@ -7,6 +7,36 @@
 ## 进行中
 
 - GUI 化重构：T1-T6 代码完成，`swift build` 与 `run-tests.sh` 通过；待用户 L3 手测（Dock、主菜单、设置保存、面板键盘、OCR 退出）
+- 终端工作区：T1-T12 代码、文档与打包完成；检查点 A、B 通过；打包产物 `Utility-1.1.64.dmg`（app 19M / DMG 7.4M，卷根含 `Utility.app` 与 `Applications` 软链）；L3 逐项手测待做（切换与退出三选、脏文档横幅、只读保存、删除后另存为、中英文切换）
+
+## 最近完成（2026-11-05）
+
+- 工作区 T1：新增 `Sources/Workspace/{WorkspaceModel,WorkspaceStore,WorkspaceMigration}.swift` 与 `workspace-check` CLI；`StoredTerminalSession` 增加可选 `workspaceID`/`role`，`backend` 继续必写
+- 配置：新增 `workspace` 段（`showHiddenFiles`/`maxFileSizeMB`/`imagePreviewMaxSizeMB`/`ignoredDirectories`），属性初值、解码兜底、`default-config.yaml` 三处一致
+- 工作区 T2：新增 `WorkspaceManager`（会话编排、tmux 生命周期、双写持久化、恢复计划）与 `WorkspaceReattribution` / `WorkspaceRestorePlan`
+- 工作区 T3：新增 `WorkspaceWindowController`、`WorkspaceSplitView`；`AppDelegate` 启动/热键/退出与 `MenuBarManager` 入口改接 `WorkspaceManager`；旧 `TerminalManager`/`TerminalWindowController` 保留待 L3 验收后移除
+- 工作区 T4：新增 `WorkspaceSidebarView`（列表、新建、双击重命名、右键移除确认、路径缺失标红）
+- 工作区 T5：新增 `TerminalHostView`、`SubTerminalPane`（主终端 + 底部子终端内容与竖向列表）
+- 工作区 T6：新增 `Sources/Core/PathRules.swift`（`ScannerConfig` 改为复用）、`FileTreeModel`、`FileExplorerPane`、`WorkspaceActivityBar`；`workspace-check --tree` 统计忽略后的文件数
+- 工作区 T7：新增 `FileDocument`、`FileEditorPane`、`LineNumberRulerView`；文件树双击打开、`lastOpenedRelativePath` 恢复；编辑器改为横向滚动并按需定位行号
+- 布局再次校正：`rightPaneWidth` 580、`fileListWidth` 200、右栏最小 525，保证编辑器可用宽度；窗口截图确认行号与代码对齐
+- 工作区 T8：新增 `EditorDraftStore`、`EditorDraftDiffWindow`；`FileDocument` 加保存/外部变更/内容哈希；编辑器加 ⌘S/另存为、未保存三选、冲突横幅、2 秒草稿快照；文件菜单与退出拦截接线
+- 工作区 T8 验证：`workspace-check --save/--draft` 断言 BOM/CRLF、同 size+mtime 内容变化判冲突、删除判据、草稿隔离与淘汰；隔离实例截图确认恢复弹窗、⌘S 落盘清草稿、外部修改自动重载
+- 布局调整（2026-11-05 用户反馈）：主终端区加宽，`rightPaneWidth` 默认 560→480 并由主区吸收窗口缩放；右侧改为文件区在上、子终端在下；子终端面板标题由「工作区」改为「终端」
+- 文件树交互：单击文件夹行任意位置切换展开/收起（三角除外），列表滚动区上下留白 6/16
+- 工作区 T9：新增 `SyntaxDefinitions`（12 种扩展名）与 `SyntaxHighlighter`（关键字/字符串/注释/数字）；编辑器取可见范围上下各 200 行，编辑 100ms、滚动 50ms 去抖，着色时挂起 undo，输入法预编辑跳过，超 1MB 或 2 万行降级纯文本；`workspace-check --highlight` 输出 token 统计与耗时
+- 文件列表自动刷新：新增 `FileTreeWatcher`（FSEvents，400ms 去抖，过滤隐藏目录与忽略目录），只重扫受影响目录并复用节点对象保留展开状态
+- 工作区 T10：新增 `ProcessRunner`（不经 shell、超时、2MB 输出上限）、`GitService`（isRepository/status/diff）、`GitStatusModel`（porcelain `-z` 解析与分组）、`GitPane`、`DiffView`；ActivityBar 切换到 Git 列表，保存后与手动刷新 400ms 去抖；`workspace-check --git` 输出分组统计
+- 工作区 T11：抽出 `Components/MarkdownPreviewView`（知识面板改为复用，接口不变；CSP 只放行 `file:`/`data:` 图片与内联脚本）；新增 `ImagePreviewView`（ImageIO 最长边 4096、20MB 上限、后台解码）；编辑器 `.md` 默认源码，右上角浮动「预览/源码」切换，图片扩展名直接预览。修复 `ImagePreviewView` 未关闭 autoresizing 导致所有文件无法显示的布局冲突
+- 工作区 T12：新增 `.claude/docs/architecture/workspace.md`（存储、迁移、会话、布局、文件树、编辑器、高亮、git、预览与已知限制）；`terminal.md` 指向该文档，`CLAUDE.md` 与 `AGENTS.md` 索引同步；README 中英文「终端工作区」段重写；`swift build`、`run-tests.sh`、l10n 双检查、`package-utility.sh` 全过，产物 `Utility-1.1.64.dmg`
+- 打包产物启动验证：只读挂载 DMG，卷根为 `Utility.app` + `Applications` 软链，Info.plist 1.1.64，二进制 arm64 17.3MB；DMG 内二进制跑 `workspace-check --help` 输出含 `--highlight`/`--git`；隔离 HOME 启动 61 秒稳定（RSS 129MB，tmux 子进程已建，SIGTERM 正常退出无残留）。挂载点会有一条 `sandbox_extension_issue_file_to_process` 警告，不影响启动。窗口可见性未验证（`osascript` 无辅助功能权限），归入 L3 手测
+- 文件树滚动最终修复（1.1.72/1.1.73，用户实测通过）：根因是 `outline`/`table`/`tableView` 作为 NSScrollView 的 documentView 时关闭了 `translatesAutoresizingMaskIntoConstraints`，Auto Layout 下没有高度约束，滚动视图每次布局都按可视区把内容压回（日志实测 832→694）。改回默认 autoresizing + `autoresizingMask = [.width]`；`refreshTreeScroll` 只做 `reflectScrolledClipView`；诊断日志已移除。坑写入 `workspace.md`
+- 文件树滚动（1.1.70）：`refreshTreeScroll()` 立即刷新一次并在下一轮 runloop 再刷新一次，异步那次额外调用 `scrollView.tile()`；根因是 `reloadItem` 后 outline 自身布局未结束，同步刷新被随后布局覆盖，所以首次展开滚不动、折叠再展开才生效。`restoreExpansion` 改为每条路径只消费一次，避免空目录导致无限递归。`[Tree]` 诊断日志暂留
+- 审查修复（1.1.68）：工作区恢复打开文件时不再抢终端焦点（`open(focus:)`）；`workspace-check --git` 遇 git 失败输出 `git: error` 并退出 1，`--tree` 对非目录同样报错；`reload(nil)` 清空 Git 面板与 model；重新加载与草稿恢复清空撤销栈；另存为删除旧路径草稿；Git 面板语言切换重建分组；`imagePreviewMaxSizeMB` 真正生效；git status 截断抛错、`capture` 区分 no-index 的退出码 1；`containsSkippedDir` 不再把文件名当目录名。新增：文件树展开状态按工作区保存并异步恢复；子项加载后 `noteNumberOfRowsChanged()` 刷新内容高度。活动栏图标间距 6→14
+- 工作区 UI 返修（14 项）：`.DS_Store`/`.localized` 无论开关都隐藏；`OverlayScrollView` 子类在 `tile` 与加入窗口时强制 overlay + autohide；活动栏 Git 图标加红底数字角标（`GitPane.onCountChange`，超 99 为 `99+`）；编辑器改用独立 `NSUndoManager`（`EditorTextView` 覆写），打开文件清空撤销记录，`EditingShortcutRouter` 在 `canUndo` 为假时放行事件并加日志；Edit 菜单补 `Cmd+F` 查找
+- 工作区 UI 返修（10 项）：单击文件直接打开编辑器（双击按同 URL 去重）；子终端区底部新增 22pt 状态栏 `WorkspaceStatusBar`，左侧显示 `git branch --show-current`（detached HEAD 回退短 hash），工作区切换与窗口重新成为 key 时刷新；`workspace-check --git` 增加 `branch:` 输出
+- 工作区 UI 返修（8 项）：`workspace.showHiddenFiles` 默认改 `true` 并让 `FileTreeWatcher` 跟随同一开关过滤隐藏路径；编辑器标题与 Git diff 标题改只显示文件名（完整路径进 toolTip）；Git 列表行只显示文件名；文件树图标 14→16、行高 26、活动栏图标 18pt；Git 面板标题显示总数（>99 为 `99+`），三个分组可折叠且右侧显示本组数量；编辑器与 DiffView 补 `scrollerStyle = .overlay`；文件树点击不再限制 `clickCount == 1`，连点第二次可折叠；工作区与子会话切换后在下一轮 runloop 把焦点交给对应终端视图
+- 验证：`swift build` 与 `run-tests.sh` 通过；隔离 HOME + 隔离 tmux 启动真实二进制，日志 `[Workspace] migrated sessions=...`、窗口 `became key responder=TerminalDropView`、两个 tmux 会话同时 attached；窗口级截图确认新布局；落盘 sidebar 220 / right 480 / sub 260；证据级别 L3（窗口截图 + 用户实测热键/关闭）
 
 ## 最近完成（2026-11-03）
 

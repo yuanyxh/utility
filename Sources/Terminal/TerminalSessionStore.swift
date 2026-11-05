@@ -7,13 +7,20 @@ struct StoredTerminalSession: Codable {
     /// Older builds decode this as required; keep writing it.
     let backend: String
     let createdAt: Date
+    let workspaceID: String?
+    let role: TerminalRole?
 
-    init(id: String, title: String, cwd: String, backend: String, createdAt: Date) {
+    init(
+        id: String, title: String, cwd: String, backend: String, createdAt: Date,
+        workspaceID: String? = nil, role: TerminalRole? = nil,
+    ) {
         self.id = id
         self.title = title
         self.cwd = cwd
         self.backend = backend
         self.createdAt = createdAt
+        self.workspaceID = workspaceID
+        self.role = role
     }
 
     init(from decoder: Decoder) throws {
@@ -23,6 +30,8 @@ struct StoredTerminalSession: Codable {
         cwd = try c.decode(String.self, forKey: .cwd)
         backend = try c.decodeIfPresent(String.self, forKey: .backend) ?? TmuxBackend.storageName
         createdAt = try c.decode(Date.self, forKey: .createdAt)
+        workspaceID = try c.decodeIfPresent(String.self, forKey: .workspaceID)
+        role = try c.decodeIfPresent(TerminalRole.self, forKey: .role)
     }
 }
 

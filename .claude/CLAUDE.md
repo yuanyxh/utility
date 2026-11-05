@@ -40,6 +40,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | 项目依赖图 graph.sqlite / graphIndexer | `.claude/docs/architecture/project-graph.md` |
 | 组件总览 / 并发 / 内存基线 | `.claude/docs/architecture/overview.md` |
 | 多终端 tmux / SwiftTerm | `.claude/docs/architecture/terminal.md` |
+| 终端工作区 / 文件树 / 编辑器 / git / 预览 | `.claude/docs/architecture/workspace.md` |
 | 配置加载 Yams / 键名解码 | `.claude/docs/architecture/config.md` |
 | 构建、验证与 scripts 目录 | `.claude/docs/architecture/build.md` |
 | RSS 采集 / 解析 / 日报 | `.claude/docs/architecture/rss.md` |

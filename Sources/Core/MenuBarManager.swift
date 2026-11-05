@@ -150,7 +150,7 @@ public final class MenuBarManager: NSObject, NSMenuDelegate {
     }
 
     @objc private func showTerminal() {
-        Task { @MainActor in TerminalManager.shared.showWindow() }
+        Task { @MainActor in WorkspaceManager.shared.showWindow() }
     }
 
     private func refreshKnowledgeItem() {

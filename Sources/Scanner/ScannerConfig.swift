@@ -22,20 +22,26 @@ final class ScannerConfig {
         let configPath = FileManager.default.fileExists(atPath: current) ? current : legacy
 
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
-           let decoded = try? JSONDecoder().decode(Config.self, from: data)
+            let decoded = try? JSONDecoder().decode(Config.self, from: data)
         {
             config = decoded
         } else {
             config = Config()
         }
 
-        resolvedIncludes = config.includes ?? ["**/*.swift", "**/*.ts", "**/*.tsx", "**/*.js",
-                                               "**/*.jsx", "**/*.vue", "**/*.mjs", "**/*.cjs",
-                                               "**/*.py",
-                                               "**/*.java", "**/*.kt", "**/*.kts", "**/*.m", "**/*.h"]
-        resolvedExcludes = config.excludes ?? [".build/**", "node_modules/**", "dist/**",
-                                               ".git/**", ".agent-gateway/**", ".utility/**",
-                                               "Pods/**", ".venv/**"]
+        resolvedIncludes =
+            config.includes ?? [
+                "**/*.swift", "**/*.ts", "**/*.tsx", "**/*.js",
+                "**/*.jsx", "**/*.vue", "**/*.mjs", "**/*.cjs",
+                "**/*.py",
+                "**/*.java", "**/*.kt", "**/*.kts", "**/*.m", "**/*.h",
+            ]
+        resolvedExcludes =
+            config.excludes ?? [
+                ".build/**", "node_modules/**", "dist/**",
+                ".git/**", ".agent-gateway/**", ".utility/**",
+                "Pods/**", ".venv/**",
+            ]
     }
 
     /// Build/cache directory names — the **single source of truth** for both
@@ -49,11 +55,7 @@ final class ScannerConfig {
     /// the whole DB), so the same symbol appeared twice in search results.
     /// Adding one entry to `resolvedExcludes` only fixes the moment; the two
     /// lists would drift again, so they are consolidated here.
-    static let skippedDirNames: Set<String> = [
-        ".build", "node_modules", "dist", ".git", ".agent-gateway", ".utility",
-        "Pods", ".venv", "__pycache__", ".svn", ".hg", ".gradle", "build",
-        "DerivedData", "Utility.app",
-    ]
+    static let skippedDirNames: Set<String> = PathRules.skippedDirNames
 
     /// Returns true if a file with the given relative path should be processed.
     func shouldInclude(_ path: String) -> Bool {
@@ -73,12 +75,12 @@ final class ScannerConfig {
     /// ancestor directories, `Utility.app/x.py` would bypass the directory-level
     /// skip check.
     private func containsSkippedDir(_ path: String) -> Bool {
-        path.split(separator: "/").contains { Self.skippedDirNames.contains(String($0)) }
+        PathRules.containsSkippedDir(path)
     }
 
     /// Returns true if a directory name is a known build/cache dir to skip.
     func shouldSkipDirectory(_ name: String) -> Bool {
-        Self.skippedDirNames.contains(name)
+        PathRules.shouldSkip(name: name)
     }
 
     private func matchGlob(_ path: String, pattern: String) -> Bool {

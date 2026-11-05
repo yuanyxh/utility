@@ -3,7 +3,7 @@
 **目标：** 把终端窗口升级为 VS Code 形态的工作区窗口：左侧工作区列表、中部主终端、右侧文件与 git 面板、右下多子终端，全部围绕当前工作区文件夹。
 **架构：** 保留 tmux 单一后端与 SwiftTerm 视图；新增工作区模型、存储、会话编排与五区窗口；文件树、编辑器、git、搜索全部用 AppKit 与现有 `TerminalShell.run` 实现，不新增 SPM 依赖。
 **技术栈：** Swift 5.9、macOS 14、AppKit、SwiftTerm 1.99+、Yams、GRDB。
-**计划状态：** 待批准
+**计划状态：** 已作废（2026-11-05 用户拍板；由 `.agent/plans/2026-11-05-terminal-workspace/` 取代）
 **依据：** 用户 2026-11-04 需求与布局图（工作区列表 | 主终端 | 图标栏 | 文件/diff 列表 | 内容区，右下子终端区 + 子终端列表）；前置计划 `.claude/plans/2026-11-04-gui-refactor/tasks.md`。
 
 ## 前置条件

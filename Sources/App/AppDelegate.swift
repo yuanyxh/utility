@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if ConfigManager.shared.config.app.showTerminalOnLaunch,
            ConfigManager.shared.config.terminal.enabled
         {
-            MainActor.assumeIsolated { TerminalManager.shared.showWindow() }
+            MainActor.assumeIsolated { WorkspaceManager.shared.showWindow() }
         }
 
         debugLog("[Utility] Ready")
@@ -82,6 +82,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     /// Stop the children in the background and keep the main thread free: the blocking
     /// `stopAndWait` used to freeze the UI until the SIGTERM grace period expired.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminationLock.lock()
+        let pendingConfirmation = !terminateRequested
+        terminationLock.unlock()
+        // Ask before touching terminateRequested so a cancel leaves the app fully alive.
+        if pendingConfirmation,
+            !MainActor.assumeIsolated({ WorkspaceManager.shared.confirmTermination() })
+        {
+            return .terminateCancel
+        }
         terminationLock.lock()
         let alreadyAsked = terminateRequested
         terminateRequested = true
@@ -127,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applicationWillTerminate(_: Notification) {
         menuBar.terminateAllTasks()
         MainActor.assumeIsolated {
-            TerminalManager.shared.shutdown()
+            WorkspaceManager.shared.shutdown()
         }
     }
 
@@ -202,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard !flag else { return true }
         MainActor.assumeIsolated {
             if ConfigManager.shared.config.terminal.enabled {
-                TerminalManager.shared.showWindow()
+                WorkspaceManager.shared.showWindow()
             } else if let window = AppWindowRegistry.frontmostWindow {
                 window.makeKeyAndOrderFront(nil)
             }
@@ -303,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if config.terminal.enabled {
             hotkeyManager.register(hotkey: config.terminal.hotkey, id: "term") {
                 Task { @MainActor in
-                    TerminalManager.shared.toggleWindow()
+                    WorkspaceManager.shared.toggleWindow()
                 }
             }
         }

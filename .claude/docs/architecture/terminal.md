@@ -2,6 +2,7 @@
 
 > 从 `AGENTS.md` 分层迁出（2026-11-03），内容逐字保留。
 > 修改终端模块前先读本文件。
+> 工作区窗口、文件树、编辑器、git 面板与预览见 `workspace.md`。
 
 - **只保留 tmux 后端**（`-L utility` 私有 socket、`-f /dev/null`），`TmuxBackend` 是唯一实现；screen/local 已删除，**禁止再加降级**
 - tmux 未安装时：`resolvedBackend()` 只返回 nil（无副作用），由 `createSession` / `showWindow` 显示窗口内空状态文案 + 一次系统通知（`didReportMissingTmux` 去重）；空状态文案由 `showEmptyState(message:)` 传入，`reload()` 会重置为默认文案，所以提示必须在 `reload` 之后设
