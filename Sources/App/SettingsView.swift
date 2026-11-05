@@ -65,13 +65,13 @@ struct SettingsView: View {
                         L10n.Settings.fieldTranslationHotkeyOcr,
                         text: $model.config.translation.hotkeyOCR,
                     )
-                    TextField(
+                    languagePicker(
                         L10n.Settings.fieldSourceLang,
-                        text: $model.config.translation.sourceLang,
+                        selection: $model.config.translation.sourceLang,
                     )
-                    TextField(
+                    languagePicker(
                         L10n.Settings.fieldTargetLang,
-                        text: $model.config.translation.targetLang,
+                        selection: $model.config.translation.targetLang,
                     )
                 }
 
@@ -163,6 +163,19 @@ struct SettingsView: View {
                 .padding(.bottom, 8)
         }
         .frame(minWidth: 620, minHeight: 460)
+    }
+
+    /// Keeps a hand-edited value selectable even when it is outside the offered list.
+    private func languagePicker(_ title: String, selection: Binding<String>) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(TranslationLanguages.all) { language in
+                Text(language.name).tag(language.code)
+            }
+            let known = TranslationLanguages.all.contains { $0.code == selection.wrappedValue }
+            if !known, !selection.wrappedValue.isEmpty {
+                Text(selection.wrappedValue).tag(selection.wrappedValue)
+            }
+        }
     }
 
     private func hotkeyField(_ title: String, text: Binding<String>) -> some View {

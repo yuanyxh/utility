@@ -80,37 +80,6 @@ public final class TranslationPanelController: NSWindowController {
     /// Frontmost app before the panel opened (restored when pasting)
     var previousFrontmostApp: NSRunningApplication?
 
-    /// 27 languages (sorted by usage), names shown in each language's native script
-    private let languages: [(code: String, name: String)] = [
-        ("auto", L10n.Translation.langAuto),
-        ("zh", L10n.Translation.langZh),
-        ("en", L10n.Translation.langEn),
-        ("es", L10n.Translation.langEs),
-        ("hi", L10n.Translation.langHi),
-        ("ar", L10n.Translation.langAr),
-        ("bn", L10n.Translation.langBn),
-        ("pt", L10n.Translation.langPt),
-        ("ru", L10n.Translation.langRu),
-        ("ja", L10n.Translation.langJa),
-        ("pa", L10n.Translation.langPa),
-        ("de", L10n.Translation.langDe),
-        ("jv", L10n.Translation.langJv),
-        ("ko", L10n.Translation.langKo),
-        ("fr", L10n.Translation.langFr),
-        ("te", L10n.Translation.langTe),
-        ("mr", L10n.Translation.langMr),
-        ("ta", L10n.Translation.langTa),
-        ("ur", L10n.Translation.langUr),
-        ("vi", L10n.Translation.langVi),
-        ("it", L10n.Translation.langIt),
-        ("th", L10n.Translation.langTh),
-        ("ms", L10n.Translation.langMs),
-        ("tr", L10n.Translation.langTr),
-        ("nl", L10n.Translation.langNl),
-        ("pl", L10n.Translation.langPl),
-        ("uk", L10n.Translation.langUk),
-    ]
-
     public init() {
         let panel = TranslationPanel(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 440),
@@ -233,19 +202,44 @@ public final class TranslationPanelController: NSWindowController {
     // MARK: - Languages
 
     private func setupLanguagePopups() {
-        for (code, name) in languages {
-            sourceLangPopup.addItem(withTitle: name)
-            sourceLangPopup.lastItem?.representedObject = code
-            targetLangPopup.addItem(withTitle: name)
-            targetLangPopup.lastItem?.representedObject = code
-        }
+        populateLanguagePopups()
         resetLanguageSelection()
+    }
+
+    private func populateLanguagePopups() {
+        sourceLangPopup.removeAllItems()
+        targetLangPopup.removeAllItems()
+        for language in TranslationLanguages.all {
+            sourceLangPopup.addItem(withTitle: language.name)
+            sourceLangPopup.lastItem?.representedObject = language.code
+            targetLangPopup.addItem(withTitle: language.name)
+            targetLangPopup.lastItem?.representedObject = language.code
+        }
+    }
+
+    /// Rebuild titles after an in-app language switch, keeping the current selections.
+    private func refreshLanguagePopups() {
+        let sourceCode = sourceLangPopup.selectedItem?.representedObject as? String
+        let targetCode = targetLangPopup.selectedItem?.representedObject as? String
+        populateLanguagePopups()
+        selectLanguage(sourceCode, in: sourceLangPopup)
+        selectLanguage(targetCode, in: targetLangPopup)
+    }
+
+    private func selectLanguage(_ code: String?, in popup: NSPopUpButton) {
+        if let code,
+            let idx = TranslationLanguages.all.firstIndex(where: { $0.code == code })
+        {
+            popup.selectItem(at: idx)
+        } else {
+            popup.selectItem(at: 0)
+        }
     }
 
     private func resetLanguageSelection() {
         sourceLangPopup.selectItem(at: 0) // auto
         let config = ConfigManager.shared.config.translation
-        if let idx = languages.firstIndex(where: { $0.code == config.targetLang }) {
+        if let idx = TranslationLanguages.all.firstIndex(where: { $0.code == config.targetLang }) {
             targetLangPopup.selectItem(at: idx)
         } else {
             targetLangPopup.selectItem(at: 0) // auto
@@ -404,6 +398,7 @@ public final class TranslationPanelController: NSWindowController {
 
     @objc private func onLanguageChanged() {
         refreshTitles()
+        refreshLanguagePopups()
     }
 
     /// Pop up an empty panel (not activated, keeps the source app frontmost so selected text can be fetched later)
