@@ -9,6 +9,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     let knowledgePanel = KnowledgePanelController()
     private let stageWindow = StageWindowController()
 
+    private let terminationLock = NSLock()
+    private var terminateRequested = false
+    private var terminationAllowed = false
+
+    /// True from the first quit request until the process exits; blocks restarting children.
+    private var isTerminating: Bool {
+        terminationLock.lock()
+        defer { terminationLock.unlock() }
+        return terminateRequested
+    }
+
     func applicationDidFinishLaunching(_: Notification) {
         debugLog("[Utility] Starting up...")
 
@@ -49,9 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         // Everything below shells out to the gateway: install the bundled wheel first
         // (no-op after the first launch of a given version).
         GatewayInstaller.ensureInstalled { [weak self] in
-            self?.startMCPService()
-            self?.startTokenProxy()
-            self?.updateRSSDailyTask()
+            guard let self, !self.isTerminating else { return }
+            self.startMCPService()
+            self.startTokenProxy()
+            self.updateRSSDailyTask()
             KnowledgeService.shared.start()
         }
 
@@ -67,9 +79,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         debugLog("[Utility] Ready")
     }
 
-    func applicationWillTerminate(_: Notification) {
-        // Stop in parallel and wait: the async stop() returns immediately, and an app that
-        // exits first leaves the children reparented to launchd holding the port and store.
+    /// Stop the children in the background and keep the main thread free: the blocking
+    /// `stopAndWait` used to freeze the UI until the SIGTERM grace period expired.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminationLock.lock()
+        let alreadyAsked = terminateRequested
+        terminateRequested = true
+        let alreadyReplied = terminationAllowed
+        terminationLock.unlock()
+        // A repeated request rides the pending shutdown; once replied there is nobody left to
+        // answer, so quit immediately instead of waiting for a reply that will never come.
+        guard !alreadyAsked else {
+            return alreadyReplied ? .terminateNow : .terminateLater
+        }
+
+        for window in sender.windows {
+            window.orderOut(nil)
+        }
         let group = DispatchGroup()
         DispatchQueue.global(qos: .userInitiated).async(group: group) {
             MCPProcessManager.shared.stopAndWait()
@@ -77,7 +103,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         DispatchQueue.global(qos: .userInitiated).async(group: group) {
             TokenProxyManager.shared.stopAndWait()
         }
-        _ = group.wait(timeout: .now() + 6)
+        group.notify(queue: .global(qos: .userInitiated)) { [weak self] in
+            self?.replyTermination()
+        }
+        // A child that never dies must not keep the app alive past the shutdown budget.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 6) { [weak self] in
+            self?.replyTermination()
+        }
+        return .terminateLater
+    }
+
+    private func replyTermination() {
+        terminationLock.lock()
+        let alreadyReplied = terminationAllowed
+        terminationAllowed = true
+        terminationLock.unlock()
+        guard !alreadyReplied else { return }
+        DispatchQueue.main.async {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
+    func applicationWillTerminate(_: Notification) {
         menuBar.terminateAllTasks()
         MainActor.assumeIsolated {
             TerminalManager.shared.shutdown()
@@ -86,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     /// Start MCP Python server if enabled in config.
     private func startMCPService() {
+        guard !isTerminating else { return }
         guard ConfigManager.shared.config.mcp?.enabled ?? false else {
             debugLog("[MCP] Disabled by config")
             return
@@ -97,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     /// Start the Token proxy monitor
     private func startTokenProxy() {
+        guard !isTerminating else { return }
         guard ConfigManager.shared.config.modelProxy?.enabled ?? false else {
             debugLog("[TokenProxy] Disabled by config")
             return
@@ -108,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     /// Config reload: re-evaluate the MCP service + summary task + Token proxy
     /// Regardless of enabled/disabled or whether the config changed, re-establish state from the current config.
     private func onConfigReloaded() {
+        guard !isTerminating else { return }
         let mcpConfig = ConfigManager.shared.config.mcp
 
         if mcpConfig?.enabled == false {
