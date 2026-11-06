@@ -38,23 +38,16 @@ final class ScannerConfig {
             ]
         resolvedExcludes =
             config.excludes ?? [
-                ".build/**", "node_modules/**", "dist/**",
+                ".build/**", "node_modules/**", "dist/**", "Utility.app/**",
                 ".git/**", ".agent-gateway/**", ".utility/**",
                 "Pods/**", ".venv/**",
             ]
     }
 
-    /// Build/cache directory names — the **single source of truth** for both
-    /// directory skipping and file exclusion.
-    ///
-    /// These were once kept in two places: directory traversal used this list
-    /// (15 entries), while file filtering only consulted `resolvedExcludes`
-    /// (7 entries, missing `Utility.app`). As a result every `.py`/`.swift`
-    /// inside the packaging output `Utility.app/**` matched includes by
-    /// extension and got indexed (measured: 120 files / 5996 symbols, 75% of
-    /// the whole DB), so the same symbol appeared twice in search results.
-    /// Adding one entry to `resolvedExcludes` only fixes the moment; the two
-    /// lists would drift again, so they are consolidated here.
+    /// Directory names pruned before traversal. Only VCS metadata is pruned;
+    /// build outputs are excluded at file level by `resolvedExcludes` so the
+    /// file tree can still show them. Indexing `Utility.app` once added
+    /// 120 files / 5996 symbols (75% of the DB), hence its exclude entry.
     static let skippedDirNames: Set<String> = PathRules.skippedDirNames
 
     /// Returns true if a file with the given relative path should be processed.
