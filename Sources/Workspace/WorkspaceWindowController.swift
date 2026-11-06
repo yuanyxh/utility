@@ -32,6 +32,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
     private var panels: [WorkspacePanel] = []
     private var stateToken: UUID?
     private var currentRoot: URL?
+    private var lastGitWatchRoot: URL?
     private var lastWorkspaceID: String?
     private var lastSubSessionID: String?
     private var branchGeneration = 0
@@ -231,6 +232,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
             self?.stateStore.update { $0.ui.expandedPaths = paths }
         }
         filePane.onFileSystemChange = { [weak self] root in self?.refreshGitStatus(for: root) }
+        filePane.onGitHeadChange = { [weak self] in self?.refreshBranch() }
         editor.onDidSave = { [weak self] in self?.refreshGitStatus() }
         editor.onDirtyChange = { [weak self] dirty in
             self?.stateStore.update { $0.editor.isDirty = dirty }
@@ -299,12 +301,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
     /// Re-queries git status after a save, a tab switch or a file-system change burst.
     private func refreshGitStatus(for root: URL? = nil) {
         guard let root = root ?? currentRoot else {
+            lastGitWatchRoot = nil
             stateStore.update {
                 $0.git = GitUIState()
                 $0.fileTree.ignoredPaths = []
             }
             return
         }
+        updateGitWatchDirectories(for: root)
         GitStatusProvider.shared.invalidate(root: root)
         Task { [weak self] in
             let result = await GitStatusProvider.shared.result(for: root)
@@ -316,6 +320,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
                 snapshot.git.files = result.files
                 snapshot.fileTree.ignoredPaths = result.ignoredPaths
             }
+        }
+    }
+
+    /// `.git` sits outside the root for subdirectory workspaces and linked worktrees,
+    /// so the watcher needs the real metadata directories.
+    private func updateGitWatchDirectories(for root: URL) {
+        guard lastGitWatchRoot != root else { return }
+        lastGitWatchRoot = root
+        Task { [weak self] in
+            let directories = await GitService(root: root).metadataDirectories()
+            guard let self, root.standardizedFileURL == self.currentRoot?.standardizedFileURL
+            else { return }
+            filePane.applyGitDirectories(directories)
         }
     }
 

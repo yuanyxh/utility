@@ -142,7 +142,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         }
 
         let maxBytes = maxFileBytes
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = FileDocument.load(url: url, maxBytes: maxBytes)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.loadGeneration == generation else { return }

@@ -11,6 +11,25 @@ struct GitService {
 
     private static let gitPath = "/usr/bin/git"
 
+    /// Directories whose metadata changes on commit, checkout and stage. Worktrees
+    /// keep HEAD and the index apart from the shared refs, so both are returned.
+    func metadataDirectories() async -> [URL] {
+        var result: [URL] = []
+        for flag in ["--absolute-git-dir", "--git-common-dir"] {
+            guard
+                let out = try? await ProcessRunner.run(
+                    executable: Self.gitPath, arguments: ["rev-parse", flag],
+                    workingDirectory: root, timeout: 5,
+                ), out.exitCode == 0
+            else { continue }
+            let raw = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+            let url = URL(fileURLWithPath: raw, relativeTo: root).standardizedFileURL
+            if !result.contains(url) { result.append(url) }
+        }
+        return result
+    }
+
     func isRepository() async -> Bool {
         guard
             let result = try? await ProcessRunner.run(

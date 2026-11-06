@@ -13,7 +13,7 @@ final class ImagePreviewView: NSView {
     static let supportedExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "tiff", "heic", "webp",
     ]
-    private static let maxPixelSize = 4096
+    nonisolated private static let maxPixelSize = 4096
 
     private var maxBytes = 20 * 1024 * 1024
 
@@ -94,7 +94,9 @@ final class ImagePreviewView: NSView {
         ])
     }
 
-    private static func decode(url: URL, maxBytes: Int) -> Result<NSImage, ImagePreviewError> {
+    nonisolated private static func decode(
+        url: URL, maxBytes: Int,
+    ) -> Result<NSImage, ImagePreviewError> {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let bytes = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         if bytes > maxBytes {

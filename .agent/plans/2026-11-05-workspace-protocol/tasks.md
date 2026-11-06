@@ -671,3 +671,11 @@ func save(_ document: WorkspaceDocument) throws   // 首次写 v2 前复制 .bak
 - [x] 回归：选中行文字/图标仍是基色（图标为 `secondaryText` 灰）。`PointerRowView` 在选中时把子孙 `NSTextField` / `NSImageView` 统一转 `VSTheme.selectionText`，取消时按记录的基色还原；配置阶段重设的基色会在下一次布局自动记录（L1，L3 待手测）。
 - [x] 回归：选中态蓝一下变灰。点文件/子终端后焦点交给编辑器或终端，列表失去 first responder，AppKit 默认按非强调色绘制。`PointerRowView.drawSelection` 自己画 `selectionActive`，仅窗口非 key 时用 `selectionInactive`（L1，L3 待手测）。旧侧栏曾用 `allowsEmptySelection = false` 修过同一问题（`terminal.md`），重写列表时回退（L1/L2，L3 待用户手测）。
 - [x] 死字段与假接缝按建议删除：`WorkspaceSnapshot.workspaceID` / `focused`（只写不读，连带删两处 `store.update`）、`EditorUIState.canHighlight`（零引用）、`FileEditorPane` 的 `syntaxProvider` 注入参数（唯一构造点不传参，无 Swift 单测）；`SyntaxProvider` 协议保留（L1）。
+
+## git 元数据监听（2026-11-06）
+
+- [x] 提交/切分支后 git 计数与分支不刷新：`.git` 元数据路径纳入相关变更，只触发 git 查询。
+- [x] 审查后补：工作区为仓库子目录或 worktree 时 `.git` 在根之外，追加 stream 监听 `--absolute-git-dir` / `--git-common-dir`。
+- [x] 审查后补：监听根与事件路径统一走 `realpath`（FSEvents 给 `/private/tmp`，`resolvingSymlinksInPath` 不展开 `/tmp`）。
+- [x] 审查后补：`onGitHeadChange` 去掉无用入参；元数据判断合并为 `gitDirectoryChange`（目录内相对路径）与 `gitMetadataChange`（含 `.git` 段的根相对路径）。
+- [x] 新增 `UTILITY_WATCH_TRACE=1` 追踪日志。L3：根仓库与子目录工作区各验证「新增文件 → 计数 1 → 外部提交 → 清零」与 `git switch` 后状态栏更新。

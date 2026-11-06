@@ -117,11 +117,12 @@ final class FileTreeModel {
 
     func loadChildren(of node: FileNode, completion: @escaping ([FileNode], Bool) -> Void) {
         node.isLoading = true
+        let url = node.url
         let showHidden = showHidden
         let extraIgnores = extraIgnores
         queue.async {
             let result = FileTreeScanner.children(
-                of: node.url, showHidden: showHidden, extraIgnores: extraIgnores,
+                of: url, showHidden: showHidden, extraIgnores: extraIgnores,
             )
             DispatchQueue.main.async { completion(result.nodes, result.truncated) }
         }

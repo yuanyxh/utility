@@ -95,6 +95,9 @@
 - `GitStatusModel` 解析 `git status --porcelain=v1 -z`，重命名记录跳过旧路径字段；未跟踪文件用 `git diff --no-index /dev/null <path>` 生成新增 diff。
 - `GitStatusProvider` 单飞 + 按 root 缓存；文件树灰化与 Git 窗格共用同一份结果，控制器写入快照。
 - 刷新时机：切到 Git 页、点刷新按钮、编辑器保存、文件系统变更集中后；二进制文件显示提示。
+- `.git/HEAD`、`index`、`refs/*`、`packed-refs` 等仓库元数据变更也要触发刷新（提交后计数清零、切换分支后更新状态栏）；这些路径只触发 git 查询，不进文件树重扫。
+- `.git` 在工作区之外时（工作区是仓库子目录、linked worktree）另挂一条 FSEvents，目录由 `git rev-parse --absolute-git-dir` 与 `--git-common-dir` 取得。监听根与事件路径都用 `realpath` 归一：FSEvents 报 `/private/tmp/...` 而 `resolvingSymlinksInPath` 不展开 `/tmp`，两侧不一致会静默丢事件。
+- 调试监听：`UTILITY_WATCH_TRACE=1` 时往 debug.log 写 `[Watch] receive/flush` 行（含列出的路径数、是否判定为 git 元数据、监听根与 git 目录）。
 - 三个分组可折叠，标题右侧显示本组文件数，窗格标题右侧显示总数（超 99 显示 `99+`）；列表行只显示文件名，完整相对路径放 toolTip。
 - CLI 断言：`workspace-check --git <dir>` 输出分组统计与当前分支；非仓库输出 `git: not-repository`。
 - 子终端区域底部有 22pt 状态栏（`WorkspaceStatusBar`），左侧显示 `git branch --show-current`，detached HEAD 回退短 hash；刷新时机为工作区切换与窗口重新成为 key。

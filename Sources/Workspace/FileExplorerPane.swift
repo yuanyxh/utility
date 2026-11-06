@@ -40,7 +40,9 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
     private var lastRenderedMode: ListMode?
     private var treeTruncated = false
     private var ignoreRules = IgnoreRules.empty
+    private var gitDirectories: [URL] = []
     var onFileSystemChange: ((URL) -> Void)?
+    var onGitHeadChange: (() -> Void)?
     private let watcher = FileTreeWatcher()
 
     override init(frame frameRect: NSRect) {
@@ -49,6 +51,11 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
         layer?.backgroundColor = VSTheme.windowBackground.cgColor
         setup()
         watcher.onChange = { [weak self] paths in self?.handleChanges(paths) }
+        watcher.onGitChange = { [weak self] head in
+            guard let self, let root = self.currentRoot else { return }
+            self.onFileSystemChange?(root)
+            if head { self.onGitHeadChange?() }
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(onLanguageChanged),
             name: L10n.languageDidChange, object: nil,
@@ -110,7 +117,9 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
         nodesByPath.removeAll()
         let config = ConfigManager.shared.config.workspace
         if let root {
-            watcher.start(root: root, showHidden: config.showHiddenFiles)
+            watcher.start(
+                root: root, showHidden: config.showHiddenFiles, gitDirectories: gitDirectories,
+            )
         } else {
             watcher.stop()
         }
@@ -396,12 +405,12 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
     /// Document heights are managed by autoresizing; only the scroller needs
     /// a nudge after children load asynchronously.
     private func refreshTreeScroll() {
-        let refresh = { [weak self] in
-            guard let self else { return }
-            self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
-        }
-        refresh()
-        DispatchQueue.main.async(execute: refresh)
+        nudgeTreeScroller()
+        DispatchQueue.main.async { [weak self] in self?.nudgeTreeScroller() }
+    }
+
+    private func nudgeTreeScroller() {
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     private func handleRowClick(atRow row: Int) {
@@ -500,13 +509,37 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
 
     // MARK: - File system changes
 
+    /// Re-points the watcher at the repo metadata when the workspace is a subdirectory
+    /// or a linked worktree, where `.git` lives outside the root.
+    func applyGitDirectories(_ directories: [URL]) {
+        guard gitDirectories != directories else { return }
+        gitDirectories = directories
+        guard let root = currentRoot else { return }
+        let config = ConfigManager.shared.config.workspace
+        watcher.start(
+            root: root, showHidden: config.showHiddenFiles, gitDirectories: directories,
+        )
+    }
+
     private func handleChanges(_ paths: [String]) {
         guard let root = currentRoot else { return }
         // Editors save atomically, so the event may name a temp file instead of
         // .gitignore; always re-query after a change burst.
         onFileSystemChange?(root)
+        var headChanged = false
+        let treePaths = paths.filter { path in
+            switch gitMetadataChange(path, root: root) {
+            case .head:
+                headChanged = true
+                return false
+            case .working: return false
+            case nil: return true
+            }
+        }
+        if headChanged { onGitHeadChange?() }
+        guard !treePaths.isEmpty else { return }
         var directories = Set<String>()
-        for path in paths {
+        for path in treePaths {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
                 .standardizedFileURL.path
             directories.insert(directory)
@@ -514,6 +547,14 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
         for directory in directories.sorted(by: { $0.count < $1.count }) {
             reload(directory: URL(fileURLWithPath: directory), root: root)
         }
+    }
+
+    private func gitMetadataChange(
+        _ path: String, root: URL,
+    ) -> FileTreeWatcher.GitMetadataChange? {
+        let rootPath = FileTreeWatcher.canonicalPath(root)
+        guard path.hasPrefix(rootPath + "/") else { return nil }
+        return FileTreeWatcher.gitMetadataChange(String(path.dropFirst(rootPath.count + 1)))
     }
 
     private func reload(directory: URL, root: URL) {
