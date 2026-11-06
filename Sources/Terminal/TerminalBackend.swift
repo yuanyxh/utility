@@ -36,15 +36,6 @@ enum TerminalShell {
         return "/bin/zsh"
     }
 
-    static func resolvedWorkingDirectory(configured: String) -> String {
-        let raw = configured.isEmpty ? homeDirectory : NSString(string: configured).expandingTildeInPath
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: raw, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return homeDirectory }
-        return raw
-    }
-
     static func environment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = searchPath

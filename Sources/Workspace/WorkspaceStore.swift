@@ -25,8 +25,6 @@ final class WorkspaceStore {
         self.sessionsURL = sessionsURL
     }
 
-    var documentURL: URL { fileURL }
-
     func load() throws -> WorkspaceDocument? {
         guard fileManager.fileExists(atPath: fileURL.path) else { return nil }
         do {

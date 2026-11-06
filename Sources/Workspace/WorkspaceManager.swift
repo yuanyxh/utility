@@ -102,14 +102,6 @@ final class WorkspaceManager {
         )
     }
 
-    func mainTerminalView() -> NSView? {
-        mountedMainSession?.view
-    }
-
-    func subTerminalView(sessionID: String) -> NSView? {
-        mountedSession(id: sessionID)?.view
-    }
-
     // MARK: - Lifecycle
 
     func restoreIfNeeded() {

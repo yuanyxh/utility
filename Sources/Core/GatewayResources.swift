@@ -91,14 +91,6 @@ enum GatewayResources {
         }.first
     }
 
-    /// `entries.json` exported by the gateway repo; the host's `GatewayEntry` must match it.
-    static func entriesFile() -> String? {
-        resourceRoots.lazy.compactMap {
-            let candidate = ($0 as NSString).appendingPathComponent("entries.json")
-            return FileManager.default.fileExists(atPath: candidate) ? candidate : nil
-        }.first
-    }
-
     /// `src/` of the sibling checkout, used as `PYTHONPATH` while developing without installing.
     static func developmentSourceRoot() -> String? {
         guard let developmentPackageRoot else { return nil }

@@ -1,15 +1,9 @@
-import CryptoKit
 import Foundation
 
 /// Version identity written into `graph.sqlite` meta. Bumping either forces a full rebuild.
 enum GraphProtocol {
     static let engineVersion = "2"
     static let schemaVersion = "1"
-
-    /// Phase 1 adapters implemented by the gateway. Empty `graph.languages` resolves to this set.
-    static let defaultLanguages: Set<String> = [
-        "swift", "python", "typescript", "javascript", "vue", "java", "kotlin", "objc",
-    ]
 
     /// Extension to language name; shared by full scans and incremental updates.
     static let languagesByExtension: [String: String] = [
@@ -169,37 +163,6 @@ struct GraphRawUnresolved: Codable {
     enum CodingKeys: String, CodingKey {
         case kind, line, reason
         case rawName = "raw_name"
-    }
-}
-
-// MARK: - Node keys
-
-enum GraphKey {
-    static func file(_ path: String) -> String {
-        "file:" + path
-    }
-
-    static func symbol(_ symKey: String) -> String {
-        "sym:" + symKey
-    }
-
-    /// Content-addressed symbol identity, including start line to keep overloads unique.
-    static func symbolKey(
-        path: String,
-        name: String,
-        kind: String,
-        signature: String?,
-        startLine: Int
-    ) -> String {
-        sha1Hex("\(path)|\(name)|\(kind)|\(signature ?? "")|\(startLine)")
-    }
-
-    static func sha1Hex(_ text: String) -> String {
-        Insecure.SHA1.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-
-    static func sha1Hex(data: Data) -> String {
-        Insecure.SHA1.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 

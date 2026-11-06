@@ -824,14 +824,6 @@ public final class KnowledgePanelController: NSWindowController {
         armAutoClose()
     }
 
-    /// 立即取下一张（菜单项「立即补货」后刷新用）。
-    func reloadCurrent() {
-        advance()
-        if activeTab == 1 {
-            reloadList()
-            updateTabVisibility()
-        }
-    }
 }
 
 // MARK: - List tab

@@ -32,18 +32,6 @@ enum WindowPositioning {
         return NSPoint(x: mouse.x + padding, y: mouse.y - windowSize.height - padding)
     }
 
-    /// Centered slightly above the screen center (used by Chat)
-    static func screenCenter(
-        windowSize: NSSize,
-        offsetFraction: CGFloat = 0.2,
-        screen: NSScreen?,
-    ) -> NSPoint {
-        guard let frame = screen?.visibleFrame else { return .zero }
-        let x = frame.midX - windowSize.width / 2
-        let y = frame.midY + frame.height * offsetFraction - windowSize.height / 2
-        return NSPoint(x: x, y: y)
-    }
-
     /// Remembered position → mouse position fallback (used by Translation)
     static func savedOrNearMouse(
         windowSize: NSSize,
