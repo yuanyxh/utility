@@ -7,7 +7,19 @@
 ## 进行中
 
 - GUI 化重构：T1-T6 代码完成，`swift build` 与 `run-tests.sh` 通过；待用户 L3 手测（Dock、主菜单、设置保存、面板键盘、OCR 退出）
+- 工作区协议化：计划 `.agent/plans/2026-11-05-workspace-protocol/`，T1-T13 完成并过两轮审查修复。状态层 + 五个窗格协议化（终端/子终端/文件树/Git/编辑器）、手型光标、⌘Z 脏点、git 忽略灰化、`ui` 字段 v2 持久化与 `.bak` 迁移、`--ui` CLI、文档与打包（`Utility-1.1.75.dmg` 已过期，需重打包）。审查修复两轮：滚动恢复布局、横幅跨文件泄漏、子目录灰化、status 失败被吞、切工作区残留；invalidate 代际号、脏重算 0.1ms、首启空态、备份只查一次、落盘收敛与 flush、指针方法去重、文档「窗格 vs 浮动面板」澄清。验证：`swift build`、`run-tests.sh`、l10n 双检查全过；列表选择三项回归（空白点击丢选中、选中底色变灰、图标与 x 按钮不变白）已修并经用户确认正常，代码已提交；已删 `PointerCursorController`（实测 0 次触发）、`FileTreeUIState.truncated`、`snapshot.workspaceID`/`focused`、`canHighlight`、`syntaxProvider` 注入参数；审查建议全部落地，`swift build` 与 `run-tests.sh` 全过
 - 终端工作区：T1-T12 代码、文档与打包完成；检查点 A、B 通过；打包产物 `Utility-1.1.64.dmg`（app 19M / DMG 7.4M，卷根含 `Utility.app` 与 `Applications` 软链）；L3 逐项手测待做（切换与退出三选、脏文档横幅、只读保存、删除后另存为、中英文切换）
+
+## 最近完成（2026-11-06）
+
+- 列表选择回归三项（用户报告并手测通过）：空白点击不再清选中（`PersistentSelectionTableView` / `FileOutlineView` 早退）；选中底色由 `PointerRowView.drawSelection` 自绘，焦点转到编辑器/终端后仍是强调蓝；选中行文字、图标与行内 `NSButton`（子终端 x）统一转白，取消时按基色还原。`swift build` 与 `run-tests.sh` 全过。
+
+- 工作区协议化收尾：`SubTerminalPane`/`FileExplorerPane`/`GitPane`/`FileEditorPane`/`TerminalHostView` 全部实现 `WorkspacePanel`，控制器统一 `render` 分发；分支、git 状态、忽略集合改由控制器写快照
+- 编辑器：脏状态改用 `savedText` 基线 + 150ms 重算 + 撤销通知；越界回原内容脏点消失（隔离实例实测）；预览模式、光标与滚动位置写入快照（200ms 去抖）
+- 持久化：`workspaces.json` 升 v2，工作区带 `ui` 字段（页签/展开/光标/滚动/预览），首次写 v2 前复制 `.bak`；重启恢复实测通过
+- 光标：根因与修法沉淀在 `cursor-evidence.md` 与 `workspace.md`「光标（手型）」一节
+- 验证：`swift build`、`run-tests.sh`、`gen-l10n --check`、`check-l10n-contract` 全过；打包 `Utility-1.1.75.dmg`（app 20M / DMG 7.5M，资源 bundle 存在）
+- 独立审查（新上下文子 agent + 本人复验）：1 阻断 + 6 应修；已修 1 阻断 + 4 应修，见 `tasks.md`「审查修复（2026-11-06）」；滚动恢复用隔离实例验证 `scrollY=3000` 往返保持
 
 ## 最近完成（2026-11-05）
 

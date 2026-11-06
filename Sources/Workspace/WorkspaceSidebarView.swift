@@ -8,8 +8,8 @@ final class WorkspaceSidebarView: NSView, NSTableViewDataSource, NSTableViewDele
     var onRemove: ((String) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
-    private let addButton = NSButton()
-    private let tableView = NSTableView()
+    private let addButton = PointerButton()
+    private let tableView = PersistentSelectionTableView()
     private let scrollView = OverlayScrollView()
     private var workspaces: [Workspace] = []
     private var selectedID: String?
@@ -219,7 +219,7 @@ final class WorkspaceSidebarView: NSView, NSTableViewDataSource, NSTableViewDele
 // MARK: - Row chrome
 
 @MainActor
-private final class WorkspaceTableRowView: NSTableRowView {
+private final class WorkspaceTableRowView: PointerRowView {
     override func drawSelection(in _: NSRect) {
         let color =
             window?.isKeyWindow == true

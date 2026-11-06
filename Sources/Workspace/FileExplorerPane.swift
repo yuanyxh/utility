@@ -3,8 +3,13 @@ import Cocoa
 /// Right pane: activity bar plus the workspace file tree. The content area stays a
 /// placeholder until the editor lands.
 @MainActor
-final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
+final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    let panelID = PanelID.fileTree
+    var focusTarget: NSView? { outline }
+
     var onOpenFile: ((URL) -> Void)?
+    var onModeChange: ((ListMode) -> Void)?
+    var onExpandedPathsChange: (([String]) -> Void)?
 
     var listWidth: CGFloat = 200 {
         didSet { listWidthConstraint?.constant = listWidth }
@@ -16,7 +21,7 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private let separator = NSView()
     private let contentContainer = NSView()
     private let contentLabel = NSTextField(labelWithString: "")
-    private let gitPane = GitPane()
+    let gitPane = GitPane()
     private let diffView = DiffView()
     private let emptyLabel = NSTextField(labelWithString: "")
     private let footerLabel = NSTextField(labelWithString: "")
@@ -29,8 +34,13 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private var currentRoot: URL?
     private var expansionByRoot: [String: Set<String>] = [:]
     private var pendingExpansion: Set<String> = []
-    private var mode: WorkspaceActivityBar.Mode = .files
+    private var listMode: ListMode = .files
+    private var selectedPath: String?
+    private var lastRenderedTree: FileTreeUIState?
+    private var lastRenderedMode: ListMode?
     private var treeTruncated = false
+    private var ignoreRules = IgnoreRules.empty
+    var onFileSystemChange: ((URL) -> Void)?
     private let watcher = FileTreeWatcher()
 
     override init(frame frameRect: NSRect) {
@@ -55,10 +65,10 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     func showContent(_ view: NSView?) {
         contentView?.removeFromSuperview()
         contentView = view
-        contentLabel.isHidden = view != nil || mode == .git
+        contentLabel.isHidden = view != nil || listMode == .git
         guard let view else { return }
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.isHidden = mode == .git
+        view.isHidden = listMode == .git
         contentContainer.addSubview(view, positioned: .below, relativeTo: diffView)
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -68,13 +78,32 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         ])
     }
 
-    func reload(root: URL?) {
-        guard root != currentRoot else { return }
+    // MARK: - WorkspacePanel
+
+    func render(_ snapshot: WorkspaceSnapshot) {
+        let tree = snapshot.fileTree
+        if tree != lastRenderedTree {
+            let firstRender = lastRenderedTree == nil
+            let rootChanged = firstRender || tree.root != lastRenderedTree?.root
+            lastRenderedTree = tree
+            if rootChanged {
+                applyRoot(tree.root, expanded: snapshot.ui.expandedPaths)
+            }
+            applyIgnoreRules(tree.ignoredPaths)
+            applySelection(tree.selectedPath)
+        }
+        if snapshot.ui.activeList != lastRenderedMode {
+            lastRenderedMode = snapshot.ui.activeList
+            applyListMode(snapshot.ui.activeList)
+        }
+    }
+
+    private func applyRoot(_ root: URL?, expanded: [String]) {
         saveExpansion()
         currentRoot = root
         pendingExpansion =
             root.map {
-                expansionByRoot[$0.standardizedFileURL.path] ?? []
+                expansionByRoot[$0.standardizedFileURL.path] ?? Set(expanded)
             } ?? []
         diffView.clear()
         roots = []
@@ -91,8 +120,8 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
         guard let root else {
             model = nil
-            gitPane.reload(root: nil)
             diffView.clear()
+            applyIgnoreRules([])
             emptyLabel.stringValue = L10n.Workspace.treeEmpty
             emptyLabel.isHidden = false
             return
@@ -102,16 +131,16 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             extraIgnores: config.ignoredDirectories,
         )
         self.model = model
-        gitPane.reload(root: root)
         model.loadRoot { [weak self] nodes, truncated in
             guard let self, self.model === model else { return }
             roots = merge(existing: roots, scanned: nodes)
             outline.reloadData()
             rebuildNodeIndex()
             emptyLabel.stringValue = L10n.Workspace.treeEmpty
-            emptyLabel.isHidden = !nodes.isEmpty
+            emptyLabel.isHidden = listMode == .git || !nodes.isEmpty
             showTruncation(truncated)
             restoreExpansion()
+            applySelection(lastRenderedTree?.selectedPath)
         }
     }
 
@@ -155,7 +184,9 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
     private func setup() {
         activityBar.translatesAutoresizingMaskIntoConstraints = false
-        activityBar.onSelect = { [weak self] mode in self?.apply(mode: mode) }
+        activityBar.onSelect = { [weak self] mode in
+            self?.onModeChange?(mode == .git ? .git : .files)
+        }
 
         let column = NSTableColumn(identifier: .init("file"))
         column.width = listWidth
@@ -210,7 +241,6 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
         gitPane.translatesAutoresizingMaskIntoConstraints = false
         gitPane.isHidden = true
-        gitPane.onOpenDiff = { [weak self] status in self?.openDiff(status) }
         gitPane.onCountChange = { [weak self] count in self?.activityBar.setGitCount(count) }
         diffView.translatesAutoresizingMaskIntoConstraints = false
         diffView.isHidden = true
@@ -273,8 +303,9 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         ])
     }
 
-    private func apply(mode: WorkspaceActivityBar.Mode) {
-        self.mode = mode
+    private func applyListMode(_ mode: ListMode) {
+        listMode = mode
+        activityBar.setMode(mode)
         let showGit = mode == .git
         scrollView.isHidden = showGit
         emptyLabel.isHidden = showGit || !roots.isEmpty
@@ -283,19 +314,51 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         contentView?.isHidden = showGit
         diffView.isHidden = !showGit
         contentLabel.isHidden = showGit || contentView != nil
-        if showGit {
-            gitPane.refresh()
-        } else {
-            diffView.clear()
-        }
+        if !showGit { diffView.clear() }
         updateContentLabel()
     }
 
-    func refreshGitStatus() {
-        gitPane.scheduleRefresh()
+    private func applyIgnoreRules(_ paths: Set<String>) {
+        let rules = IgnoreRules(paths: paths)
+        guard rules != ignoreRules else { return }
+        ignoreRules = rules
+        outline.reloadData()
     }
 
-    private func openDiff(_ status: GitFileStatus) {
+    private func applySelection(_ path: String?) {
+        guard path != selectedPath else { return }
+        selectedPath = path
+        guard let path, let node = nodesByPath[path] else {
+            outline.deselectAll(nil)
+            return
+        }
+        let row = outline.row(forItem: node)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+    }
+
+    private func syncExpandedPaths() {
+        guard let root = currentRoot else { return }
+        var set = Set<String>()
+        for row in 0..<outline.numberOfRows {
+            guard let node = outline.item(atRow: row) as? FileNode, node.isDirectory,
+                outline.isItemExpanded(node),
+                let relative = relativePath(of: node.url, root: root)
+            else { continue }
+            set.insert(relative)
+        }
+        expansionByRoot[root.standardizedFileURL.path] = set
+        onExpandedPathsChange?(set.sorted())
+    }
+
+    private func isIgnored(_ node: FileNode) -> Bool {
+        guard let root = currentRoot, let relative = relativePath(of: node.url, root: root)
+        else { return false }
+        return ignoreRules.isIgnored(relativePath: relative)
+    }
+
+    func showDiff(_ status: GitFileStatus) {
         guard let root = currentRoot else { return }
         let service = GitService(root: root)
         Task { [weak self] in
@@ -312,7 +375,7 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
     private func updateContentLabel() {
         contentLabel.stringValue =
-            mode == .files ? L10n.Workspace.editorPlaceholder : L10n.Workspace.gitPlaceholder
+            listMode == .files ? L10n.Workspace.editorPlaceholder : L10n.Workspace.gitPlaceholder
     }
 
     private func showTruncation(_ truncated: Bool) {
@@ -395,12 +458,30 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         cell.imageView?.image = NSImage(
             systemSymbolName: symbol, accessibilityDescription: node.name,
         )
+        let ignored = isIgnored(node)
+        cell.textField?.textColor = ignored ? VSTheme.dimmedText : VSTheme.text
+        cell.imageView?.contentTintColor = ignored ? VSTheme.dimmedText : VSTheme.secondaryText
+        cell.toolTip = ignored ? "\(node.name) (gitignored)" : nil
         return cell
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem _: Any) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("pointer-row")
+        let row =
+            outlineView.makeView(withIdentifier: identifier, owner: self) as? PointerRowView
+            ?? PointerRowView()
+        row.identifier = identifier
+        return row
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? FileNode else { return }
         loadChildrenIfNeeded(node)
+        syncExpandedPaths()
+    }
+
+    func outlineViewItemDidCollapse(_: Notification) {
+        syncExpandedPaths()
     }
 
     private func loadChildrenIfNeeded(_ node: FileNode) {
@@ -421,6 +502,9 @@ final class FileExplorerPane: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
     private func handleChanges(_ paths: [String]) {
         guard let root = currentRoot else { return }
+        // Editors save atomically, so the event may name a temp file instead of
+        // .gitignore; always re-query after a change burst.
+        onFileSystemChange?(root)
         var directories = Set<String>()
         for path in paths {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -543,8 +627,9 @@ private final class FileOutlineView: NSOutlineView {
         let hitRow = row(at: point)
         let disclosure = hitRow >= 0 ? frameOfOutlineCell(atRow: hitRow) : .zero
         let onDisclosure = !disclosure.isEmpty && disclosure.contains(point)
+        guard hitRow >= 0 else { return }
         super.mouseDown(with: event)
-        guard hitRow >= 0, !onDisclosure else { return }
+        guard !onDisclosure else { return }
         onRowClick?(hitRow)
     }
 }

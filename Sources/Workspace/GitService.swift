@@ -48,10 +48,43 @@ struct GitService {
         return hash.isEmpty ? nil : hash
     }
 
-    func status() async throws -> [GitFileStatus] {
+    /// Changed files keep per-file listing; ignored paths come from a second pass
+    /// because `--untracked-files=all` expands ignored directories into every file.
+    func status() async throws -> GitStatusResult {
+        let prefix = await workspacePrefix()
+        let changed = try await captureStatus(["--untracked-files=all"])
+        var result = GitStatusModel.parse(changed)
+        do {
+            let ignored = try await captureStatus(["--ignored=traditional"])
+            result.ignoredPaths = GitStatusModel.parse(ignored).ignoredPaths
+        } catch {
+            debugLog("[Git] ignored query failed root=\(root.path) error=\(error)")
+        }
+        return GitStatusModel.scoped(result, prefix: prefix)
+    }
+
+    /// Path of the working tree root relative to the repository root; nil when equal.
+    private func workspacePrefix() async -> String? {
+        guard
+            let top = try? await ProcessRunner.run(
+                executable: Self.gitPath,
+                arguments: ["rev-parse", "--show-toplevel"],
+                workingDirectory: root,
+                timeout: 5,
+            ), top.exitCode == 0
+        else { return nil }
+        let repoPath = URL(
+            fileURLWithPath: top.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+        ).standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        guard rootPath != repoPath, rootPath.hasPrefix(repoPath + "/") else { return nil }
+        return String(rootPath.dropFirst(repoPath.count + 1))
+    }
+
+    private func captureStatus(_ extra: [String]) async throws -> String {
         let result = try await ProcessRunner.run(
             executable: Self.gitPath,
-            arguments: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            arguments: ["status", "--porcelain=v1", "-z"] + extra,
             workingDirectory: root,
             timeout: 5,
         )
@@ -61,7 +94,7 @@ struct GitService {
         guard !result.truncated else {
             throw GitError.commandFailed("git status output exceeded the buffer limit")
         }
-        return GitStatusModel.parse(result.stdout)
+        return result.stdout
     }
 
     func diff(path: String, untracked: Bool = false) async throws -> String {

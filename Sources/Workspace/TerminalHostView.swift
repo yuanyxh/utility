@@ -2,9 +2,13 @@ import Cocoa
 
 /// Main terminal pane: one SwiftTerm view at a time plus the empty-state label.
 @MainActor
-final class TerminalHostView: NSView {
+final class TerminalHostView: NSView, WorkspacePanel {
+    let panelID = PanelID.mainTerminal
+    var focusTarget: NSView? { terminalView }
+
     private let emptyLabel = NSTextField(labelWithString: L10n.Terminal.empty)
     private(set) var terminalView: NSView?
+    private var lastRendered: TerminalUIState?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -22,6 +26,14 @@ final class TerminalHostView: NSView {
 
     required init?(coder _: NSCoder) {
         nil
+    }
+
+    func render(_ snapshot: WorkspaceSnapshot) {
+        guard snapshot.terminals != lastRendered else { return }
+        lastRendered = snapshot.terminals
+        if terminalView == nil {
+            emptyLabel.isHidden = snapshot.terminals.mainSessionID != nil
+        }
     }
 
     var terminalContentSize: NSSize {

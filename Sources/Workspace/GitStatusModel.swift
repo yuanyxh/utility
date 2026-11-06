@@ -20,12 +20,18 @@ struct GitStatusSection {
     let items: [GitFileStatus]
 }
 
+/// Porcelain output split into changed files and paths ignored by .gitignore.
+struct GitStatusResult: Equatable {
+    var files: [GitFileStatus] = []
+    var ignoredPaths: Set<String> = []
+}
+
 enum GitStatusModel {
     /// Parses `git status --porcelain=v1 -z`. Rename records carry the new path
     /// followed by the original path, so the extra field is skipped.
-    static func parse(_ raw: String) -> [GitFileStatus] {
+    static func parse(_ raw: String) -> GitStatusResult {
         let records = raw.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
-        var items: [GitFileStatus] = []
+        var result = GitStatusResult()
         var index = 0
         while index < records.count {
             let record = records[index]
@@ -34,13 +40,18 @@ enum GitStatusModel {
 
             let x = record[record.startIndex]
             let y = record[record.index(after: record.startIndex)]
-            guard x != "!" else { continue }
+            if x == "!" {
+                var path = String(record.dropFirst(3))
+                while path.hasSuffix("/") { path.removeLast() }
+                if !path.isEmpty { result.ignoredPaths.insert(path) }
+                continue
+            }
 
             if x == "R" || x == "C" || y == "R" || y == "C", index < records.count {
                 index += 1
             }
             let untracked = x == "?"
-            items.append(
+            result.files.append(
                 GitFileStatus(
                     path: String(record.dropFirst(3)),
                     code: String([x, y]),
@@ -50,7 +61,29 @@ enum GitStatusModel {
                 ),
             )
         }
-        return items
+        return result
+    }
+
+    /// Keeps entries inside the workspace subtree and rewrites them to
+    /// workspace-relative paths; porcelain always reports repo-root paths.
+    static func scoped(_ result: GitStatusResult, prefix: String?) -> GitStatusResult {
+        guard let prefix, !prefix.isEmpty else { return result }
+        let head = prefix + "/"
+        func relative(_ path: String) -> String? {
+            guard path.hasPrefix(head) else { return nil }
+            let value = String(path.dropFirst(head.count))
+            return value.isEmpty ? nil : value
+        }
+        var scoped = GitStatusResult()
+        scoped.files = result.files.compactMap { file in
+            guard let path = relative(file.path) else { return nil }
+            return GitFileStatus(
+                path: path, code: file.code, staged: file.staged,
+                unstaged: file.unstaged, untracked: file.untracked,
+            )
+        }
+        scoped.ignoredPaths = Set(result.ignoredPaths.compactMap(relative))
+        return scoped
     }
 
     static func sections(from items: [GitFileStatus]) -> [GitStatusSection] {

@@ -2,9 +2,14 @@ import Cocoa
 
 /// File list for git status, grouped into staged / unstaged / untracked.
 @MainActor
-final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class GitPane: NSView, WorkspacePanel, NSTableViewDataSource, NSTableViewDelegate {
+    let panelID = PanelID.gitList
+    var focusTarget: NSView? { table }
+
     var onOpenDiff: ((GitFileStatus) -> Void)?
     var onCountChange: ((Int) -> Void)?
+    var onToggleSection: ((GitSectionKind) -> Void)?
+    var onRequestRefresh: (() -> Void)?
 
     private enum Row {
         case header(GitStatusSection)
@@ -13,20 +18,16 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let countLabel = NSTextField(labelWithString: "")
-    private let refreshButton = NSButton()
+    private let refreshButton = PointerButton()
     private let scrollView = OverlayScrollView()
-    private let table = NSTableView()
+    private let table = PersistentSelectionTableView()
     private let emptyLabel = NSTextField(labelWithString: "")
 
-    private var root: URL?
-    private var hasLoaded = false
     private var repository = false
-    private var lastItems: [GitFileStatus] = []
     private var sections: [GitStatusSection] = []
     private var collapsed: Set<GitSectionKind> = []
     private var rows: [Row] = []
-    private var generation = 0
-    private var refreshWorkItem: DispatchWorkItem?
+    private var lastRendered: GitUIState?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -43,40 +44,12 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         nil
     }
 
-    deinit {
-        refreshWorkItem?.cancel()
-    }
+    // MARK: - WorkspacePanel
 
-    // MARK: - Public
-
-    func reload(root: URL?) {
-        self.root = root
-        refresh()
-    }
-
-    func scheduleRefresh() {
-        refreshWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.refresh() }
-        refreshWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: item)
-    }
-
-    func refresh() {
-        refreshWorkItem?.cancel()
-        refreshWorkItem = nil
-        guard let root else {
-            apply(isRepository: false, items: [])
-            return
-        }
-        generation += 1
-        let generation = self.generation
-        Task { [weak self] in
-            let service = GitService(root: root)
-            let isRepository = await service.isRepository()
-            let items = isRepository ? ((try? await service.status()) ?? []) : []
-            guard let self, self.generation == generation else { return }
-            self.apply(isRepository: isRepository, items: items)
-        }
+    func render(_ snapshot: WorkspaceSnapshot) {
+        guard snapshot.git != lastRendered else { return }
+        lastRendered = snapshot.git
+        apply(snapshot.git)
     }
 
     // MARK: - UI
@@ -163,11 +136,10 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         ])
     }
 
-    private func apply(isRepository: Bool, items: [GitFileStatus]) {
-        hasLoaded = true
-        repository = isRepository
-        lastItems = items
-        guard isRepository else {
+    private func apply(_ state: GitUIState) {
+        repository = state.isRepository
+        collapsed = state.collapsed
+        guard state.isRepository else {
             sections = []
             rows = []
             countLabel.isHidden = true
@@ -177,13 +149,22 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
             emptyLabel.isHidden = false
             return
         }
-        sections = GitStatusModel.sections(from: items)
+        sections = GitStatusModel.sections(from: state.files)
         rebuildRows()
-        countLabel.stringValue = items.count > 99 ? "99+" : "\(items.count)"
-        countLabel.isHidden = items.isEmpty
-        onCountChange?(items.count)
+        countLabel.stringValue = state.files.count > 99 ? "99+" : "\(state.files.count)"
+        countLabel.isHidden = state.files.isEmpty
+        onCountChange?(state.files.count)
         emptyLabel.stringValue = L10n.Workspace.gitClean
         emptyLabel.isHidden = !rows.isEmpty
+        applySelection(state.selectedPath)
+    }
+
+    private func applySelection(_ path: String?) {
+        for (index, row) in rows.enumerated() {
+            guard case .file(let status) = row, status.path == path else { continue }
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            return
+        }
     }
 
     private func rebuildRows() {
@@ -195,7 +176,7 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     @objc private func onRefresh() {
-        refresh()
+        onRequestRefresh?()
     }
 
     @objc private func onRowClick() {
@@ -203,12 +184,7 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
         guard row >= 0, row < rows.count else { return }
         switch rows[row] {
         case .header(let section):
-            if collapsed.contains(section.kind) {
-                collapsed.remove(section.kind)
-            } else {
-                collapsed.insert(section.kind)
-            }
-            rebuildRows()
+            onToggleSection?(section.kind)
         case .file(let status):
             onOpenDiff?(status)
         }
@@ -217,8 +193,8 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     @objc private func onLanguageChanged() {
         titleLabel.stringValue = L10n.Workspace.gitPlaceholder
         refreshButton.toolTip = L10n.Workspace.gitRefresh
-        guard hasLoaded else { return }
-        apply(isRepository: repository, items: lastItems)
+        guard let state = lastRendered else { return }
+        apply(state)
     }
 
     // MARK: - NSTableViewDataSource
@@ -228,6 +204,16 @@ final class GitPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     // MARK: - NSTableViewDelegate
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        if rows.indices.contains(row), case .header = rows[row] { return nil }
+        let identifier = NSUserInterfaceItemIdentifier("pointer-row")
+        let rowView =
+            tableView.makeView(withIdentifier: identifier, owner: self) as? PointerRowView
+            ?? PointerRowView()
+        rowView.identifier = identifier
+        return rowView
+    }
 
     func tableView(_: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count else { return nil }

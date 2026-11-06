@@ -12,7 +12,16 @@ private final class EditorTextView: NSTextView {
 
 /// Text editor with a line-number gutter, draft snapshots and external-change handling.
 @MainActor
-final class FileEditorPane: NSView, NSTextViewDelegate {
+final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
+    let panelID = PanelID.editor
+    var focusTarget: NSView? { textView }
+
+    var onDidSave: (() -> Void)?
+    var onDirtyChange: ((Bool) -> Void)?
+    var onExternalChange: ((ExternalChange) -> Void)?
+    var onPreviewModeChange: ((EditorPreviewMode) -> Void)?
+    var onPositionChange: ((Int, Double) -> Void)?
+
     private(set) var document: FileDocument?
     private(set) var rootURL: URL?
 
@@ -27,9 +36,9 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         return view
     }()
     private let imagePreview = ImagePreviewView()
-    private let sourceButton = NSButton()
-    private let previewButton = NSButton()
-    private var previewMode: PreviewMode = .source
+    private let sourceButton = PointerButton()
+    private let previewButton = PointerButton()
+    private var previewMode: EditorPreviewMode = .source
     private var markdownURL: URL?
     private let banner = NSView()
     private let bannerLabel = NSTextField(labelWithString: "")
@@ -38,17 +47,23 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     private var ruler: LineNumberRulerView?
     private var pendingURL: URL?
     private var pendingFocus = true
+    private var pendingPosition: (caret: Int, scrollY: Double)?
     private var loadGeneration = 0
     private var draftWorkItem: DispatchWorkItem?
+    private var dirtyWorkItem: DispatchWorkItem?
+    private var positionWorkItem: DispatchWorkItem?
     private var syntaxDefinition: SyntaxDefinition?
     private var highlightWorkItem: DispatchWorkItem?
     private var highlightDisabled = false
+    private var lastRendered: EditorUIState?
+    private var lastPreviewMode: EditorPreviewMode?
     private let draftStore = EditorDraftStore()
+    private let syntaxProvider: any SyntaxProvider
 
-    var onDidSave: (() -> Void)?
-    var isDirty: Bool { document?.isDirty == true }
+    private(set) var isDirty = false
 
     override init(frame frameRect: NSRect) {
+        self.syntaxProvider = DefaultSyntaxProvider()
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = VSTheme.editorBackground.cgColor
@@ -63,18 +78,62 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         nil
     }
 
+    // MARK: - WorkspacePanel
+
+    func render(_ snapshot: WorkspaceSnapshot) {
+        let state = snapshot.editor
+        if state != lastRendered {
+            lastRendered = state
+            if state.isDirty != isDirty {
+                isDirty = state.isDirty
+                updateHeader()
+            }
+            applyExternalChange(state.externalChange)
+        }
+        if snapshot.ui.previewMode != lastPreviewMode {
+            lastPreviewMode = snapshot.ui.previewMode
+            applyPreviewMode(snapshot.ui.previewMode)
+        }
+    }
+
+    private func applyExternalChange(_ change: ExternalChange) {
+        switch change {
+        case .unchanged: hideBanner()
+        case .modified: showBanner(deleted: false)
+        case .deleted: showBanner(deleted: true)
+        }
+    }
+
+    private func applyPreviewMode(_ mode: EditorPreviewMode) {
+        guard markdownURL != nil else { return }
+        previewMode = mode == .markdown ? .markdown : .source
+        if previewMode == .markdown { renderMarkdownPreview() }
+        updatePreviewVisibility()
+        updateModeButtons()
+    }
+
+    private func setDirty(_ value: Bool) {
+        guard isDirty != value else { return }
+        isDirty = value
+        onDirtyChange?(value)
+    }
+
     // MARK: - Public
 
-    func open(url: URL, root: URL?, focus: Bool = true) {
+    func open(
+        url: URL, root: URL?, focus: Bool = true, position: (caret: Int, scrollY: Double)? = nil,
+    ) {
         if document?.url == url || pendingURL == url { return }
         pendingURL = url
         pendingFocus = focus
+        pendingPosition = position
         rootURL = root
         loadGeneration += 1
         let generation = loadGeneration
         headerLabel.stringValue = url.lastPathComponent
         headerLabel.toolTip = url.path
         hideBanner()
+        onExternalChange?(.unchanged)
 
         if ImagePreviewView.supportedExtensions.contains(url.pathExtension.lowercased()) {
             pendingURL = nil
@@ -108,7 +167,8 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
             )
         }
         document.updateText(draft.text)
-        document.isDirty = true
+        setDirty(true)
+        onExternalChange?(.unchanged)
         self.document = document
         textView.string = draft.text
         textView.undoManager?.removeAllActions()
@@ -129,6 +189,8 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         loadGeneration += 1
         pendingURL = nil
         document = nil
+        setDirty(false)
+        onExternalChange?(.unchanged)
         textView.string = ""
         hidePreview()
         headerLabel.stringValue = ""
@@ -138,7 +200,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
 
     /// Returns false only when the user cancels or a save fails.
     func confirmClose() -> Bool {
-        guard let document, document.isDirty else { return true }
+        guard let document, isDirty else { return true }
         let alert = NSAlert()
         alert.messageText = L10n.Workspace.unsavedTitle
         alert.informativeText = L10n.Workspace.unsavedBody(name: document.url.lastPathComponent)
@@ -150,7 +212,8 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
             return save()
         case .alertSecondButtonReturn:
             discardDraft()
-            document.isDirty = false
+            setDirty(false)
+            updateHeader()
             return true
         default:
             return false
@@ -162,15 +225,15 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         guard let document, pendingURL == nil else { return }
         switch document.checkExternalChange() {
         case .unchanged:
-            hideBanner()
+            onExternalChange?(.unchanged)
         case .modified:
-            if document.isDirty {
-                showBanner(deleted: false)
+            if isDirty {
+                onExternalChange?(.modified)
             } else {
                 reloadFromDisk()
             }
         case .deleted:
-            showBanner(deleted: true)
+            onExternalChange?(.deleted)
         }
     }
 
@@ -260,7 +323,8 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     private func finishSave() {
         draftWorkItem?.cancel()
         if let url = document?.url { draftStore.delete(for: url) }
-        hideBanner()
+        setDirty(false)
+        onExternalChange?(.unchanged)
         updateHeader()
         onDidSave?()
     }
@@ -286,6 +350,8 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         else { return }
         let offset = scrollView.contentView.bounds.origin
         document.applyReload(fresh)
+        setDirty(false)
+        onExternalChange?(.unchanged)
         textView.string = fresh.text
         textView.undoManager?.removeAllActions()
         ruler?.rebuildLineStarts(fresh.text)
@@ -322,7 +388,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     }
 
     private func writeDraftSnapshot() {
-        guard let document, document.isDirty else { return }
+        guard let document, isDirty else { return }
         document.updateText(textView.string)
         let draft = EditorDraft(
             url: document.url, text: document.text, encoding: document.encoding,
@@ -376,6 +442,16 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         textView.isContinuousSpellCheckingEnabled = false
         textView.usesFindBar = true
         textView.delegate = self
+        if let undoManager = textView.undoManager {
+            for name in [
+                Notification.Name.NSUndoManagerDidUndoChange,
+                Notification.Name.NSUndoManagerDidRedoChange,
+            ] {
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(onUndoChange), name: name, object: undoManager,
+                )
+            }
+        }
         textView.typingAttributes = [
             .font: VSTheme.editorFont(size: 12),
             .foregroundColor: VSTheme.editorText,
@@ -443,7 +519,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
             headerLabel.heightAnchor.constraint(equalToConstant: 16),
 
             previewButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            previewButton.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 8),
+            previewButton.topAnchor.constraint(equalTo: topAnchor, constant: 7),
             previewButton.widthAnchor.constraint(equalToConstant: 22),
             previewButton.heightAnchor.constraint(equalToConstant: 22),
 
@@ -510,7 +586,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     }
 
     private func bannerButton(_ title: String, _ action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
+        let button = PointerButton(title: title, target: self, action: action)
         button.controlSize = .small
         button.bezelStyle = .rounded
         return button
@@ -544,6 +620,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         switch result {
         case .text(let loaded):
             document = loaded
+            setDirty(false)
             textView.string = loaded.text
             textView.undoManager?.removeAllActions()
             textView.isEditable = true
@@ -553,6 +630,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
             updateHeader()
             preparePreview(for: url)
             rebuildHighlightState()
+            restorePositionIfNeeded()
             if previewMode == .source, pendingFocus { window?.makeFirstResponder(textView) }
         case .tooLarge:
             resetDocument()
@@ -569,8 +647,25 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         }
     }
 
+    private func restorePositionIfNeeded() {
+        guard let position = pendingPosition else { return }
+        pendingPosition = nil
+        let length = (textView.string as NSString).length
+        let caret = min(max(position.caret, 0), length)
+        textView.setSelectedRange(NSRange(location: caret, length: 0))
+        if let container = textView.textContainer, let layout = textView.layoutManager {
+            layout.ensureLayout(for: container)
+        }
+        let maxY = max(0, textView.bounds.height - scrollView.contentView.bounds.height)
+        let y = min(max(position.scrollY, 0), Double(maxY))
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
     private func resetDocument() {
         document = nil
+        pendingPosition = nil
+        setDirty(false)
         syntaxDefinition = nil
         highlightWorkItem?.cancel()
         hidePreview()
@@ -579,12 +674,6 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     }
 
     // MARK: - Preview
-
-    private enum PreviewMode {
-        case source
-        case markdown
-        case image
-    }
 
     private func preparePreview(for url: URL) {
         imagePreview.clear()
@@ -596,6 +685,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         previewMode = .source
         updateModeButtons()
         updatePreviewVisibility()
+        if let lastPreviewMode { applyPreviewMode(lastPreviewMode) }
     }
 
     private func showImage(url: URL, generation: Int) {
@@ -683,19 +773,14 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
 
     @objc private func onShowSource() {
         guard markdownURL != nil else { return }
-        previewMode = .source
-        updatePreviewVisibility()
-        updateModeButtons()
+        onPreviewModeChange?(.source)
         window?.makeFirstResponder(textView)
         scheduleHighlight(delay: 0)
     }
 
     @objc private func onShowPreview() {
         guard markdownURL != nil else { return }
-        previewMode = .markdown
-        renderMarkdownPreview()
-        updatePreviewVisibility()
-        updateModeButtons()
+        onPreviewModeChange?(.markdown)
     }
 
     private func showMessage(_ message: String) {
@@ -706,7 +791,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
 
     private func updateHeader() {
         guard let document else { return }
-        let marker = document.isDirty ? "\u{25CF} " : ""
+        let marker = isDirty ? "\u{25CF} " : ""
         headerLabel.stringValue = marker + document.url.lastPathComponent
         headerLabel.toolTip = document.url.path
     }
@@ -714,6 +799,22 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     @objc private func onScrollChanged() {
         ruler?.needsDisplay = true
         scheduleHighlight(delay: 0.05)
+        schedulePositionSync()
+    }
+
+    private func schedulePositionSync() {
+        positionWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let caret = textView.selectedRange().location
+            onPositionChange?(caret, Double(scrollView.contentView.bounds.origin.y))
+        }
+        positionWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: item)
+    }
+
+    func textViewDidChangeSelection(_: Notification) {
+        schedulePositionSync()
     }
 
     @objc private func onLanguageChanged() {
@@ -729,12 +830,45 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_: Notification) {
-        guard let document else { return }
-        document.isDirty = true
+        guard document != nil else { return }
+        if !isDirty {
+            setDirty(true)
+            updateHeader()
+        }
         ruler?.rebuildLineStarts(textView.string)
-        updateHeader()
         scheduleDraftSnapshot()
+        scheduleDirtyRecompute()
         scheduleHighlight(delay: 0.1)
+    }
+
+    // MARK: - Dirty state
+
+    private func scheduleDirtyRecompute() {
+        dirtyWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.recomputeDirty() }
+        dirtyWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: item)
+    }
+
+    private func recomputeDirty() {
+        guard let document else {
+            setDirty(false)
+            return
+        }
+        let next = document.isDirty(currentText: textView.string)
+        guard next != isDirty else { return }
+        setDirty(next)
+        updateHeader()
+        if next {
+            scheduleDraftSnapshot()
+        } else {
+            draftWorkItem?.cancel()
+            draftStore.delete(for: document.url)
+        }
+    }
+
+    @objc private func onUndoChange() {
+        recomputeDirty()
     }
 
     // MARK: - Highlight
@@ -752,9 +886,7 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         let text = textView.string as NSString
         highlightDisabled =
             text.length > Self.maxHighlightLength || lineCount(of: text) > Self.maxHighlightLines
-        syntaxDefinition = SyntaxDefinitions.definition(
-            forExtension: document.url.pathExtension,
-        )
+        syntaxDefinition = syntaxProvider.definition(for: document.url)
         if highlightDisabled {
             clearHighlight()
         } else {
@@ -789,14 +921,14 @@ final class FileEditorPane: NSView, NSTextViewDelegate {
         )
         guard range.length > 0 else { return }
 
-        let tokens = SyntaxHighlighter.tokens(in: text, range: range, definition: definition)
+        let tokens = syntaxProvider.tokens(in: text, range: range, definition: definition)
         let undo = textView.undoManager
         undo?.disableUndoRegistration()
         storage.beginEditing()
         storage.addAttribute(.foregroundColor, value: VSTheme.editorText, range: range)
         for token in tokens {
             storage.addAttribute(
-                .foregroundColor, value: SyntaxHighlighter.color(for: token.kind), range: token.range,
+                .foregroundColor, value: syntaxProvider.color(for: token.kind), range: token.range,
             )
         }
         storage.endEditing()

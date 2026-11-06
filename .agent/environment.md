@@ -23,6 +23,7 @@
 | 本地验证 | `bash scripts/run-tests.sh` | 可用 |
 | 打包 | `SIGNING_IDENTITY=<sha1> bash scripts/package-utility.sh` | 可用（需签名身份） |
 | 启动 app | `open -a /Applications/Utility.app` | 可用 |
+| 启动开发版 | `./.build/debug/utility`（可与安装版并存，MCP 复用 9001） | 可用 |
 | 打开终端面板 | **无 CLI / URL scheme 入口** | **缺口**，只能靠 `option+space` 热键或菜单栏 |
 | 截图 | `screencapture -x <path>` | 可用（整屏）；按窗口截图需先取 window id，未封装 |
 | 运行日志 | `~/.cache/utility/debug.log` | 可用 |

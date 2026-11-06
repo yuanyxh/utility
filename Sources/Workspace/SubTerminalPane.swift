@@ -2,24 +2,26 @@ import Cocoa
 
 /// Bottom pane: the selected sub-terminal on the left and a vertical session list on the right.
 @MainActor
-final class SubTerminalPane: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class SubTerminalPane: NSView, WorkspacePanel, NSTableViewDataSource, NSTableViewDelegate {
+    let panelID = PanelID.subTerminals
+    var focusTarget: NSView? { currentView }
+
     var onAdd: (() -> Void)?
     var onSelect: ((String) -> Void)?
     var onClose: ((String) -> Void)?
 
     private let headerLabel = NSTextField(labelWithString: "")
-    private let addButton = NSButton()
+    private let addButton = PointerButton()
     private let listContainer = NSView()
     private let separator = NSView()
     private let contentContainer = NSView()
     private let emptyLabel = NSTextField(labelWithString: "")
-    private let tableView = NSTableView()
+    private let tableView = PersistentSelectionTableView()
     private let scrollView = OverlayScrollView()
     private let statusBar = WorkspaceStatusBar()
 
     private var sessions: [WorkspaceSessionSummary] = []
-    private var branchGeneration = 0
-    private var selectedID: String?
+    private var lastRendered: TerminalUIState?
     private var currentView: NSView?
     private var isUpdatingSelection = false
 
@@ -38,14 +40,21 @@ final class SubTerminalPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         nil
     }
 
-    // MARK: - Public
+    // MARK: - WorkspacePanel
 
-    func reload(sessions: [WorkspaceSessionSummary], selectedID: String?) {
-        self.sessions = sessions
-        self.selectedID = selectedID
+    func render(_ snapshot: WorkspaceSnapshot) {
+        guard snapshot.terminals != lastRendered else { return }
+        lastRendered = snapshot.terminals
+        apply(snapshot.terminals)
+    }
+
+    private func apply(_ state: TerminalUIState) {
+        sessions = state.sessions
         isUpdatingSelection = true
         tableView.reloadData()
-        if let selectedID, let index = sessions.firstIndex(where: { $0.id == selectedID }) {
+        if let id = state.selectedSubSessionID,
+            let index = sessions.firstIndex(where: { $0.id == id })
+        {
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         } else {
             tableView.deselectAll(nil)
@@ -54,7 +63,10 @@ final class SubTerminalPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         if currentView == nil {
             emptyLabel.isHidden = !sessions.isEmpty
         }
+        statusBar.setBranch(state.branch)
     }
+
+    // MARK: - Public
 
     func attach(_ view: NSView) {
         emptyLabel.isHidden = true
@@ -75,27 +87,6 @@ final class SubTerminalPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         currentView?.removeFromSuperview()
         currentView = nil
         emptyLabel.isHidden = !sessions.isEmpty
-    }
-
-    func reloadBranch(root: URL?) {
-        branchGeneration += 1
-        let generation = branchGeneration
-        guard let root else {
-            statusBar.setBranch(nil)
-            return
-        }
-        Task { [weak self] in
-            let branch = await GitService(root: root).branch()
-            guard let self, self.branchGeneration == generation else { return }
-            statusBar.setBranch(branch)
-        }
-    }
-
-    func focusContent() {
-        guard let view = currentView else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.window?.makeFirstResponder(view)
-        }
     }
 
     // MARK: - UI
@@ -237,6 +228,15 @@ final class SubTerminalPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         return rowView
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow _: Int) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("pointer-row")
+        let row =
+            tableView.makeView(withIdentifier: identifier, owner: self) as? PointerRowView
+            ?? PointerRowView()
+        row.identifier = identifier
+        return row
+    }
+
     func tableViewSelectionDidChange(_: Notification) {
         guard !isUpdatingSelection else { return }
         let row = tableView.selectedRow
@@ -253,7 +253,7 @@ private final class SubSessionRowView: NSTableCellView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let cwdLabel = NSTextField(labelWithString: "")
-    private let closeButton = NSButton()
+    private let closeButton = PointerButton()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

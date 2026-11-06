@@ -13,8 +13,8 @@ final class WorkspaceActivityBar: NSView {
         didSet { updateSelection() }
     }
 
-    private let filesButton = NSButton()
-    private let gitButton = NSButton()
+    private let filesButton = PointerButton()
+    private let gitButton = PointerButton()
     private let gitBadge = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
@@ -74,6 +74,10 @@ final class WorkspaceActivityBar: NSView {
         button.translatesAutoresizingMaskIntoConstraints = false
     }
 
+    func setMode(_ mode: ListMode) {
+        self.mode = mode == .git ? .git : .files
+    }
+
     func setGitCount(_ count: Int) {
         guard count > 0 else {
             gitBadge.isHidden = true
@@ -89,12 +93,10 @@ final class WorkspaceActivityBar: NSView {
     }
 
     @objc private func selectFiles() {
-        mode = .files
         onSelect?(.files)
     }
 
     @objc private func selectGit() {
-        mode = .git
         onSelect?(.git)
     }
 }

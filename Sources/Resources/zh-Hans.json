@@ -280,6 +280,8 @@
     "cli.workspace_draft_help": "校验草稿存储、损坏隔离与淘汰",
     "cli.workspace_highlight_help": "输出语法高亮的 token 统计与样本",
     "cli.workspace_git_help": "输出 git 状态统计",
+    "cli.workspace_dirty_help": "比较编辑文本与保存基线，输出脏判定结果",
+    "cli.workspace_ui_help": "输出工作区文档版本与各工作区的界面状态摘要",
     "settings.title": "设置",
     "settings.save": "保存",
     "settings.reload": "重新加载",

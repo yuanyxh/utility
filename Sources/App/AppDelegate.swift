@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
 
     func applicationDidFinishLaunching(_: Notification) {
         debugLog("[Utility] Starting up...")
+        #if DEBUG
+            CursorTrace.installIfRequested()
+        #endif
 
         do { try ConfigManager.shared.load() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(

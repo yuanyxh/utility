@@ -280,6 +280,8 @@
     "cli.workspace_draft_help": "Verify draft storage, quarantine and eviction",
     "cli.workspace_highlight_help": "Print syntax token counts and samples",
     "cli.workspace_git_help": "Print git status counts",
+    "cli.workspace_dirty_help": "Compare editor text with the saved baseline",
+    "cli.workspace_ui_help": "Print the document version and per-workspace UI state",
     "settings.title": "Settings",
     "settings.save": "Save",
     "settings.reload": "Reload",

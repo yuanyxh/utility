@@ -39,6 +39,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
     var subSessionIDs: [String]
     var selectedSubSessionID: String?
     var lastOpenedRelativePath: String?
+    var ui: WorkspaceUIState
     let createdAt: Date
 
     init(
@@ -49,6 +50,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         subSessionIDs: [String] = [],
         selectedSubSessionID: String? = nil,
         lastOpenedRelativePath: String? = nil,
+        ui: WorkspaceUIState = WorkspaceUIState(),
         createdAt: Date = Date(),
     ) {
         self.id = id
@@ -58,6 +60,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         self.subSessionIDs = subSessionIDs
         self.selectedSubSessionID = selectedSubSessionID
         self.lastOpenedRelativePath = lastOpenedRelativePath
+        self.ui = ui
         self.createdAt = createdAt
     }
 
@@ -70,6 +73,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         subSessionIDs = try c.decodeIfPresent([String].self, forKey: .subSessionIDs) ?? []
         selectedSubSessionID = try c.decodeIfPresent(String.self, forKey: .selectedSubSessionID)
         lastOpenedRelativePath = try c.decodeIfPresent(String.self, forKey: .lastOpenedRelativePath)
+        ui = (try? c.decodeIfPresent(WorkspaceUIState.self, forKey: .ui)) ?? WorkspaceUIState()
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
     }
 
@@ -92,7 +96,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct WorkspaceDocument: Codable, Equatable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int
     var selectedWorkspaceID: String?
@@ -152,6 +156,9 @@ struct WorkspaceDocument: Codable, Equatable, Sendable {
                     subSessionIDs: subs,
                     selectedSubSessionID: selectedSub ?? subs.first,
                     lastOpenedRelativePath: workspace.lastOpenedRelativePath,
+                    ui: workspace.ui.clamped(
+                        textLength: Int.max, contentHeight: Double.greatestFiniteMagnitude,
+                    ),
                     createdAt: workspace.createdAt,
                 ),
             )

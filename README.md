@@ -310,7 +310,7 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 |---|---|
 | Activity bar | Switch between the file tree and git status |
 | Single-click a folder | Expand / collapse |
-| Double-click a file | Open it in the editor on the right |
+| Single-click a file | Open it in the editor on the right |
 | `+` in the sub-terminal panel | New sub terminal |
 | `×` on a row | Close the session and end its process |
 | Process exit | Row is removed |
@@ -320,7 +320,7 @@ Each candidate concept passes a scope gate before sources are fetched and the ca
 | `⌘S` / `⌘⇧S` in the editor | Save / save as |
 | Icons at the editor's top-right | Toggle Markdown preview / source |
 
-A workspace combines a main terminal, sub terminals and a file pane; the split layout is saved as you drag. The file tree follows directory changes and shows new or deleted entries within about 0.4 s. The editor provides syntax highlighting, external-change warnings and crash-draft recovery. The git pane lists staged, unstaged and untracked files with diffs. Markdown and common image files render in place.
+A workspace combines a main terminal, sub terminals and a file pane; the split layout is saved as you drag. The file tree follows directory changes and shows new or deleted entries within about 0.4 s; git-ignored entries are dimmed. The active tab, expanded folders, caret and scroll position are restored on restart. The editor provides syntax highlighting, a saved-baseline dirty marker that clears after undo, external-change warnings and crash-draft recovery. The git pane lists staged, unstaged and untracked files with diffs. Markdown and common image files render in place.
 
 The terminal requires tmux (`brew install tmux`); without it the window notifies you and creates nothing. Sessions keep running after the app quits and reattach on the next open.
 

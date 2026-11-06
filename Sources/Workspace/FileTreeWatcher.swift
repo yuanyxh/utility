@@ -100,6 +100,8 @@ final class FileTreeWatcher {
         guard resolved.hasPrefix(root + "/") else { return false }
         let relative = String(resolved.dropFirst(root.count + 1))
         guard !relative.isEmpty else { return false }
+        // Ignore files affect the tree's grey styling even when they are hidden.
+        if relative == ".gitignore" || relative == ".git/info/exclude" { return true }
         if PathRules.isAlwaysHiddenFile(name: (resolved as NSString).lastPathComponent) {
             return false
         }

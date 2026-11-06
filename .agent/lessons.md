@@ -42,3 +42,14 @@ app 没有 CLI/URL scheme 等可脚本化入口时，自动化验证从第一轮
 
 `became/resigned key`、`frontmost`、`newKey` 等字段应在改代码前就布好，
 否则每轮都要改日志 → 打包 → 重新部署。
+
+## 选中态是状态，不是视图属性（2026-11-06）
+
+列表选中来自快照时，视图层不能再让 AppKit 自行清空：`allowsEmptySelection = true` 下点空白会 deselect，
+回调里 `row == -1` 提前 return，界面与状态就此分叉。空白点击一律在视图层拦住（`PersistentSelectionTableView`），
+旧侧栏用 `allowsEmptySelection = false` 修过同一问题，新列表重写时又退回去了。
+
+## 焦点转移会改选中底色（2026-11-06）
+
+选行后把 first responder 交给编辑器/终端，AppKit 默认按「非强调」画选中，蓝色立刻变灰。
+列表选中要稳定就得在行视图里自己画（`PointerRowView.drawSelection`），只在窗口失焦时才降级。

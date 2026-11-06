@@ -131,6 +131,7 @@ final class WorkspaceManager {
 
     func shutdown() {
         guard didLoad else { return }
+        windowController?.persistUIStateNow()
         isShuttingDown = true
         persist()
         detachMountedSessions()
@@ -200,6 +201,7 @@ final class WorkspaceManager {
         controller.onSelectSubSession = { [weak self] id in self?.selectSubSession(id: id) }
         controller.onCloseSubSession = { [weak self] id in self?.closeSubSession(id: id) }
         controller.onLayoutChanged = { [weak self] layout in self?.updateLayout(layout) }
+        controller.onUIStateChanged = { [weak self] ui in self?.updateUIState(ui) }
         controller.onFileOpened = { [weak self] relative in
             self?.setLastOpened(relativePath: relative)
         }
@@ -259,6 +261,7 @@ final class WorkspaceManager {
         ensureLoaded()
         guard let workspace = document.workspaces.first(where: { $0.id == id }) else { return }
         guard confirmTermination() else { return }
+        windowController?.persistUIStateNow()
         detachMountedSessions()
         for sessionID in sessionIDs(in: workspace) {
             backend?.kill(id: sessionID)
@@ -276,6 +279,7 @@ final class WorkspaceManager {
         guard document.workspaces.contains(where: { $0.id == id }) else { return }
         guard id != document.selectedWorkspaceID || mountedSessions.isEmpty else { return }
         guard confirmTermination() else { return }
+        windowController?.persistUIStateNow()
         detachMountedSessions()
         document.selectedWorkspaceID = id
         persist()
@@ -290,6 +294,20 @@ final class WorkspaceManager {
         else { return }
         document.workspaces[index].lastOpenedRelativePath = relativePath
         persist()
+    }
+
+    func updateUIState(_ ui: WorkspaceUIState) {
+        ensureLoaded()
+        guard let id = document.selectedWorkspaceID,
+            let index = document.workspaces.firstIndex(where: { $0.id == id }),
+            document.workspaces[index].ui != ui
+        else { return }
+        document.workspaces[index].ui = ui
+        do {
+            try store.save(document)
+        } catch {
+            debugLog("[Workspace] save ui failed: \(error)")
+        }
     }
 
     func updateLayout(_ layout: WindowLayout) {

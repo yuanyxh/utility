@@ -44,6 +44,12 @@ struct WorkspaceCheckCommand: ParsableCommand {
     @Option(name: .customLong("git"), help: ArgumentHelp(L10n.CLI.workspaceGitHelp))
     var git: String?
 
+    @Option(name: .customLong("dirty"), help: ArgumentHelp(L10n.CLI.workspaceDirtyHelp))
+    var dirty: String?
+
+    @Option(name: .customLong("ui"), help: ArgumentHelp(L10n.CLI.workspaceUiHelp))
+    var ui: String?
+
     func run() throws {
         var handled = false
         if let sessions, reattach == nil {
@@ -86,10 +92,18 @@ struct WorkspaceCheckCommand: ParsableCommand {
             handled = true
             try printGit(path: git)
         }
+        if let dirty {
+            handled = true
+            try checkDirty(path: dirty)
+        }
+        if let ui {
+            handled = true
+            try printUIState(path: ui)
+        }
         guard handled else {
             throw ValidationError(
                 "Provide --sessions, --roundtrip, --state, --reattach, --restore, "
-                    + "--tree, --save, --draft, --highlight or --git",
+                    + "--tree, --save, --draft, --highlight, --git, --dirty or --ui",
             )
         }
     }
@@ -139,6 +153,21 @@ struct WorkspaceCheckCommand: ParsableCommand {
         print("sessions: \(document.sessionCount)")
         if let selected = document.selectedWorkspaceID {
             print("selected: \(selected)")
+        }
+    }
+
+    private func printUIState(path: String) throws {
+        let source = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        let document = try WorkspaceJSON.decode(try Data(contentsOf: source)).normalized()
+        print("version: \(document.version)")
+        for workspace in document.workspaces {
+            let ui = workspace.ui
+            print("workspace: \(workspace.id) \(workspace.name)")
+            print(
+                "  ui: list=\(ui.activeList.rawValue) expanded=\(ui.expandedPaths.count) "
+                    + "caret=\(ui.caretLocation) scroll=\(Int(ui.scrollY)) "
+                    + "preview=\(ui.previewMode.rawValue)",
+            )
         }
     }
 
@@ -230,7 +259,7 @@ struct WorkspaceCheckCommand: ParsableCommand {
         let marker = "save-check-\(UUID().uuidString.prefix(8))"
         document.updateText(document.text + "\n// \(marker)\n")
         try document.save(overwriteExternal: false)
-        guard !document.isDirty else {
+        guard !document.isDirty(currentText: document.text) else {
             print("save: dirty-after-save")
             throw ExitCode.failure
         }
@@ -263,6 +292,20 @@ struct WorkspaceCheckCommand: ParsableCommand {
             throw ExitCode.failure
         }
         print("save: ok lineEnding=\(lineEnding.rawValue) bom=\(hadBOM)")
+    }
+
+    private func checkDirty(path: String) throws {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        guard case .text(let document) = FileDocument.load(url: url, maxBytes: 32 * 1024 * 1024)
+        else {
+            print("dirty: not-text")
+            throw ExitCode.failure
+        }
+        print("baseline: \(document.isDirty(currentText: document.text))")
+        print("appended: \(document.isDirty(currentText: document.text + "x"))")
+        print("restored: \(document.isDirty(currentText: document.text))")
+        let crlf = document.text.replacingOccurrences(of: "\n", with: "\r\n")
+        print("crlf-equal: \(document.isDirty(currentText: crlf))")
     }
 
     private func checkDraft(directory: String) throws {
@@ -318,17 +361,21 @@ struct WorkspaceCheckCommand: ParsableCommand {
         Task.detached {
             let isRepository = await service.isRepository()
             var items: [GitFileStatus] = []
+            var ignored: Set<String> = []
             var failure: String?
             if isRepository {
                 do {
-                    items = try await service.status()
+                    let status = try await service.status()
+                    items = status.files
+                    ignored = status.ignoredPaths
                 } catch {
                     failure = "\(error)"
                 }
             }
             let branch = isRepository ? await service.branch() : nil
             box.set(
-                isRepository: isRepository, items: items, branch: branch, error: failure,
+                isRepository: isRepository, items: items, ignored: ignored, branch: branch,
+                error: failure,
             )
             semaphore.signal()
         }
@@ -343,6 +390,10 @@ struct WorkspaceCheckCommand: ParsableCommand {
         }
         print("git: \(box.items.count) files")
         print("branch: \(box.branch ?? "unknown")")
+        print("ignored: \(box.ignored.count)")
+        if !box.ignored.isEmpty {
+            print("ignored-sample: \(box.ignored.sorted().prefix(3).joined(separator: ", "))")
+        }
         for section in GitStatusModel.sections(from: box.items) {
             print("\(section.title): \(section.items.count)")
             for item in section.items {
@@ -355,18 +406,27 @@ struct WorkspaceCheckCommand: ParsableCommand {
         private let lock = NSLock()
         private var repository = false
         private var files: [GitFileStatus] = []
+        private var ignoredPaths: Set<String> = []
         private var branchName: String?
         private var failure: String?
 
         func set(
-            isRepository: Bool, items: [GitFileStatus], branch: String?, error: String?,
+            isRepository: Bool, items: [GitFileStatus], ignored: Set<String>, branch: String?,
+            error: String?,
         ) {
             lock.lock()
             repository = isRepository
             files = items
+            ignoredPaths = ignored
             branchName = branch
             failure = error
             lock.unlock()
+        }
+
+        var ignored: Set<String> {
+            lock.lock()
+            defer { lock.unlock() }
+            return ignoredPaths
         }
 
         var error: String? {

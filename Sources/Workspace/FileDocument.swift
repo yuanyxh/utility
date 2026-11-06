@@ -40,7 +40,7 @@ final class FileDocument {
     private(set) var lineEnding: FileLineEnding
     private(set) var fingerprint: FileFingerprint
     private(set) var loadedContentHash: String
-    var isDirty = false
+    private(set) var savedText: String
 
     init(
         url: URL, text: String, encoding: String.Encoding, hadBOM: Bool,
@@ -53,6 +53,7 @@ final class FileDocument {
         self.lineEnding = lineEnding
         self.fingerprint = fingerprint
         self.loadedContentHash = FileDocument.contentHash(text)
+        self.savedText = text
     }
 
     // MARK: - Loading
@@ -109,8 +110,19 @@ final class FileDocument {
         return (text, .utf8, false)
     }
 
+    /// Byte-level scan: String.contains scans grapheme clusters (~40x slower on large text).
+    static func hasCarriageReturn(_ text: String) -> Bool {
+        let found = text.utf8.withContiguousStorageIfAvailable { buffer -> Bool in
+            guard let base = buffer.baseAddress, buffer.count > 0 else { return false }
+            return memchr(base, 13, buffer.count) != nil
+        }
+        if let found { return found }
+        return text.utf8.contains(13)
+    }
+
     static func normalizedText(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard hasCarriageReturn(text) else { return text }
+        return text.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
     }
 
@@ -122,6 +134,13 @@ final class FileDocument {
 
     func updateText(_ newText: String) {
         text = FileDocument.normalizedText(newText)
+    }
+
+    /// Compares live editor text with the last saved or loaded content. Text without
+    /// carriage returns skips normalization, which keeps large-file checks cheap.
+    func isDirty(currentText: String) -> Bool {
+        guard FileDocument.hasCarriageReturn(currentText) else { return currentText != savedText }
+        return FileDocument.normalizedText(currentText) != savedText
     }
 
     /// Compares size and mtime first, then the decoded content so a restored mtime still counts.
@@ -146,7 +165,7 @@ final class FileDocument {
         lineEnding = fresh.lineEnding
         fingerprint = fresh.fingerprint
         loadedContentHash = fresh.loadedContentHash
-        isDirty = false
+        savedText = fresh.text
     }
 
     func encodedData() -> Data {
@@ -190,7 +209,7 @@ final class FileDocument {
         }
         refreshFingerprint()
         loadedContentHash = FileDocument.contentHash(text)
-        isDirty = false
+        savedText = text
     }
 
     func savedCopy(at newURL: URL) throws -> FileDocument {

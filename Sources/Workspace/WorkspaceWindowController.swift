@@ -15,6 +15,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
     var onCloseSubSession: ((String) -> Void)?
     var onLayoutChanged: ((WindowLayout) -> Void)?
     var onFileOpened: ((String?) -> Void)?
+    var onUIStateChanged: ((WorkspaceUIState) -> Void)?
 
     var wantsVisible = false {
         didSet { if wantsVisible { didApplyLayout = false } }
@@ -27,14 +28,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
     private let filePane = FileExplorerPane(frame: .zero)
     private let subPane = SubTerminalPane(frame: .zero)
     private let editor = FileEditorPane(frame: .zero)
+    private let stateStore = WorkspaceStateStore()
+    private var panels: [WorkspacePanel] = []
+    private var stateToken: UUID?
     private var currentRoot: URL?
     private var lastWorkspaceID: String?
     private var lastSubSessionID: String?
+    private var branchGeneration = 0
 
     private var lastLayout = WindowLayout()
     private var didApplyLayout = false
     private var isApplyingLayout = false
     private var layoutWorkItem: DispatchWorkItem?
+    private var uiPersistWorkItem: DispatchWorkItem?
+    private var lastPersistedUI: WorkspaceUIState?
 
     init() {
         let window = NSWindow(
@@ -103,18 +110,41 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         let subChanged = subID != lastSubSessionID
         lastSubSessionID = subID
         currentRoot = rootURL
-        filePane.reload(root: rootURL)
         if workspaceChanged {
             lastWorkspaceID = workspace?.id
             editor.close()
-            if let workspace, let rootURL, let relative = workspace.lastOpenedRelativePath {
-                editor.open(
-                    url: rootURL.appendingPathComponent(relative), root: rootURL, focus: false,
-                )
+            let restoredUI = workspace?.ui ?? WorkspaceUIState()
+            stateStore.update {
+                $0.editor = EditorUIState()
+                $0.ui = restoredUI
+                $0.fileTree.root = rootURL
+                $0.fileTree.ignoredPaths = []
+                $0.git = GitUIState()
+                $0.terminals.branch = nil
             }
+            if let workspace, let rootURL, let relative = workspace.lastOpenedRelativePath {
+                let url = rootURL.appendingPathComponent(relative)
+                editor.open(
+                    url: url, root: rootURL, focus: false,
+                    position: (restoredUI.caretLocation, restoredUI.scrollY),
+                )
+                stateStore.update {
+                    $0.editor.url = url
+                    $0.fileTree.selectedPath = relative
+                }
+            }
+            refreshGitStatus()
+        } else {
+            stateStore.update { $0.fileTree.root = rootURL }
+        }
+
+        stateStore.update {
+            $0.terminals.mainSessionID = state.mainSession?.id
+            $0.terminals.sessions = state.subSessions
+            $0.terminals.selectedSubSessionID = workspace?.selectedSubSessionID
         }
         if workspaceChanged {
-            subPane.reloadBranch(root: rootURL)
+            refreshBranch()
         }
 
         if let view = state.mainView {
@@ -123,10 +153,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
             mainHost.detach()
         }
 
-        subPane.reload(
-            sessions: state.subSessions,
-            selectedID: state.selectedWorkspace?.selectedSubSessionID,
-        )
         if let view = state.subView {
             subPane.attach(view)
         } else {
@@ -136,7 +162,31 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         if workspaceChanged {
             mainHost.focus()
         } else if subChanged {
-            subPane.focusContent()
+            focus(.subTerminals)
+        }
+    }
+
+    private func focus(_ panel: PanelID) {
+        guard let target = panels.first(where: { $0.panelID == panel })?.focusTarget else {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.makeFirstResponder(target)
+        }
+    }
+
+    /// Fetches the branch for the status bar; the panel only renders the snapshot.
+    private func refreshBranch() {
+        branchGeneration += 1
+        let generation = branchGeneration
+        guard let root = currentRoot else {
+            stateStore.update { $0.terminals.branch = nil }
+            return
+        }
+        Task { [weak self] in
+            let branch = await GitService(root: root).branch()
+            guard let self, self.branchGeneration == generation else { return }
+            stateStore.update { $0.terminals.branch = branch }
         }
     }
 
@@ -158,7 +208,50 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
 
         filePane.showContent(editor)
         filePane.onOpenFile = { [weak self] url in self?.openFile(url) }
-        editor.onDidSave = { [weak self] in self?.filePane.refreshGitStatus() }
+        filePane.onModeChange = { [weak self] mode in
+            guard let self else { return }
+            stateStore.update { $0.ui.activeList = mode }
+            if mode == .git { refreshGitStatus() }
+        }
+        filePane.gitPane.onRequestRefresh = { [weak self] in self?.refreshGitStatus() }
+        filePane.gitPane.onToggleSection = { [weak self] kind in
+            self?.stateStore.update { snapshot in
+                if snapshot.git.collapsed.contains(kind) {
+                    snapshot.git.collapsed.remove(kind)
+                } else {
+                    snapshot.git.collapsed.insert(kind)
+                }
+            }
+        }
+        filePane.gitPane.onOpenDiff = { [weak self] status in
+            self?.stateStore.update { $0.git.selectedPath = status.path }
+            self?.filePane.showDiff(status)
+        }
+        filePane.onExpandedPathsChange = { [weak self] paths in
+            self?.stateStore.update { $0.ui.expandedPaths = paths }
+        }
+        filePane.onFileSystemChange = { [weak self] root in self?.refreshGitStatus(for: root) }
+        editor.onDidSave = { [weak self] in self?.refreshGitStatus() }
+        editor.onDirtyChange = { [weak self] dirty in
+            self?.stateStore.update { $0.editor.isDirty = dirty }
+        }
+        editor.onExternalChange = { [weak self] change in
+            self?.stateStore.update { $0.editor.externalChange = change }
+        }
+        editor.onPreviewModeChange = { [weak self] mode in
+            self?.stateStore.update { $0.ui.previewMode = mode }
+        }
+        editor.onPositionChange = { [weak self] caret, scrollY in
+            self?.stateStore.update { snapshot in
+                snapshot.ui.caretLocation = caret
+                snapshot.ui.scrollY = scrollY
+            }
+        }
+        GitStatusProvider.shared.onUpdate = { [weak self] root, result in
+            guard let self, root.standardizedFileURL == self.currentRoot?.standardizedFileURL
+            else { return }
+            self.stateStore.update { $0.fileTree.ignoredPaths = result.ignoredPaths }
+        }
 
         sidebar.onSelect = { [weak self] id in self?.onSelectWorkspace?(id) }
         sidebar.onCreate = { [weak self] in self?.presentNewWorkspace() }
@@ -168,6 +261,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         subPane.onAdd = { [weak self] in self?.onAddSubSession?() }
         subPane.onSelect = { [weak self] id in self?.onSelectSubSession?(id) }
         subPane.onClose = { [weak self] id in self?.onCloseSubSession?(id) }
+
+        panels = [mainHost, subPane, filePane, filePane.gitPane, editor]
+        stateToken = stateStore.observe { [weak self] snapshot in
+            guard let self else { return }
+            for panel in self.panels { panel.render(snapshot) }
+            scheduleUIPersist(snapshot.ui)
+        }
 
         rootSplit.addSubview(sidebar)
         rootSplit.addSubview(mainHost)
@@ -188,7 +288,35 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         guard let root = currentRoot else { return }
         guard editor.confirmClose() else { return }
         editor.open(url: url, root: root)
-        onFileOpened?(relativePath(for: url))
+        let relative = relativePath(for: url)
+        stateStore.update {
+            $0.fileTree.selectedPath = relative
+            $0.editor.url = url
+        }
+        onFileOpened?(relative)
+    }
+
+    /// Re-queries git status after a save, a tab switch or a file-system change burst.
+    private func refreshGitStatus(for root: URL? = nil) {
+        guard let root = root ?? currentRoot else {
+            stateStore.update {
+                $0.git = GitUIState()
+                $0.fileTree.ignoredPaths = []
+            }
+            return
+        }
+        GitStatusProvider.shared.invalidate(root: root)
+        Task { [weak self] in
+            let result = await GitStatusProvider.shared.result(for: root)
+            guard let self, root.standardizedFileURL == self.currentRoot?.standardizedFileURL
+            else { return }
+            stateStore.update { snapshot in
+                snapshot.git.root = root
+                snapshot.git.isRepository = result.isRepository
+                snapshot.git.files = result.files
+                snapshot.fileTree.ignoredPaths = result.ignoredPaths
+            }
+        }
     }
 
     private func relativePath(for url: URL) -> String? {
@@ -221,7 +349,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
                 switch alert.runModal() {
                 case .alertFirstButtonReturn:
                     editor.restore(draft, root: currentRoot)
-                    onFileOpened?(relativePath(for: draft.fileURL))
+                    let relative = relativePath(for: draft.fileURL)
+                    stateStore.update {
+                        $0.editor.url = draft.fileURL
+                        $0.fileTree.selectedPath = relative
+                    }
+                    onFileOpened?(relative)
                     pending = false
                     return
                 case .alertSecondButtonReturn:
@@ -315,6 +448,30 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         return layout.clamped()
     }
 
+    /// Persists the UI state after a short quiet period; focus loss flushes it.
+    private func scheduleUIPersist(_ ui: WorkspaceUIState) {
+        guard ui != lastPersistedUI else { return }
+        lastPersistedUI = ui
+        uiPersistWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.uiPersistWorkItem = nil
+            self?.onUIStateChanged?(ui)
+        }
+        uiPersistWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    private func flushUIPersist() {
+        uiPersistWorkItem?.cancel()
+        uiPersistWorkItem = nil
+        onUIStateChanged?(stateStore.snapshot.ui)
+    }
+
+    /// Called before switching workspaces or quitting so the pending debounce is not lost.
+    func persistUIStateNow() {
+        flushUIPersist()
+    }
+
     private func scheduleLayoutPersist() {
         layoutWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
@@ -371,6 +528,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         debugLog(
             "[Workspace] resigned key visible=\(window?.isVisible == true) appHidden=\(NSApp.isHidden) active=\(NSApp.isActive) newKey=\(newKey)",
         )
+        flushUIPersist()
         if window?.isMiniaturized != true {
             scheduleRestoreCheck(after: 0.4)
         }
@@ -380,7 +538,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate,
         let responder = window?.firstResponder.map { "\(type(of: $0))" } ?? "nil"
         debugLog("[Workspace] became key responder=\(responder)")
         editor.checkExternalChange()
-        subPane.reloadBranch(root: currentRoot)
+        refreshBranch()
     }
 
     @objc private func didBecomeActive() {

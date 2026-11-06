@@ -40,8 +40,28 @@ final class WorkspaceStore {
     }
 
     func save(_ document: WorkspaceDocument) throws {
+        backUpLegacyVersionIfNeeded()
         let data = try WorkspaceJSON.encode(document.normalized())
         try data.write(to: fileURL, options: .atomic)
+    }
+
+    private var didCheckLegacyBackup = false
+
+    /// Keeps the pre-v2 file once per launch, so a downgrade can still read the old layout.
+    private func backUpLegacyVersionIfNeeded() {
+        guard !didCheckLegacyBackup else { return }
+        didCheckLegacyBackup = true
+        guard let existing = try? Data(contentsOf: fileURL),
+            let version = try? WorkspaceJSON.decode(existing).version,
+            version < WorkspaceDocument.currentVersion
+        else { return }
+        let backup = fileURL.appendingPathExtension("bak")
+        guard !fileManager.fileExists(atPath: backup.path) else { return }
+        do {
+            try fileManager.copyItem(at: fileURL, to: backup)
+        } catch {
+            debugLog("[Workspace] legacy backup failed: \(error)")
+        }
     }
 
     /// Copies the legacy session file once, before the first workspace document exists.
