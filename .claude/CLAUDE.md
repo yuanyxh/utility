@@ -143,8 +143,15 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 环境与驱动方式：`.agent/environment.md`（含可脚本化入口与已知缺口）
 - 领域：`.agent/domains/macos-desktop-app.md`、`.agent/domains/terminal-integration.md`
 - 规则（由技能读取）：`.agent/rules/{testing,engineering,design,vcs,ui,observability,documentation}.md`
-- 技能：`.claude/skills/{build,hunt,review,learn,upgrade}/SKILL.md`
+- 技能：`.claude/skills/{build,hunt,review,learn,upgrade,steward,sandbox}/SKILL.md`
 - 知识索引：`.agent/knowledge/README.md`
+- 体检与隔离：`.agent/agent-health.md`、`.agent/sandbox.md`；钩子 `.claude/hooks/agent-maintenance.sh`（SessionStart）
+
+## 维护约束
+- 修复、发布、重构或用户纠正后运行 `learn`，无新事实不记录
+- 体检报告过期或增删 agent 资产前运行 `steward`，不触碰业务代码
+- 集成与端到端验证前用 `sandbox` 建一次性环境，禁用生产凭据与数据
+- 记忆、规则与用户当次修正冲突时停止确认，旧条目标记 superseded
 - 证据分级（TST-07）：L1 存在性（构建/符号/路径可达）、L2 行为（脚本或日志断言）、L3 端到端（真实交互/截图）。汇报必须标注级别，未达 L3 时列出待验项
 
 ## 未来规划

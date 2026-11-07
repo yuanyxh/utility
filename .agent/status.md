@@ -106,3 +106,10 @@
 - 验证：`swift build` 通过；`run-tests.sh` 6/6；`archive-check --roundtrip` 覆盖嵌套路径平移与伪造 manifest 拒绝；`setup-check` 六项通过；改动文件 `swift-format lint --strict` 0 告警。
 - 待验：设置导出、向导导入、真实依赖安装与 L3 手测。
 - 编译告警清零：`AppConfig` 标为 `@unchecked Sendable`（纯值类型快照），`SetupModel.loadConfig` / `ExportModel.estimate`、`size` 标 `nonisolated`，导出闭包统一 `[weak self]` 所有权；并发类告警 0。
+
+## 基座升级（2026-11-08）
+
+- seed_version 1.4.0 → 1.5.0：新增 `steward`/`sandbox` 技能、`.agent/agent-health.md` 基线、`.agent/sandbox.md`、`.agent/.maintenance-state`、维护钩子与 SessionStart 注册；profile 补 `maintenance_*` 与 `isolation_*`。
+- `verify-instantiation.sh`：0 warnings；2 errors 为既有校验器限制（`.githooks/pre-commit` 通过 `scripts/lint-staged-swift.py` 执行格式检查，校验器只匹配字面命令），未改钩子。
+- 未执行：首次 `steward` 体检；`sandbox` 尚未实际创建环境。
+- `CommandRunner` 已删除并统一到 `ProcessRunner`；上文迁移记录中的同类描述仅作历史，以本条为准。
