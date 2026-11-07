@@ -92,6 +92,19 @@ public final class AppDatabase {
             )
         }
 
+        migrator.registerMigration("v4") { db in
+            try db.execute(
+                sql: """
+                        ALTER TABLE rss_item
+                        ADD COLUMN date_known BOOLEAN NOT NULL DEFAULT 1
+                    """,
+            )
+            try db.execute(
+                sql: "UPDATE rss_item SET date_known = 0 WHERE pub_date <= ?",
+                arguments: [RSSItem.unknownDate],
+            )
+        }
+
         return migrator
     }
 }

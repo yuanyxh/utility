@@ -93,7 +93,7 @@ public final class RSSManager {
     // MARK: - Query
 
     /// Unread items, optionally limited by publication window (0 = no limit).
-    /// Rows whose pub_date failed to parse carry `RSSItem.unknownDate` and bypass the window.
+    /// Rows whose date failed to parse have `dateKnown = false` and bypass the window.
     public func unread(maxAgeDays: Int = 0) throws -> [RSSItem] {
         let cutoff = maxAgeDays > 0
             ? Calendar.current.date(byAdding: .day, value: -maxAgeDays, to: Date())
@@ -102,8 +102,8 @@ public final class RSSManager {
             var request = RSSItem.filter(Column("is_read") == false)
             if let cutoff {
                 request = request.filter(
-                    sql: "pub_date >= ? OR pub_date <= ?",
-                    arguments: [cutoff, RSSItem.unknownDate],
+                    sql: "pub_date >= ? OR date_known = ?",
+                    arguments: [cutoff, false],
                 )
             }
             return try request.order(Column("pub_date").desc).fetchAll(db)

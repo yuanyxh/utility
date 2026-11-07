@@ -12,10 +12,12 @@
 - 同一天重跑按去重键**追加**到当天归档（`mergeWithExisting`）：文章用 URL 归一化，过滤项用 URL（无 URL 时用标题）；空结果不会清空已有日报与过滤记录
 - 单篇抓取/总结失败降级为「已过滤条目」，不中断整次日报
 
-## 解析与去重（2026-11-03）
+## 解析与去重（2026-11-07）
 
-- 日期解析失败时 `parseDate` 返回 `nil`，记录 `feed` 与原始串，落库统一使用 `RSSItem.unknownDate` 哨兵
-- `unread(maxAgeDays:)` 的发布时间窗必须把哨兵行算作「未知日期」放行：`pub_date >= cutoff OR pub_date <= RSSItem.unknownDate`
+- 日期解析失败时 `parseDate` 返回 `nil`，记录 `feed` 与原始串，落库使用 `RSSItem.unknownDate` 哨兵并记 `dateKnown = false`
+- 解析成功但早于或等于 1970 的占位日期（如 `0001-01-01`）同样按未知处理，避免新旧数据判定不一致
+- `unread(maxAgeDays:)` 的发布时间窗把未知日期放行：`pub_date >= cutoff OR date_known = 0`
 - 入库去重按 `id` 或非空 `link`：同一条目经不同 feed（如 HN 与原文源）以不同 guid 出现时只保留首次入库行
 - 迁移 v3 一次性清理历史重复链接：同一 link 保留未读行，全部已读时保留最早行
-- 历史 430 条未知日期条目无法回溯真实日期，仅以哨兵存储
+- 迁移 v4 新增 `date_known` 列，并一次性把既有 `pub_date <= 1970-01-01` 的行标记为 0
+- 历史未知日期条目无法回溯真实日期，仅以哨兵存储；判定统一看 `date_known = 0`

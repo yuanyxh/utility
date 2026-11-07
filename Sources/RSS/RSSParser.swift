@@ -74,6 +74,8 @@ public final class RSSParser: NSObject, XMLParserDelegate {
         if date == nil {
             debugLog("[RSS] unparseable pubDate feed=\(feedName) raw=\(rawDate.isEmpty ? "<empty>" : rawDate)")
         }
+        // Placeholder dates such as 0001-01-01 parse successfully but are not real.
+        let knownDate = date.flatMap { $0 > RSSItem.unknownDate ? $0 : nil }
         let guid = currentGUID.isEmpty ? currentLink : currentGUID
 
         items.append(
@@ -82,7 +84,8 @@ public final class RSSParser: NSObject, XMLParserDelegate {
                 title: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                 link: currentLink.trimmingCharacters(in: .whitespacesAndNewlines),
                 itemDescription: currentDesc.trimmingCharacters(in: .whitespacesAndNewlines),
-                pubDate: date ?? RSSItem.unknownDate,
+                pubDate: knownDate ?? RSSItem.unknownDate,
+                dateKnown: knownDate != nil,
                 feedName: feedName,
             ),
         )
