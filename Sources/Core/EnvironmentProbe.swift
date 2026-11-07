@@ -29,7 +29,7 @@ enum EnvironmentProbe {
     }
 
     static func version(of executable: String, arguments: [String] = ["--version"]) -> String? {
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             [executable] + arguments,
             timeout: 5,
             environment: probeEnvironment,
@@ -51,7 +51,7 @@ enum EnvironmentProbe {
     }
 
     static func xcodeCLTPath() -> String? {
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             ["/usr/bin/xcode-select", "-p"],
             timeout: 5,
             environment: probeEnvironment,
@@ -118,7 +118,7 @@ enum EnvironmentProbe {
     }
 
     private static func which(_ name: String) -> String? {
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             ["/usr/bin/which", name],
             timeout: 3,
             environment: probeEnvironment,

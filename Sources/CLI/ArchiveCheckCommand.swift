@@ -327,7 +327,7 @@ struct ArchiveCheckCommand: ParsableCommand {
             at: forgedRoot,
             withIntermediateDirectories: true,
         )
-        let extract = CommandRunner.run(
+        let extract = ProcessRunner.runSync(
             ["/usr/bin/tar", "-xf", archive.path, "-C", forgedRoot.path],
             timeout: 60,
         )
@@ -343,7 +343,7 @@ struct ArchiveCheckCommand: ParsableCommand {
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             .write(to: forgedManifest, options: .atomic)
         let forgedArchive = base.appendingPathComponent("forged.zip")
-        let forgedZip = CommandRunner.run(
+        let forgedZip = ProcessRunner.runSync(
             ["/usr/bin/ditto", "-c", "-k", "--norsrc", forgedRoot.path, forgedArchive.path],
             timeout: 60,
         )

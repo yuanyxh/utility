@@ -152,7 +152,7 @@ enum ConfigArchive {
         configDir: URL,
         log: @escaping (String) -> Void,
     ) throws -> ArchiveImportPlan {
-        let extract = CommandRunner.run(
+        let extract = ProcessRunner.runSync(
             ["/usr/bin/tar", "-xf", archive.path, "-C", staging.path],
             timeout: zipTimeout,
         )
@@ -633,7 +633,7 @@ enum ConfigArchive {
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.trashItem(at: destination, resultingItemURL: nil)
         }
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             ["/usr/bin/ditto", "-c", "-k", "--norsrc", staging.path, destination.path],
             timeout: zipTimeout,
         )

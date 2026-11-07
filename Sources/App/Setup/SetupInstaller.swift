@@ -50,7 +50,7 @@ enum SetupInstaller {
                 [.posixPermissions: 0o755],
                 ofItemAtPath: url.path,
             )
-            let result = CommandRunner.run(
+            let result = ProcessRunner.runSync(
                 ["/usr/bin/open", url.path],
                 timeout: 10,
                 environment: EnvironmentProbe.probeEnvironment,
@@ -125,7 +125,7 @@ enum SetupInstaller {
         log("[Setup] \(brew) install \(formula)")
         var environment = EnvironmentProbe.probeEnvironment
         environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             [brew, "install", formula],
             timeout: timeout,
             environment: environment,
@@ -144,7 +144,7 @@ enum SetupInstaller {
         python: String,
         config: AppConfig,
         log: @escaping (String) -> Void,
-    ) -> CommandResult {
+    ) -> ProcessResult {
         let cache = SetupProbe.embedderCacheDirectory(config: config)
         try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let model = SetupProbe.embedderModelName(config: config)
@@ -158,7 +158,7 @@ enum SetupInstaller {
         var environment = EnvironmentProbe.probeEnvironment
         environment["FASTEMBED_CACHE_PATH"] = cache.path
         environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        let result = CommandRunner.run(
+        let result = ProcessRunner.runSync(
             [python, "-c", code, model, cache.path],
             timeout: 1800,
             environment: environment,

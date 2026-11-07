@@ -230,8 +230,8 @@ enum GatewayInstaller {
         _ arguments: [String],
         timeout: TimeInterval,
         progress: @escaping (String) -> Void,
-    ) -> CommandResult {
-        let result = CommandRunner.run(
+    ) -> ProcessResult {
+        let result = ProcessRunner.runSync(
             arguments,
             timeout: timeout,
             environment: EnvironmentProbe.probeEnvironment,

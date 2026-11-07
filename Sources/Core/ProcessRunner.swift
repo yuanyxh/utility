@@ -6,6 +6,11 @@ struct ProcessResult {
     let stderr: String
     let truncated: Bool
     let timedOut: Bool
+
+    var ok: Bool { !timedOut && exitCode == 0 }
+
+    /// stdout followed by stderr; interleaving is not preserved.
+    var output: String { stdout + stderr }
 }
 
 enum ProcessError: Error {
@@ -16,12 +21,16 @@ enum ProcessError: Error {
 /// output. Output beyond the cap is drained and discarded so the child never
 /// blocks on a full pipe.
 enum ProcessRunner {
+    private static let defaultMaxBytes = 2 * 1024 * 1024
+
     static func run(
         executable: String,
         arguments: [String],
         workingDirectory: URL? = nil,
         timeout: TimeInterval,
-        maxBytes: Int = 2 * 1024 * 1024,
+        maxBytes: Int = defaultMaxBytes,
+        environment: [String: String]? = nil,
+        onOutput: ((String) -> Void)? = nil,
     ) async throws -> ProcessResult {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -32,6 +41,8 @@ enum ProcessRunner {
                         workingDirectory: workingDirectory,
                         timeout: timeout,
                         maxBytes: maxBytes,
+                        environment: environment,
+                        onOutput: onOutput,
                     )
                     continuation.resume(returning: result)
                 } catch {
@@ -41,17 +52,58 @@ enum ProcessRunner {
         }
     }
 
+    /// Blocking entry point for synchronous callers (probes, installers, CLI checks).
+    /// `arguments[0]` is the executable, matching the shape those call sites already use.
+    static func runSync(
+        _ arguments: [String],
+        timeout: TimeInterval,
+        environment: [String: String]? = nil,
+        onOutput: ((String) -> Void)? = nil,
+    ) -> ProcessResult {
+        guard let executable = arguments.first else {
+            return ProcessResult(
+                exitCode: -1,
+                stdout: "",
+                stderr: "empty command",
+                truncated: false,
+                timedOut: false,
+            )
+        }
+        do {
+            return try execute(
+                executable: executable,
+                arguments: Array(arguments.dropFirst()),
+                workingDirectory: nil,
+                timeout: timeout,
+                maxBytes: defaultMaxBytes,
+                environment: environment,
+                onOutput: onOutput,
+            )
+        } catch {
+            return ProcessResult(
+                exitCode: -1,
+                stdout: "",
+                stderr: "failed to launch \(executable): \(error.localizedDescription)",
+                truncated: false,
+                timedOut: false,
+            )
+        }
+    }
+
     private static func execute(
         executable: String,
         arguments: [String],
         workingDirectory: URL?,
         timeout: TimeInterval,
         maxBytes: Int,
+        environment: [String: String]?,
+        onOutput: ((String) -> Void)?,
     ) throws -> ProcessResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
+        if let environment { process.environment = environment }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -67,8 +119,21 @@ enum ProcessRunner {
         let stdoutBuffer = OutputBuffer(limit: maxBytes)
         let stderrBuffer = OutputBuffer(limit: maxBytes)
         let group = DispatchGroup()
-        drain(stdoutPipe.fileHandleForReading, into: stdoutBuffer, group: group)
-        drain(stderrPipe.fileHandleForReading, into: stderrBuffer, group: group)
+        let callbackQueue = DispatchQueue(label: "utility.process.output")
+        drain(
+            stdoutPipe.fileHandleForReading,
+            into: stdoutBuffer,
+            group: group,
+            callbackQueue: callbackQueue,
+            onOutput: onOutput,
+        )
+        drain(
+            stderrPipe.fileHandleForReading,
+            into: stderrBuffer,
+            group: group,
+            callbackQueue: callbackQueue,
+            onOutput: onOutput,
+        )
 
         var timedOut = false
         let deadline = Date().addingTimeInterval(timeout)
@@ -88,7 +153,9 @@ enum ProcessRunner {
             Thread.sleep(forTimeInterval: 0.05)
         }
         process.waitUntilExit()
-        group.wait()
+        // A grandchild can inherit the pipe and outlive the direct child, so EOF
+        // may never arrive. Bound the wait instead of blocking the caller forever.
+        _ = group.wait(timeout: .now() + 2)
 
         let (stdout, stdoutTruncated) = stdoutBuffer.snapshot()
         let (stderr, stderrTruncated) = stderrBuffer.snapshot()
@@ -102,7 +169,11 @@ enum ProcessRunner {
     }
 
     private static func drain(
-        _ handle: FileHandle, into buffer: OutputBuffer, group: DispatchGroup,
+        _ handle: FileHandle,
+        into buffer: OutputBuffer,
+        group: DispatchGroup,
+        callbackQueue: DispatchQueue,
+        onOutput: ((String) -> Void)?,
     ) {
         group.enter()
         DispatchQueue.global(qos: .utility).async {
@@ -110,6 +181,10 @@ enum ProcessRunner {
                 let chunk = handle.availableData
                 if chunk.isEmpty { break }
                 buffer.append(chunk)
+                if let onOutput {
+                    let text = String(decoding: chunk, as: UTF8.self)
+                    callbackQueue.async { onOutput(text) }
+                }
             }
             group.leave()
         }
