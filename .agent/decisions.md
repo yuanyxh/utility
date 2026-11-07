@@ -51,3 +51,19 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 **决策**：解析失败统一存 `RSSItem.unknownDate`（1970-01-01）并记录 feed/原始串；入库按 `id` 或非空 `link` 去重；迁移 v3 清理历史重复链接，保留未读行或最早行。
 
 **理由**：430 条非法日期（429 条 1970 + 1 条 0001）来自 epoch 回退；17 组重复链接是同文经不同 feed（HN 与原文源）以不同 guid 入库。日期不可回溯，只保留哨兵；跨源重复不应在日报中重复出现。
+
+## 2026-11-06 换机迁移归档范围与导入策略
+
+**决策**：导出包包含 `~/.config/utility` 核心数据与笔记整目录（知识卡、RSS 产出按目录去重）；SQLite 用 GRDB 在线备份；默认剥离所有 `apiKey`。导入默认恢复到原路径，路径缺失时由用户选新路径并改写 `mcp.knowledgeBasePath`、`knowledge.likedSaveDir`、`rss.daily.outputDir`；同名文件按角色选跳过或覆盖，覆盖前备份。
+
+**理由**：文件直拷会带走 WAL、venv 与密钥；外部目录是用户可见数据，不能只迁数据库。导入限首启、`ConfigManager.load()` 之前执行，避免运行中替换数据库。Homebrew 缺失时打开 Terminal 执行官方脚本，因为 sudo 无 TTY 无法在 app 内完成。
+
+**验证**：`archive-check --roundtrip` 覆盖导出、校验、导入、外部路径改写、密钥剥离、schema 拒绝与范围过滤；`run-tests.sh` 6/6 通过。
+
+## 2026-11-07 迁移审查修复
+
+**决策**：`external[].archivePath` 必须严格等于 `external/<role>`，`originalPath` 必须绝对；notes 重映射时按相对路径平移其内的 liked/RSS 显式路径；manifest 增加 `gatewayWheel`，与当前 wheel 不一致即移走安装戳；外部目标在替换核心文件前预检可写；校验失败或重选压缩包立即清理 staging。
+
+**理由**：嵌套目录去重后原实现只改 notes 键，导入后配置仍指向旧路径；manifest 外部路径未校验可越界读取；安装失败信息被 `startCheck()` 清空；跨版本导入会保留旧 wheel。
+
+**验证**：`archive-check --roundtrip` 新增嵌套路径与伪造 manifest 断言，`run-tests.sh` 6/6 通过。

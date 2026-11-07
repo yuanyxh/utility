@@ -42,6 +42,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | 多终端 tmux / SwiftTerm | `.claude/docs/architecture/terminal.md` |
 | 终端工作区 / 文件树 / 编辑器 / git / 预览 | `.claude/docs/architecture/workspace.md` |
 | 配置加载 Yams / 键名解码 | `.claude/docs/architecture/config.md` |
+| 换机迁移 / 数据归档 / 首启引导 | `.claude/docs/architecture/portability.md` |
 | 构建、验证与 scripts 目录 | `.claude/docs/architecture/build.md` |
 | RSS 采集 / 解析 / 日报 | `.claude/docs/architecture/rss.md` |
 | 检索性能约定 | `.claude/docs/architecture/retrieval.md` |

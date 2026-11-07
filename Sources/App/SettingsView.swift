@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @State private var showExportSheet = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -136,6 +137,16 @@ struct SettingsView: View {
                         format: .number,
                     )
                 }
+
+                Section(L10n.Settings.groupData) {
+                    HStack(spacing: 12) {
+                        Text(L10n.Export.sectionHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(L10n.Export.openButton) { showExportSheet = true }
+                    }
+                }
             }
             .formStyle(.grouped)
 
@@ -163,6 +174,9 @@ struct SettingsView: View {
                 .padding(.bottom, 8)
         }
         .frame(minWidth: 620, minHeight: 460)
+        .sheet(isPresented: $showExportSheet) {
+            ExportSheet(model: ExportModel())
+        }
     }
 
     /// Keeps a hand-edited value selectable even when it is outside the offered list.

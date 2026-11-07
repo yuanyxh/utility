@@ -5,19 +5,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "=== 1/5 Examples parity ==="
+echo "=== 1/6 Examples parity ==="
 python3 scripts/check-examples-parity.py
 
 echo ""
-echo "=== 2/5 i18n catalog ==="
+echo "=== 2/6 i18n catalog ==="
 python3 scripts/gen-l10n.py --check
 
 echo ""
-echo "=== 3/5 i18n contract ==="
+echo "=== 3/6 i18n contract ==="
 python3 scripts/check-l10n-contract.py
 
 echo ""
-echo "=== 4/5 入口契约 ==="
+echo "=== 4/6 入口契约 ==="
 ENTRIES=""
 if [ -f Sources/Gateway/entries.json ]; then
     ENTRIES="Sources/Gateway/entries.json"
@@ -43,7 +43,7 @@ else
 fi
 
 echo ""
-echo "=== 5/5 workspace-check ==="
+echo "=== 5/6 workspace-check ==="
 BIN=".build/debug/utility"
 if [ ! -x "$BIN" ]; then
     swift build >/dev/null
@@ -69,6 +69,16 @@ UI_OUT="$("$BIN" workspace-check --ui "$TMP/workspaces.json")"
 echo "$UI_OUT" | grep -qx "version: 2"
 echo "$UI_OUT" | grep -q "ui: list=files expanded=0 caret=0 scroll=0"
 echo "[workspace-check] ok"
+
+echo ""
+echo "=== 6/6 archive-check ==="
+ARCHIVE_OUT="$("$BIN" archive-check --roundtrip)"
+echo "$ARCHIVE_OUT" | grep -qx "roundtrip: ok"
+echo "[archive-check] ok"
+SETUP_OUT="$("$BIN" setup-check)"
+echo "$SETUP_OUT" | grep -q "^python:"
+echo "$SETUP_OUT" | grep -q "^gateway:"
+echo "[setup-check] ok"
 
 echo ""
 echo "=== All checks passed ==="

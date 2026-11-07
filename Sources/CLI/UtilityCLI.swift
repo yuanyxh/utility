@@ -15,6 +15,8 @@ struct UtilityCLI: ParsableCommand {
             WebSearchCommand.self,
             NoticeCommand.self,
             WorkspaceCheckCommand.self,
+            ArchiveCheckCommand.self,
+            SetupCheckCommand.self,
         ],
         defaultSubcommand: nil,
     )

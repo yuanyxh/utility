@@ -236,59 +236,27 @@ final class MCPProcessManager {
         if pythonChecked { return pythonAvailable }
         pythonChecked = true
 
-        // 1. Check if venv exists
+        let venv = PythonScriptRunner.venvDir
         let venvPython = PythonScriptRunner.pythonVenvPath
         guard FileManager.default.fileExists(atPath: venvPython) else {
-            // 2. Check if Homebrew python3.12 is available
-            let brewTask = Process()
-            brewTask.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            // Probe for any python3 rather than a pinned minor version: looking
-            // for python3.12 when the user installed 3.13 would falsely report
-            // "not installed"
-            brewTask.arguments = ["bash", "-c", "command -v python3"]
-            let brewPipe = Pipe()
-            brewTask.standardOutput = brewPipe
-            brewTask.standardError = FileHandle.nullDevice
-            var brewPython: String? = nil
-            if (try? brewTask.run()) != nil {
-                brewTask.waitUntilExit()
-                if brewTask.terminationStatus == 0 {
-                    let data = brewPipe.fileHandleForReading.readDataToEndOfFile()
-                    brewPython = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-
-            if brewPython == nil {
-                let msg = L10n.Notify.mcpEnvPythonMissing
-                log("[MCP] ❌ \(msg)")
-                notify(L10n.Notify.mcpEnvCheckTitle, msg)
-            } else {
-                // Installation is normally automatic (GatewayInstaller); this is the manual fallback
-                let steps = """
-                Create the virtual environment:
-                  python3 -m venv ~/.config/utility/mcp-venv
-                  ~/.config/utility/mcp-venv/bin/pip install '<Gateway/*.whl>[proxy,memory,server]'
-                """
-                log("[MCP] ❌ Virtual environment not ready\n\(steps)")
-                notify(L10n.Notify.mcpEnvCheckTitle, L10n.Notify.mcpEnvVenvMissing)
-            }
+            let msg =
+                EnvironmentProbe.resolvePython(atLeast: (3, 12)) == nil
+                ? L10n.Notify.mcpEnvPythonMissing
+                : L10n.Notify.mcpEnvVenvMissing
+            log("[MCP] ❌ \(msg)")
+            notify(L10n.Notify.mcpEnvCheckTitle, msg)
             pythonAvailable = false
             return false
         }
-
-        // 3. venv exists, verify it works
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: venvPython)
-        task.arguments = ["--version"]
-        task.standardOutput = Pipe()
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            pythonAvailable = task.terminationStatus == 0
-        } catch {
+        if EnvironmentProbe.venvNeedsRebuild(at: venv) {
+            let version = EnvironmentProbe.venvVersion(at: venv) ?? "unknown"
+            let msg = L10n.Notify.mcpEnvVenvMissing
+            log("[MCP] ❌ \(msg) (venv Python \(version) < 3.12)")
+            notify(L10n.Notify.mcpEnvCheckTitle, msg)
             pythonAvailable = false
+            return false
         }
+        pythonAvailable = EnvironmentProbe.version(of: venvPython) != nil
         if !pythonAvailable {
             log("[MCP] ❌ Virtual environment Python unusable: \(venvPython)")
         }

@@ -26,6 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             CursorTrace.installIfRequested()
         #endif
 
+        if !FileManager.default.fileExists(atPath: AppPaths.configFile.path) {
+            MainActor.assumeIsolated {
+                NSApp.setActivationPolicy(.regular)
+                SetupWindowController.shared.runFirstLaunch()
+            }
+        }
+
         do { try ConfigManager.shared.load() } catch {
             EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
                 title: L10n.Notify.configLoadFailed, body: error.localizedDescription,

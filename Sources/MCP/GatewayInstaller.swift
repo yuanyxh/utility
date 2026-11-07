@@ -15,6 +15,7 @@ enum GatewayInstaller {
     private static let extrasImports = ["aiohttp", "uvicorn", "mcp", "mem0", "fastembed", "qdrant_client"]
     private static let stampName = ".agent-gateway-wheel"
     private static let brokenMarker = ".agent-gateway-broken"
+    private static let minimumPython = (3, 12)
 
     private enum Timeout {
         static let venv: TimeInterval = 120
@@ -26,7 +27,7 @@ enum GatewayInstaller {
     /// Ensure the venv holds the wheel; `completion` runs on the main queue.
     static func ensureInstalled(completion: @escaping () -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            install()
+            install(progress: { debugLog($0) })
             DispatchQueue.main.async(execute: completion)
         }
     }
@@ -34,6 +35,17 @@ enum GatewayInstaller {
     /// True when a previous attempt failed and nothing has fixed it since.
     static var isKnownBroken: Bool {
         FileManager.default.fileExists(atPath: "\(PythonScriptRunner.venvDir)/\(brokenMarker)")
+    }
+
+    static var bundledWheelName: String? {
+        GatewayResources.bundledWheel().map { ($0 as NSString).lastPathComponent }
+    }
+
+    /// Forces the next install pass to verify the wheel again (used after importing data).
+    static func invalidateStamp() {
+        let url = URL(fileURLWithPath: "\(PythonScriptRunner.venvDir)/\(stampName)")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
     }
 
     /// `agent_gateway` is importable from the venv (a bare venv is not enough: the install
@@ -49,23 +61,75 @@ enum GatewayInstaller {
         }
     }
 
-    private static func install() {
+    @discardableResult
+    static func install(progress: @escaping (String) -> Void) -> Bool {
         guard let wheel = GatewayResources.bundledWheel() else {
-            debugLog("[Gateway] No bundled wheel, falling back to PYTHONPATH sources")
-            return
+            progress("[Gateway] No bundled wheel, falling back to PYTHONPATH sources")
+            return false
         }
         let venv = PythonScriptRunner.venvDir
-        let python = PythonScriptRunner.pythonVenvPath
         let stamp = "\(venv)/\(stampName)"
         let broken = "\(venv)/\(brokenMarker)"
         let wheelName = (wheel as NSString).lastPathComponent
 
-        if !FileManager.default.fileExists(atPath: python),
-           !run(["/usr/bin/env", "python3", "-m", "venv", venv], timeout: Timeout.venv).ok
+        if FileManager.default.fileExists(atPath: venv),
+            EnvironmentProbe.venvNeedsRebuild(at: venv, minimum: minimumPython)
         {
-            debugLog("[Gateway] ❌ venv creation failed: \(venv)")
-            markBroken(broken)
-            return
+            let version = EnvironmentProbe.venvVersion(at: venv) ?? "unknown"
+            progress("[Gateway] venv Python \(version) is below 3.12; rebuilding")
+            do {
+                try FileManager.default.trashItem(
+                    at: URL(fileURLWithPath: venv),
+                    resultingItemURL: nil,
+                )
+            } catch {
+                progress("[Gateway] ❌ cannot move the stale venv to the Trash")
+                markBroken(broken)
+                return false
+            }
+        }
+
+        if FileManager.default.fileExists(atPath: venv),
+            !FileManager.default.fileExists(atPath: PythonScriptRunner.pythonVenvPath)
+        {
+            progress("[Gateway] venv has no interpreter; rebuilding")
+            do {
+                try FileManager.default.trashItem(
+                    at: URL(fileURLWithPath: venv),
+                    resultingItemURL: nil,
+                )
+            } catch {
+                progress("[Gateway] ❌ cannot move the broken venv to the Trash")
+                markBroken(broken)
+                return false
+            }
+        }
+
+        var python = PythonScriptRunner.pythonVenvPath
+        if !FileManager.default.fileExists(atPath: python) {
+            guard let resolution = EnvironmentProbe.resolvePython(atLeast: minimumPython) else {
+                let hint = "brew install python@3.12"
+                progress("[Gateway] ❌ Python 3.12+ not found. Install it with: \(hint)")
+                markBroken(broken)
+                return false
+            }
+            progress("[Gateway] interpreter: \(resolution.path) (\(resolution.version))")
+            let created = run(
+                [resolution.path, "-m", "venv", venv],
+                timeout: Timeout.venv,
+                progress: progress,
+            )
+            guard created.ok else {
+                progress("[Gateway] ❌ venv creation failed: \(venv)")
+                markBroken(broken)
+                return false
+            }
+            python = "\(venv)/bin/python3"
+            if !FileManager.default.fileExists(atPath: python) {
+                progress("[Gateway] ❌ venv interpreter missing after creation: \(python)")
+                markBroken(broken)
+                return false
+            }
         }
 
         // Size and mtime too: a rebuild reuses the version string, and a name-only stamp
@@ -75,59 +139,70 @@ enum GatewayInstaller {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if installed == stampValue, isInstalled {
             try? FileManager.default.removeItem(atPath: broken)
-            debugLog("[Gateway] \(wheelName) already installed")
-            return
+            progress("[Gateway] \(wheelName) already installed")
+            return true
         }
 
-        debugLog("[Gateway] Installing \(wheelName)…")
-        guard run(
+        progress("[Gateway] Installing \(wheelName)…")
+        let wheelResult = run(
             [python, "-m", "pip", "install", "--quiet", "--no-deps", "--force-reinstall", wheel],
             timeout: Timeout.wheel,
-        ).ok else {
-            debugLog("[Gateway] ❌ wheel install failed")
+            progress: progress,
+        )
+        guard wheelResult.ok else {
+            progress("[Gateway] ❌ wheel install failed")
             markBroken(broken)
-            return
+            return false
         }
 
-        guard installDependencies(python: python, wheel: wheel) else {
+        guard installDependencies(python: python, wheel: wheel, progress: progress) else {
             markBroken(broken)
-            return
+            return false
         }
-        guard run(
+        let imports = run(
             [python, "-c", "import " + extrasImports.joined(separator: ", ")],
             timeout: Timeout.imports,
-        ).ok else {
-            debugLog("[Gateway] ❌ extras installed but not importable")
+            progress: progress,
+        )
+        guard imports.ok else {
+            progress("[Gateway] ❌ extras installed but not importable")
             markBroken(broken)
-            return
+            return false
         }
 
         try? stampValue.write(toFile: stamp, atomically: true, encoding: .utf8)
         try? FileManager.default.removeItem(atPath: broken)
-        debugLog("[Gateway] Installed \(wheelName)")
+        progress("[Gateway] Installed \(wheelName)")
+        return true
     }
 
     /// Dependencies from the wheel extras: a packaging-time constraints snapshot first,
     /// plain resolution as fallback so a stale pin never blocks the app.
-    private static func installDependencies(python: String, wheel: String) -> Bool {
+    private static func installDependencies(
+        python: String,
+        wheel: String,
+        progress: @escaping (String) -> Void,
+    ) -> Bool {
         let requirement = "\(wheel)[\(extras)]"
         var output = ""
         if let constraints = GatewayResources.constraintsFile() {
             let constrained = run(
                 [python, "-m", "pip", "install", "--quiet", "-c", constraints, requirement],
                 timeout: Timeout.dependencies,
+                progress: progress,
             )
             if constrained.ok {
                 output = constrained.output
             } else {
-                debugLog("[Gateway] ⚠️ Constrained install failed, retrying without constraints")
+                progress("[Gateway] ⚠️ Constrained install failed, retrying without constraints")
                 let retry = run(
                     [python, "-m", "pip", "install", "--quiet", requirement],
                     timeout: Timeout.dependencies,
+                    progress: progress,
                 )
                 output = constrained.output + retry.output
                 if !retry.ok {
-                    debugLog("[Gateway] ⚠️ Dependencies not installed (offline?) — gateway imports may fail")
+                    progress("[Gateway] ⚠️ Dependencies not installed (offline?) — gateway imports may fail")
                     return false
                 }
             }
@@ -135,19 +210,39 @@ enum GatewayInstaller {
             let result = run(
                 [python, "-m", "pip", "install", "--quiet", requirement],
                 timeout: Timeout.dependencies,
+                progress: progress,
             )
             output = result.output
             if !result.ok {
-                debugLog("[Gateway] ⚠️ Dependencies not installed (offline?) — gateway imports may fail")
+                progress("[Gateway] ⚠️ Dependencies not installed (offline?) — gateway imports may fail")
                 return false
             }
         }
         // pip reports an unknown extra as a warning and exits 0: only the text reveals it
         if output.lowercased().contains("does not provide the extra") {
-            debugLog("[Gateway] ❌ pip skipped an unknown extra (the extras list drifted)")
+            progress("[Gateway] ❌ pip skipped an unknown extra (the extras list drifted)")
             return false
         }
         return true
+    }
+
+    private static func run(
+        _ arguments: [String],
+        timeout: TimeInterval,
+        progress: @escaping (String) -> Void,
+    ) -> CommandResult {
+        let result = CommandRunner.run(
+            arguments,
+            timeout: timeout,
+            environment: EnvironmentProbe.probeEnvironment,
+        )
+        guard !result.ok else { return result }
+        let reason = result.timedOut ? "timed out after \(Int(timeout))s" : "exited \(result.exitCode)"
+        progress(
+            "[Gateway] ❌ \(arguments.joined(separator: " ")) \(reason)\n"
+                + String(result.output.suffix(800)),
+        )
+        return result
     }
 
     private static func markBroken(_ path: String) {
@@ -160,60 +255,5 @@ enum GatewayInstaller {
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
         let mtime = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         return "\((path as NSString).lastPathComponent)-\(size)-\(Int(mtime))"
-    }
-
-    /// Run a command to completion; non-zero exit or timeout logs the tail of its output.
-    private static func run(_ arguments: [String], timeout: TimeInterval) -> (ok: Bool, output: String) {
-        guard let executable = arguments.first else { return (false, "") }
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: executable)
-        task.arguments = Array(arguments.dropFirst())
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        // Launchd-started GUI apps miss the Homebrew prefix, and `python3` is looked up through PATH
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        task.environment = env
-
-        var output = Data()
-        let lock = NSLock()
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            lock.lock()
-            output.append(chunk)
-            lock.unlock()
-        }
-        guard (try? task.run()) != nil else {
-            return (false, "failed to launch \(executable)")
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while task.isRunning, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        let timedOut = task.isRunning
-        if timedOut {
-            kill(task.processIdentifier, SIGKILL)
-            task.waitUntilExit()
-        }
-        pipe.fileHandleForReading.readabilityHandler = nil
-        lock.lock()
-        output.append(pipe.fileHandleForReading.readDataToEndOfFile())
-        lock.unlock()
-
-        let text = String(data: output, encoding: .utf8) ?? ""
-        guard !timedOut, task.terminationStatus == 0 else {
-            debugLog(
-                "[Gateway] \(arguments.joined(separator: " ")) "
-                    + (timedOut ? "timed out after \(Int(timeout))s" : "exited \(task.terminationStatus)")
-                    + "\n" + String(text.suffix(800)),
-            )
-            return (false, text)
-        }
-        return (true, text)
     }
 }

@@ -39,6 +39,20 @@ The AI layer also needs Python 3.12. Its runtime comes from the separate
 
 ---
 
+## Migrating to another Mac
+
+On the old Mac: Settings (⌘,) → Data & Migration → Export User Data…, pick the categories and save the ZIP. The archive contains preferences, memory, knowledge, clipboard and reminders, terminal workspaces, the notes directory, knowledge cards and RSS output. API keys are stripped unless you enable “Include API keys”.
+
+On the new Mac: the first launch opens the setup wizard. Choose the ZIP, keep each external directory at its original path or choose a new one, and pick skip or overwrite for existing files. The wizard then checks Homebrew, Xcode Command Line Tools, Python 3.12+, tmux, the Python dependencies and the embedding model; missing items are installed after confirmation. Homebrew opens Terminal because its installer needs an administrator password.
+
+Import backs up the current config to `~/.config/utility.backup-<timestamp>/`. To roll back:
+
+```bash
+ditto ~/.config/utility.backup-<timestamp>/ ~/.config/utility/
+```
+
+---
+
 ## Paths
 
 | Path | Default | Content | Setting |

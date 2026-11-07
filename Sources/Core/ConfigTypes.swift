@@ -24,7 +24,8 @@ enum ConfigDefaults {
 
 // MARK: - Root Config
 
-public struct AppConfig: Codable {
+/// Value-only snapshot: all stored properties are value types, safe to copy across queues.
+public struct AppConfig: Codable, @unchecked Sendable {
     var general: GeneralConfig = .init()
     var ai: AIConfig = .init()
     var clipboard: ClipboardConfig = .init()
