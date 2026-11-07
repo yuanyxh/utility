@@ -38,8 +38,9 @@ final class ScannerConfig {
             ]
         resolvedExcludes =
             config.excludes ?? [
-                ".build/**", "node_modules/**", "dist/**", "Utility.app/**",
-                ".git/**", ".agent-gateway/**", ".utility/**",
+                ".build/**", "build/**", "dist/**", "DerivedData/**",
+                "node_modules/**", "coverage/**", "__pycache__/**",
+                "Utility.app/**", ".git/**", ".agent-gateway/**", ".utility/**",
                 "Pods/**", ".venv/**",
             ]
     }
