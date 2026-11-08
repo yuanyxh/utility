@@ -103,6 +103,7 @@ enum GatewayConfigWriter {
             "maxContentChars": mcp.memoryMaxContentChars,
             "maxSummaries": mcp.memoryMaxSummaries,
             "maxSummariesPerEpisode": mcp.memoryMaxSummariesPerEpisode,
+            "governanceApply": mcp.memoryGovernanceApply,
             "rankSignal": [
                 "recency": mcp.rankSignalRecency,
                 "access": mcp.rankSignalAccess,

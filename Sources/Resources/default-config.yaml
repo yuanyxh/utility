@@ -186,6 +186,11 @@ mcp:
   memoryMaxSummaries: 0
   memoryMaxSummariesPerEpisode: 0
 
+  # Whether the daily consolidation pass applies LLM split/merge decisions to
+  # episode groups. Disable to leave groups untouched while still reporting
+  # governance counts in the daily result.
+  memoryGovernanceApply: true
+
   # Optional ranking signals blended into retrieval order, each 0-1. All 0 = plain score order.
   # Enable one at a time and compare hit@1 against the evaluator first; the defaults stay off
   # because no signal has shown a stable gain yet.

@@ -187,6 +187,8 @@ public struct MCPConfig: Codable {
     var memoryMaxSummaries: Int = 0
     /// Per-episode cap on active consolidation summaries (0 = no folding)
     var memoryMaxSummariesPerEpisode: Int = 0
+    /// Whether the daily pass applies split/merge decisions to episode groups
+    var memoryGovernanceApply: Bool = true
 
     /// Optional ranking signals blended into retrieval order; all zero = plain score order
     var rankSignalRecency: Double = 0
@@ -237,6 +239,8 @@ public struct MCPConfig: Codable {
         memoryMaxSummaries = try c.decodeIfPresent(Int.self, forKey: .memoryMaxSummaries) ?? 0
         memoryMaxSummariesPerEpisode =
             try c.decodeIfPresent(Int.self, forKey: .memoryMaxSummariesPerEpisode) ?? 0
+        memoryGovernanceApply =
+            try c.decodeIfPresent(Bool.self, forKey: .memoryGovernanceApply) ?? true
         rankSignalRecency = try c.decodeIfPresent(Double.self, forKey: .rankSignalRecency) ?? 0
         rankSignalAccess = try c.decodeIfPresent(Double.self, forKey: .rankSignalAccess) ?? 0
         rankSignalQuality = try c.decodeIfPresent(Double.self, forKey: .rankSignalQuality) ?? 0
