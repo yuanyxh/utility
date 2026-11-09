@@ -45,7 +45,7 @@
 - **关键词参数回归（2026-10-31 二次修订）**：`recall` 的 `keywords`（字符串数组，**必填**）成为主查询，`query` 改为**可选**的语义化描述；两者都传时双跑 + RRF 融合，只传 keywords 则单跑。推翻同日「关键词已移除」的结论，依据是新的 146 条真实样本对比：关键词 0.336 > 语义化描述 0.267 > 用户原话 0.199，双跑 RRF 0.377 高于关键词单跑 0.356
   - 两次结论冲突的原因：上一次把关键词当作「用户原话之外的第二次检索」，短标识符单独做向量查询召回极差；这一次关键词由模型从用户原话构造，本身就承担了改写职责
   - 未变的教训：schema 文案必须与实际行为一致（文案写 “each is searched separately” 会让模型过度传参）；`Stage` 若允许自带 `subqueries`/`fusion`/`scope`，就必须保证融合能读到过滤后的结果
-- **交叉编码器重排按需启用**：`Pipeline(reranker=...)` 是可选钩子，`rerank.py` 的 `get_reranker()` 懒加载 `bge-reranker-base-int8`（`RERANK_MODEL_DIR` 可覆盖，缺模型返回 `None` 即不重排，不阻断检索）。`project_notes` 已启用；`recall` 未启用——实测 bge 对关键词查询有害（0.336→0.315），对语义化描述才有效（0.267→0.322）
+- **交叉编码器重排（2026-11-09 起 recall 默认启用）**：`Pipeline(reranker=...)` 是可选钩子，`rerank.py` 的 `get_reranker()` 懒加载 `bge-reranker-base-int8`（`RERANK_MODEL_DIR` 可覆盖，缺模型返回 `None` 即不重排，60 秒后重试，不阻断检索）。`project_notes` 与 `recall` 均启用，`RECALL_RERANK=0` 可关闭。100 条 known-item 隔离评测（生产 embedder jinazh768）：hit@1 0.90→0.97、mrr 0.932→0.975、返回条数 393→305、字符/查询 1621.5→1238.7、p95 458→2552 ms；首次 ONNX 加载约 600 ms，recall 的构建与运行统一放在 `asyncio.to_thread`
   - 重排后**丢弃非正分**：交叉编码器输出的是相关性 logit，负分即「不是这条查询的段落」，留着只烧 token
 - **笔记向量缓存带模型身份（2026-10-31）**：`note_vectors.sqlite` 的 `chunks` 表配 `meta` 表存 `embedder_tag` / `embedder_dims`。但**判定以向量 blob 长度为准**，不信 meta——换模型后旧向量不会失效（`_ensure_note_cache` 只重嵌 mtime/size 变了的文件），混维矩阵会让 `np.array` 直接抛错。实测三项目全中：agent-gateway 405 条 384 维 + 3133 条 768 维、utility 2287 + 476、generate-app 全 384 维，向量检索全部静默降级成关键词。发现混维即整表作废重嵌
   - 向量阶段失败现在记 `logger.error` 并写明「本次查询降级为关键词」，不再是容易被忽略的 warning

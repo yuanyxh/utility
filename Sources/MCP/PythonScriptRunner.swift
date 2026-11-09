@@ -151,6 +151,9 @@ enum PythonScriptRunner {
             for (key, value) in memoryEnvironment() {
                 env[key] = value
             }
+            for (key, value) in rerankEnvironment() {
+                env[key] = value
+            }
             for (key, value) in logEnvironment() {
                 env[key] = value
             }
@@ -222,6 +225,18 @@ enum PythonScriptRunner {
         env[EnvKeys.gatewayLang] = L10n.resolvedLanguage(
             configured: ConfigManager.shared.config.general.language,
         )
+        return env
+    }
+
+    /// Re-ranking model location and its kill switch. The model default lives here so the
+    /// setup download and the runtime loader resolve the same directory.
+    static func rerankEnvironment() -> [String: String] {
+        var env: [String: String] = [:]
+        env[EnvKeys.rerankModelDir] = AppPaths.rerankerModelDir.path
+        // Explicit env wins; absent means the Python side's default (on).
+        if let recall = ProcessInfo.processInfo.environment[EnvKeys.recallRerank], !recall.isEmpty {
+            env[EnvKeys.recallRerank] = recall
+        }
         return env
     }
 
@@ -345,6 +360,9 @@ enum PythonScriptRunner {
                 overrides[key] = value
             }
             for (key, value) in memoryEnvironment() {
+                overrides[key] = value
+            }
+            for (key, value) in rerankEnvironment() {
                 overrides[key] = value
             }
             for (key, value) in logEnvironment() {

@@ -110,16 +110,16 @@ struct SetupInstallView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            if model.missingRequired.isEmpty {
+            if model.missingInstallable.isEmpty {
                 Text(L10n.Setup.noMissing)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(model.missingRequired) { item in
+                ForEach(model.missingInstallable) { item in
                     Text("• \(model.itemTitle(item.id))")
                         .font(.callout)
                 }
-                if model.missingRequired.contains(where: { $0.id == .homebrew }) {
+                if model.missingInstallable.contains(where: { $0.id == .homebrew }) {
                     Text(L10n.Setup.homebrewHint)
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -149,7 +149,7 @@ struct SetupInstallView: View {
             Spacer()
             HStack(spacing: 10) {
                 Button(L10n.Setup.startInstall) { model.startInstall() }
-                    .disabled(model.installing || model.missingRequired.isEmpty)
+                    .disabled(model.installing || model.missingInstallable.isEmpty)
                 Spacer()
                 Button(L10n.Setup.recheck) { model.startCheck() }
                     .disabled(model.installing || model.checking)

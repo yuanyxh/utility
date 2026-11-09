@@ -47,6 +47,19 @@ enum AppPaths {
         return dir
     }()
 
+    /// ~/.cache/utility/models/bge-reranker-base-int8；RERANK_MODEL_DIR 覆盖。
+    static var rerankerModelDir: URL {
+        let override = (ProcessInfo.processInfo.environment["RERANK_MODEL_DIR"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !override.isEmpty {
+            return URL(
+                fileURLWithPath: (override as NSString).expandingTildeInPath,
+                isDirectory: true,
+            )
+        }
+        return cacheDir.appendingPathComponent("models/bge-reranker-base-int8", isDirectory: true)
+    }
+
     /// ~/.cache/utility/debug.log
     static let debugLog: String = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -130,6 +143,10 @@ enum EnvKeys {
     static let rankSignalRecency = "RANK_SIGNAL_RECENCY"
     static let rankSignalAccess = "RANK_SIGNAL_ACCESS"
     static let rankSignalQuality = "RANK_SIGNAL_QUALITY"
+
+    /// Cross-encoder model directory; `RECALL_RERANK=0` disables re-ranking.
+    static let rerankModelDir = "RERANK_MODEL_DIR"
+    static let recallRerank = "RECALL_RERANK"
 }
 
 // MARK: - Shared Pasteboard Types

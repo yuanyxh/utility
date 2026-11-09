@@ -67,3 +67,11 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 **理由**：嵌套目录去重后原实现只改 notes 键，导入后配置仍指向旧路径；manifest 外部路径未校验可越界读取；安装失败信息被 `startCheck()` 清空；跨版本导入会保留旧 wheel。
 
 **验证**：`archive-check --roundtrip` 新增嵌套路径与伪造 manifest 断言，`run-tests.sh` 6/6 通过。
+
+## 2026-11-09 首启向导的默认配置与下载代理
+
+**决策**：向导与 `setup-check` 读配置统一走 `ConfigManager.readConfigOrDefault`，config 缺失时回退打包的 `default-config.yaml`；`writeDefault` 改为直接拷贝模板；`SetupInstaller.downloadEnvironment` 在 `proxyEnabled=true` 或首启（无 config）时读取系统代理并注入 `HTTP(S)_PROXY`，curl 与 fastembed 共用。
+
+**理由**：向导在 `ConfigManager.load()` 之前运行，新机器没有 config.yaml，解码空 `AppConfig()` 时 `mcp` 为 nil，reranker/embedder 只标 optional、永不进入安装列表；`writeDefault` 同样写空模型，生成的默认配置缺整个 `mcp` 段。首启下载还依赖代理，而模板 `proxyEnabled=false`，`launchctl setenv` 也不会进入 GUI app 环境，直连 HuggingFace 超时。
+
+**验证**：config 缺失时 `setup-check` 由 optional 变 missing；无代理 curl 报 `(28) Timeout`，带 `127.0.0.1:7897` range 下载返回 206；`run-tests.sh` 9 个用例全过。L3 向导真机下载待用户完成。

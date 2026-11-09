@@ -180,7 +180,13 @@ enum ConfigArchive {
             )
         }
 
+        var roles = Set<ExternalRole>()
         for record in manifest.external {
+            guard roles.insert(record.role).inserted else {
+                throw ArchiveError.invalidManifest(
+                    "duplicate external role \(record.role.rawValue)",
+                )
+            }
             try validateArchivePath(record.archivePath)
             guard record.archivePath == "external/\(record.role.rawValue)" else {
                 throw ArchiveError.invalidManifest(

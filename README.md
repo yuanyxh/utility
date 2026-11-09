@@ -614,6 +614,8 @@ Restart the service after adding or changing a skill.
 | `mcp.maxRestarts` / `restartDelayMs` | `3` / `2000` | restart policy after a crash |
 | `search.runtime` | `timeoutSeconds: 25` | cascade hard timeout; optional `parallel` / `concurrency` |
 
+`recall` uses the `bge-reranker-base-int8` cross-encoder by default. The model is downloaded during the first-launch setup (about 280 MB) into `~/.cache/utility/models/bge-reranker-base-int8`; set `RERANK_MODEL_DIR` to use another directory, or `RECALL_RERANK=0` to fall back to fused order. A missing model degrades to fused order instead of failing.
+
 Restart from **menu bar → MCP** after changing any of these.
 
 ---

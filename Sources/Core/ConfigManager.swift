@@ -124,7 +124,32 @@ public final class ConfigManager {
         EventBus.shared.publish(AppEvent.configDidLoad)
     }
 
+    /// Reads config.yaml, falling back to the bundled template before `load()` writes it.
+    /// Setup runs ahead of `load()`, so a fresh machine has no file yet; decoding
+    /// `AppConfig()` there leaves `mcp` nil and hides the optional installs.
+    static func readConfigOrDefault(in directory: URL) -> AppConfig {
+        let file = directory.appendingPathComponent("config.yaml")
+        if let data = try? Data(contentsOf: file),
+            let config = try? YAMLDecoder().decode(AppConfig.self, from: data)
+        {
+            return config
+        }
+        if let url = Bundle.module.url(forResource: "default-config", withExtension: "yaml"),
+            let data = try? Data(contentsOf: url),
+            let config = try? YAMLDecoder().decode(AppConfig.self, from: data)
+        {
+            return config
+        }
+        return AppConfig()
+    }
+
     private func writeDefault() throws {
+        if let url = Bundle.module.url(forResource: "default-config", withExtension: "yaml"),
+            let data = try? Data(contentsOf: url)
+        {
+            try data.write(to: configFile, options: .atomic)
+            return
+        }
         let encoder = YAMLEncoder()
         let yaml = try encoder.encode(AppConfig())
         let commented = """

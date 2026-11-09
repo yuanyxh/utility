@@ -7,6 +7,7 @@ enum SetupItemID: String, CaseIterable, Sendable {
     case tmux
     case gateway
     case embedder
+    case reranker
 }
 
 enum SetupState: Equatable, Sendable {
@@ -37,7 +38,40 @@ enum SetupProbe {
             tmuxItem(config: config),
             gatewayItem(),
             embedderItem(config: config),
+            rerankerItem(config: config),
         ]
+    }
+
+    static func rerankerModelDirectory() -> URL {
+        AppPaths.rerankerModelDir
+    }
+
+    private static func rerankerItem(config: AppConfig) -> SetupItem {
+        let required = config.mcp?.enabled == true
+        let directory = rerankerModelDirectory()
+        let tokenizer = directory.appendingPathComponent("tokenizer.json")
+        let model = directory.appendingPathComponent("onnx/model_int8.onnx")
+        if FileManager.default.fileExists(atPath: tokenizer.path),
+            FileManager.default.fileExists(atPath: model.path)
+        {
+            return SetupItem(
+                id: .reranker,
+                state: .ok,
+                version: "bge-reranker-base-int8",
+                path: directory.path,
+                isRequired: false,
+            )
+        }
+        return SetupItem(
+            id: .reranker,
+            state: required ? .missing : .optional,
+            version: "bge-reranker-base-int8",
+            path: directory.path,
+            detail: required
+                ? L10n.Setup.rerankerDownloadHint
+                : L10n.Setup.mcpDisabledHint,
+            isRequired: false,
+        )
     }
 
     static func embedderCacheDirectory(config: AppConfig) -> URL {

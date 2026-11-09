@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct SetupFailure: LocalizedError {
@@ -113,6 +114,14 @@ enum SetupInstaller {
             }
         }
 
+        if missing.contains(.reranker) {
+            guard downloadReranker(config: config, log: log) else {
+                return .failure(
+                    SetupFailure(step: .reranker, message: "reranker download failed"),
+                )
+            }
+        }
+
         return .success(())
     }
 
@@ -140,6 +149,85 @@ enum SetupInstaller {
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
+    private static let rerankerSHA256 = [
+        "tokenizer.json": "48564c5c7d3fa64d85d95e65414a542385f88b0f128fd8d4163fd7a57f2be05c",
+        "onnx/model_int8.onnx": "2059d8ef0b6e935b4845e11b38c9af9e9e2e7b91f69fc99efe03254e0a7da8d3",
+    ]
+
+    /// First launch has no config.yaml, so `proxyEnabled` is the template default while the
+    /// system proxy may exist; use the system proxy until the user has made a choice.
+    private static func downloadEnvironment(config: AppConfig) -> [String: String] {
+        var environment = EnvironmentProbe.probeEnvironment
+        let firstLaunch = !FileManager.default.fileExists(atPath: AppPaths.configFile.path)
+        guard config.general.proxyEnabled || firstLaunch,
+            let proxy = URLSessionManager.readSystemProxy()
+        else { return environment }
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            environment[key] = proxy.absoluteString
+        }
+        return environment
+    }
+
+    private static func downloadReranker(
+        config: AppConfig,
+        log: @escaping (String) -> Void,
+    ) -> Bool {
+        let directory = SetupProbe.rerankerModelDirectory()
+        let onnx = directory.appendingPathComponent("onnx", isDirectory: true)
+        try? FileManager.default.createDirectory(at: onnx, withIntermediateDirectories: true)
+        let base = "https://huggingface.co/Xenova/bge-reranker-base/resolve/main"
+        let files = [
+            ("tokenizer.json", directory.appendingPathComponent("tokenizer.json")),
+            ("onnx/model_int8.onnx", onnx.appendingPathComponent("model_int8.onnx")),
+        ]
+        for (remote, target) in files {
+            if sha256(of: target) == rerankerSHA256[remote] { continue }
+            let temporary = target.appendingPathExtension("download")
+            log("[Setup] curl \(base)/\(remote)")
+            var arguments = [
+                "/usr/bin/curl", "-L", "--fail", "--retry", "2", "--connect-timeout", "20",
+                "--speed-limit", "1024", "--speed-time", "60", "-C", "-",
+                "-o", temporary.path, "\(base)/\(remote)",
+            ]
+            let result = ProcessRunner.runSync(
+                arguments,
+                timeout: 1800,
+                environment: downloadEnvironment(config: config),
+                onOutput: { log("[Setup] \($0)") },
+            )
+            guard result.ok else {
+                log("[Setup] exit \(result.exitCode)\(result.timedOut ? " (timeout)" : "")")
+                debugLog("[Setup] reranker \(remote) failed exit=\(result.exitCode) timeout=\(result.timedOut)")
+                return false
+            }
+            guard sha256(of: temporary) == rerankerSHA256[remote] else {
+                log("[Setup] checksum mismatch for \(remote)")
+                debugLog("[Setup] reranker \(remote) checksum mismatch")
+                try? FileManager.default.trashItem(at: temporary, resultingItemURL: nil)
+                return false
+            }
+            do {
+                try? FileManager.default.trashItem(at: target, resultingItemURL: nil)
+                try FileManager.default.moveItem(at: temporary, to: target)
+            } catch {
+                log("[Setup] move failed: \(error.localizedDescription)")
+                debugLog("[Setup] reranker move failed \(error.localizedDescription)")
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func sha256(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let data = try? handle.read(upToCount: 1 << 20), !data.isEmpty {
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func downloadEmbedder(
         python: String,
         config: AppConfig,
@@ -155,7 +243,7 @@ enum SetupInstaller {
             print("model-ready")
             """
         log("[Setup] \(python) -c <download embedder \(model)>")
-        var environment = EnvironmentProbe.probeEnvironment
+        var environment = downloadEnvironment(config: config)
         environment["FASTEMBED_CACHE_PATH"] = cache.path
         environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
         let result = ProcessRunner.runSync(

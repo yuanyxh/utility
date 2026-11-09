@@ -1,6 +1,5 @@
 import ArgumentParser
 import Foundation
-import Yams
 
 /// Headless view of the first-launch dependency probe.
 struct SetupCheckCommand: ParsableCommand {
@@ -32,11 +31,7 @@ struct SetupCheckCommand: ParsableCommand {
     }
 
     private func loadConfig(_ directory: URL) -> AppConfig {
-        let file = directory.appendingPathComponent("config.yaml")
-        guard let data = try? Data(contentsOf: file),
-            let config = try? YAMLDecoder().decode(AppConfig.self, from: data)
-        else { return AppConfig() }
-        return config
+        ConfigManager.readConfigOrDefault(in: directory)
     }
 
     private func state(_ state: SetupState) -> String {

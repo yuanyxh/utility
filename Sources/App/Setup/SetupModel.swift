@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Yams
 
 /// Four-step first-launch state machine: import, check, install, done.
 @MainActor
@@ -36,6 +35,11 @@ final class SetupModel: ObservableObject {
         items.filter { $0.state == .missing && $0.isRequired }
     }
 
+    /// Missing items that the install step can handle, required or not.
+    var missingInstallable: [SetupItem] {
+        items.filter { $0.state == .missing }
+    }
+
     var allRequiredOK: Bool {
         missingRequired.isEmpty
     }
@@ -48,6 +52,7 @@ final class SetupModel: ObservableObject {
         case .tmux: L10n.Setup.itemTmux
         case .gateway: L10n.Setup.itemGateway
         case .embedder: L10n.Setup.itemEmbedder
+        case .reranker: L10n.Setup.itemReranker
         }
     }
 
@@ -235,14 +240,14 @@ final class SetupModel: ObservableObject {
     }
 
     func nextFromCheck() {
-        step = allRequiredOK ? .done : .install
+        step = missingInstallable.isEmpty ? .done : .install
     }
 
     func startInstall() {
         installing = true
         error = nil
         logLines = []
-        append("installing \(missingRequired.map(\.id.rawValue).joined(separator: ", "))")
+        append("installing \(missingInstallable.map(\.id.rawValue).joined(separator: ", "))")
         SetupInstaller.install(
             items: items,
             config: currentConfig,
@@ -284,10 +289,6 @@ final class SetupModel: ObservableObject {
     }
 
     private nonisolated static func loadConfig(_ directory: URL) -> AppConfig {
-        let file = directory.appendingPathComponent("config.yaml")
-        guard let data = try? Data(contentsOf: file),
-            let config = try? YAMLDecoder().decode(AppConfig.self, from: data)
-        else { return AppConfig() }
-        return config
+        ConfigManager.readConfigOrDefault(in: directory)
     }
 }

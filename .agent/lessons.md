@@ -53,3 +53,18 @@ app 没有 CLI/URL scheme 等可脚本化入口时，自动化验证从第一轮
 
 选行后把 first responder 交给编辑器/终端，AppKit 默认按「非强调」画选中，蓝色立刻变灰。
 列表选中要稳定就得在行视图里自己画（`PointerRowView.drawSelection`），只在窗口失焦时才降级。
+
+## GUI app 看不到 launchctl setenv 的变量（2026-11-09）
+
+`launchctl setenv HTTPS_PROXY …` 之后启动的 utility.app，`ps eww` 里仍然没有任何代理变量。
+给 GUI 子进程配网络代理不能靠 shell/launchd 环境，必须在代码里显式注入，或读 `SCDynamicStoreCopyProxies`。
+
+## 向导只在 config.yaml 不存在时出现（2026-11-09）
+
+`AppDelegate` 用「配置文件缺失」判定首启。移走模型目录后普通重启不会弹向导，
+想复验安装步骤必须同时移走 `config.yaml`，且要在 app 退出状态下移——运行中的 app 会立刻把模板写回去。
+
+## 默认配置不要用空模型编码（2026-11-09）
+
+`YAMLEncoder().encode(AppConfig())` 会把 `mcp`（Optional，默认 nil）整段省略，
+新机器拿到的 config 没有 MCP 段，功能默认关闭。默认值应复用仓库里的 `default-config.yaml` 模板。
