@@ -155,6 +155,7 @@ final class SetupModel: ObservableObject {
         }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var backup: URL?
             do {
                 try ConfigArchive.validateExternalDestinations(decisions)
                 if !remaps.isEmpty {
@@ -163,14 +164,15 @@ final class SetupModel: ObservableObject {
                         remaps: remaps,
                     )
                 }
-                let backup = try ConfigArchive.applyCore(plan, configDir: configDir)
+                let backupURL = try ConfigArchive.applyCore(plan, configDir: configDir)
+                backup = backupURL
                 if plan.manifest.gatewayWheel != GatewayInstaller.bundledWheelName {
                     GatewayInstaller.invalidateStamp()
                 }
                 _ = try ConfigArchive.applyExternal(
                     decisions: decisions,
                     plan: plan,
-                    backup: backup,
+                    backup: backupURL,
                 )
                 ConfigArchive.discard(plan)
                 let config = Self.loadConfig(configDir)
@@ -182,8 +184,36 @@ final class SetupModel: ObservableObject {
                     self?.startCheck()
                 }
             } catch {
+                var rolledBack = false
+                if let backup {
+                    do {
+                        try ConfigArchive.rollbackCore(
+                            backup: backup,
+                            configDir: configDir,
+                            plan: plan,
+                        )
+                        rolledBack = true
+                    } catch {
+                        rolledBack = false
+                    }
+                }
+                let message: String
+                if let backup {
+                    message =
+                        rolledBack
+                        ? L10n.Setup.importFailedRolledBack(
+                            message: error.localizedDescription,
+                            backup: backup.path,
+                        )
+                        : L10n.Setup.importFailedRollbackFailed(
+                            message: error.localizedDescription,
+                            backup: backup.path,
+                        )
+                } else {
+                    message = error.localizedDescription
+                }
                 DispatchQueue.main.async {
-                    self?.error = error.localizedDescription
+                    self?.error = message
                     self?.validating = false
                 }
             }

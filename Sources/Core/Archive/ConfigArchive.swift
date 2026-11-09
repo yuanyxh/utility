@@ -333,38 +333,60 @@ enum ConfigArchive {
         log: @escaping (String) -> Void = { _ in },
     ) throws -> ExternalApplyResult {
         var result = ExternalApplyResult()
-        for record in plan.manifest.external {
-            guard let decision = decisions.first(where: { $0.role == record.role }) else {
-                continue
-            }
-            let sourceRoot = plan.stagingDir.appendingPathComponent(record.archivePath)
-            let files = try regularFiles(under: sourceRoot)
-            for source in files {
-                let relative = relativePath(of: source, root: sourceRoot)
-                let destination = decision.destination.appendingPathComponent(relative)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    switch decision.policy {
-                    case .skipExisting:
-                        result.skipped += 1
-                        continue
-                    case .overwrite:
-                        let saved =
-                            backup
-                            .appendingPathComponent("external-\(record.role.rawValue)")
-                            .appendingPathComponent(relative)
-                        try copy(destination, to: saved)
-                        result.overwritten += 1
-                    }
+        var applied: [(destination: URL, saved: URL?)] = []
+        do {
+            for record in plan.manifest.external {
+                guard let decision = decisions.first(where: { $0.role == record.role }) else {
+                    continue
                 }
-                try copy(source, to: destination)
-                result.copied += 1
+                let sourceRoot = plan.stagingDir.appendingPathComponent(record.archivePath)
+                let files = try regularFiles(under: sourceRoot)
+                for source in files {
+                    let relative = relativePath(of: source, root: sourceRoot)
+                    let destination = decision.destination.appendingPathComponent(relative)
+                    var saved: URL?
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        switch decision.policy {
+                        case .skipExisting:
+                            result.skipped += 1
+                            continue
+                        case .overwrite:
+                            let target =
+                                backup
+                                .appendingPathComponent("external-\(record.role.rawValue)")
+                                .appendingPathComponent(relative)
+                            try copy(destination, to: target)
+                            saved = target
+                            result.overwritten += 1
+                        }
+                    }
+                    // Record first: copy trashes the target before writing.
+                    applied.append((destination, saved))
+                    try copy(source, to: destination)
+                    result.copied += 1
+                }
+                log(
+                    "restored \(record.role.rawValue) to \(decision.destination.path) "
+                        + "(copied \(result.copied), skipped \(result.skipped))",
+                )
             }
-            log(
-                "restored \(record.role.rawValue) to \(decision.destination.path) "
-                    + "(copied \(result.copied), skipped \(result.skipped))",
-            )
+            return result
+        } catch {
+            rollbackExternal(applied)
+            throw error
         }
-        return result
+    }
+
+    private static func rollbackExternal(
+        _ applied: [(destination: URL, saved: URL?)],
+    ) {
+        let manager = FileManager.default
+        for entry in applied.reversed() {
+            try? manager.trashItem(at: entry.destination, resultingItemURL: nil)
+            if let saved = entry.saved {
+                try? manager.copyItem(at: saved, to: entry.destination)
+            }
+        }
     }
 
     static func rewriteConfigPaths(
@@ -540,6 +562,36 @@ enum ConfigArchive {
             try manager.trashItem(at: destination, resultingItemURL: nil)
         }
         try manager.copyItem(at: staged, to: destination)
+    }
+
+    /// Restore the core config directory after a later import stage failed.
+    static func rollbackCore(
+        backup: URL,
+        configDir: URL,
+        plan: ArchiveImportPlan,
+    ) throws {
+        try restore(backup: backup, configDir: configDir)
+        let manager = FileManager.default
+        for file in plan.files {
+            guard let destination = destinationPath(for: file.path, configDir: configDir)
+            else { continue }
+            let relative =
+                destination.path.hasPrefix(configDir.path + "/")
+                ? String(destination.path.dropFirst(configDir.path.count + 1))
+                : destination.lastPathComponent
+            let backedUp = backup.appendingPathComponent(relative)
+            if !manager.fileExists(atPath: backedUp.path),
+                manager.fileExists(atPath: destination.path)
+            {
+                if destination.path.hasSuffix(".sqlite") {
+                    for suffix in ["-wal", "-shm"] {
+                        let sidecar = URL(fileURLWithPath: destination.path + suffix)
+                        try? manager.trashItem(at: sidecar, resultingItemURL: nil)
+                    }
+                }
+                try? manager.trashItem(at: destination, resultingItemURL: nil)
+            }
+        }
     }
 
     private static func restore(backup: URL, configDir: URL) throws {

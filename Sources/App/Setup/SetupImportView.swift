@@ -30,7 +30,7 @@ struct SetupImportView: View {
                 Text(L10n.Setup.error(message: error))
                     .font(.caption)
                     .foregroundStyle(.red)
-                    .lineLimit(3)
+                    .lineLimit(5)
             }
 
             Spacer()

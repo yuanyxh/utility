@@ -365,6 +365,8 @@
     "setup.done_hint": "Preferences and dependencies are ready.",
     "setup.finish": "Finish",
     "setup.error": "Failed: {message}",
+    "setup.import_failed_rolled_back": "Import failed and was rolled back: {message}. Backup: {backup}",
+    "setup.import_failed_rollback_failed": "Import failed and rollback did not complete: {message}. Restore from: {backup}",
     "setup.busy": "Working…",
     "setup.item_xcode": "Xcode Command Line Tools",
     "setup.item_homebrew": "Homebrew",

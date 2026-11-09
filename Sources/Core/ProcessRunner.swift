@@ -6,6 +6,8 @@ struct ProcessResult {
     let stderr: String
     let truncated: Bool
     let timedOut: Bool
+    /// Drain threads had not reached EOF; output may miss its tail.
+    let outputIncomplete: Bool
 
     var ok: Bool { !timedOut && exitCode == 0 }
 
@@ -67,6 +69,7 @@ enum ProcessRunner {
                 stderr: "empty command",
                 truncated: false,
                 timedOut: false,
+                outputIncomplete: false,
             )
         }
         do {
@@ -86,6 +89,7 @@ enum ProcessRunner {
                 stderr: "failed to launch \(executable): \(error.localizedDescription)",
                 truncated: false,
                 timedOut: false,
+                outputIncomplete: false,
             )
         }
     }
@@ -155,7 +159,7 @@ enum ProcessRunner {
         process.waitUntilExit()
         // A grandchild can inherit the pipe and outlive the direct child, so EOF
         // may never arrive. Bound the wait instead of blocking the caller forever.
-        _ = group.wait(timeout: .now() + 2)
+        let drainFinished = group.wait(timeout: .now() + 2) == .success
 
         let (stdout, stdoutTruncated) = stdoutBuffer.snapshot()
         let (stderr, stderrTruncated) = stderrBuffer.snapshot()
@@ -165,6 +169,7 @@ enum ProcessRunner {
             stderr: String(decoding: stderr, as: UTF8.self),
             truncated: stdoutTruncated || stderrTruncated,
             timedOut: timedOut,
+            outputIncomplete: !drainFinished,
         )
     }
 

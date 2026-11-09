@@ -365,6 +365,8 @@
     "setup.done_hint": "配置与依赖已就绪。",
     "setup.finish": "完成",
     "setup.error": "操作失败：{message}",
+    "setup.import_failed_rolled_back": "导入失败，已回滚：{message}。备份位于 {backup}",
+    "setup.import_failed_rollback_failed": "导入失败，回滚未完成：{message}。请从备份恢复：{backup}",
     "setup.busy": "正在处理…",
     "setup.item_xcode": "Xcode 命令行工具",
     "setup.item_homebrew": "Homebrew",

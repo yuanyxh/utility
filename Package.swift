@@ -23,6 +23,10 @@ let package = Package(
                 .process("Resources"),
                 .copy("Gateway"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "UtilityTests",
+            dependencies: ["utility"]
+        ),
     ]
 )
