@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Yams
 
 /// Four-step first-launch state machine: import, check, install, done.
 @MainActor
@@ -22,6 +23,8 @@ final class SetupModel: ObservableObject {
     @Published private(set) var decisions: [ExternalRestoreDecision] = []
     @Published private(set) var conflicts: [ExternalConflict] = []
     @Published private(set) var currentConfig = AppConfig()
+    @Published private(set) var archivedQdrantPath = ""
+    @Published private(set) var qdrantDestination: URL?
 
     private let configDir = AppPaths.configDir
     private let onFinish: () -> Void
@@ -42,6 +45,21 @@ final class SetupModel: ObservableObject {
 
     var allRequiredOK: Bool {
         missingRequired.isEmpty
+    }
+
+    /// Archived Qdrant path is missing here; the user picks a new target.
+    var needsQdrantDestination: Bool {
+        guard !archivedQdrantPath.isEmpty else { return false }
+        let expanded = (archivedQdrantPath as NSString).expandingTildeInPath
+        return !FileManager.default.fileExists(atPath: expanded)
+    }
+
+    var qdrantTarget: String {
+        qdrantDestination?.path ?? archivedQdrantPath
+    }
+
+    func setQdrantDestination(_ url: URL) {
+        qdrantDestination = url
     }
 
     func itemTitle(_ id: SetupItemID) -> String {
@@ -82,7 +100,26 @@ final class SetupModel: ObservableObject {
 
     func setDestination(_ url: URL, for role: ExternalRole) {
         guard let index = decisions.firstIndex(where: { $0.role == role }) else { return }
-        decisions[index].destination = url
+        var updated = decisions
+        updated[index].destination = url
+        decisions = updated
+        refreshConflicts()
+    }
+
+    /// The picker policy depends on destination contents; rescan off-main-thread.
+    /// Directories can be large, so scans are async and token-guarded.
+    private func refreshConflicts() {
+        guard let plan else { return }
+        validationToken += 1
+        let token = validationToken
+        let decisions = decisions
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let scan = ConfigArchive.scanConflicts(plan: plan, decisions: decisions)
+            DispatchQueue.main.async {
+                guard let self, self.validationToken == token else { return }
+                self.conflicts = scan
+            }
+        }
     }
 
     func setPolicy(_ policy: ExternalConflictPolicy, for role: ExternalRole) {
@@ -115,6 +152,8 @@ final class SetupModel: ObservableObject {
                     self.plan = plan
                     self.decisions = decisions
                     self.conflicts = conflicts
+                    self.archivedQdrantPath = Self.qdrantPath(in: plan)
+                    self.qdrantDestination = nil
                     self.validating = false
                 }
             } catch {
@@ -151,6 +190,7 @@ final class SetupModel: ObservableObject {
         error = nil
         let decisions = decisions
         let configDir = configDir
+        let qdrantDestination = qdrantDestination
         var remaps: [ExternalRole: URL] = [:]
         for decision in decisions {
             let original = plan.manifest.external.first { $0.role == decision.role }?.originalPath
@@ -167,6 +207,12 @@ final class SetupModel: ObservableObject {
                     try ConfigArchive.rewriteConfigPaths(
                         configFile: plan.stagingDir.appendingPathComponent("config/config.yaml"),
                         remaps: remaps,
+                    )
+                }
+                if let qdrantDestination {
+                    try ConfigArchive.rewriteQdrantPath(
+                        configFile: plan.stagingDir.appendingPathComponent("config/config.yaml"),
+                        destination: qdrantDestination,
                     )
                 }
                 let backupURL = try ConfigArchive.applyCore(plan, configDir: configDir)
@@ -225,7 +271,7 @@ final class SetupModel: ObservableObject {
         }
     }
 
-    func startCheck(clearError: Bool = true) {
+    func startCheck(clearError: Bool = true, completion: (() -> Void)? = nil) {
         checking = true
         if clearError { error = nil }
         let config = currentConfig
@@ -235,6 +281,7 @@ final class SetupModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.items = items
                 self?.checking = false
+                completion?()
             }
         }
     }
@@ -272,8 +319,17 @@ final class SetupModel: ObservableObject {
     func nextFromInstall() {
         if allRequiredOK {
             step = .done
-        } else {
-            startCheck()
+            return
+        }
+        startCheck(clearError: false) { [weak self] in
+            guard let self else { return }
+            if self.allRequiredOK {
+                self.step = .done
+            } else {
+                self.error = L10n.Setup.installIncomplete(
+                    items: self.missingRequired.map { self.itemTitle($0.id) }.joined(separator: "、"),
+                )
+            }
         }
     }
 
@@ -286,6 +342,14 @@ final class SetupModel: ObservableObject {
         if logLines.count > 2000 {
             logLines.removeFirst(logLines.count - 2000)
         }
+    }
+
+    private nonisolated static func qdrantPath(in plan: ArchiveImportPlan) -> String {
+        let file = plan.stagingDir.appendingPathComponent("config/config.yaml")
+        guard let data = try? Data(contentsOf: file),
+            let config = try? YAMLDecoder().decode(AppConfig.self, from: data)
+        else { return "" }
+        return config.mcp?.qdrantPath ?? ""
     }
 
     private nonisolated static func loadConfig(_ directory: URL) -> AppConfig {

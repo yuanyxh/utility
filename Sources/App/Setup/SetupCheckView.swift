@@ -104,40 +104,51 @@ struct SetupInstallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.Setup.installTitle)
-                .font(.title3.bold())
-            Text(L10n.Setup.installHint)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            if model.missingInstallable.isEmpty {
-                Text(L10n.Setup.noMissing)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(model.missingInstallable) { item in
-                    Text("• \(model.itemTitle(item.id))")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(L10n.Setup.installTitle)
+                        .font(.title3.bold())
+                    Text(L10n.Setup.installHint)
                         .font(.callout)
-                }
-                if model.missingInstallable.contains(where: { $0.id == .homebrew }) {
-                    Text(L10n.Setup.homebrewHint)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Text(L10n.Setup.homebrewScript(url: SetupInstaller.homebrewScriptURL))
-                        .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
                         .foregroundStyle(.secondary)
-                }
-            }
 
-            if model.installing {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(L10n.Setup.installingLabel)
-                        .font(.caption)
+                    if model.missingInstallable.isEmpty {
+                        Text(L10n.Setup.noMissing)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(model.missingInstallable) { item in
+                            Text("• \(model.itemTitle(item.id))")
+                                .font(.callout)
+                        }
+                        if model.missingInstallable.contains(where: { $0.id == .homebrew }) {
+                            Text(L10n.Setup.homebrewHint)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            Text(L10n.Setup.homebrewNetworkHint)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            Text(L10n.Setup.homebrewScript(url: SetupInstaller.homebrewScriptURL))
+                                .font(.system(.caption2, design: .monospaced))
+                                .textSelection(.enabled)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if model.installing {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(L10n.Setup.installingLabel)
+                                .font(.caption)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxHeight: .infinity)
+
             SetupLogView(lines: model.logLines)
+                .frame(minHeight: 120, maxHeight: 220)
 
             if let error = model.error {
                 Text(L10n.Setup.error(message: error))
@@ -146,7 +157,6 @@ struct SetupInstallView: View {
                     .lineLimit(3)
             }
 
-            Spacer()
             HStack(spacing: 10) {
                 Button(L10n.Setup.startInstall) { model.startInstall() }
                     .disabled(model.installing || model.missingInstallable.isEmpty)
@@ -155,7 +165,7 @@ struct SetupInstallView: View {
                     .disabled(model.installing || model.checking)
                 Button(L10n.Setup.next) { model.nextFromInstall() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.installing || model.checking)
+                    .disabled(model.installing || model.checking || !model.allRequiredOK)
             }
         }
         .padding(20)
@@ -205,7 +215,7 @@ private struct SetupLogView: View {
                 }
                 .padding(8)
             }
-            .frame(height: 170)
+            .frame(maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .onChange(of: lines.count) { _, _ in

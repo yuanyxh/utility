@@ -62,6 +62,12 @@ struct SetupImportView: View {
                     externalRow(record)
                 }
             }
+            if model.needsQdrantDestination {
+                Text(L10n.Setup.qdrantTitle)
+                    .font(.callout.bold())
+                    .padding(.top, 4)
+                qdrantRow
+            }
         }
     }
 
@@ -107,6 +113,26 @@ struct SetupImportView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
+    private var qdrantRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(L10n.Setup.destinationLabel(path: model.qdrantTarget))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button(L10n.Setup.chooseDestination) { chooseQdrantDestination() }
+            }
+            Text(L10n.Setup.qdrantMissingHint)
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     private var footer: some View {
         HStack(spacing: 10) {
             if model.validating {
@@ -142,6 +168,16 @@ struct SetupImportView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.chooseArchive(url)
+    }
+
+    private func chooseQdrantDestination() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.setQdrantDestination(url)
     }
 
     private func chooseDestination(for role: ExternalRole) {

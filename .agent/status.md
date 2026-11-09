@@ -2,7 +2,7 @@
 
 ## 当前目标
 
-1.1.42 基线整理：RSS 解析与去重、配置键对齐、基座按 agent-vibe 1.4.0 对齐。
+换机迁移与首启向导：VM 内导入验证（L3 通过），向导健壮性修复至 1.2.7。
 
 ## 进行中
 
@@ -10,7 +10,8 @@
 - GUI 化重构：T1-T6 代码完成，`swift build` 与 `run-tests.sh` 通过；待用户 L3 手测（Dock、主菜单、设置保存、面板键盘、OCR 退出）
 - 工作区协议化：计划 `.agent/plans/2026-11-05-workspace-protocol/`，T1-T13 完成并过两轮审查修复。状态层 + 五个窗格协议化（终端/子终端/文件树/Git/编辑器）、手型光标、⌘Z 脏点、git 忽略灰化、`ui` 字段 v2 持久化与 `.bak` 迁移、`--ui` CLI、文档与打包（`Utility-1.1.75.dmg` 已过期，需重打包）。审查修复两轮：滚动恢复布局、横幅跨文件泄漏、子目录灰化、status 失败被吞、切工作区残留；invalidate 代际号、脏重算 0.1ms、首启空态、备份只查一次、落盘收敛与 flush、指针方法去重、文档「窗格 vs 浮动面板」澄清。验证：`swift build`、`run-tests.sh`、l10n 双检查全过；列表选择三项回归（空白点击丢选中、选中底色变灰、图标与 x 按钮不变白）已修并经用户确认正常，代码已提交；已删 `PointerCursorController`（实测 0 次触发）、`FileTreeUIState.truncated`、`snapshot.workspaceID`/`focused`、`canHighlight`、`syntaxProvider` 注入参数；审查建议全部落地，`swift build` 与 `run-tests.sh` 全过
 - 终端工作区：T1-T12 代码、文档与打包完成；检查点 A、B 通过；打包产物 `Utility-1.1.64.dmg`（app 19M / DMG 7.4M，卷根含 `Utility.app` 与 `Applications` 软链）；L3 逐项手测待做（切换与退出三选、脏文档横幅、只读保存、删除后另存为、中英文切换）
-- 首启 reranker 下载验证（2026-11-09，未提交）：1.1.109 已部署，含三项修复——`ConfigManager.readConfigOrDefault` 回退 `default-config.yaml`、`writeDefault` 拷贝模板、`SetupInstaller.downloadEnvironment` 首启使用系统代理。L2 证据：config 缺失时 `setup-check` 显示 embedder/reranker `missing`；无代理 curl 超时、带系统代理 range 下载 206。L3 通过（17:59）：看守脚本在 app 退出后移走 config，向导「跳过」后真实下载两个模型文件，SHA256 与安装器常量一致，`setup-check` 两项均 ok；重启后 recall 首调 3243 ms（含 ONNX 加载）、热调 865 ms，rerank 降级警告 0。用户原配置已恢复，看守脚本已清理。改动全部未提交
+- 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：1.1.109 含 `ConfigManager.readConfigOrDefault` 回退模板、`writeDefault` 拷贝模板、首启使用系统代理。L3 通过：向导真实下载两个模型文件，SHA256 与常量一致，`setup-check` 两项 ok；recall 首调 3243 ms、热调 865 ms，rerank 降级警告 0。
+- 1.2.7 向导修复（2026-11-10，待提交）：安装页 ScrollView + 日志区限高、目标目录改选后重扫冲突、模型缺失时禁用「下一步」、`nextFromInstall` 未通过时给出缺失项、Homebrew 失败提示网络指引并注入代理、嵌入模型下载 30s 元数据超时 + 900s 总超时、`mcp.qdrantPath` 缺失检测与导入前改写。VM 内导入 L3 通过：备份目录生成、各表行数与归档一致、notes 1655 文件一致。验证：`swift build`、5 个向导测试、l10n 双检查、entries/graph 契约全过，1.2.7 已打包。
 
 ## 最近完成（2026-11-06）
 

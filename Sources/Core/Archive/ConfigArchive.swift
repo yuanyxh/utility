@@ -424,9 +424,23 @@ enum ConfigArchive {
         try Data(content.utf8).write(to: configFile, options: .atomic)
     }
 
+    /// Qdrant lives outside the archive; only its path is rewritten at import.
+    static func rewriteQdrantPath(configFile: URL, destination: URL) throws {
+        guard let text = try? String(contentsOf: configFile, encoding: .utf8),
+            var root = (try? Yams.load(yaml: text)) as? [String: Any]
+        else {
+            throw ArchiveError.invalidManifest("cannot parse config.yaml")
+        }
+        setValue(destination.path, at: qdrantKey, in: &root)
+        let dumped = try Yams.dump(object: root, allowUnicode: true, sortKeys: true)
+        let content = "\(L10n.Config.headerComment)\n\(dumped)"
+        try Data(content.utf8).write(to: configFile, options: .atomic)
+    }
+
     private static let notesKey = ["mcp", "knowledgeBasePath"]
     private static let likedKey = ["knowledge", "likedSaveDir"]
     private static let rssKey = ["rss", "daily", "outputDir"]
+    private static let qdrantKey = ["mcp", "qdrantPath"]
 
     /// Explicit liked/RSS paths inside the old notes directory follow the notes remap.
     private static func remapNested(

@@ -91,9 +91,25 @@ enum SetupProbe {
     }
 
     static func embedderModelDirectory(config: AppConfig) -> URL {
-        let folder = embedderModelName(config: config).replacingOccurrences(of: "/", with: "--")
-        return embedderCacheDirectory(config: config)
-            .appendingPathComponent("models--\(folder)", isDirectory: true)
+        let cache = embedderCacheDirectory(config: config)
+        let name = embedderModelName(config: config)
+        let exact = cache.appendingPathComponent(
+            "models--\(name.replacingOccurrences(of: "/", with: "--"))",
+            isDirectory: true,
+        )
+        if FileManager.default.fileExists(atPath: exact.path) { return exact }
+        // fastembed resolves aliases: sentence-transformers/all-MiniLM-L6-v2
+        // is cached as models--Qdrant--all-MiniLM-L6-v2-onnx.
+        let leaf = (name.split(separator: "/").last.map(String.init) ?? name).lowercased()
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: cache.path)) ?? []
+        for entry in entries where entry.hasPrefix("models--") {
+            let directoryLeaf = (entry.split(separator: "--").last.map(String.init) ?? entry)
+                .lowercased()
+            if directoryLeaf.hasPrefix(leaf) {
+                return cache.appendingPathComponent(entry, isDirectory: true)
+            }
+        }
+        return exact
     }
 
     private static func xcodeItem() -> SetupItem {

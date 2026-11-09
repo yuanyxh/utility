@@ -35,12 +35,32 @@ enum SetupInstaller {
 
     /// Writes the fixed official script to a `.command` file and lets Terminal run it.
     @discardableResult
-    static func openHomebrewInstaller(log: @escaping (String) -> Void) -> Bool {
+    static func openHomebrewInstaller(config: AppConfig, log: @escaping (String) -> Void) -> Bool {
+        // curl ignores the system proxy; export it for the official installer.
+        let proxyURL = systemProxyURL(config: config)
         let script = """
             #!/bin/bash
-            set -e
-            /bin/bash -c "$(curl -fsSL \(homebrewScriptURL))"
-            echo "Homebrew installation finished. Return to Utility and click Re-check."
+            set -u
+            if [ -n "\(proxyURL?.absoluteString ?? "")" ]; then
+              export http_proxy="\(proxyURL?.absoluteString ?? "")" https_proxy="\(proxyURL?.absoluteString ?? "")"
+              export HTTP_PROXY="$http_proxy" HTTPS_PROXY="$https_proxy"
+            fi
+            URL="\(homebrewScriptURL)"
+            echo "Downloading Homebrew installer: $URL"
+            if ! INSTALLER="$(curl -fsSL --max-time 90 "$URL")"; then
+              echo ""
+              echo "Could not download the installer (GitHub unreachable)."
+              echo "Enable a system proxy and retry, or install manually: https://brew.sh"
+              read -n 1 -s -r -p "Press any key to close..."
+              exit 1
+            fi
+            if /bin/bash -c "$INSTALLER"; then
+              echo "Homebrew installation finished. Return to Utility and click Re-check."
+            else
+              echo ""
+              echo "Homebrew installation did not finish. Check the messages above,"
+              echo "then return to Utility and click Re-check. Manual install: https://brew.sh"
+            fi
             read -n 1 -s -r -p "Press any key to close..."
             """
         let url = FileManager.default.temporaryDirectory
@@ -74,7 +94,7 @@ enum SetupInstaller {
         log: @escaping (String) -> Void,
     ) -> Result<Void, Error> {
         if missing.contains(.homebrew) {
-            openHomebrewInstaller(log: log)
+            openHomebrewInstaller(config: config, log: log)
             return .success(())
         }
 
@@ -156,12 +176,15 @@ enum SetupInstaller {
 
     /// First launch has no config.yaml, so `proxyEnabled` is the template default while the
     /// system proxy may exist; use the system proxy until the user has made a choice.
+    private static func systemProxyURL(config: AppConfig) -> URL? {
+        let firstLaunch = !FileManager.default.fileExists(atPath: AppPaths.configFile.path)
+        guard config.general.proxyEnabled || firstLaunch else { return nil }
+        return URLSessionManager.readSystemProxy()
+    }
+
     private static func downloadEnvironment(config: AppConfig) -> [String: String] {
         var environment = EnvironmentProbe.probeEnvironment
-        let firstLaunch = !FileManager.default.fileExists(atPath: AppPaths.configFile.path)
-        guard config.general.proxyEnabled || firstLaunch,
-            let proxy = URLSessionManager.readSystemProxy()
-        else { return environment }
+        guard let proxy = systemProxyURL(config: config) else { return environment }
         for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
             environment[key] = proxy.absoluteString
         }
@@ -246,13 +269,18 @@ enum SetupInstaller {
         var environment = downloadEnvironment(config: config)
         environment["FASTEMBED_CACHE_PATH"] = cache.path
         environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        // A stalled CDN connection would hang until install times out.
+        environment["HF_HUB_DOWNLOAD_TIMEOUT"] = "30"
         let result = ProcessRunner.runSync(
             [python, "-c", code, model, cache.path],
-            timeout: 1800,
+            timeout: 900,
             environment: environment,
             onOutput: { log("[Setup] \($0)") },
         )
         log("[Setup] exit \(result.exitCode)\(result.timedOut ? " (timeout)" : "")")
+        if !result.ok {
+            debugLog("[Setup] embedder download failed exit=\(result.exitCode) timeout=\(result.timedOut)")
+        }
         return result
     }
 }

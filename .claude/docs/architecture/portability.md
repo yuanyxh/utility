@@ -65,6 +65,7 @@ flowchart TD
 
 - 默认恢复到 manifest 记录的原路径。
 - 目标路径缺失或用户改选时，只改写三个键：`mcp.knowledgeBasePath`、`knowledge.likedSaveDir`、`rss.daily.outputDir`。
+- `mcp.qdrantPath` 不在外部角色内，归档也不含向量数据：归档记录的路径在本机不存在时，导入页单独展示该路径并要求另选目标，导入前改写 `mcp.qdrantPath`；新目录为空，记忆需重新嵌入。
 - `likedSaveDir` / `rss.daily.outputDir` 若位于旧笔记目录内，notes 改路径时按相对路径一并平移；显式给出的角色路径优先。
 - 同名文件按角色选择「跳过已存在」或「覆盖」；覆盖前把被覆盖文件备份到 `<backup>/external-<role>/`。
 - 外部目录复制使用逐文件复制，失败时保留已完成文件与备份，可重试。
@@ -80,9 +81,53 @@ flowchart TD
 | Python | 候选解释器 `--version` ≥ 3.12，返回实际路径与版本 |
 | tmux | 可执行文件存在；`terminal.enabled` 为 false 时只作可选项 |
 | Python 依赖 | venv 内 `site-packages/agent_gateway` 存在且未写 broken 标记 |
-| 嵌入模型 | `<cache>/models--<org>--<name>` 目录存在 |
+| 嵌入模型 | fastembed 缓存目录下存在匹配目录，`models--Qdrant--all-MiniLM-L6-v2-onnx` 这类别名也算命中 |
+| 重排模型 | `RERANK_MODEL_DIR` 或 `~/.cache/utility/models/bge-reranker-base-int8` 下 `tokenizer.json` 与 `onnx/model_int8.onnx` 同时存在 |
 
-安装顺序：Homebrew → `brew install python@3.12` → `brew install tmux` → gateway wheel/extras → 嵌入模型。Homebrew 缺失时，安装页先展示官方脚本 URL 与完整命令，用户点「开始安装」后写临时 `.command` 并用 `open -a Terminal` 执行，app 不阻塞；其余步骤必须由用户确认后执行，每步输出 `[Setup]` 日志与退出码。Xcode 命令行工具是可选提示项，由 Homebrew 安装脚本自行处理。
+安装顺序：Homebrew → `brew install python@3.12` → `brew install tmux` → gateway wheel/extras → 嵌入模型 → 重排模型。Homebrew 缺失时，安装页先展示官方脚本 URL 与完整命令，用户点「开始安装」后写临时 `.command` 并用 `open -a Terminal` 执行，app 不阻塞；其余步骤必须由用户确认后执行，每步输出 `[Setup]` 日志与退出码。Xcode 命令行工具是可选提示项，由 Homebrew 安装脚本自行处理。
+
+下载走 `SetupInstaller.downloadEnvironment`：`proxyEnabled=true` 或首启（`config.yaml` 不存在）时读系统代理并注入 `HTTP(S)_PROXY`，curl 与 fastembed 共用。重排模型下载后校验 SHA256（`tokenizer.json` 与 `onnx/model_int8.onnx` 各一个常量），不匹配即移走临时文件并标记失败。
+
+## 依赖与缓存清单
+
+完整运行分四层：系统工具、Python venv、模型缓存、用户数据。前三层可删除重建，用户数据必须保留。
+
+### 系统依赖
+
+| 依赖 | 要求 | 缺失时 |
+|---|---|---|
+| Homebrew | `brew` 在 `/opt/homebrew/bin` 或 `/usr/local/bin` | 必需，安装页给出官方脚本 |
+| Python | ≥ 3.12 | 必需 |
+| tmux | 任意版本 | 终端启用时必需 |
+| Xcode CLT | `xcode-select -p` 有效 | 可选 |
+
+### Python 运行时
+
+| 内容 | 位置 | 说明 |
+|---|---|---|
+| gateway wheel | 随 app 分发（`Sources/Gateway`） | 首启装进 venv |
+| venv | `~/.config/utility/mcp-venv` | extras `proxy,memory,server` |
+| 基础依赖 | PyPI | httpx、pathspec、PyYAML、tree-sitter 与各语言语法包 |
+| proxy / memory / server | PyPI | aiohttp、Brotli、mem0ai、fastembed、qdrant-client、mcp、uvicorn、trafilatura 等 |
+
+SwiftPM 依赖编译进 app，不需要用户单独安装。
+
+### 模型缓存
+
+| 模型 | 默认位置 | 来源 |
+|---|---|---|
+| 重排 `bge-reranker-base-int8` | `~/.cache/utility/models/<name>` | HuggingFace `Xenova/bge-reranker-base` |
+| 嵌入 | `~/.cache/utility/fastembed`，可用 `mcp.fastembedCacheDir` 覆盖 | fastembed 按模型解析，目录名可能是 `Qdrant/<name>-onnx` |
+
+模型缓存可删除重建；重排模型缺失只让 recall 退回融合排序，不影响启动。
+
+### 用户数据与运行缓存
+
+- 数据：`~/.config/utility` 下的 `config.yaml`、`agent-gateway.yaml`、`data.sqlite`、`memory_graph.sqlite`、`knowledge.sqlite`、`notices.sqlite`、`token_usage.sqlite`、`tool_output.sqlite`、`workspaces.json`、`terminal-sessions.json`、`retrieval_thresholds.json`
+- 向量库：`mcp.qdrantPath` 指向的 Qdrant 本地目录
+- 项目图：各项目根 `.agent-gateway/graph.sqlite`
+- 日志与调试：`~/.cache/utility/*.log`、`agent_debug/`、`clip/`、`stage/`
+- 导入备份：`~/.config/utility.backup-<yyyyMMddHHmmss>`
 
 ## 预算与限制
 
@@ -110,4 +155,4 @@ bash scripts/run-tests.sh
 "$(swift build --show-bin-path)/utility" setup-check
 ```
 
-`archive-check --roundtrip` 覆盖导出、校验、导入、外部路径改写、密钥剥离、schema 拒绝与范围过滤；`setup-check` 输出六项依赖状态。
+`archive-check --roundtrip` 覆盖导出、校验、导入、外部路径改写、密钥剥离、schema 拒绝与范围过滤；`setup-check` 输出七项依赖状态（含重排模型）。
