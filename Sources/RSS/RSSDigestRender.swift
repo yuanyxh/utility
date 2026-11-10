@@ -7,6 +7,7 @@ enum RSSDigestRender {
         var url: String
         var titleTranslation: String
         var summary: String
+        var dateKnown: Bool = true
     }
 
     struct Filtered {
@@ -75,9 +76,18 @@ enum RSSDigestRender {
         var result: [Article] = []
         var current: Article?
         for line in text.components(separatedBy: "\n") {
-            if let parsed = linkParts(line) {
+            if var parsed = linkParts(line) {
                 if let current { result.append(current) }
-                current = Article(title: parsed.title, url: parsed.url, titleTranslation: "", summary: "")
+                let suffix = dateSuffix(in: parsed.title)
+                let known = suffix == nil
+                if let suffix { parsed.title.removeLast(suffix.count) }
+                current = Article(
+                    title: parsed.title,
+                    url: parsed.url,
+                    titleTranslation: "",
+                    summary: "",
+                    dateKnown: known
+                )
             } else if var pending = current, line.hasPrefix("> ") {
                 pending.summary = String(line.dropFirst(2))
                 current = pending
@@ -126,7 +136,8 @@ enum RSSDigestRender {
             lines.append("")
         }
         for item in articles {
-            let title = decorateTitle(item.title, translation: item.titleTranslation)
+            let decorated = decorateTitle(item.title, translation: item.titleTranslation)
+            let title = item.dateKnown ? decorated : "\(decorated)\(L10n.RSS.dateUnknown)"
             lines.append(contentsOf: [
                 "---",
                 "",
@@ -152,6 +163,13 @@ enum RSSDigestRender {
     }
 
     // MARK: - Internal
+
+    /// Suffixes written by any supported language; older archives may use a
+    /// language other than the current one, so parsing accepts both.
+    private static func dateSuffix(in title: String) -> String? {
+        let candidates = [L10n.RSS.dateUnknown, " (date unknown)", "（日期未知）"]
+        return candidates.first { !$0.isEmpty && title.hasSuffix($0) }
+    }
 
     private static func linkParts(_ line: String) -> (title: String, url: String)? {
         guard line.hasPrefix("## [") else { return nil }

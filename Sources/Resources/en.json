@@ -411,5 +411,6 @@
     "settings.error_hotkey_invalid": "{field} is not a valid hotkey",
     "settings.error_negative": "{field} must not be negative",
     "notify.notice_missed": "Missed reminders",
-    "notify.notice_missed_body": "{count:d} reminders were older than 24 hours and were not shown"
+    "notify.notice_missed_body": "{count:d} reminders were older than 24 hours and were not shown",
+    "rss.date_unknown": " (date unknown)"
 }

@@ -14,6 +14,7 @@ final class RSSDigestService {
         var feed: String
         var kind: String = "article"
         var text: String = ""
+        var dateKnown: Bool = true
     }
 
     private struct SummaryPayload {
@@ -137,12 +138,15 @@ final class RSSDigestService {
                 ))
                 continue
             }
-            selected.append(Entry(
-                title: item.title,
-                link: item.link,
-                feed: item.feedName,
-                kind: decision.kind
-            ))
+            selected.append(
+                Entry(
+                    title: item.title,
+                    link: item.link,
+                    feed: item.feedName,
+                    kind: decision.kind,
+                    dateKnown: item.dateKnown
+                )
+            )
         }
         return (selected, responded)
     }
@@ -185,7 +189,8 @@ final class RSSDigestService {
                     title: entry.title,
                     url: entry.link,
                     titleTranslation: payload.titleTranslation,
-                    summary: payload.summary
+                    summary: payload.summary,
+                    dateKnown: entry.dateKnown
                 )
             )
         }

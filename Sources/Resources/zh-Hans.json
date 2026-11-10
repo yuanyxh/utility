@@ -411,5 +411,6 @@
     "settings.error_hotkey_invalid": "{field} 格式不合法",
     "settings.error_negative": "{field} 不能为负数",
     "notify.notice_missed": "错过的提醒",
-    "notify.notice_missed_body": "{count:d} 条提醒已超过 24 小时，未逐条弹出"
+    "notify.notice_missed_body": "{count:d} 条提醒已超过 24 小时，未逐条弹出",
+    "rss.date_unknown": "（日期未知）"
 }
