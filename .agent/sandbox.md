@@ -61,7 +61,7 @@
 - `lume stop` + `lume delete utility-sandbox`，确认 `lume ls` 为空。
 - 删除 `/tmp` 下安装脚本、审计文件与 expect 脚本。
 - 检查 `~/Library/LaunchAgents` 无 lume 相关项、无残留进程。
-- 若不再需要 Lume，按安装目录移废纸篓并删除 `~/.local/share/lume`。
+- Lume 本体保留（2026-11-10 用户决定），如需移除：`~/.local/bin/lume`、`~/.local/share/lume`、`~/.lume` 移入废纸篓。
 
 ### 限制
 
@@ -76,4 +76,4 @@
 - 2026-11-10：用户本机导出 `Utility-1.1.109-20261109-2151.zip`（含密钥），经 `scp` 传入 VM。
 - 导入验证（L3）：`~/.config/utility.backup-<时间戳>` 生成，各 SQLite 关键表行数与归档一致，external notes 1655 个文件一致。
 - 本轮暴露并修复的向导缺陷：安装页内容被裁剪且日志区过大/贴边、选目录后冲突状态不刷新、模型缺失时「下一步」可点、日志区空置、Homebrew 卡住无后续指引、嵌入模型下载无外部超时、`mcp.qdrantPath` 缺失不检测。修复见于 1.2.4 至 1.2.7。
-- 待办：VM 拆除与残留检查尚未执行；VM 仍运行中。
+- 2026-11-10 拆除：`lume delete utility-sandbox --force` 成功，`lume ls` 为空；无 LaunchAgent、无残留进程；`/tmp` 无安装或审计文件。用户选择保留 Lume（21M，无守护进程、telemetry 关闭），供后续端到端测试复用。
