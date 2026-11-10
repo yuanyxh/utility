@@ -50,7 +50,7 @@ public final class ConfigManager {
     /// Backs up the previous file and keeps top-level keys the Swift model does not own.
     public func apply(_ newConfig: AppConfig) throws {
         let encoded = try YAMLEncoder().encode(newConfig)
-        let yaml = try mergedWithUnknownKeys(encoded)
+        let yaml = Self.decimalized(try mergedWithUnknownKeys(encoded))
         let content = "\(L10n.Config.headerComment)\n\(yaml)"
         let data = Data(content.utf8)
         guard data.count <= Self.maxConfigBytes else {
@@ -89,6 +89,35 @@ public final class ConfigManager {
         return try Yams.dump(object: updated, allowUnicode: true, sortKeys: true)
     }
 
+    /// Yams renders every `Double` in scientific notation (`3e-1`), which PyYAML
+    /// reads back as a string. Rewrite scalar-only numeric lines as decimals.
+    static func decimalized(_ yaml: String) -> String {
+        let pattern = #"^(\s*[^#\s][^:]*:\s*)([-+]?\d+(?:\.\d+)?[eE][-+]?\d+)\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return yaml }
+        var lines = yaml.components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() {
+            let range = NSRange(line.startIndex..., in: line)
+            guard let match = regex.firstMatch(in: line, range: range),
+                let valueRange = Range(match.range(at: 2), in: line),
+                let value = Double(line[valueRange])
+            else { continue }
+            lines[index] = line.replacingCharacters(
+                in: valueRange, with: decimalText(value)
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func decimalText(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.maximumSignificantDigits = 15
+        formatter.minimumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
     /// Validates `rawText` as a complete config, writes it verbatim, then reloads.
     /// Validation runs before the write, so a bad edit never replaces a working config.
     public func apply(rawText: String) throws {
@@ -103,7 +132,7 @@ public final class ConfigManager {
     /// Encodes the current config back to the config file (persists runtime changes).
     public func save() throws {
         let encoder = YAMLEncoder()
-        let yaml = try encoder.encode(config)
+        let yaml = Self.decimalized(try encoder.encode(config))
         let content = """
         \(L10n.Config.headerComment)
         \(yaml)
