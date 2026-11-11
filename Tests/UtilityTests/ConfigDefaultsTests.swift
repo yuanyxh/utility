@@ -9,6 +9,29 @@ final class ConfigDefaultsTests: XCTestCase {
         XCTAssertEqual(config.mcp?.enabled, true)
     }
 
+    func testNestedNeuronConfigOverridesDefaults() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("config-neuron-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let yaml = """
+            mcp:
+              neuron:
+                maxDepth: 7
+                reviewConcurrency: 9
+            """
+        try yaml.write(
+            to: directory.appendingPathComponent("config.yaml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let config = ConfigManager.readConfigOrDefault(in: directory)
+        XCTAssertEqual(config.mcp?.neuron.maxDepth, 7)
+        XCTAssertEqual(config.mcp?.neuron.reviewConcurrency, 9)
+    }
+
     func testDecimalizedRewritesScientificFloatsOnly() {
         let input = [
             "hotkey: cmd+shift+c",

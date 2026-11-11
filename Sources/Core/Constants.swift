@@ -145,6 +145,18 @@ enum EnvKeys {
     static let rankSignalAccess = "RANK_SIGNAL_ACCESS"
     static let rankSignalQuality = "RANK_SIGNAL_QUALITY"
 
+    /// Memory neuron network, from `mcp.neuron*`; read by both the service and `.sh` tasks.
+    static let neuronEnabled = "MEMORY_NEURON_ENABLED"
+    static let neuronBuild = "MEMORY_NEURON_BUILD"
+    static let neuronMaintenance = "MEMORY_NEURON_MAINTENANCE"
+    static let neuronMaxDepth = "MEMORY_NEURON_MAX_DEPTH"
+    static let neuronBeam = "MEMORY_NEURON_BEAM"
+    static let neuronActivationFloor = "MEMORY_NEURON_ACTIVATION_FLOOR"
+    static let neuronArchiveDays = "MEMORY_NEURON_ARCHIVE_DAYS"
+    static let neuronTrashDays = "MEMORY_NEURON_TRASH_DAYS"
+    static let neuronLlmPairs = "MEMORY_NEURON_LLM_PAIRS"
+    static let neuronReviewConcurrency = "MEMORY_NEURON_REVIEW_CONCURRENCY"
+
     /// Cross-encoder model directory; `RECALL_RERANK=0` disables re-ranking.
     static let rerankModelDir = "RERANK_MODEL_DIR"
     static let recallRerank = "RECALL_RERANK"

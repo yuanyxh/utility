@@ -559,6 +559,7 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 | `mcp.memoryMaxContentChars` | `0` | 单条记忆的建议长度上限(字符)，超限只警告不拒写；`0` 不限 |
 | `mcp.memoryMaxSummaries` / `memoryMaxSummariesPerEpisode` | `0` | 活跃整合摘要的预算；超预算时最旧摘要折叠为一条更高层级摘要(上限 3 层)；`0` 不折叠 |
 | `mcp.rankSignalRecency` / `rankSignalAccess` / `rankSignalQuality` | `0` | 可选排序信号，需先在评测集上对比再逐个开启；全 `0` 为纯相关度排序 |
+| `mcp.neuron` | 见 `default-config.yaml` | 记忆神经网：`enabled`/`build`/`maintenance`、扩散 `maxDepth`/`beam`/`activationFloor`、分层 `archiveDays`/`trashDays`、每日建边 `llmPairs`、审查并发 `reviewConcurrency` |
 | `mcp.synonyms` | `{}` | 检索同义词增量补充(同名覆盖、异名追加) |
 | `mcp.toolDefaults` | `recall: 6` 等 | 各工具默认返回条数 |
 | `mcp.qdrantPath` / `knowledgeBasePath` | `""` | 存储路径；留空用默认路径 |

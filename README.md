@@ -603,6 +603,7 @@ Restart the service after adding or changing a skill.
 | `mcp.memoryMaxContentChars` | `0` | soft length limit per memory in characters, warns but never rejects; `0` unlimited |
 | `mcp.memoryMaxSummaries` / `memoryMaxSummariesPerEpisode` | `0` | budgets for active consolidation summaries; over budget the oldest fold into one higher-level summary (max 3 levels); `0` disables folding |
 | `mcp.rankSignalRecency` / `rankSignalAccess` / `rankSignalQuality` | `0` | optional ranking signals; benchmark each on the evaluator set before enabling, all `0` keeps plain score order |
+| `mcp.neuron` | see `default-config.yaml` | memory neuron network: `enabled`/`build`/`maintenance`, spread `maxDepth`/`beam`/`activationFloor`, tier `archiveDays`/`trashDays`, `llmPairs` per daily build, and `reviewConcurrency` for parallel review batches |
 | `mcp.synonyms` | `{}` | search synonyms, an increment over the built-in table |
 | `mcp.toolDefaults` | e.g. `recall: 6` | default result caps per tool |
 | `mcp.qdrantPath` / `knowledgeBasePath` | `""` | storage paths; empty uses the default paths |

@@ -299,6 +299,21 @@ enum PythonScriptRunner {
         for (key, value) in signals where value > 0 {
             env[key] = String(value)
         }
+        let neuronEnv = [
+            (EnvKeys.neuronEnabled, String(mcp.neuron.enabled)),
+            (EnvKeys.neuronBuild, String(mcp.neuron.build)),
+            (EnvKeys.neuronMaintenance, String(mcp.neuron.maintenance)),
+            (EnvKeys.neuronMaxDepth, String(mcp.neuron.maxDepth)),
+            (EnvKeys.neuronBeam, String(mcp.neuron.beam)),
+            (EnvKeys.neuronActivationFloor, String(mcp.neuron.activationFloor)),
+            (EnvKeys.neuronArchiveDays, String(mcp.neuron.archiveDays)),
+            (EnvKeys.neuronTrashDays, String(mcp.neuron.trashDays)),
+            (EnvKeys.neuronLlmPairs, String(mcp.neuron.llmPairs)),
+            (EnvKeys.neuronReviewConcurrency, String(mcp.neuron.reviewConcurrency)),
+        ]
+        for (key, value) in neuronEnv {
+            env[key] = value
+        }
         return env
     }
 

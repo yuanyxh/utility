@@ -198,6 +198,23 @@ mcp:
   rankSignalAccess: 0
   rankSignalQuality: 0
 
+  # Memory neuron network: memories form groups (neurons) joined by weighted synapses.
+  # `enabled` gates associative recall and all network writes; `build`/`maintenance`
+  # gate the daily/ weekly passes. Spread depth/beam and the activation floor bound
+  # associative recall; archive/trash days control tier retention before physical purge.
+  neuron:
+    enabled: true
+    build: true
+    maintenance: true
+    maxDepth: 3
+    beam: 5
+    activationFloor: 0.15
+    archiveDays: 180
+    trashDays: 30
+    llmPairs: 100
+    # 关联审查并发批次，1 为串行；回填建议 8-10
+    reviewConcurrency: 1
+
   # Daily summary (triggered by TaskScheduler, runs summarize.py)
   summaryEnabled: true
   summaryHour: 17

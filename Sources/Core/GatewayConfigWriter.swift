@@ -109,6 +109,18 @@ enum GatewayConfigWriter {
                 "access": mcp.rankSignalAccess,
                 "quality": mcp.rankSignalQuality,
             ],
+            "neuron": [
+                "enabled": mcp.neuron.enabled,
+                "build": mcp.neuron.build,
+                "maintenance": mcp.neuron.maintenance,
+                "maxDepth": mcp.neuron.maxDepth,
+                "beam": mcp.neuron.beam,
+                "activationFloor": mcp.neuron.activationFloor,
+                "archiveDays": mcp.neuron.archiveDays,
+                "trashDays": mcp.neuron.trashDays,
+                "llmPairs": mcp.neuron.llmPairs,
+                "reviewConcurrency": mcp.neuron.reviewConcurrency,
+            ],
             "embedder": [
                 "model": mcp.embedderModel,
                 "cacheDir": mcp.fastembedCacheDir,

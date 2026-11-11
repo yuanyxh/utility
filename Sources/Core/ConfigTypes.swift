@@ -195,6 +195,9 @@ public struct MCPConfig: Codable {
     var rankSignalAccess: Double = 0
     var rankSignalQuality: Double = 0
 
+    // Memory neuron network (groups, synapses, spreading activation, tiered lifecycle)
+    var neuron: NeuronConfig = NeuronConfig()
+
     // Daily summary
     var summaryEnabled: Bool = true
     var summaryHour: Int = 17
@@ -244,12 +247,43 @@ public struct MCPConfig: Codable {
         rankSignalRecency = try c.decodeIfPresent(Double.self, forKey: .rankSignalRecency) ?? 0
         rankSignalAccess = try c.decodeIfPresent(Double.self, forKey: .rankSignalAccess) ?? 0
         rankSignalQuality = try c.decodeIfPresent(Double.self, forKey: .rankSignalQuality) ?? 0
+        neuron = try c.decodeIfPresent(NeuronConfig.self, forKey: .neuron) ?? NeuronConfig()
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
         synonyms = try c.decodeIfPresent([String: String].self, forKey: .synonyms) ?? [:]
         toolDefaults = try c.decodeIfPresent([String: [String: Int]].self, forKey: .toolDefaults) ?? [:]
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
+    }
+}
+
+/// Memory neuron network: groups, synapses, spreading activation and tiered lifecycle.
+public struct NeuronConfig: Codable {
+    var enabled: Bool = true
+    var build: Bool = true
+    var maintenance: Bool = true
+    var maxDepth: Int = 3
+    var beam: Int = 5
+    var activationFloor: Double = 0.15
+    var archiveDays: Int = 180
+    var trashDays: Int = 30
+    var llmPairs: Int = 100
+    var reviewConcurrency: Int = 1
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        build = try c.decodeIfPresent(Bool.self, forKey: .build) ?? true
+        maintenance = try c.decodeIfPresent(Bool.self, forKey: .maintenance) ?? true
+        maxDepth = try c.decodeIfPresent(Int.self, forKey: .maxDepth) ?? 3
+        beam = try c.decodeIfPresent(Int.self, forKey: .beam) ?? 5
+        activationFloor = try c.decodeIfPresent(Double.self, forKey: .activationFloor) ?? 0.15
+        archiveDays = try c.decodeIfPresent(Int.self, forKey: .archiveDays) ?? 180
+        trashDays = try c.decodeIfPresent(Int.self, forKey: .trashDays) ?? 30
+        llmPairs = try c.decodeIfPresent(Int.self, forKey: .llmPairs) ?? 100
+        reviewConcurrency = try c.decodeIfPresent(Int.self, forKey: .reviewConcurrency) ?? 1
     }
 }
 
