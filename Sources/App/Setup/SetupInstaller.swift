@@ -207,7 +207,7 @@ enum SetupInstaller {
             if sha256(of: target) == rerankerSHA256[remote] { continue }
             let temporary = target.appendingPathExtension("download")
             log("[Setup] curl \(base)/\(remote)")
-            var arguments = [
+            let arguments = [
                 "/usr/bin/curl", "-L", "--fail", "--retry", "2", "--connect-timeout", "20",
                 "--speed-limit", "1024", "--speed-time", "60", "-C", "-",
                 "-o", temporary.path, "\(base)/\(remote)",
