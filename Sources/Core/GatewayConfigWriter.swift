@@ -121,6 +121,15 @@ enum GatewayConfigWriter {
                 "llmPairs": mcp.neuron.llmPairs,
                 "reviewConcurrency": mcp.neuron.reviewConcurrency,
             ],
+            "brain": [
+                "pairMode": mcp.brain.pairMode,
+                "sparseFloor": mcp.brain.sparseFloor,
+                "attractor": mcp.brain.attractor,
+                "forgetting": mcp.brain.forgetting,
+                "buffer": mcp.brain.buffer,
+                "replay": mcp.brain.replay,
+                "semantic": mcp.brain.semantic,
+            ],
             "embedder": [
                 "model": mcp.embedderModel,
                 "cacheDir": mcp.fastembedCacheDir,

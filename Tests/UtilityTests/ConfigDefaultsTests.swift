@@ -9,6 +9,32 @@ final class ConfigDefaultsTests: XCTestCase {
         XCTAssertEqual(config.mcp?.enabled, true)
     }
 
+    func testBrainConfigDefaultsAndOverrides() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("config-brain-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.trashItem(at: directory, resultingItemURL: nil) }
+        let yaml = """
+            mcp:
+              brain:
+                pairMode: v2
+                sparseFloor: 0.1
+                replay: false
+            """
+        try yaml.write(
+            to: directory.appendingPathComponent("config.yaml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let config = ConfigManager.readConfigOrDefault(in: directory)
+        XCTAssertEqual(config.mcp?.brain.pairMode, "v2")
+        XCTAssertEqual(config.mcp?.brain.sparseFloor, 0.1)
+        XCTAssertEqual(config.mcp?.brain.replay, false)
+        XCTAssertEqual(config.mcp?.brain.attractor, true)
+    }
+
     func testNestedNeuronConfigOverridesDefaults() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("config-neuron-\(UUID().uuidString)", isDirectory: true)

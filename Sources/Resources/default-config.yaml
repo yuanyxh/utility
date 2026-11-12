@@ -214,6 +214,15 @@ mcp:
     llmPairs: 100
     # 关联审查并发批次，1 为串行；回填建议 8-10
     reviewConcurrency: 1
+    # 网关原生 v3 开关，仅写入 agent-gateway.yaml；默认值即生产推荐值
+    brain:
+      pairMode: v3
+      sparseFloor: 0.0
+      attractor: true
+      forgetting: true
+      buffer: true
+      replay: true
+      semantic: true
 
   # Daily summary (triggered by TaskScheduler, runs summarize.py)
   summaryEnabled: true

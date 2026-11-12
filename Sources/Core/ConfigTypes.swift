@@ -197,6 +197,8 @@ public struct MCPConfig: Codable {
 
     // Memory neuron network (groups, synapses, spreading activation, tiered lifecycle)
     var neuron: NeuronConfig = NeuronConfig()
+    // Gateway-native v3 switches; the host only persists them for `agent-gateway.yaml`
+    var brain: BrainConfig = BrainConfig()
 
     // Daily summary
     var summaryEnabled: Bool = true
@@ -248,12 +250,37 @@ public struct MCPConfig: Codable {
         rankSignalAccess = try c.decodeIfPresent(Double.self, forKey: .rankSignalAccess) ?? 0
         rankSignalQuality = try c.decodeIfPresent(Double.self, forKey: .rankSignalQuality) ?? 0
         neuron = try c.decodeIfPresent(NeuronConfig.self, forKey: .neuron) ?? NeuronConfig()
+        brain = try c.decodeIfPresent(BrainConfig.self, forKey: .brain) ?? BrainConfig()
         summaryEnabled = try c.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
         summaryHour = try c.decodeIfPresent(Int.self, forKey: .summaryHour) ?? 17
         synonyms = try c.decodeIfPresent([String: String].self, forKey: .synonyms) ?? [:]
         toolDefaults = try c.decodeIfPresent([String: [String: Int]].self, forKey: .toolDefaults) ?? [:]
         maxRestarts = try c.decodeIfPresent(Int.self, forKey: .maxRestarts) ?? 3
         restartDelayMs = try c.decodeIfPresent(Int.self, forKey: .restartDelayMs) ?? 2000
+    }
+}
+
+/// Gateway-native v3 pair/replay switches; defaults match `agent-gateway` behaviour.
+public struct BrainConfig: Codable {
+    var pairMode: String = "v3"
+    var sparseFloor: Double = 0
+    var attractor: Bool = true
+    var forgetting: Bool = true
+    var buffer: Bool = true
+    var replay: Bool = true
+    var semantic: Bool = true
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pairMode = try c.decodeIfPresent(String.self, forKey: .pairMode) ?? "v3"
+        sparseFloor = try c.decodeIfPresent(Double.self, forKey: .sparseFloor) ?? 0
+        attractor = try c.decodeIfPresent(Bool.self, forKey: .attractor) ?? true
+        forgetting = try c.decodeIfPresent(Bool.self, forKey: .forgetting) ?? true
+        buffer = try c.decodeIfPresent(Bool.self, forKey: .buffer) ?? true
+        replay = try c.decodeIfPresent(Bool.self, forKey: .replay) ?? true
+        semantic = try c.decodeIfPresent(Bool.self, forKey: .semantic) ?? true
     }
 }
 
