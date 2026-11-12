@@ -218,12 +218,11 @@ enum ConfigArchive {
             guard let destination = destinationPath(for: file.path, configDir: configDir),
                 FileManager.default.fileExists(atPath: destination.path)
             else { continue }
-            let incoming = try tableNames(at: staging.appendingPathComponent(file.path))
-            let current = try tableNames(at: destination)
-            guard incoming == current else {
-                let difference = incoming.symmetricDifference(current).sorted()
-                throw ArchiveError.schemaMismatch(file.path, difference)
-            }
+            try checkSchema(
+                incoming: staging.appendingPathComponent(file.path),
+                current: destination,
+                path: file.path,
+            )
         }
 
         log("validated \(manifest.files.count) files")
@@ -512,6 +511,13 @@ enum ConfigArchive {
             return configDir.appendingPathComponent(String(archivePath.dropFirst(prefix.count)))
         }
         return nil
+    }
+
+    static func checkSchema(incoming: URL, current: URL, path: String) throws {
+        let extraTables = try tableNames(at: incoming).subtracting(tableNames(at: current))
+        guard extraTables.isEmpty else {
+            throw ArchiveError.schemaMismatch(path, extraTables.sorted())
+        }
     }
 
     private static func tableNames(at url: URL) throws -> Set<String> {
