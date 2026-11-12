@@ -46,6 +46,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | 构建、验证与 scripts 目录 | `.claude/docs/architecture/build.md` |
 | RSS 采集 / 解析 / 日报 | `.claude/docs/architecture/rss.md` |
 | 检索性能约定 | `.claude/docs/architecture/retrieval.md` |
+| 记忆神经网 v3 / 质心与嵌入模型 / 建边与重放 | `.claude/docs/architecture/memory-brain.md` |
 | Orchestrate 设计沉淀 / Claude CLI 标志 | `.claude/docs/architecture/design-notes.md` |
 
 以下只列**每次改动都必须遵守的不变量**；原因与历史案例在文档里。
@@ -108,6 +109,12 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `websearch_engine` 内置在 `server.py`，分三层：`search/engines.py`（引擎搜索）→ `fetch/http.py`（抓取）→ `markdown/html.py`（HTML→Markdown）；`web_search.py` 只是兼容 facade
 - `read_url` 内置，已取代 `read` skill：本地优先，`use_proxy=true` 才走 defuddle/jina；失败必须返回 `ok:false` + `error_code` + `attempts`，禁止把登录壳或空内容当成功
 - 页面读取不要把 `Enable JavaScript` 等字样当挑战页（只有搜索引擎请求启用 `detect_challenge`）；结构容器 `html/body/main/article` 不得被 boilerplate 规则跳过
+
+### 记忆神经网（memory brain）
+- `neurons.centroid` 必须与 `EMBEDDER_MODEL` 同源同维；换模型先跑 `memory_centroids.py`（VACUUM INTO 备份）再 `--sparse --force`，否则图按维度分裂
+- 建边写入权重用原始余弦、门槛 0.62；高置信自动接受只是全量回填的临时策略，已回滚，禁止恢复为默认
+- 桥接边 `kind='bridge'` 绕过门槛、归档后可复活；`llm_skipped` 时必须告警
+- 提示词副本必须与 gateway 源仓一致；facts 按 evidence 幂等，同一证据不重复计 support
 
 ### 知识面板
 - 补货**不能走 TaskScheduler**（sub-daily cron 会静默退化成每天一次），用 `KnowledgeService` 自建 Timer
