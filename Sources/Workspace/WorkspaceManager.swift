@@ -49,7 +49,6 @@ final class WorkspaceManager {
     /// Supplies the size a fresh terminal view gets before the pty starts.
     var viewSize: () -> NSSize = { NSSize(width: 760, height: 520) }
     var isWindowVisible: () -> Bool = { false }
-    var isWindowFocused: () -> Bool = { false }
 
     private(set) var document = WorkspaceDocument()
     private(set) var mountedSessions: [TerminalSession] = []
@@ -203,10 +202,6 @@ final class WorkspaceManager {
             controller?.terminalContentSize ?? NSSize(width: 760, height: 520)
         }
         isWindowVisible = { [weak controller] in controller?.window?.isVisible == true }
-        isWindowFocused = { [weak controller] in
-            guard NSApplication.shared.isActive else { return false }
-            return controller?.window?.isVisible == true
-        }
         windowController = controller
         return controller
     }
@@ -605,7 +600,7 @@ final class WorkspaceManager {
     }
 
     private func handleNotification(_ session: TerminalSession, title: String, body: String) {
-        guard !isWindowFocused() else {
+        guard !isSessionFocused(session) else {
             debugLog("[Workspace] notify suppressed focused=true title=\(title)")
             return
         }
@@ -622,6 +617,19 @@ final class WorkspaceManager {
             body: body.isEmpty ? L10n.Terminal.notifyBody(title: session.title) : body,
             sessionID: session.id,
         )
+    }
+
+    /// Suppress only when the emitting terminal itself holds focus in the key window.
+    private func isSessionFocused(_ session: TerminalSession) -> Bool {
+        guard NSApplication.shared.isActive,
+            let window = windowController?.window, window.isKeyWindow
+        else { return false }
+        var responder = window.firstResponder
+        while let current = responder {
+            if current === session.view { return true }
+            responder = current.nextResponder
+        }
+        return false
     }
 
     private func removeReference(to sessionID: String) {

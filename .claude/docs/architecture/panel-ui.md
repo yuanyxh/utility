@@ -9,6 +9,7 @@
 - 栈结构 = 激活面板，后入栈顶
 - dispatchKey：栈顶→底遍历，handleKeyEvent 对自己关心的键全 return true 阻断下层
 - didResignKey：用 DispatchQueue.main.async 等通知链完再读 NSApp.keyWindow（不用 didResignActive）
+- **向焦点控件定向粘贴必须走响应链**：`finishPaste` 直接 `sendAction(paste:, to: firstResponder)` 会给不响应 `paste:` 的视图（终端/WebView）抛 unrecognized selector，进程 SIGABRT（2026-11-12 翻译回车粘贴闪退）；用 `tryToPerform` 沿链查找，兜底 `sendAction(to: nil)`
 - Stage 独立不入栈
 - **自动弹出也必须走 requestShow**（context 带 `auto`），不能直接 `orderFront`：直接显示的面板不在栈里，`dispatchKey` 分发不到，ESC 失效，`hasVisiblePanel` 也会漏判（2026-10-29 知识面板 showAuto 修复）
 - **常驻窗口必须注册 `AppWindowRegistry`**（终端 / 配置 / Stage）：`hideIfEmpty` 用 `hasVisibleWindow` 决定是否 `NSApp.hide`，漏注册会让常驻窗口在最后一个面板关闭时被连带隐藏（2026-10-29 Stage 修复）

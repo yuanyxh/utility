@@ -54,6 +54,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 ### 面板与 UI
 - 面板零引用 PanelManager，只经 EventBus 发 requestShow/Close；PanelManager 是唯一 show/close 入口，栈顶优先，Stage 不入栈
 - `didResignKey` 用 `DispatchQueue.main.async` 等通知链完再读 `NSApp.keyWindow`，不用 didResignActive
+- 定向粘贴不能直接 `sendAction(paste:, to: firstResponder)`：非文本 firstResponder 会抛 unrecognized selector 导致 SIGABRT；用 `tryToPerform` 沿响应链，兜底 `sendAction(to: nil)`
 - 跨模块通信走 EventBus，禁止直接持有对方引用
 - `HotkeyManager.keyCodeMap` 必须完整覆盖 26 个字母 + 常用符号；`parse` 的 keyCode 用 Optional，**不能用 0 表示未匹配**（`a` 的 ANSI 键码就是 0）
 - 热键只在启动时 `registerAllHotkeys()` 注册，配置重载不重注册 —— 改热键要重启 app
@@ -61,6 +62,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 请求封装类必须用 `RequestConfig` struct 收束全部控制参数，不拆成单独函数参数
 - i18n 唯一数据源是 `Sources/Resources/<lang>.json`；Swift 访问器由 `scripts/gen-l10n.py` 生成到 `L10nKeys.swift`（禁止手改）；占位符只用 `{name}` / `{name:d}` / `{name:.Nf}`（禁止 `%@`/`%ld`/`String(format:)`）；改 JSON 后必须重新生成，打包前跑 `gen-l10n.py --check` 与 `check-l10n-contract.py`；运行时切语言用 `refreshAllTitles()` 模式
 - Python 侧语言包由 agent-gateway 自持（`src/agent_gateway/locales/*.json`），本仓不生成、不校验
+- MCP 服务必须 `json_response=False`（SSE）；JSON 单响应没有 sink，会静默丢弃 `notifications/progress`，详见 `mcp-server.md`
 
 ### 符号提取（Scanner）
 - 旧的 `.utility/deps.sqlite` 扫描链已于 2026-11-02 移除，**禁止重新引入**；项目索引只有 `graph.sqlite`，见 `project-graph.md`

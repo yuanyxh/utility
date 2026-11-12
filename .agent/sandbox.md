@@ -77,3 +77,14 @@
 - 导入验证（L3）：`~/.config/utility.backup-<时间戳>` 生成，各 SQLite 关键表行数与归档一致，external notes 1655 个文件一致。
 - 本轮暴露并修复的向导缺陷：安装页内容被裁剪且日志区过大/贴边、选目录后冲突状态不刷新、模型缺失时「下一步」可点、日志区空置、Homebrew 卡住无后续指引、嵌入模型下载无外部超时、`mcp.qdrantPath` 缺失不检测。修复见于 1.2.4 至 1.2.7。
 - 2026-11-10 拆除：`lume delete utility-sandbox --force` 成功，`lume ls` 为空；无 LaunchAgent、无残留进程；`/tmp` 无安装或审计文件。用户选择保留 Lume（21M，无守护进程、telemetry 关闭），供后续端到端测试复用。
+
+## 2026-11-12 MCP progress 端到端
+
+- Level: virtual-machine，复用既有 `utility-env`（内含 Utility.app、mcp-venv 3.12.16、agent-gateway wheel 0.1.0）。
+- 被测代码：宿主 `src` 的 3 个改动文件覆盖到 VM `~/gateway-src/src`，以 `PYTHONPATH` 指向源码启动 server（9001）。
+- 网络：VM 系统代理 `127.0.0.1:7897` 未运行，server 以 `no_proxy=*` 直连；仅测试环境，不代表宿主配置。
+- 结论：`json_response=True` 时服务端 on_progress 已触发但客户端收不到（SDK 无 SSE sink）；改 `json_response=False` 后 progress 1/2/3 单调、total 一致。
+- 稳定性：顺序 5 次、同 session 并发 3 次全部通过，无 `-32000`、无断连。
+- 脚本：`/tmp/lume-e2e/e2e_progress.py`（宿主临时目录，验证后清理）。
+- 残留：VM 内 `~/gateway-src/src` 为新源码，旧版在 `agent_gateway.bak`；VM 已停止。
+- 未覆盖：真实 Claude Code UI 渲染（客户端用官方 SDK 2.3.0）。

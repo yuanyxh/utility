@@ -67,12 +67,14 @@ public final class PanelManager {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 if AppWindowRegistry.hasVisibleWindow, NSApplication.shared.isActive,
-                   let target = AppWindowRegistry.frontmostWindow
+                    let target = AppWindowRegistry.frontmostWindow
                 {
                     target.makeKeyAndOrderFront(nil)
-                    NSApp.sendAction(
-                        #selector(NSText.paste(_:)), to: target.firstResponder, from: nil,
-                    )
+                    // firstResponder may not handle paste: (terminal, web view);
+                    // sendAction to it raises unrecognized selector, so walk the chain.
+                    let paste = #selector(NSText.paste(_:))
+                    if target.firstResponder?.tryToPerform(paste, with: nil) == true { return }
+                    _ = NSApp.sendAction(paste, to: nil, from: nil)
                     return
                 }
                 if !AppWindowRegistry.hasVisibleWindow {
