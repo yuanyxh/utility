@@ -10,11 +10,19 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     private var currentDesc = ""
     private var currentPubDate = ""
     private var currentGUID = ""
+    private var channelDate = ""
+    private var channelDateLocked = false
     private var isItem = false
+
+    private static let dateElements: Set<String> = [
+        "pubDate", "lastBuildDate", "published", "updated",
+    ]
 
     public func parse(data: Data, feedName: String) -> [RSSItem] {
         self.feedName = feedName
         items = []
+        channelDate = ""
+        channelDateLocked = false
         let parser = XMLParser(data: data)
         parser.delegate = self
         parser.parse()
@@ -30,6 +38,10 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     ) {
         currentElement = elementName
 
+        if !isItem, Self.dateElements.contains(elementName), !channelDateLocked {
+            channelDate = ""
+        }
+
         if elementName == "item" || elementName == "entry" {
             isItem = true
             currentTitle = ""
@@ -41,14 +53,20 @@ public final class RSSParser: NSObject, XMLParserDelegate {
 
         // Atom: <link href="..." />, take it from the attributes
         if isItem, elementName == "link", let href = attributeDict["href"],
-           !href.isEmpty, currentLink.isEmpty
+            !href.isEmpty, currentLink.isEmpty
         {
             currentLink = href
         }
     }
 
     public func parser(_: XMLParser, foundCharacters string: String) {
-        guard isItem else { return }
+        guard isItem else {
+            // Feeds such as GitHub Trending carry the date only at channel level.
+            if Self.dateElements.contains(currentElement), !channelDateLocked {
+                channelDate += string
+            }
+            return
+        }
         switch currentElement {
         case "title": currentTitle += string
         case "link":
@@ -67,11 +85,25 @@ public final class RSSParser: NSObject, XMLParserDelegate {
         _: XMLParser, didEndElement elementName: String,
         namespaceURI _: String?, qualifiedName _: String?,
     ) {
-        guard isItem, elementName == "item" || elementName == "entry" else { return }
+        guard isItem, elementName == "item" || elementName == "entry" else {
+            // Lock only on a usable value: a blank or unsupported pubDate must not
+            // outrank a later lastBuildDate.
+            if Self.dateElements.contains(elementName),
+                parseDate(channelDate.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+            {
+                channelDateLocked = true
+            }
+            return
+        }
 
         let rawDate = currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines)
-        let date = parseDate(rawDate)
-        if date == nil {
+        let itemDate = parseDate(rawDate)
+        // Item dates win; a feed-level date stands in when the item omits one or
+        // ships a format parseDate does not know.
+        let date =
+            itemDate
+            ?? parseDate(channelDate.trimmingCharacters(in: .whitespacesAndNewlines))
+        if itemDate == nil {
             debugLog("[RSS] unparseable pubDate feed=\(feedName) raw=\(rawDate.isEmpty ? "<empty>" : rawDate)")
         }
         // Placeholder dates such as 0001-01-01 parse successfully but are not real.

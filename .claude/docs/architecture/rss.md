@@ -15,6 +15,7 @@
 ## 解析与去重（2026-11-07）
 
 - 日期解析失败时 `parseDate` 返回 `nil`，记录 `feed` 与原始串，落库使用 `RSSItem.unknownDate` 哨兵并记 `dateKnown = false`
+- item 级日期优先；item 缺日期或格式解析不了时回退到 channel 级 `pubDate` / `lastBuildDate` / `updated`（GitHub Trending 只在 channel 上给日期）。channel 值按「第一个能解析的」取，空白或未知格式不会挡住后面的 `lastBuildDate`；item 原始串仍照常记 `unparseable pubDate` 日志
 - 解析成功但早于或等于 1970 的占位日期（如 `0001-01-01`）同样按未知处理，避免新旧数据判定不一致
 - `unread(maxAgeDays:)` 的发布时间窗把未知日期放行：`pub_date >= cutoff OR date_known = 0`
 - 入库去重按 `id` 或非空 `link`：同一条目经不同 feed（如 HN 与原文源）以不同 guid 出现时只保留首次入库行
