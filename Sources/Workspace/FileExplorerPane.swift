@@ -463,7 +463,7 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
             ?? makeCell(identifier: identifier)
         guard let node = item as? FileNode else { return cell }
         cell.textField?.stringValue = node.name
-        let symbol = node.isDirectory ? "folder" : "doc"
+        let symbol = node.isSymlink ? "link" : (node.isDirectory ? "folder" : "doc")
         cell.imageView?.image = NSImage(
             systemSymbolName: symbol, accessibilityDescription: node.name,
         )
@@ -596,7 +596,8 @@ final class FileExplorerPane: NSView, WorkspacePanel, NSOutlineViewDataSource, N
         merged.reserveCapacity(scanned.count)
         for fresh in scanned {
             if let old = byPath[fresh.url.standardizedFileURL.path],
-                old.isDirectory == fresh.isDirectory
+                old.isDirectory == fresh.isDirectory,
+                old.isSymlink == fresh.isSymlink
             {
                 merged.append(old)
             } else {

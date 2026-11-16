@@ -188,21 +188,19 @@ final class FileDocument {
 
     func save(overwriteExternal: Bool) throws {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { throw FileSaveError.missing }
+        // Write through a symlink so saving keeps the link and updates its target.
+        let target = url.resolvingSymlinksInPath()
+        guard fm.fileExists(atPath: target.path) else { throw FileSaveError.missing }
         if !overwriteExternal, checkExternalChange() != .unchanged {
             throw FileSaveError.externalModified
         }
-        guard fm.isWritableFile(atPath: url.path) else { throw FileSaveError.readOnly }
+        guard fm.isWritableFile(atPath: target.path) else { throw FileSaveError.readOnly }
 
-        let temp = url.deletingLastPathComponent()
+        let temp = target.deletingLastPathComponent()
             .appendingPathComponent(".utility-save-\(UUID().uuidString).tmp")
         do {
             try encodedData().write(to: temp, options: .atomic)
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: temp)
-            } else {
-                try fm.moveItem(at: temp, to: url)
-            }
+            _ = try fm.replaceItemAt(target, withItemAt: temp)
         } catch {
             try? fm.removeItem(at: temp)
             throw FileSaveError.writeFailed(error.localizedDescription)

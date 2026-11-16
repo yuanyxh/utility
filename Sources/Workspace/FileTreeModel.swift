@@ -4,14 +4,16 @@ final class FileNode {
     let url: URL
     let name: String
     let isDirectory: Bool
+    let isSymlink: Bool
     var children: [FileNode]?
     var isLoading = false
     var truncated = false
 
-    init(url: URL, isDirectory: Bool) {
+    init(url: URL, isDirectory: Bool, isSymlink: Bool = false) {
         self.url = url
         self.name = url.lastPathComponent
         self.isDirectory = isDirectory
+        self.isSymlink = isSymlink
     }
 }
 
@@ -20,7 +22,8 @@ struct FileChildren {
     let truncated: Bool
 }
 
-/// Directory enumeration for the file tree. Symlinks are never followed.
+/// Directory enumeration for the file tree. Symlinks are listed but only
+/// expanded on demand; `countFiles` guards against link cycles.
 enum FileTreeScanner {
     static let directoryLimit = 2000
 
@@ -29,28 +32,41 @@ enum FileTreeScanner {
         limit: Int = directoryLimit,
     ) -> FileChildren {
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        // A symlinked directory must be resolved before enumeration: passing the
+        // link itself to contentsOfDirectory returns nil, not its target entries.
+        let target = directory.resolvingSymlinksInPath()
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
-                at: directory, includingPropertiesForKeys: Array(keys), options: [],
+                at: target, includingPropertiesForKeys: Array(keys), options: [],
             )
         else {
             return FileChildren(nodes: [], truncated: false)
         }
 
         var nodes: [FileNode] = []
-        for url in entries {
+        for entry in entries {
+            let url = directory.appendingPathComponent(entry.lastPathComponent)
             let name = url.lastPathComponent
             if PathRules.isAlwaysHiddenFile(name: name) { continue }
             if !showHidden, name.hasPrefix(".") { continue }
             let values = try? url.resourceValues(forKeys: keys)
-            if values?.isSymbolicLink == true { continue }
-            let isDirectory = values?.isDirectory == true
+            let isSymlink = values?.isSymbolicLink == true
+            let isDirectory: Bool
+            if isSymlink {
+                var targetIsDirectory: ObjCBool = false
+                let exists = FileManager.default.fileExists(
+                    atPath: url.path, isDirectory: &targetIsDirectory,
+                )
+                isDirectory = exists && targetIsDirectory.boolValue
+            } else {
+                isDirectory = values?.isDirectory == true
+            }
             if isDirectory,
                 PathRules.shouldSkip(name: name) || extraIgnores.contains(name)
             {
                 continue
             }
-            nodes.append(FileNode(url: url, isDirectory: isDirectory))
+            nodes.append(FileNode(url: url, isDirectory: isDirectory, isSymlink: isSymlink))
             if nodes.count >= limit {
                 return FileChildren(nodes: sorted(nodes), truncated: true)
             }
@@ -63,7 +79,11 @@ enum FileTreeScanner {
     ) -> Int {
         var total = 0
         var pending: [URL] = [root]
+        var visited: Set<String> = []
         while let directory = pending.popLast() {
+            guard visited.insert(directory.resolvingSymlinksInPath().path).inserted else {
+                continue
+            }
             let result = children(
                 of: directory, showHidden: showHidden, extraIgnores: extraIgnores,
                 limit: Int.max,

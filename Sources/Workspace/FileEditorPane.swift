@@ -57,6 +57,10 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
     private var highlightDisabled = false
     private var lastRendered: EditorUIState?
     private var lastPreviewMode: EditorPreviewMode?
+    private var fileWatch: DispatchSourceFileSystemObject?
+    private var fileWatchURL: URL?
+    private var fileWatchWorkItem: DispatchWorkItem?
+    private static let maxWatchRetries = 3
     private let draftStore = EditorDraftStore()
     private let syntaxProvider: any SyntaxProvider
 
@@ -129,6 +133,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         pendingPosition = position
         rootURL = root
         loadGeneration += 1
+        stopWatchingFile()
         let generation = loadGeneration
         headerLabel.stringValue = url.lastPathComponent
         headerLabel.toolTip = url.path
@@ -170,6 +175,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         setDirty(true)
         onExternalChange?(.unchanged)
         self.document = document
+        startWatchingFile(draft.fileURL)
         textView.string = draft.text
         textView.undoManager?.removeAllActions()
         textView.isEditable = true
@@ -187,6 +193,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         highlightWorkItem?.cancel()
         syntaxDefinition = nil
         loadGeneration += 1
+        stopWatchingFile()
         pendingURL = nil
         document = nil
         setDirty(false)
@@ -257,6 +264,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         do {
             self.document = try document.savedCopy(at: url)
             if previousURL != url { draftStore.delete(for: previousURL) }
+            startWatchingFile(url)
             rootURL = rootURL ?? url.deletingLastPathComponent()
             headerLabel.stringValue = url.lastPathComponent
             headerLabel.toolTip = url.path
@@ -345,6 +353,77 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
 
     // MARK: - Disk changes
 
+    /// Watches the opened file so edits made by tools in the embedded terminal
+    /// surface without waiting for an app reactivation.
+    private func startWatchingFile(_ url: URL) {
+        stopWatchingFile()
+        fileWatchURL = url
+        armFileWatch(url)
+    }
+
+    @discardableResult
+    private func armFileWatch(_ url: URL, attempt: Int = 0) -> Bool {
+        let fd = Darwin.open(url.path, O_EVTONLY)
+        guard fd >= 0 else {
+            scheduleWatchRetry(url, attempt: attempt)
+            return false
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .rename, .delete, .revoke],
+            queue: .main,
+        )
+        source.setEventHandler { [weak self] in
+            guard let self, let source = self.fileWatch else { return }
+            let flags = source.data
+            let replaced =
+                flags.contains(.rename) || flags.contains(.delete)
+                || flags.contains(.revoke)
+            self.scheduleFileCheck(rearm: replaced)
+        }
+        source.setCancelHandler { Darwin.close(fd) }
+        fileWatch = source
+        source.resume()
+        return true
+    }
+
+    private func scheduleWatchRetry(_ url: URL, attempt: Int) {
+        guard attempt < Self.maxWatchRetries else {
+            debugLog("[Editor] file watch retry exhausted: \(url.path)")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, self.fileWatchURL == url, self.fileWatch == nil else { return }
+            self.armFileWatch(url, attempt: attempt + 1)
+        }
+    }
+
+    private func scheduleFileCheck(rearm: Bool) {
+        fileWatchWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.checkExternalChange()
+            if rearm { self.restartFileWatch() }
+        }
+        fileWatchWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
+    }
+
+    private func restartFileWatch() {
+        guard let url = document?.url ?? fileWatchURL else { return }
+        stopWatchingFile()
+        fileWatchURL = url
+        armFileWatch(url)
+    }
+
+    private func stopWatchingFile() {
+        fileWatchWorkItem?.cancel()
+        fileWatchWorkItem = nil
+        fileWatch?.cancel()
+        fileWatch = nil
+        fileWatchURL = nil
+    }
+
     private func reloadFromDisk() {
         guard let document, case .text(let fresh) = FileDocument.load(url: document.url, maxBytes: maxFileBytes)
         else { return }
@@ -360,6 +439,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         hideBanner()
         updateHeader()
         rebuildHighlightState()
+        if previewMode == .markdown { renderMarkdownPreview() }
         draftStore.delete(for: document.url)
     }
 
@@ -620,6 +700,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
         switch result {
         case .text(let loaded):
             document = loaded
+            startWatchingFile(url)
             setDirty(false)
             textView.string = loaded.text
             textView.undoManager?.removeAllActions()
@@ -665,6 +746,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
     private func resetDocument() {
         document = nil
         pendingPosition = nil
+        stopWatchingFile()
         setDirty(false)
         syntaxDefinition = nil
         highlightWorkItem?.cancel()
@@ -690,6 +772,7 @@ final class FileEditorPane: NSView, WorkspacePanel, NSTextViewDelegate {
 
     private func showImage(url: URL, generation: Int) {
         document = nil
+        stopWatchingFile()
         markdownURL = nil
         textView.string = ""
         ruler?.rebuildLineStarts("")

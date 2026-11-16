@@ -64,7 +64,7 @@
 
 ## 文件树
 
-- `FileTreeScanner` 不跟随符号链接，目录名走 `PathRules.shouldSkip`，单目录上限 2000 条并提示截断；`workspace.showHiddenFiles` 默认 `true`，关闭时按点号前缀过滤；`.DS_Store` / `.localized` 无论开关都隐藏（`PathRules.isAlwaysHiddenFile`）。
+- `FileTreeScanner` 列出符号链接条目但不自动递归：链接是否目录按目标类型判断，目录链接仅在用户展开时扫描；`countFiles` 用 `resolvingSymlinksInPath` 去重防循环。目录名走 `PathRules.shouldSkip`，单目录上限 2000 条并提示截断；`workspace.showHiddenFiles` 默认 `true`，关闭时按点号前缀过滤；`.DS_Store` / `.localized` 无论开关都隐藏（`PathRules.isAlwaysHiddenFile`）。
 - `FileTreeWatcher` 监听当前工作区根（FSEvents，400ms 去抖），按同一 `showHiddenFiles` 开关过滤隐藏路径与 `PathRules` 忽略目录，只重扫事件涉及的父目录。
 - 重扫用 `merge(existing:scanned:)` 复用路径未变的节点对象，已展开目录不会折叠；根路径统一 `resolvingSymlinksInPath`（`/tmp` 与 `/private/tmp` 前缀不一致会导致事件全部丢失）。
 - 单击文件夹行任意位置切换展开/收起，第二次点击（`clickCount == 2`）同样切换；单击文件直接打开编辑器，双击是重复调用（`open` 内部按同 URL 去重）；点在展开三角上时交给系统；列表上下留白 6 / 16。
@@ -75,7 +75,8 @@
 
 - `FileDocument` 负责编码探测、BOM/CRLF 记录、指纹（size + mtime + 内容哈希）、原子替换保存（同目录临时文件 + `replaceItemAt`）。
 - 脏状态由 `FileDocument.savedText` 基线与当前文本比较（`isDirty(currentText:)`），不再是布尔字段；`textDidChange` 先即时置脏，150ms 后重算，撤销/重做通知立即重算，回到基线时删除草稿并隐藏标题脏点。
-- 外部修改检测只在三个触发点执行：应用激活、切换文件或工作区前、保存前；同 size + mtime 时再比内容哈希。
+- 外部修改检测的触发点：应用激活、窗口成为 key、切换文件或工作区前、保存前，以及当前文件的 `DispatchSource` 监听（250ms 去抖；原子替换后按 rename/delete 事件重建监听）；同 size + mtime 时再比内容哈希。
+- 保存软链文件时写到 `resolvingSymlinksInPath()` 的目标，保留链接本身。
 - 干净文档自动重载并恢复滚动位置；脏文档显示横幅（重新加载 / 保留我的 / 对比）；文件被删除时保留缓冲，保存走另存为。
 - 编辑器使用独立的 `NSUndoManager`（`EditorTextView` 覆写 `undoManager`），高亮改属性不会污染窗口级撤销栈；打开文件后清空撤销记录。
 - 着色时挂起 undo 注册，结束后恢复；`hasMarkedText()` 为真时跳过。
