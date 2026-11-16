@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 
-/// `utility graph --sync [--dir <path>]`
+/// `utility graph --sync [--root <path>]`
 struct GraphCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graph",

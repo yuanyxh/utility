@@ -676,6 +676,7 @@ The data behind `project_lookup` / `project_impact` lives in `.agent-gateway/gra
 | Command | Purpose |
 |---|---|
 | `utility -a "<agent command>" [--dir <dir>]` | Agent parasitic mode: build the graph, start the file watcher, launch the Agent |
+| `utility graph --sync [--root <dir>]` | Reconcile the symbol graph with the tree only, without launching an Agent (`--root` defaults to the current directory) |
 
 What `utility -a` does:
 
@@ -695,7 +696,11 @@ utility --dir ~/myapp -a claude
 
 ## Configuration
 
-Config lives in `~/.config/utility/config.yaml`, written with defaults on first launch. **Settings → Open Config** edits it in place; `⌘↩` validates and saves (nothing is written when validation fails). **Reload** in the settings window rereads the file from disk and applies it at runtime. Changes to `mcp.*` or `modelProxy.*` need the matching service restarted from the menu bar.
+Config lives in `~/.config/utility/config.yaml`, written with defaults on first launch.
+
+`utility config --migrate [--dry-run]` merges keys added by newer versions into the existing file, rewrites scientific-notation scalars (e.g. `3e-1`) as plain decimals, and keeps a `.bak` copy of the previous file before saving.
+
+**Settings → Open Config** edits it in place; `⌘↩` validates and saves (nothing is written when validation fails). **Reload** in the settings window rereads the file from disk and applies it at runtime. Changes to `mcp.*` or `modelProxy.*` need the matching service restarted from the menu bar.
 
 ### Global
 
