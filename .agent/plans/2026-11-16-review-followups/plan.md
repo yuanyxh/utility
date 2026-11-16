@@ -142,6 +142,7 @@ flowchart TD
 | T12 | 两仓 `.agent/status.md` 更新 | XS |
 | T13 | 8 个零调用工具评估 | S |
 | T14 | 上期 T17 合并项 | XS |
+| T15 | lume VM 端到端验证 | M |
 
 ## 检查点
 

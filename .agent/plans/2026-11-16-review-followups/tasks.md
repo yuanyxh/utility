@@ -4,7 +4,7 @@
 
 ## 批次 A：gateway 运行时与索引
 
-- [ ] T1 热层初始化退避与锁诊断（依赖：无，规模：S）
+- [x] T1 热层初始化退避与锁诊断（依赖：无，规模：S）
 
 **文件**
 
@@ -36,7 +36,7 @@
 - [ ] 步骤 5：运行验证命令，确认通过
 - [ ] 步骤 6：`git add` 后等检查点 A 统一提交
 
-- [ ] T2 图索引 external 分类（依赖：T1，规模：M）
+- [x] T2 图索引 external 分类（依赖：T1，规模：M）
 
 **文件**
 
@@ -67,7 +67,7 @@
 - [ ] 步骤 4：运行 `project_lookup` 复核命中
 - [ ] 步骤 5：记录迁移前后未解析率到检查点 A
 
-- [ ] T3 记忆边类型 v4 schema 与写入改造（依赖：T2，规模：M）
+- [x] T3 记忆边类型 v4 schema 与写入改造（依赖：T2，规模：M）
 
 **文件**
 
@@ -101,7 +101,7 @@
 - [ ] 步骤 3：改 schema、`V3_COLUMNS`、`merge_fact`、`current_facts`、`EDGE_TYPES`
 - [ ] 步骤 4：运行测试，确认通过
 
-- [ ] T3b v4 迁移、重复清理与 importance 回填（依赖：T3，规模：M）
+- [x] T3b v4 迁移、重复清理与 importance 回填（依赖：T3，规模：M）
 
 **文件**
 
@@ -130,7 +130,7 @@
 - [ ] 步骤 3：清理重复 `content_hash` 与回填 `importance`
 - [ ] 步骤 4：记录迁移前后统计到检查点 A
 
-- [ ] T4 进度上报 future 异常处理（依赖：无，规模：XS）
+- [x] T4 进度上报 future 异常处理（依赖：无，规模：XS）
 
 **文件**
 
@@ -155,7 +155,7 @@
 
 ## 批次 B：utility 修复
 
-- [ ] T5 编辑器删除重建监听重试（依赖：无，规模：S）
+- [x] T5 编辑器删除重建监听重试（依赖：无，规模：S）
 
 **文件**
 
@@ -182,7 +182,7 @@
 - [ ] 步骤 3：`restartFileWatch` 记录 `attempt` 并传回
 - [ ] 步骤 4：运行验证命令，确认通过
 
-- [ ] T6 配置写入备份与 `config --migrate`（依赖：T5，规模：M）
+- [x] T6 配置写入备份与 `config --migrate`（依赖：T5，规模：M）
 
 **文件**
 
@@ -209,14 +209,14 @@
 
 - 命令：`swift build && .build/debug/utility config --migrate --dry-run`
 - 命令：`python3 scripts/gen-l10n.py --check && python3 scripts/check-l10n-contract.py`
-- 期望：输出 `missing=18`、`clipboard.pollInterval 3e-1 -> 0.3`、`general.httpTimeout 3e+1 -> 30`；l10n 双检查通过
+- 期望：输出 `missing=18` 与全部科学计数法行（含 `pollInterval: 3e-1`、`httpTimeout: 3e+1`）；l10n 双检查通过
 
 - [ ] 步骤 1：写 `testSaveCreatesBackup` 与 `testMigrateDryRunReportsMissing`
 - [ ] 步骤 2：抽出 `backupExisting()`，三处写入路径复用
 - [ ] 步骤 3：新增 `ConfigCommand`：读用户配置 → 合并默认键 → `decimalized` → 校验 → 备份 → 原子写
 - [ ] 步骤 4：注册子命令，运行验证命令
 
-- [ ] T7 `graph --sync` 增量索引入口（依赖：T6，规模：S）
+- [x] T7 `graph --sync` 增量索引入口（依赖：T6，规模：S）
 
 **文件**
 
@@ -250,7 +250,7 @@
 
 ## 批次 C：提交、打包与配置迁移
 
-- [ ] T8 两仓按主题提交工作区改动（依赖：T5-T7，规模：M）
+- [x] T8 两仓按主题提交工作区改动（依赖：T5-T7，规模：M）
 
 **文件**
 
@@ -280,7 +280,7 @@
 - [ ] 步骤 4：gateway 暂存 3 个文件并提交
 - [ ] 步骤 5：检查 `default-config.yaml`、`README.md`、`AGENTS.md` 是否需要同步
 
-- [ ] T9 重新打包并校验资源（依赖：T8，规模：S）
+- [x] T9 重新打包并校验资源（依赖：T8，规模：S）
 
 **文件**
 
@@ -302,7 +302,7 @@
 - [ ] 步骤 2：挂载 DMG 校验版本、bundle、二进制符号
 - [ ] 步骤 3：记录产物路径到检查点 C
 
-- [ ] T10 执行配置迁移（依赖：T6、T8，规模：XS）
+- [x] T10 执行配置迁移（依赖：T6、T8，规模：XS）
 
 **文件**
 
@@ -326,7 +326,7 @@
 
 ## 批次 D：数据清理与文档
 
-- [ ] T11 旧 Qdrant 与记忆快照移废纸篓（依赖：T10，规模：XS）
+- [x] T11 旧 Qdrant 与记忆快照移废纸篓（依赖：T10，规模：XS）
 
 **文件**
 
@@ -349,7 +349,7 @@
 - [ ] 步骤 2：`mkdir -p ~/.Trash` 后 `mv` 三个目标
 - [ ] 步骤 3：重启 MCP 并检查 health
 
-- [ ] T12 两仓 `.agent/status.md` 更新（依赖：T8，规模：XS）
+- [x] T12 两仓 `.agent/status.md` 更新（依赖：T8，规模：XS）
 
 **文件**
 
@@ -366,7 +366,7 @@
 - 命令：`head -12 /Users/yuanyxh/Documents/selfdata/projects/{utility,agent-gateway}/.agent/status.md`
 - 期望：两仓目标段落与当前版本一致
 
-- [ ] T13 8 个零调用工具评估（依赖：无，规模：S）
+- [x] T13 8 个零调用工具评估（依赖：无，规模：S）
 
 **文件**
 
@@ -388,7 +388,7 @@
 - [ ] 步骤 2：对照 06 域调用统计写结论
 - [ ] 步骤 3：落盘 `tool-review.md`
 
-- [ ] T14 上期 T17 合并项（依赖：无，规模：XS）
+- [x] T14 上期 T17 合并项（依赖：无，规模：XS）
 
 **文件**
 
@@ -410,30 +410,62 @@
 - [ ] 步骤 2：核对脚本入口
 - [ ] 步骤 3：落盘结论，关闭上期 T17
 
+- [ ] T15 lume VM 端到端验证（依赖：T1-T14，规模：M）
+
+**文件**
+
+- 新建：`.agent/plans/2026-11-16-review-followups/vm-report.md`
+- 输入：`/tmp/lume-e2e-20261116/memory_graph.anon.sqlite`（脱敏副本）
+- 只读：`.agent/sandbox.md` 的「2026-11-16」段
+
+**接口**
+
+- 消费：gateway 工作区源码、`Utility-1.2.16.dmg`、脱敏库
+- 产出：VM 内命令、日志、退出码与统计值
+
+**验收**
+
+- [ ] VM 内迁移后 `distinct type` ≤ 8，`user_version=4`
+- [ ] 锁占用下退避日志出现 0.5/1/2 s 且进程不退出
+- [ ] `config --migrate --dry-run` 与 `graph --sync` 在 VM 内可执行
+
+**验证**
+
+- 命令：`lume ssh utility-env 'cd ~/gateway-src && PYTHONPATH=src python -m pytest tests/ -q'`
+- 期望：全量通过；迁移统计与宿主一致
+
+- [ ] 步骤 1：启动 `utility-env`，确认 SSH 与代理状态
+- [ ] 步骤 2：`git archive` 两仓并 scp 传入
+- [ ] 步骤 3：传入脱敏库，跑 `memory_edges_v4.py --dry-run` 与 `--apply`
+- [ ] 步骤 4：启动 server，跑健康、lookup、锁占用退避
+- [ ] 步骤 5：传入 DMG，验证 `config --migrate` 与 `graph --sync`
+- [ ] 步骤 6：写 `vm-report.md`，停 VM
+
 ## 检查点
+
 
 ### 检查点 A（T1-T4 后）
 
-- [ ] `cd gateway && PYTHONPATH=src .venv/bin/python -m pytest tests/ -q` 全过
-- [ ] `cd gateway && .venv/bin/ruff check src tests` 通过
-- [ ] `memory_edges` distinct type ≤ 8，备份 `quick_check=ok`
-- [ ] 两仓图库重建后 `external` 分类生效，`project_lookup ConfigManager` 仍命中
+- [x] `cd gateway && PYTHONPATH=src .venv/bin/python -m pytest tests/ -q` 全过
+- [x] `cd gateway && .venv/bin/ruff check src tests` 通过
+- [x] `memory_edges` distinct type ≤ 8，备份 `quick_check=ok`
+- [x] 两仓图库重建后 `external` 分类生效，`project_lookup ConfigManager` 仍命中
 
 ### 检查点 B（T5-T7 后）
 
-- [ ] `swift build` 通过
-- [ ] `bash scripts/run-tests.sh` 全过
-- [ ] `utility config --migrate --dry-run` 输出 18 缺键与 2 处浮点
-- [ ] `utility graph --sync` 后工作区符号进图库
+- [x] `swift build` 通过
+- [x] `bash scripts/run-tests.sh` 全过
+- [x] `utility config --migrate --dry-run` 输出 18 缺键与 2 处浮点
+- [x] `utility graph --sync` 后工作区符号进图库
 
 ### 检查点 C（T8-T10 后）
 
-- [ ] 两仓 `git status` 干净
-- [ ] DMG 版本与二进制一致
-- [ ] `config.yaml` 缺键 0、浮点十进制、`.bak` 存在
+- [x] 两仓 `git status` 干净
+- [x] DMG 版本与二进制一致
+- [x] `config.yaml` 缺键 0、浮点十进制、`.bak` 存在
 
 ### 检查点 D（T11-T14 后）
 
-- [ ] 配置目录体积下降，MCP `/health` 为 `ok`
-- [ ] 两仓状态文档已更新
-- [ ] `tool-review.md` 与 `t17-merge.md` 已落盘
+- [x] 配置目录体积下降，MCP `/health` 为 `ok`
+- [x] 两仓状态文档已更新
+- [x] `tool-review.md` 与 `t17-merge.md` 已落盘
