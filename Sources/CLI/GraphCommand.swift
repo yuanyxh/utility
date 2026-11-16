@@ -11,12 +11,12 @@ struct GraphCommand: ParsableCommand {
     @Flag(name: .customLong("sync"), help: ArgumentHelp(L10n.CLI.graphSyncHelp))
     var sync = false
 
-    @Option(name: .customLong("dir"), help: ArgumentHelp(L10n.CLI.graphDirHelp))
-    var directory = FileManager.default.currentDirectoryPath
+    @Option(name: .customLong("root"), help: ArgumentHelp(L10n.CLI.graphDirHelp))
+    var root = FileManager.default.currentDirectoryPath
 
     func run() throws {
         guard sync else { throw CleanExit.helpRequest() }
-        let scanner = try GraphScanner(projectPath: directory)
+        let scanner = try GraphScanner(projectPath: root)
         defer { scanner.stop() }
         let summary = try scanner.syncScan()
         print(

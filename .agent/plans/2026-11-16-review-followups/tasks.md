@@ -228,7 +228,7 @@
 
 **接口**
 
-- 产出：`utility graph --sync [--dir <path>]`，调用 `GraphScanner(projectPath:).syncScan()`
+- 产出：`utility graph --sync [--root <path>]`，调用 `GraphScanner(projectPath:).syncScan()`
 - 消费：`GraphScanner.init(projectPath:languages:maxRestarts:)`
 
 **验收**
@@ -239,11 +239,11 @@
 
 **验证**
 
-- 命令：`swift build && .build/debug/utility graph --sync --dir /Users/yuanyxh/Documents/selfdata/projects/utility`
+- 命令：`swift build && .build/debug/utility graph --sync --root /Users/yuanyxh/Documents/selfdata/projects/utility`
 - 命令：`python3 scripts/gen-l10n.py --check && python3 scripts/check-l10n-contract.py`
 - 期望：退出码 0，输出 `files`、`symbols`、`elapsedMs`；l10n 双检查通过
 
-- [ ] 步骤 1：新增 `GraphCommand`（`--dir` 默认当前目录，`--sync` 必选）
+- [ ] 步骤 1：新增 `GraphCommand`（`--root` 默认当前目录，`--sync` 必选）
 - [ ] 步骤 2：注册子命令并构建
 - [ ] 步骤 3：运行命令，统计图库 `files` 是否包含工作区文件
 - [ ] 步骤 4：跑 `project_lookup` 复核
