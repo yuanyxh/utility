@@ -17,6 +17,8 @@ struct UtilityCLI: ParsableCommand {
             WorkspaceCheckCommand.self,
             ArchiveCheckCommand.self,
             SetupCheckCommand.self,
+            ConfigCommand.self,
+            GraphCommand.self,
         ],
         defaultSubcommand: nil,
     )

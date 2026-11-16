@@ -72,4 +72,46 @@ final class ConfigDefaultsTests: XCTestCase {
         XCTAssertTrue(output.contains("rankSignalAccess: 0"))
         XCTAssertTrue(output.contains(#"note: "keep 3e-1""#))
     }
+
+    func testWriteWithBackupKeepsPreviousFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("config-backup-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.trashItem(at: directory, resultingItemURL: nil) }
+        let file = directory.appendingPathComponent("config.yaml")
+        try "a: 1\n".write(to: file, atomically: true, encoding: .utf8)
+
+        try ConfigManager.writeWithBackup("a: 2\n", to: file)
+
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "a: 2\n")
+        let backup = directory.appendingPathComponent("config.yaml.bak")
+        XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "a: 1\n")
+    }
+
+    func testMergedWithTemplateCountsLeafKeys() {
+        let original: [String: Any] = ["mcp": ["enabled": true]]
+        let template: [String: Any] = [
+            "mcp": [
+                "enabled": true,
+                "neuron": ["beam": 4, "brain": ["replay": true]],
+                "memoryGovernanceApply": false,
+            ],
+            "general": ["httpTimeout": 30.0],
+        ]
+
+        let merged = ConfigManager.mergedWithTemplate(original, template)
+
+        XCTAssertEqual(
+            merged.added.sorted(),
+            [
+                "general.httpTimeout",
+                "mcp.memoryGovernanceApply",
+                "mcp.neuron.beam",
+                "mcp.neuron.brain.replay",
+            ]
+        )
+        XCTAssertEqual(merged.value["general"] as? [String: Any] != nil, true)
+    }
 }

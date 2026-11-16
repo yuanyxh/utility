@@ -57,10 +57,7 @@ public final class ConfigManager {
             throw ConfigApplyError.fileTooLarge(data.count)
         }
         _ = try YAMLDecoder().decode(AppConfig.self, from: data)
-        if let existing = try? Data(contentsOf: configFile) {
-            try existing.write(to: backupFile, options: .atomic)
-        }
-        try content.write(to: configFile, atomically: true, encoding: .utf8)
+        try Self.writeWithBackup(content, to: configFile)
         try load()
     }
 
@@ -72,8 +69,12 @@ public final class ConfigManager {
 
     private static let maxConfigBytes = 1_048_576
 
-    private var backupFile: URL {
-        configDir.appendingPathComponent("config.yaml.bak")
+    /// Writes the previous file to `<name>.bak`, then replaces the target.
+    static func writeWithBackup(_ content: String, to file: URL) throws {
+        if let existing = try? Data(contentsOf: file) {
+            try existing.write(to: file.appendingPathExtension("bak"), options: .atomic)
+        }
+        try content.write(to: file, atomically: true, encoding: .utf8)
     }
 
     /// Keys such as `search` have no Swift model but still belong to the host config.
@@ -87,6 +88,33 @@ public final class ConfigManager {
             updated[key] = value
         }
         return try Yams.dump(object: updated, allowUnicode: true, sortKeys: true)
+    }
+
+    /// Fills keys present in the template but missing from `original`.
+    static func mergedWithTemplate(
+        _ original: [String: Any], _ template: [String: Any], path: String = ""
+    ) -> (value: [String: Any], added: [String]) {
+        var value = original
+        var added: [String] = []
+        for (key, item) in template {
+            let name = path.isEmpty ? key : "\(path).\(key)"
+            if value[key] == nil {
+                value[key] = item
+                added.append(contentsOf: Self.leafNames(item, path: name))
+            } else if let nested = item as? [String: Any],
+                let current = value[key] as? [String: Any]
+            {
+                let merged = mergedWithTemplate(current, nested, path: name)
+                value[key] = merged.value
+                added.append(contentsOf: merged.added)
+            }
+        }
+        return (value, added)
+    }
+
+    private static func leafNames(_ item: Any, path: String) -> [String] {
+        guard let dict = item as? [String: Any], !dict.isEmpty else { return [path] }
+        return dict.flatMap { leafNames($0.value, path: "\(path).\($0.key)") }.sorted()
     }
 
     /// Yams renders every `Double` in scientific notation (`3e-1`), which PyYAML
@@ -125,7 +153,7 @@ public final class ConfigManager {
         if !fileManager.fileExists(atPath: configDir.path) {
             try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
         }
-        try rawText.write(to: configFile, atomically: true, encoding: .utf8)
+        try Self.writeWithBackup(rawText, to: configFile)
         try load()
     }
 
@@ -137,7 +165,7 @@ public final class ConfigManager {
         \(L10n.Config.headerComment)
         \(yaml)
         """
-        try content.write(to: configFile, atomically: true, encoding: .utf8)
+        try Self.writeWithBackup(content, to: configFile)
         try? GatewayConfigWriter.write(config)
     }
 
