@@ -410,7 +410,7 @@
 - [ ] 步骤 2：核对脚本入口
 - [ ] 步骤 3：落盘结论，关闭上期 T17
 
-- [ ] T15 lume VM 端到端验证（依赖：T1-T14，规模：M）
+- [x] T15 lume VM 端到端验证（依赖：T1-T14，规模：M）
 
 **文件**
 
@@ -425,21 +425,21 @@
 
 **验收**
 
-- [ ] VM 内迁移后 `distinct type` ≤ 8，`user_version=4`
-- [ ] 锁占用下退避日志出现 0.5/1/2 s 且进程不退出
-- [ ] `config --migrate --dry-run` 与 `graph --sync` 在 VM 内可执行
+- [x] VM 内迁移后 `distinct type` ≤ 8，`user_version=4`
+- [x] 锁占用下退避日志出现 0.5/1/2 s 且进程不退出
+- [x] `config --migrate --dry-run` 与 `graph --sync` 在 VM 内可执行
 
 **验证**
 
 - 命令：`lume ssh utility-env 'cd ~/gateway-src && PYTHONPATH=src python -m pytest tests/ -q'`
 - 期望：全量通过；迁移统计与宿主一致
 
-- [ ] 步骤 1：启动 `utility-env`，确认 SSH 与代理状态
-- [ ] 步骤 2：`git archive` 两仓并 scp 传入
-- [ ] 步骤 3：传入脱敏库，跑 `memory_edges_v4.py --dry-run` 与 `--apply`
-- [ ] 步骤 4：启动 server，跑健康、lookup、锁占用退避
-- [ ] 步骤 5：传入 DMG，验证 `config --migrate` 与 `graph --sync`
-- [ ] 步骤 6：写 `vm-report.md`，停 VM
+- [x] 步骤 1：启动 `utility-env`，确认 SSH 与代理状态
+- [x] 步骤 2：`git archive` 两仓并 scp 传入
+- [x] 步骤 3：传入脱敏库，跑 `memory_edges_v4.py --dry-run` 与 `--apply`
+- [x] 步骤 4：启动 server，跑健康、lookup、锁占用退避
+- [x] 步骤 5：传入 DMG，验证 `config --migrate` 与 `graph --sync`
+- [x] 步骤 6：写 `vm-report.md`，停 VM
 
 ## 检查点
 

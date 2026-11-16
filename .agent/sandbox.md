@@ -139,3 +139,14 @@
 
 - 真实 Claude Code UI 渲染不验证。
 - 热层初始化依赖 VM 内嵌入模型；模型缺失时只验证退避与错误日志，不验证成功路径。
+
+### 运行记录（2026-11-16）
+
+- 复用 `utility-env`（用户 `lume`，IP 192.168.64.14），VM 内无 pytest，改用 unittest。
+- 迁移：脱敏库 101,926 条边，`facts=48600 structural=53326`，迁移后 `distinct type=6`、`user_version=4`，importance 回填 5,816。
+- external 分类：9,090 external / 2,688 no_binding；`project_lookup merge_fact` 命中。
+- 热层退避：0.52 s / 1.03 s 两次间隔，失败日志含 `qdrant_path`；真实锁竞争未复现。
+- 工具清单 15 个，四个历史工具已消失。
+- 发现并修复：`utility graph --sync --dir` 与顶层 `--dir` 冲突，改 `--root` 后重打包 1.2.17。
+- 宿主单测 834 通过；VM 内 2 项网络/端口检查失败，属环境限制。
+- 清理：VM 内产物移入 `~/.Trash`，VM 已停；`gateway-src` 旧版保留。
