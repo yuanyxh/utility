@@ -68,3 +68,27 @@ app 没有 CLI/URL scheme 等可脚本化入口时，自动化验证从第一轮
 
 `YAMLEncoder().encode(AppConfig())` 会把 `mcp`（Optional，默认 nil）整段省略，
 新机器拿到的 config 没有 MCP 段，功能默认关闭。默认值应复用仓库里的 `default-config.yaml` 模板。
+
+## 同名异义概念要按主题域校验证据（2026-11-15）
+
+知识卡「健康检查」在 Java 后端主题下被写成医学体检：`gather_evidence` 只按 concept 检索，
+`_matches` 只要求概念词出现，医学页面全部通过。检索词扩展解决不了同名异义，
+生成提示词必须显式要求核对「资料是否属于主题领域」，不符时输出空卡（走既有 `CARD_FAIL`）。
+
+## 软链接是条目，不是要过滤的类型（2026-11-15）
+
+`FileTreeScanner` 用 `isSymbolicLink` 直接 `continue`，整个文件列表看不到链接。
+「不跟随」应指不自动递归：条目照常显示，目录链接按目标类型判 `isDirectory`、展开时才扫描；
+`countFiles` 必须用 `resolvingSymlinksInPath` 去重防循环；保存软链文件要写解析后的目标，否则原子替换会把链接本身换掉。
+
+## 窗口内外部修改需要文件监听（2026-11-15）
+
+编辑器只在应用激活、窗口成为 key、切换文件与保存前做外部修改检测，
+用户在窗口里的终端跑 agent 改文件时应用一直 active，永远不会触发。
+当前文件要挂 `DispatchSource`（250ms 去抖）；原子替换会产生 rename，事件后必须按当前 URL 重建监听。
+
+## GUI 隔离要用 CFFIXED_USER_HOME（2026-11-15）
+
+`HOME=... ./utility` 对 `FileManager.homeDirectoryForCurrentUser` 与 `NSHomeDirectory()` 都无效，
+隔离实例会直接读写真实 `~/.config/utility`，把 `workspaces.json` / `terminal-sessions.json` 的会话 id 改掉。
+GUI 冒烟必须用 `CFFIXED_USER_HOME`，并用 `TMUX_TMPDIR` 隔离 socket；启动后先确认配置目录写到了隔离 HOME 再继续。

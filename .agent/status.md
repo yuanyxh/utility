@@ -13,6 +13,13 @@
 - 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：1.1.109 含 `ConfigManager.readConfigOrDefault` 回退模板、`writeDefault` 拷贝模板、首启使用系统代理。L3 通过：向导真实下载两个模型文件，SHA256 与常量一致，`setup-check` 两项 ok；recall 首调 3243 ms、热调 865 ms，rerank 降级警告 0。
 - 1.2.7 向导修复（2026-11-10，待提交）：安装页 ScrollView + 日志区限高、目标目录改选后重扫冲突、模型缺失时禁用「下一步」、`nextFromInstall` 未通过时给出缺失项、Homebrew 失败提示网络指引并注入代理、嵌入模型下载 30s 元数据超时 + 900s 总超时、`mcp.qdrantPath` 缺失检测与导入前改写。VM 内导入 L3 通过：备份目录生成、各表行数与归档一致、notes 1655 文件一致。验证：`swift build`、5 个向导测试、l10n 双检查、entries/graph 契约全过，1.2.7 已打包。
 
+## 最近完成（2026-11-15）
+
+- 知识库跑题卡：`cards.id=237`「健康检查」是医学体检内容，却挂在 Java 后端主题下。根因：`gather_evidence` 只按 concept 检索，`_matches` 只要求概念词出现，医学页面全部命中；`knowledge_card` 无「同名异义」判据。已把该卡 `status` 改 `removed`；gateway 提示词（中英）新增「资料属于其他领域同名概念时输出空 card」，`Sources/Gateway/prompts` 副本同步；空卡走既有 `CARD_FAIL`，concept 落 `failed`，新增回归测试。
+- 工作区文件树：软链接条目此前在 `FileTreeScanner.children` 被整体跳过。现按链接目标类型显示（link 图标），目录链接展开时才扫描；`countFiles` 用解析路径去重防循环。用户部署 1.2.14 后报「软链下内容看不到」：`contentsOfDirectory(at: 软链目录)` 返回 nil，展开必须先用 `resolvingSymlinksInPath()` 枚举，子项 URL 再拼回软链路径。用户确认策略：目录可展开、保存写目标保留链接、链接条目用 link 图标。1.2.15 已重打包，包内 `workspace-check --tree` 对指向外部目录的软链返回 2（旧逻辑为 0）。
+- 编辑器外部修改：新增当前文件 `DispatchSource` 监听（250ms 去抖，rename/delete 后重建），窗口内 agent 改文件不再等到切焦点才刷新；保存软链文件写目标、保留链接。
+- 验证：`swift build`、`run-tests.sh`（20 tests）、`swift-format lint --strict`、gateway `test_knowledge_engine` 全过；L3 隔离实例（`CFFIXED_USER_HOME`）截图确认软链显示、编辑器自动更新。未提交，待用户授权。
+
 ## 最近完成（2026-11-06）
 
 - 列表选择回归三项（用户报告并手测通过）：空白点击不再清选中（`PersistentSelectionTableView` / `FileOutlineView` 早退）；选中底色由 `PointerRowView.drawSelection` 自绘，焦点转到编辑器/终端后仍是强调蓝；选中行文字、图标与行内 `NSButton`（子终端 x）统一转白，取消时按基色还原。`swift build` 与 `run-tests.sh` 全过。

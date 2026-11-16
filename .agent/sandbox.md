@@ -88,3 +88,54 @@
 - 脚本：`/tmp/lume-e2e/e2e_progress.py`（宿主临时目录，验证后清理）。
 - 残留：VM 内 `~/gateway-src/src` 为新源码，旧版在 `agent_gateway.bak`；VM 已停止。
 - 未覆盖：真实 Claude Code UI 渲染（客户端用官方 SDK 2.3.0）。
+
+## 2026-11-16 审查后续计划端到端
+
+- Level: virtual-machine，优先复用 `utility-env`；本轮不创建新 VM。
+- 被测：计划 `.agent/plans/2026-11-16-review-followups/` 的 T1-T4 与 T3b（gateway），T5-T7（utility）。
+- 分两轮：先验 gateway（源码进 VM，`PYTHONPATH` 启动 9001），再验 utility（打包 app 进 VM）。
+
+### 隔离对象
+
+| 对象 | 处理 |
+|---|---|
+| 数据 | VM 内合成 `memory_graph.sqlite`，禁止复制宿主生产库 |
+| 端口 | 只用 VM 内 8613 / 9001，宿主端口不监听 |
+| 凭据 | 不注入任何生产密钥；LLM 相关路径用本地桩 |
+| Qdrant | VM 内独立目录，不复用宿主 `~/.config/utility/data` |
+| 网络 | 默认拒绝；仅模型下载与本地回环按需放行 |
+
+### 合成数据规格
+
+- 节点 300 条，`content_hash` 含 2 组重复。
+- 边 1,000 条：结构边 6 类各 50 条，事实边 700 条，谓词覆盖中英文各 50 种。
+- `metadata.importance` 在 70% 节点上缺失，验证回填口径。
+
+### 步骤
+
+1. 启动 `utility-env`，确认 SSH 可用。
+2. 用 `git archive` 打包 gateway 工作区，`scp` 解压到 `~/gateway-src`。
+3. VM 内生成合成库，跑 `memory_edges_v4.py --dry-run` 与 `--apply`。
+4. 启动 server（`PYTHONPATH=src`，9001），调用 `/health`、`project_lookup`、`recall`。
+5. 制造 Qdrant 锁占用，观察热层退避日志与重试次数。
+6. 重建图库，统计 `external` 分类与未解析率。
+7. 打包 utility 1.2.15，传入 VM，验证 `config --migrate` 与 `graph --sync`。
+8. 记录命令、日志、退出码与统计值。
+
+### 校验
+
+- 迁移后 `distinct type` ≤ 8，事实边 `predicate` 与原 `type` 一一对应。
+- 退避日志出现 0.5 / 1 / 2 s 三次尝试，进程未退出。
+- `project_lookup ConfigManager` 命中，`external` 占比有数值。
+- `config --migrate --dry-run` 输出 18 键与 2 处浮点。
+
+### 拆除与残留
+
+- `lume stop utility-env`；不删除 VM（复用资产）。
+- 删除 VM 内 `~/gateway-src` 与合成库，保留旧版备份目录。
+- 主机侧清理 `/tmp/lume-e2e-*`，检查无 lume 进程与 LaunchAgent。
+
+### 限制
+
+- 真实 Claude Code UI 渲染不验证。
+- 热层初始化依赖 VM 内嵌入模型；模型缺失时只验证退避与错误日志，不验证成功路径。
