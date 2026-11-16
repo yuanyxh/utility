@@ -39,3 +39,19 @@
 ## 清理
 
 VM 内删除 `~/gateway-v4`、`~/e2e`、脱敏库与 DMG；`$HOME/.agent-gateway` 误生成目录一并删除。VM 保留供后续复用。
+
+## 审查修复复验（2026-11-16 12:32）
+
+针对审查的 P1（迁移非原子）与 P2 复验：
+
+| 验证项 | 结果 |
+|---|---|
+| 原子迁移 | 新脚本单事务 `RENAME` → 重建 → 复制 → `DROP`，失败回滚 |
+| 自动备份 | `connect` 自动迁移前 `VACUUM INTO`，同一库只保留一份 |
+| 失败注入 | `EdgeUpgradeFailureTest` 与全量 34 例通过，旧表保留 |
+| 新输出口径 | `free_text=0 facts=48836 structural=53430` |
+| 进度 future | `test_progress_future` 2 例通过 |
+| 配置备份 | 1.2.18 实跑生成 `config.yaml.bak`，`missing=18 → 0` |
+| 全量 | 840 例，仅上轮两个网络/端口检查失败，无新增 |
+
+迁移后 `user_version=4`、`distinct type=6`、备份文件 1 份。
