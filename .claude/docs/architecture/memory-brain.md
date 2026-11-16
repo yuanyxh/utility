@@ -9,11 +9,22 @@
 原始记忆（`memory_nodes`，hot/cold 两层）→ episode 分组为神经元（`neurons`）→ 每日建边
 （`synapses`）→ 检索时按 CSR 图扩散/吸引子 → 召回强化与夜间重放调整权重。
 
-- 图存储：`memory_graph.sqlite`（v3 schema，`PRAGMA user_version=3`）。
+- 图存储：`memory_graph.sqlite`（v4 schema，`PRAGMA user_version=4`）。
 - 关键表：`neurons`（质心、稀疏码、层级）、`synapses`（权重、kind、inferred）、
   `neuron_members`、`memory_nodes`、`entities`/`entity_mentions`、`memory_edges`（事实边）、
   `replay_runs`（重放审计）、`activation_buffer`。
 - 图索引：`GraphIndex` 是内存 CSR，30 秒 TTL 重建；扩展开销亚毫秒级，禁止在检索路径回到 SQL。
+
+## v4 边表
+
+- `memory_edges.type` 只放受控枚举（`supersedes`、`episode`、`derived_from`、`disputes`、`relates`、`mentions`、`fact`），
+  自由谓词写入 `predicate` 列，唯一键为 `(from_id, to_id, type, predicate)`。
+- 事实边只由 `entities.merge_fact` 写入；`graph.add_edge` 拒绝 `fact`，避免空谓词边。
+- v3→v4 在 `store.connect` 内自动迁移：先 `VACUUM INTO` 备份为 `<db>.pre-v4-<时间戳>.sqlite`，
+  再在单事务内把旧表改名为 `memory_edges_v3`、建新表、复制、删除旧表。失败回滚，进程被杀由 WAL 恢复。
+- 旧代码读到 v4 库不会重建表，但事实边查询为空；回滚用备份覆盖原库后重启 MCP。
+- `graph.store.stats()` 的 `unresolved` 已排除 `external`，新增 `unresolved_external`；
+  审查脚本换口径时以本版本为分界，前后期数据不可直接比较。
 
 ## v3 建边
 
