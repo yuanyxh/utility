@@ -71,7 +71,8 @@ public final class ConfigManager {
 
     /// Writes the previous file to `<name>.bak`, then replaces the target.
     static func writeWithBackup(_ content: String, to file: URL) throws {
-        if let existing = try? Data(contentsOf: file) {
+        if FileManager.default.fileExists(atPath: file.path) {
+            let existing = try Data(contentsOf: file)
             try existing.write(to: file.appendingPathExtension("bak"), options: .atomic)
         }
         try content.write(to: file, atomically: true, encoding: .utf8)

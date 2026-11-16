@@ -90,6 +90,25 @@ final class ConfigDefaultsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "a: 1\n")
     }
 
+    func testWriteWithBackupCreatesMissingFileWithoutBackup() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("config-new-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.trashItem(at: directory, resultingItemURL: nil) }
+        let file = directory.appendingPathComponent("config.yaml")
+
+        try ConfigManager.writeWithBackup("a: 1\n", to: file)
+
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "a: 1\n")
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("config.yaml.bak").path
+            )
+        )
+    }
+
     func testMergedWithTemplateCountsLeafKeys() {
         let original: [String: Any] = ["mcp": ["enabled": true]]
         let template: [String: Any] = [
