@@ -53,6 +53,18 @@ final class RSSParserTests: XCTestCase {
         XCTAssertTrue(items[0].dateKnown, "blank pubDate must not lock out lastBuildDate")
     }
 
+    func testPlaceholderChannelDateFallsBackToNextElement() {
+        let xml = """
+            <rss version="2.0"><channel><title>t</title>
+            <pubDate>Mon, 01 Jan 0001 00:00:00 GMT</pubDate>
+            <lastBuildDate>Sun, 15 Nov 2026 07:22:55 GMT</lastBuildDate>
+            <item><title>a</title><link>https://e.test/a</link></item>
+            </channel></rss>
+            """
+        let items = parse(xml)
+        XCTAssertTrue(items[0].dateKnown, "placeholder pubDate must not lock out lastBuildDate")
+    }
+
     func testUnparseableItemDateStillUsesChannelDate() {
         let xml = """
             <rss version="2.0"><channel><title>t</title>

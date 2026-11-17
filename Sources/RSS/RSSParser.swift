@@ -87,9 +87,13 @@ public final class RSSParser: NSObject, XMLParserDelegate {
     ) {
         guard isItem, elementName == "item" || elementName == "entry" else {
             // Lock only on a usable value: a blank or unsupported pubDate must not
-            // outrank a later lastBuildDate.
+            // outrank a later lastBuildDate, and a placeholder such as 0001-01-01
+            // parses successfully but is not a real date.
             if Self.dateElements.contains(elementName),
-                parseDate(channelDate.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+                let parsed = parseDate(
+                    channelDate.trimmingCharacters(in: .whitespacesAndNewlines)
+                ),
+                parsed > RSSItem.unknownDate
             {
                 channelDateLocked = true
             }
