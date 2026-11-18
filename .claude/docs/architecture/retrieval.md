@@ -8,3 +8,4 @@
 - **查询嵌入走 `server_embed.embed_query` 共享 LRU**（容量 `EMBED_QUERY_CACHE_SIZE`，默认 64，`0` 关闭缓存）：同一轮 agent 常对同一 query 并行调用多个检索工具，此前各自独立嵌入（单条约 45ms）。返回的 ndarray **就是缓存对象本身，调用方只读**
 - mem0 内部使用它自己的 embedder，不经过 `embed_query`，那一路无法共享
 - `recall` / `_contradiction_check_hot` 不再传 `rerank=True`：`MEM0_CONFIG` 未配置 RerankerFactory 所需的 `reranker` 段，mem0 内部条件 `if rerank and self.reranker` 恒假，该参数是空操作，留着只会误导后来的读者
+- **维度过滤后的补齐**：过滤后不足 limit 时，被排除的行作为候选与严格命中一起 rerank；严格命中始终排在补齐行之前，纯补齐结果的 `status` 为 `weak_match`

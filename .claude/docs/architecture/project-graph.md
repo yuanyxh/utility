@@ -54,6 +54,10 @@
 - 响应条目仍是 `name/kind/file/startLine/endLine/callerCount/topCallers/resolver`；`trace_id` 前缀由 `gl_` 变为 Pipeline 的 `rt_`
 - `project_impact` 仍是确定性图遍历，不接 Pipeline
 
+## 未解决引用分类（2026-11-19）
+
+`unresolved.reason` 的 `external` 判据：receiver 只有是类型（`TYPE_KINDS`）、导入命名空间或模块路径才算项目内符号；函数体内的局部变量 receiver 判 `external`，不再落 `no_binding`。resolver 行为变更不会自动触发重建，需 bump `ENGINE_VERSION` 或删库后重建。
+
 ## 不变量
 
 - **符号 key 含行号**：`sym_key = sha1(path|name|kind|signature|start_line)`。`replace_file` 必须按 `(name,kind,signature)` 把旧 key 的入边重绑到新 key，否则编辑任意上方一行就让该符号的 impact 永久失效。
