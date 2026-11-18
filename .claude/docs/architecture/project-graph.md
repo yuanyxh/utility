@@ -31,6 +31,19 @@
 
 查询不等待扫描：第一次仍是旧结果，下一次查询才是新结果。刷新与索引器启动的短窗口不加跨进程图库写锁，依靠 SQLite 写事务串行和下一次扫描纠正。
 
+## 日志（2026-11-18）
+
+索引日志写 `<root>/.agent-gateway/graph.log`，与图库同目录，随项目走。路径决定的唯一入口是 gateway `services/graph/logging_setup.py` 的 `graph_logger()`；`analysis.py` 与 `indexer.py` 都从它取 logger，禁止各自 `setup_logging("graph")`——两处同时建 handler 时，先 import 的把路径定死，后者被 `if root.handlers: return root` 静默吞掉。
+
+| 项 | 说明 |
+|---|---|
+| 行格式 | JSON Lines，含 `ts`（UTC ISO8601）、`trace_id`、`op`、`project`、`file`、`elapsed_ms`、`edge_count`、`unresolved_count` |
+| 轮转 | `RotatingFileHandler`，`logging.maxSize` 默认 10 MB，`backupCount` 3 |
+| root 来源 | 常驻进程取 `argv[1]`；CLI 取 `--root`；都没有则回退 `~/.cache/agent-gateway/graph.log` |
+| 与 Swift 日志 | Swift `GraphLog` 写 `~/Library/Logs/Utility/graph.log`，记 `ping`/`status`；Python 记索引明细，两者不合并 |
+
+2026-11-18 之前所有项目共写 `~/.cache/utility/graph.log`。每个项目的 indexer 是独立进程，各自持有 `RotatingFileHandler`，rollover 按各自 fd 位置判断而非文件真实大小，互相改名对方正在写的文件，表现为 `.1`/`.2` 的 mtime 不单调。落项目目录后竞争消失。
+
 ## 检索层接入（2026-11-02）
 
 `project_lookup` 走 `Pipeline("project_lookup")`：单臂 `ProjectLookupArm` + `MaxScoreFusion` + `PassThroughGate`。
@@ -51,6 +64,7 @@
 - **扩展名唯一源**：python `services/graph/constants.py` 是扩展名/语言族唯一表；Swift 侧对应 `GraphProtocol.languagesByExtension`，只用于 watcher 事件过滤，并由契约脚本断言一致。
 - **解析器独立降级**：`parsers/__init__.py` 逐语言 try-import，缺一个 grammar 只禁用该语言，ping 仍可用。
 - **常驻进程单线程**：stdin 请求串行处理；DB 写与解析在同一线程。
+- **日志单一入口**：graph logger 只能由 `services/graph/logging_setup.py` 创建，模块级 `setup_logging("graph")` 会让先 import 者决定路径。
 - **退出**：`Darwin.exit` 跳过 defer，`AgentRunner` 必须显式 `watcher.stop()` → `graph.stop()`；PID 由 `onProcessChange` 回填供信号处理使用。索引器 `main()` 的 `finally` 把自己从 `indexer.json` 移除。
 
 ## 验证

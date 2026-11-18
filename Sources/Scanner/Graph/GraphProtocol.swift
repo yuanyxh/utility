@@ -180,6 +180,7 @@ struct GraphStats: Codable {
 // MARK: - Logging
 
 /// Structured JSONL log at `~/Library/Logs/Utility/graph.log`.
+/// The gateway keeps its per-project index log at `<root>/.agent-gateway/graph.log`; both exist.
 enum GraphLog {
     static let path: String = {
         let dir = FileManager.default.homeDirectoryForCurrentUser

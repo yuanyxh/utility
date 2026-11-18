@@ -12,7 +12,7 @@
 - Carbon EventHotKey 全局快捷键
 - GRDB 本地 SQLite 存储；Vision OCR 屏幕区域识别
 - MCP 记忆服务：Mem0 + Qdrant 冷热双层，Python 侧在 `agent-gateway` 仓
-- 项目索引：`GraphScanner` 写入 `.agent-gateway/graph.sqlite`
+- 项目索引：`GraphScanner` 写入 `.agent-gateway/graph.sqlite`，索引日志 `graph.log` 同目录
 
 ## 开始任何任务前
 

@@ -150,3 +150,58 @@
 - 发现并修复：`utility graph --sync --dir` 与顶层 `--dir` 冲突，改 `--root` 后重打包 1.2.17。
 - 宿主单测 834 通过；VM 内 2 项网络/端口检查失败，属环境限制。
 - 清理：VM 内产物移入 `~/.Trash`，VM 已停；`gateway-src` 旧版保留。
+
+## 2026-11-18 graph 日志落项目目录
+
+- Level: process。`lume` 已不在 PATH，VM 级不可用；被测对象是 stdin/stdout 常驻进程，不监听端口、不联网、无凭据，VM 级不必要。
+- 被测：`log_utils.setup_logging` 加 `path` 参数、`indexer` 按 root 解析日志路径、`_log()` 补 `ts`、CLI 按 `--root` 写项目目录。
+
+### 隔离对象
+
+| 对象 | 处理 |
+|---|---|
+| 数据 | 临时 git 仓库 A/B，各 3 个合成 `.py` 文件，不碰真实项目目录 |
+| cache | `GATEWAY_CACHE` 指向临时目录，禁止写 `~/.cache/utility` |
+| 项目状态 | 临时根下的 `.agent-gateway/` |
+| 网络 | 全程不联网 |
+| 凭据 | 不注入任何密钥 |
+
+### 步骤
+
+1. 改 `log_utils.py`、`indexer.py` 四处。
+2. 建临时仓库 A/B，各写 3 个互相引用的 `.py`。
+3. 用 stdin 驱动 indexer 分别索引 A/B，检查日志落位与内容互不交叉。
+4. 检查每行含 `ts`，且 `ts` 可解析。
+5. CLI 验证 `graph index --root` 写项目目录。
+6. 用 `GATEWAY_LOG_MAX_SIZE` 调小上限，验证 `.1` 出现且时间序单调。
+7. 拆除临时目录，检查无残留。
+
+### 校验
+
+- `<tmp>/A/.agent-gateway/graph.log` 存在，每行含可解析 `ts`。
+- B 的日志不含 A 的项目路径，反之亦然。
+- 临时 cache 目录下无 `graph.log`。
+- CLI 执行后 A 的日志行数增长。
+- 小上限下出现 `.1`，`rotation_order.monotonic=true`。
+
+### 限制
+
+- 不验证 GUI 侧 `GraphIndexerClient` 的缓冲与重启逻辑。
+- 不验证真实 Swift 侧的并发多项目索引，只用两个独立进程模拟。
+
+### 运行记录（2026-11-18）
+
+首轮失败：日志仍写 cache。根因是 `analysis.py:13` 也创建 `"graph"` logger，它在 `indexer.py` 之前被 import，`setup_logging` 的 `if root.handlers: return root` 把后设的路径吞掉。抽出 `logging_setup.py` 作为唯一起点后通过。
+
+| 项 | 结果 |
+|---|---|
+| E1 落位 | projA/projB 各自 `.agent-gateway/graph.log` 698 B，cache 目录为空 |
+| E2 隔离 | 两文件互不含对方项目路径（0/0），每行 `ts` 可解析且单调 |
+| E3 CLI | `--root` 下 `log_file` 指向项目；无 root 返回 `None` 回退 cache；`graph index` 走 `project_scan.sync`，本就不写 index 日志 |
+| E4 轮转 | `GATEWAY_LOG_MAX_SIZE=600` 下产生 `.1/.2/.3`，`ts` 严格递增（`.3`→`.2`→`.1`→base） |
+| 单测 | 844 tests OK |
+| 生产隔离 | `~/.cache/utility/graph.log` mtime 保持 21:55 未变 |
+
+- 部署（2026-11-18 22:53）：用户完成部署，安装副本与源码一致，旧 indexer 句柄释放；新进程 85459 启动后日志落 `<repo>/.agent-gateway/graph.log`，6 行全部含 `ts`。
+- 迁移：5 个旧日志（`~/.cache/utility/graph.log{,.1,.2,.3}`、`~/.cache/agent-gateway/graph.log`）移入废纸篓，cache 目录已无 graph.log。
+- 残留：`/tmp` 已无沙箱目录；`~/.Trash` 受 TCC 保护（`Operation not permitted`），`mv` 返回成功但无法读取确认落位。

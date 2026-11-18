@@ -68,6 +68,7 @@ ditto ~/.config/utility.backup-<timestamp>/ ~/.config/utility/
 | Model cache | `~/.cache/utility/fastembed/` | embedding model | `mcp.fastembedCacheDir` |
 | Logs | `~/.cache/utility/` | per-process logs | — |
 | Project graph | `<project root>/.agent-gateway/graph.sqlite` | data source for `project_lookup` / `project_impact` | — |
+| Project graph log | `<project root>/.agent-gateway/graph.log` | per-project index trace, rotated at 10 MB | — |
 
 ```bash
 tail -f ~/.cache/utility/debug.log         # runtime trace
