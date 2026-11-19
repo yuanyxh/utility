@@ -4,7 +4,7 @@
 **背景：** 两个 P2 连续三期未关闭（热层初始化被 Qdrant 本地锁阻断、图索引未解析率 70.32% / 62.62%），生产 app 1.2.15 超前 HEAD 1.2.13，配置缺 18 键且浮点仍是科学计数法，记忆边类型增长到 23,421 种。本期建成后，HEAD 可复现线上行为，未解析率有可解释基线，配置与图数据可脚本化修复。
 **架构：** 分四段：gateway 运行时与索引修复（热层退避、external 分类、边类型 v4、进度 future），utility 编辑器与配置入口修复，提交打包与配置迁移，数据清理与文档同步。每段结束有检查点。
 **技术栈：** Swift 6 / AppKit / SPM（utility）、Python 3.12 / mem0 / Qdrant / tree-sitter（agent-gateway）、SQLite / GRDB。
-**计划状态：** 待批准
+**计划状态：** 已作废（2026-11-19 用户拍板；由 `.agent/plans/2026-11-19-review-fixes/` 取代）
 **依据：** `~/Documents/selfdata/notes/Review/2026-11-16/README.md` 与 01~17 分域明细；`/Users/yuanyxh/Documents/selfdata/projects/utility/.agent/status.md`；两仓 `CLAUDE.md`。
 
 ## 非目标
