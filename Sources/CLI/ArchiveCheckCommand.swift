@@ -211,11 +211,6 @@ struct ArchiveCheckCommand: ParsableCommand {
             at: sourceRoot.appendingPathComponent("knowledge.sqlite"),
             sql: "CREATE TABLE card (id TEXT);",
         )
-        try createDatabase(
-            at: sourceRoot.appendingPathComponent("notices.sqlite"),
-            sql: "CREATE TABLE notice (id TEXT);",
-        )
-
         let config = try loadConfig(sourceRoot)
         let archive = base.appendingPathComponent("archive.zip")
         let manifest = try ConfigArchive.export(

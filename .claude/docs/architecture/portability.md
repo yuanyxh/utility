@@ -123,7 +123,7 @@ SwiftPM 依赖编译进 app，不需要用户单独安装。
 
 ### 用户数据与运行缓存
 
-- 数据：`~/.config/utility` 下的 `config.yaml`、`agent-gateway.yaml`、`data.sqlite`、`memory_graph.sqlite`、`knowledge.sqlite`、`notices.sqlite`、`token_usage.sqlite`、`tool_output.sqlite`、`workspaces.json`、`terminal-sessions.json`、`retrieval_thresholds.json`
+- 数据：`~/.config/utility` 下的 `config.yaml`、`agent-gateway.yaml`、`data.sqlite`、`memory_graph.sqlite`、`knowledge.sqlite`、`token_usage.sqlite`、`tool_output.sqlite`、`workspaces.json`、`terminal-sessions.json`、`retrieval_thresholds.json`
 - 向量库：`mcp.qdrantPath` 指向的 Qdrant 本地目录
 - 项目图：各项目根 `.agent-gateway/graph.sqlite`
 - 日志与调试：`~/.cache/utility/*.log`、`agent_debug/`、`clip/`、`stage/`

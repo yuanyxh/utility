@@ -83,7 +83,6 @@ extension ArchiveScope {
             append("knowledge.sqlite", as: "data/knowledge.sqlite", kind: .sqliteBackup)
         case .local:
             append("data.sqlite", as: "data/data.sqlite", kind: .sqliteBackup)
-            append("notices.sqlite", as: "data/notices.sqlite", kind: .sqliteBackup)
         case .terminal:
             append(
                 "terminal-sessions.json",

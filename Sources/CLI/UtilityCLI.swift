@@ -13,7 +13,6 @@ struct UtilityCLI: ParsableCommand {
         subcommands: [
             RSSCommand.self,
             WebSearchCommand.self,
-            NoticeCommand.self,
             WorkspaceCheckCommand.self,
             ArchiveCheckCommand.self,
             SetupCheckCommand.self,
