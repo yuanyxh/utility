@@ -55,17 +55,6 @@ enum AppMainMenu {
         appMenu.addItem(.separator())
         appMenu.addItem(item(L10n.Menu.quit, #selector(NSApplication.terminate(_:)), "q"))
 
-        let fileMenu = NSMenu(title: L10n.Menu.file)
-        fileMenu.addItem(
-            item(
-                L10n.Menu.fileSave, #selector(FileEditorPane.saveEditorDocument(_:)), "s",
-            ))
-        fileMenu.addItem(
-            item(
-                L10n.Menu.fileSaveAs, #selector(FileEditorPane.saveEditorDocumentAs(_:)), "s",
-                [.command, .shift],
-            ))
-
         let editMenu = NSMenu(title: L10n.Menu.edit)
         editMenu.addItem(item(L10n.Menu.editUndo, Selector(("undo:")), "z"))
         editMenu.addItem(
@@ -107,9 +96,6 @@ enum AppMainMenu {
         let appItem = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
         appItem.submenu = appMenu
         main.addItem(appItem)
-        let fileItem = NSMenuItem(title: L10n.Menu.file, action: nil, keyEquivalent: "")
-        fileItem.submenu = fileMenu
-        main.addItem(fileItem)
         let editItem = NSMenuItem(title: L10n.Menu.edit, action: nil, keyEquivalent: "")
         editItem.submenu = editMenu
         main.addItem(editItem)

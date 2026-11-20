@@ -15,6 +15,13 @@
   `replay_runs`（重放审计）、`activation_buffer`。
 - 图索引：`GraphIndex` 是内存 CSR，30 秒 TTL 重建；扩展开销亚毫秒级，禁止在检索路径回到 SQL。
 
+## 分组与治理
+
+- 写入继承：与近邻相似记忆（至多 3 条）比较，`semantic_score ≥ 0.65` 的组按多数投票继承，满 8 条跳过。
+- 日任务只重扫近 24h 写入触及的组；周任务全量回扫（`scope_all`），预算 85 次 LLM 调用。
+- 治理候选带 session/task/file；同 session 或同 task 才视为同一次任务。
+- `neurons.importance` 由成员节点 importance 均值/10 聚合；重放种子只取有活跃突触的神经元。
+
 ## v4 边表
 
 - `memory_edges.type` 只放受控枚举（`supersedes`、`episode`、`derived_from`、`disputes`、`relates`、`mentions`、`fact`），

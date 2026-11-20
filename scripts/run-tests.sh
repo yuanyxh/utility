@@ -50,24 +50,23 @@ if [ ! -x "$BIN" ]; then
 fi
 TMP="$(mktemp -d)"
 trap 'mv "$TMP" "${HOME}/.Trash/" 2>/dev/null || true' EXIT
-printf '# probe\n\nbody\n' > "$TMP/note.md"
-DIRTY_OUT="$("$BIN" workspace-check --dirty "$TMP/note.md")"
-echo "$DIRTY_OUT" | grep -qx "baseline: false"
-echo "$DIRTY_OUT" | grep -qx "appended: true"
-echo "$DIRTY_OUT" | grep -qx "restored: false"
-echo "$DIRTY_OUT" | grep -qx "crlf-equal: false"
 cat > "$TMP/workspaces.json" <<'JSON'
 {
   "version" : 1,
-  "layout" : { "sidebarWidth" : 220, "rightPaneWidth" : 580, "fileListWidth" : 200, "subTerminalHeight" : 260, "subListWidth" : 180 },
+  "layout" : { "sidebarWidth" : 220, "rightPaneWidth" : 580, "fileListWidth" : 200, "subTerminalHeight" : 260 },
   "workspaces" : [
-    { "id" : "ws-probe", "name" : "probe", "path" : "/tmp", "subSessionIDs" : [ ] }
+    {
+      "id" : "ws-probe", "name" : "probe", "path" : "/tmp", "subSessionIDs" : [ ],
+      "lastOpenedRelativePath" : "a.md",
+      "ui" : { "activeList" : "files", "expandedPaths" : [ ], "caretLocation" : 3 }
+    }
   ]
 }
 JSON
-UI_OUT="$("$BIN" workspace-check --ui "$TMP/workspaces.json")"
-echo "$UI_OUT" | grep -qx "version: 2"
-echo "$UI_OUT" | grep -q "ui: list=files expanded=0 caret=0 scroll=0"
+STATE_OUT="$("$BIN" workspace-check --state "$TMP/workspaces.json")"
+echo "$STATE_OUT" | grep -qx "workspaces: 1"
+ROUNDTRIP_OUT="$("$BIN" workspace-check --roundtrip "$TMP/workspaces.json")"
+echo "$ROUNDTRIP_OUT" | grep -qx "roundtrip: ok"
 echo "[workspace-check] ok"
 
 echo ""

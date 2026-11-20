@@ -40,7 +40,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | 项目依赖图 graph.sqlite / graphIndexer | `.claude/docs/architecture/project-graph.md` |
 | 组件总览 / 并发 / 内存基线 | `.claude/docs/architecture/overview.md` |
 | 多终端 tmux / SwiftTerm | `.claude/docs/architecture/terminal.md` |
-| 终端工作区 / 文件树 / 编辑器 / git / 预览 | `.claude/docs/architecture/workspace.md` |
+| 终端工作区 / 布局 / 会话恢复 | `.claude/docs/architecture/workspace.md` |
 | 配置加载 Yams / 键名解码 | `.claude/docs/architecture/config.md` |
 | 换机迁移 / 数据归档 / 首启引导 | `.claude/docs/architecture/portability.md` |
 | 构建、验证与 scripts 目录 | `.claude/docs/architecture/build.md` |
@@ -117,6 +117,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 建边写入权重用原始余弦、门槛 0.62；高置信自动接受只是全量回填的临时策略，已回滚，禁止恢复为默认
 - 桥接边 `kind='bridge'` 绕过门槛、归档后可复活；`llm_skipped` 时必须告警
 - 提示词副本必须与 gateway 源仓一致；facts 按 evidence 幂等，同一证据不重复计 support
+- 分组继承 = 近邻多数投票、阈值 0.65；日任务 24h 增量、周任务全量回扫；重放种子只取有活跃突触的神经元，`neurons.importance` 由成员聚合
 
 ### 知识面板
 - 补货**不能走 TaskScheduler**（sub-daily cron 会静默退化成每天一次），用 `KnowledgeService` 自建 Timer

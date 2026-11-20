@@ -17,6 +17,10 @@
 - 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：1.1.109 含 `ConfigManager.readConfigOrDefault` 回退模板、`writeDefault` 拷贝模板、首启使用系统代理。L3 通过：向导真实下载两个模型文件，SHA256 与常量一致，`setup-check` 两项 ok；recall 首调 3243 ms、热调 865 ms，rerank 降级警告 0。
 - 1.2.7 向导修复（2026-11-10，待提交）：安装页 ScrollView + 日志区限高、目标目录改选后重扫冲突、模型缺失时禁用「下一步」、`nextFromInstall` 未通过时给出缺失项、Homebrew 失败提示网络指引并注入代理、嵌入模型下载 30s 元数据超时 + 900s 总超时、`mcp.qdrantPath` 缺失检测与导入前改写。VM 内导入 L3 通过：备份目录生成、各表行数与归档一致、notes 1655 文件一致。验证：`swift build`、5 个向导测试、l10n 双检查、entries/graph 契约全过，1.2.7 已打包。
 
+## 最近完成（2026-11-20）
+
+- 工作区收敛为纯终端布局：文件树、文件编辑器、Git 面板、Markdown/图片预览、语法高亮、草稿恢复全部删除（19 个源文件 + 2 个测试移入废纸篓），状态层只剩 `TerminalUIState`；布局为「工作区列表 + 主终端 + 子终端区域」，保留子终端底部分支状态栏与 `GitService.branch()`。CLI 只留 `--sessions/--dry-run/--roundtrip/--state/--reattach/--restore/--live`，删除 `workspace` 配置段与 54 个文案键（含文件菜单）。旧 `workspaces.json`（含 `ui`/`lastOpenedRelativePath`）仍可加载，写回时自然清除。验证：`swift build`、`run-tests.sh`（31 tests）、l10n 双检查通过；lume `utility-env` 隔离 HOME 启动 dev 构建，截图确认布局（`.agent/plans/2026-11-20-workspace-terminal-only/evidence/`），本机生产 `Utility.app` 与 tmux 会话未受影响。已随 1.2.34 部署并提交（`1f04ca0`）。
+
 ## 最近完成（2026-11-15）
 
 - 知识库跑题卡：`cards.id=237`「健康检查」是医学体检内容，却挂在 Java 后端主题下。根因：`gather_evidence` 只按 concept 检索，`_matches` 只要求概念词出现，医学页面全部命中；`knowledge_card` 无「同名异义」判据。已把该卡 `status` 改 `removed`；gateway 提示词（中英）新增「资料属于其他领域同名概念时输出空 card」，`Sources/Gateway/prompts` 副本同步；空卡走既有 `CARD_FAIL`，concept 落 `failed`，新增回归测试。

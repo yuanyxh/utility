@@ -8,25 +8,27 @@ enum TerminalRole: String, Codable, Sendable {
 struct WindowLayout: Codable, Equatable, Sendable {
     var sidebarWidth: Double = 220
     var rightPaneWidth: Double = 580
-    var fileListWidth: Double = 200
-    var subTerminalHeight: Double = 260
-    var subListWidth: Double = 180
 
     static let minimum = WindowLayout(
         sidebarWidth: 180,
-        rightPaneWidth: 525,
-        fileListWidth: 160,
-        subTerminalHeight: 120,
-        subListWidth: 140,
+        rightPaneWidth: 320,
     )
+
+    init(sidebarWidth: Double = 220, rightPaneWidth: Double = 580) {
+        self.sidebarWidth = sidebarWidth
+        self.rightPaneWidth = rightPaneWidth
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sidebarWidth = (try? c.decodeIfPresent(Double.self, forKey: .sidebarWidth)) ?? 220
+        rightPaneWidth = (try? c.decodeIfPresent(Double.self, forKey: .rightPaneWidth)) ?? 580
+    }
 
     func clamped() -> WindowLayout {
         WindowLayout(
             sidebarWidth: max(sidebarWidth, Self.minimum.sidebarWidth),
             rightPaneWidth: max(rightPaneWidth, Self.minimum.rightPaneWidth),
-            fileListWidth: max(fileListWidth, Self.minimum.fileListWidth),
-            subTerminalHeight: max(subTerminalHeight, Self.minimum.subTerminalHeight),
-            subListWidth: max(subListWidth, Self.minimum.subListWidth),
         )
     }
 }
@@ -38,8 +40,6 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
     var mainSessionID: String?
     var subSessionIDs: [String]
     var selectedSubSessionID: String?
-    var lastOpenedRelativePath: String?
-    var ui: WorkspaceUIState
     let createdAt: Date
 
     init(
@@ -49,8 +49,6 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         mainSessionID: String? = nil,
         subSessionIDs: [String] = [],
         selectedSubSessionID: String? = nil,
-        lastOpenedRelativePath: String? = nil,
-        ui: WorkspaceUIState = WorkspaceUIState(),
         createdAt: Date = Date(),
     ) {
         self.id = id
@@ -59,8 +57,6 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         self.mainSessionID = mainSessionID
         self.subSessionIDs = subSessionIDs
         self.selectedSubSessionID = selectedSubSessionID
-        self.lastOpenedRelativePath = lastOpenedRelativePath
-        self.ui = ui
         self.createdAt = createdAt
     }
 
@@ -72,8 +68,6 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         mainSessionID = try c.decodeIfPresent(String.self, forKey: .mainSessionID)
         subSessionIDs = try c.decodeIfPresent([String].self, forKey: .subSessionIDs) ?? []
         selectedSubSessionID = try c.decodeIfPresent(String.self, forKey: .selectedSubSessionID)
-        lastOpenedRelativePath = try c.decodeIfPresent(String.self, forKey: .lastOpenedRelativePath)
-        ui = (try? c.decodeIfPresent(WorkspaceUIState.self, forKey: .ui)) ?? WorkspaceUIState()
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
     }
 
@@ -155,10 +149,6 @@ struct WorkspaceDocument: Codable, Equatable, Sendable {
                     mainSessionID: workspace.mainSessionID,
                     subSessionIDs: subs,
                     selectedSubSessionID: selectedSub ?? subs.first,
-                    lastOpenedRelativePath: workspace.lastOpenedRelativePath,
-                    ui: workspace.ui.clamped(
-                        textLength: Int.max, contentHeight: Double.greatestFiniteMagnitude,
-                    ),
                     createdAt: workspace.createdAt,
                 ),
             )

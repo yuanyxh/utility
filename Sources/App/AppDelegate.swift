@@ -93,15 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     /// `stopAndWait` used to freeze the UI until the SIGTERM grace period expired.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminationLock.lock()
-        let pendingConfirmation = !terminateRequested
-        terminationLock.unlock()
-        // Ask before touching terminateRequested so a cancel leaves the app fully alive.
-        if pendingConfirmation,
-            !MainActor.assumeIsolated({ WorkspaceManager.shared.confirmTermination() })
-        {
-            return .terminateCancel
-        }
-        terminationLock.lock()
         let alreadyAsked = terminateRequested
         terminateRequested = true
         let alreadyReplied = terminationAllowed

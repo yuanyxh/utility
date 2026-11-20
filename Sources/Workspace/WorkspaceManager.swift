@@ -15,8 +15,6 @@ struct WorkspaceSessionSummary: Equatable {
 struct WorkspaceState {
     let document: WorkspaceDocument
     let sessions: [WorkspaceSessionSummary]
-    let mountedMainID: String?
-    let mountedSubID: String?
     let mainView: NSView?
     let subView: NSView?
 
@@ -62,7 +60,6 @@ final class WorkspaceManager {
     private var didRestore = false
     private var isShuttingDown = false
     private var didReportMissingTmux = false
-    private var didOfferDrafts = false
     private var pathTimer: Timer?
     /// Some prompts emit the same notification twice; keep one banner per burst.
     private var lastNotification: (sessionID: String, at: Date)?
@@ -94,8 +91,6 @@ final class WorkspaceManager {
         return WorkspaceState(
             document: document,
             sessions: summaries,
-            mountedMainID: mountedMainSession?.id,
-            mountedSubID: mountedSubSession?.id,
             mainView: mountedMainSession?.view,
             subView: mountedSubSession?.view,
         )
@@ -122,7 +117,6 @@ final class WorkspaceManager {
 
     func shutdown() {
         guard didLoad else { return }
-        windowController?.persistUIStateNow()
         isShuttingDown = true
         persist()
         detachMountedSessions()
@@ -141,25 +135,11 @@ final class WorkspaceManager {
             mountSelectedWorkspace()
         }
         controller.reload(state: state)
-        presentPendingDraftsIfNeeded()
         if state.mainSession == nil, !TmuxBackend.isAvailable() {
             controller.showEmptyState(message: L10n.Terminal.tmuxMissingBody)
         }
         NSApplication.shared.activate(ignoringOtherApps: true)
         controller.focusTerminalIfNeeded()
-    }
-
-    func confirmTermination() -> Bool {
-        windowController?.confirmEditorClose() ?? true
-    }
-
-    private func presentPendingDraftsIfNeeded() {
-        guard !didOfferDrafts else { return }
-        didOfferDrafts = true
-        let drafts = EditorDraftStore().loadAll()
-        guard !drafts.isEmpty else { return }
-        debugLog("[Workspace] offering drafts count=\(drafts.count)")
-        windowController?.presentDraftRecovery(drafts)
     }
 
     func toggleWindow() {
@@ -192,10 +172,6 @@ final class WorkspaceManager {
         controller.onSelectSubSession = { [weak self] id in self?.selectSubSession(id: id) }
         controller.onCloseSubSession = { [weak self] id in self?.closeSubSession(id: id) }
         controller.onLayoutChanged = { [weak self] layout in self?.updateLayout(layout) }
-        controller.onUIStateChanged = { [weak self] ui in self?.updateUIState(ui) }
-        controller.onFileOpened = { [weak self] relative in
-            self?.setLastOpened(relativePath: relative)
-        }
         controller.window?.layoutIfNeeded()
         observer = controller
         viewSize = { [weak controller] in
@@ -211,7 +187,6 @@ final class WorkspaceManager {
     @discardableResult
     func createWorkspace(path: String) -> Workspace? {
         ensureLoaded()
-        guard confirmTermination() else { return nil }
         let standardized = Workspace.standardizedPath(path)
         guard !document.workspaces.contains(where: { $0.path == standardized }) else {
             debugLog("[Workspace] duplicate path rejected path=\(standardized)")
@@ -247,8 +222,6 @@ final class WorkspaceManager {
     func removeWorkspace(id: String) {
         ensureLoaded()
         guard let workspace = document.workspaces.first(where: { $0.id == id }) else { return }
-        guard confirmTermination() else { return }
-        windowController?.persistUIStateNow()
         detachMountedSessions()
         for sessionID in sessionIDs(in: workspace) {
             backend?.kill(id: sessionID)
@@ -265,36 +238,10 @@ final class WorkspaceManager {
         ensureLoaded()
         guard document.workspaces.contains(where: { $0.id == id }) else { return }
         guard id != document.selectedWorkspaceID || mountedSessions.isEmpty else { return }
-        guard confirmTermination() else { return }
-        windowController?.persistUIStateNow()
         detachMountedSessions()
         document.selectedWorkspaceID = id
         persist()
         mountSelectedWorkspace()
-    }
-
-    func setLastOpened(relativePath: String?) {
-        ensureLoaded()
-        guard let id = document.selectedWorkspaceID,
-            let index = document.workspaces.firstIndex(where: { $0.id == id }),
-            document.workspaces[index].lastOpenedRelativePath != relativePath
-        else { return }
-        document.workspaces[index].lastOpenedRelativePath = relativePath
-        persist()
-    }
-
-    func updateUIState(_ ui: WorkspaceUIState) {
-        ensureLoaded()
-        guard let id = document.selectedWorkspaceID,
-            let index = document.workspaces.firstIndex(where: { $0.id == id }),
-            document.workspaces[index].ui != ui
-        else { return }
-        document.workspaces[index].ui = ui
-        do {
-            try store.save(document)
-        } catch {
-            debugLog("[Workspace] save ui failed: \(error)")
-        }
     }
 
     func updateLayout(_ layout: WindowLayout) {
