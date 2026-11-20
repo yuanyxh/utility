@@ -23,12 +23,6 @@ enum AgentRunner {
         try cleanupStaleAgents()
         installSignalHandlers()
 
-        // Warm note vectors off the main thread; the agent session keeps the
-        // process alive, so this finishes while the user works.
-        Thread.detachNewThread {
-            MCPClient.shared.prewarmNotes(projectPath: projectPath)
-        }
-
         // 1. Project graph: rebuild only when meta is missing or engine/schema/root differ.
         let graph = prepareGraph(projectPath: projectPath)
         // Crash restarts change the PID, so refresh the signal-context copy.

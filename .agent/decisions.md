@@ -75,3 +75,19 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 **理由**：向导在 `ConfigManager.load()` 之前运行，新机器没有 config.yaml，解码空 `AppConfig()` 时 `mcp` 为 nil，reranker/embedder 只标 optional、永不进入安装列表；`writeDefault` 同样写空模型，生成的默认配置缺整个 `mcp` 段。首启下载还依赖代理，而模板 `proxyEnabled=false`，`launchctl setenv` 也不会进入 GUI app 环境，直连 HuggingFace 超时。
 
 **验证**：config 缺失时 `setup-check` 由 optional 变 missing；无代理 curl 报 `(28) Timeout`，带 `127.0.0.1:7897` range 下载返回 206；`run-tests.sh` 9 个用例全过。L3 向导真机下载待用户完成。
+
+## 2026-11-20 移除定时提醒（Notice）
+
+**决策**：删除 `NoticeWatcher`、`NoticeStore`、`utility notice` 子命令，以及 `noticesDatabase`、归档范围、l10n 键与 `notices.sqlite` 数据文件。
+
+**理由**：功能投放后三天日志 0 条，但常驻每 5 分钟轮询一次并占一个计时器。
+
+**影响**：`utility notice` 命令消失；系统通知仍由 `NotificationManager` 承担。证据：`swift build`、`gen-l10n.py --check`（349 键）、`check-l10n-contract.py`、`utility --help` 无 notice 子命令。
+
+## 2026-11-20 笔记向量按需预热与索引白名单
+
+**决策**：`utility -a` 启动不再调用 `/api/project/notes/prewarm`；`FileWatcher` 只把 `ScannerConfig` 白名单内且是普通文件的路径发给 graphIndexer。
+
+**理由**：启动预热让每次会话启动即单核满载 5~10 分钟，与 IDE 抢 P 核；Watcher 把目录与无 parser 路径当文件发送，两天产生 18582 次无效报错。
+
+**验证**：新旧二进制同项目 A/B 对照（新无预热记录、旧 10:30:58 触发）；首次 `project_notes` 查询才触发后台嵌入；`swift build` 通过。

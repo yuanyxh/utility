@@ -19,29 +19,6 @@ final class MCPClient {
 
     private init() {}
 
-    // MARK: - Tools
-
-    /// Best-effort note-vector prewarm for a project. Fire-and-forget: the
-    /// server schedules the embedding work and returns.
-    func prewarmNotes(projectPath: String, timeout: TimeInterval = 1.5) {
-        guard let url = URL(string: baseURL + "/api/project/notes/prewarm") else {
-            return
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(
-            withJSONObject: ["project_path": projectPath]
-        )
-        req.timeoutInterval = timeout
-
-        let semaphore = DispatchSemaphore(value: 0)
-        let task = session.dataTask(with: req) { _, _, _ in semaphore.signal() }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout)
-        task.cancel()
-    }
-
     // MARK: - Gateway capabilities
 
     /// Read a page as Markdown through the gateway's local-first extractor.
