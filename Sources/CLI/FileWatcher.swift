@@ -11,6 +11,7 @@ import Foundation
 final class FileWatcher {
     private let projectPath: String
     private let graphScanner: GraphScanner?
+    private let scannerConfig: ScannerConfig
     private var stream: FSEventStreamRef?
 
     /// Serial queue for FSEventStream delivery (FSEventStream requires serial).
@@ -25,6 +26,7 @@ final class FileWatcher {
     init(projectPath: String, graphScanner: GraphScanner?) {
         self.projectPath = projectPath
         self.graphScanner = graphScanner
+        scannerConfig = ScannerConfig(projectPath: projectPath)
         eventQueue = DispatchQueue(label: "com.utility.filewatcher.events", qos: .utility)
         debugLog("[Watcher] Init: \(projectPath)")
     }
@@ -90,7 +92,6 @@ final class FileWatcher {
 
     /// Called on `eventQueue` (serial). FSEventStream requires a serial dispatch queue.
     private func onEvent(paths: [String], flags: [FSEventStreamEventFlags]) {
-        let config = ScannerConfig(projectPath: projectPath)
         var relevant = Set<String>()
 
         for (i, path) in paths.enumerated() {
@@ -119,10 +120,10 @@ final class FileWatcher {
             guard let relRange = standardizedPath.range(of: projectPath + "/") else { continue }
             let relPath = String(standardizedPath[relRange.upperBound...])
 
-            if isDir, config.shouldSkipDirectory(URL(fileURLWithPath: path).lastPathComponent) {
+            if isDir, scannerConfig.shouldSkipDirectory(URL(fileURLWithPath: path).lastPathComponent) {
                 continue
             }
-            if isFile, !config.shouldInclude(relPath) {
+            if isFile, !scannerConfig.shouldInclude(relPath) {
                 continue
             }
             // Full scans use .skipsHiddenFiles; apply to dirs too (.git/objects leaked).
@@ -198,12 +199,21 @@ final class FileWatcher {
     private func processChanges(_ paths: Set<String>) {
         guard !paths.isEmpty else { return }
 
-        let deleted = paths.filter {
-            !FileManager.default.fileExists(
-                atPath: (projectPath as NSString).appendingPathComponent($0),
-            )
+        var deleted = Set<String>()
+        var existing = Set<String>()
+        for relPath in paths {
+            // Directories and unsupported extensions never reach the indexer.
+            guard scannerConfig.shouldInclude(relPath) else { continue }
+            var isDirectory: ObjCBool = false
+            let fullPath = (projectPath as NSString).appendingPathComponent(relPath)
+            if FileManager.default.fileExists(atPath: fullPath, isDirectory: &isDirectory) {
+                if !isDirectory.boolValue {
+                    existing.insert(relPath)
+                }
+            } else {
+                deleted.insert(relPath)
+            }
         }
-        let existing = paths.subtracting(deleted)
 
         processGraphChanges(deleted: deleted, existing: existing)
         debugLog("[Watcher] Scan result: \(existing.count) updated, \(deleted.count) deleted")

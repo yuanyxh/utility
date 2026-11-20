@@ -66,6 +66,7 @@
 - **stale 回收**：`sync` 前后各执行一次 `delete_dangling_stale_edges()`，删除目标符号/文件已不存在的 stale 边；仍存在的目标保持可恢复。
 - **引擎版本一致**：`services/graph/constants.py` 的 `ENGINE_VERSION` / `SCHEMA_VERSION` 是唯一源，导出到 `contracts/graph.json`；Swift `GraphProtocol` 由 `check-graph-contract.py` 校验。
 - **扩展名唯一源**：python `services/graph/constants.py` 是扩展名/语言族唯一表；Swift 侧对应 `GraphProtocol.languagesByExtension`，只用于 watcher 事件过滤，并由契约脚本断言一致。
+- **Watcher 入图白名单**：`FileWatcher.processChanges` 只把 `ScannerConfig.shouldInclude` 通过且是普通文件的路径发给 indexer；目录与无 parser 扩展名在客户端截断，不再依赖 indexer 报错。
 - **解析器独立降级**：`parsers/__init__.py` 逐语言 try-import，缺一个 grammar 只禁用该语言，ping 仍可用。
 - **常驻进程单线程**：stdin 请求串行处理；DB 写与解析在同一线程。
 - **日志单一入口**：graph logger 只能由 `services/graph/logging_setup.py` 创建，模块级 `setup_logging("graph")` 会让先 import 者决定路径。
