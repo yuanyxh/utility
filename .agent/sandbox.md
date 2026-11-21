@@ -205,3 +205,68 @@
 - 部署（2026-11-18 22:53）：用户完成部署，安装副本与源码一致，旧 indexer 句柄释放；新进程 85459 启动后日志落 `<repo>/.agent-gateway/graph.log`，6 行全部含 `ts`。
 - 迁移：5 个旧日志（`~/.cache/utility/graph.log{,.1,.2,.3}`、`~/.cache/agent-gateway/graph.log`）移入废纸篓，cache 目录已无 graph.log。
 - 残留：`/tmp` 已无沙箱目录；`~/.Trash` 受 TCC 保护（`Operation not permitted`），`mv` 返回成功但无法读取确认落位。
+
+## 2026-11-20 1.2.35 部署后隔离验证（计划）
+
+- Level: process。`~/.local/bin/lume` 可用但 VM 均 stopped；被测为 CLI 与 gateway 常驻进程，不涉 GUI，临时 HOME + 临时项目 + 临时端口足够，省去 VM 开机与 SSH。出现 GUI 项再升级 virtual-machine 复用 `utility-env`。
+- 被测：已部署 `/Applications/Utility.app`（1.2.35）与其 `~/.config/utility/mcp-venv` wheel（已确认含 `core/trace_context.py`）。
+- 变更边界：`2a4be85` Watcher 白名单、`be1a30c` 预热移除、`441b639` notice 移除、`76190cd` 仅文档；gateway `f63702e` trace_id。
+
+### 隔离对象
+
+| 对象 | 处理 |
+|---|---|
+| 数据 | 临时 HOME（`HOME` + `CFFIXED_USER_HOME`）+ 临时项目；生产 `~/.config/utility` 只取 mtime/size 快照 |
+| venv | `cp -cR` 克隆生产 `mcp-venv` 到临时 HOME，避免向生产写 `__pycache__` |
+| 端口 | MCP 19003；shell 继承的 `MCP_PORT=9001` 必须覆盖；生产 9001 / 8613 不触达 |
+| 网络 | 仅 loopback；trace E2E 用 fake upstream 与 ephemeral 端口，无外联 |
+| 凭据 | 不注入任何 key，provider `apiKey` 为空 |
+| cache | `GATEWAY_CACHE` / `QDRANT_PATH` / `UTILITY_DATA_DIR` 全指临时目录 |
+
+### 用例
+
+- A1 CLI 面：deployed `--help` 无 notice；`utility notice` 返回非 0。
+- A2 归档：隔离 HOME 下 `archive-check --roundtrip` 通过，归档范围不再含 notices。
+- A3 Watcher：临时项目首扫断言 4 符号 / 2 边；新增 `gamma.swift`、`sub/delta.swift`、`notes.txt`、`image.png` 与目录事件，断言仅支持的源码入库、日志无 no-parser 报错；删除文件断言节点移除。
+- A4 预热：隔离 config `mcp.port=19003` + 本地记录桩；`utility -a` 全程断言 0 次 `/api/project/notes/prewarm`。
+- A5 Gateway trace：以生产 venv python 跑 `agent-gateway/tests/eval/trace_id/2026-11-20/run.sh`，断言 `RESULT PASS`、`X-Trace-Id`、`mcp.ids.join` 相等。
+
+### 校验
+
+- 生产 `token_usage.sqlite` mtime/size 不变；9001/8613 仍为原 PID 27487/27488；生产 debug.log 不新增本次记录。
+- 临时目录与子进程清理；19003 等端口无监听。
+
+### 限制
+
+- 不验 GUI 面板与系统通知（notice 移除后的菜单/通知行为）。
+- trace 使用真实 socket 但 fake upstream，不代表真实上游链路。
+
+### 运行记录（2026-11-20）
+
+- 被测：`/Applications/Utility.app` 1.2.35（deployed binary）+ 克隆自生产 `mcp-venv` 的临时 venv；临时 HOME `/tmp/utility-e2e.*`。
+- A1：`--help` 无 notice；`utility notice` exit 64。A2：`archive-check --roundtrip` exit 0。
+- A3：首扫 4 符号 / 2 边；新增 `gamma.swift`、`sub/delta.swift`、`notes.txt`、`image.png`、`emptydir/` 后仅 2 个源码入库（`Scan result: 2 updated, 0 deleted`），txt/png 未入图，`graph.log` 无 no-parser/unsupported；删除 `alpha.swift` 后 1 符号移除（`remove_file`）。graph ops：`index_file×2`、`remove_file×1`。
+- A4：19003 记录桩全程 0 请求；二进制 `notes/prewarm` 字符串 0 次。
+- A5：生产 venv python 跑 trace E2E（E2E_MCP_PORT=19004）`RESULT PASS`，代理 JSON/SSE/413 均带 `X-Trace-Id`，`mcp.ids.join` 两侧相等；已部署 wheel 含 `core/trace_context.py`。
+- 隔离：生产 token_usage mtime 变化来自运行中 App 的正常流量；生产 PIDs 27487/27488 未变，生产 debug.log 无临时路径（0 次）。临时目录已移入废纸篓，19003/19004 无监听、无残留进程。
+- 未覆盖：GUI 菜单/系统通知；notice 移除后的真实通知行为。
+
+## 2026-11-20 recall 分层端到端
+
+- Level: virtual-machine（L3）。复用 `utility-env`，真实记忆副本：Qdrant 140M（热层 `mem0_jinazh768` + 冷层）、图库 128M（5774 神经元 / 18884 突触）、notes 274M、reranker 模型 293M。端口 19001 基线（master `f63702e`）/ 19002 正式版；宿主经 SSH 隧道访问 19002。
+- 数据隔离：`~/recall-ab/data` 给基线，`~/recall-ab/data-exp` + `exp-home` 给正式版（embedded Qdrant 不能双开同一目录）；`GATEWAY_CACHE` 分开；LLM key 清空，`AI_API_KEY=sk-dummy` 仅供 mem0 初始化。
+- 环境缺陷与修复：首轮两台服务都缺 `GATEWAY_USER_ID`，`dense_hot` 报 `Invalid user_id`（server.log 1017/916 次），hot 行实际来自 SemanticArm。补 `GATEWAY_USER_ID=yuanyxh` 后同一查询 `dense_hot raw=80 kept=17`、top1 命中「记忆神经单元」。**后续 VM 检索测试必须带该 env。**
+- A/B（249 条 gold，补齐 `GATEWAY_USER_ID` 后）：anchors precision 8.9% vs 6.7%，入口覆盖 35.7% vs 32.9%（anchors 非空子集 10.0% vs 7.5%、入口覆盖 39.8% vs 36.7%），基线已命中 82 条零丢失，p50 3316ms vs 3978ms；28 条空 anchors 全部有 candidates（基线同批平均 5.43 条、仅 1 条命中）；基线 trace 63.6% 返回行为 rerank 判负后复活。
+- 两轮独立审查：首轮 8 条发现，修复 project_notes 结果丢失、project_lookup 状态波及、candidates 绕过 max_chars、trace 与返回 status 不一致；复审发现 candidates 跨尺度排序挤掉 rerank_rejected，改为来源优先级（rerank_rejected > below_floor > filter_miss）。898→901 单测、ruff 全过。
+- 真实长任务（3 个独立 agent，非模拟）：①短查询 rerank 评估，判负行约 60% 实际相关，推荐「判定与排序分离」，词面救援精度 0.837/召回 0.947；②治理离线增量落盘方案（run.json + batches.jsonl + 断点键）；③SwiftPM 依赖审计方案（check-deps.py，OSV SwiftURL）。
+- 残留：VM 仍在运行，`~/recall-ab` 与报告（report-full/report-formal/report-final.json）保留待复查；宿主 `/tmp/recall-ab`、SSH 隧道进程待清理。生产代码未部署 wheel。
+
+## 2026-11-21 短查询词面救援
+
+- Level: virtual-machine（L3）。同一 VM、同一真实副本；19001 基线 `src-base`，19002 正式版 `src-formal`（含救援）。仅 19002 经宿主隧道。
+- 环境坑：VM shell 带 `http_proxy=127.0.0.1:7897`（代理未运行），VM 内跑 `eval.py` 的 urllib 全部 `Connection refused`；必须加 `NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost`。宿主侧跑无此问题。
+- 短查询/不存在集（`short_eval.py`）：12/12 短查询 anchors 非空（5~6 条相关）；20 条不存在查询 11 empty、8 candidates_only、1 条 `ok` 是库内真实收录的自引用记录（`zzz-nonexistent-abc`），无词面误报。
+- 249 条 gold（`report-tight.json`）：anchors precision 8.9% vs 6.7%，入口覆盖 35.7% vs 32.9%，exp_empty 28，p50 3318ms vs 3909ms。与宽松救援版 `report-rescue.json` 逐条对比：仅 2 条 exp_ids 变化（各多 1 条无关 anchor），相关命中与入口覆盖零丢失。
+- 复审后修：CJK bigram 被当词数导致 ≤2 词中文救援失效 → 门限改按空白分词、覆盖率允许缺 1 个词（75% 在 N=3 不可达）；补有效负例（停用词、词边界、CJK 跨词 bigram、boost 混排）与 `rerank_rescued` 契约/trace 断言。912 单测、ruff 全过。
+- 清理：19001/19002 已停、宿主 SSH 隧道已关闭；VM 保持运行，`~/recall-ab/eval/report-tight.json`、`tight.log` 与真实副本保留待复查。
+- 部署（2026-11-21 23:20/23:27）：`/Applications/Utility.app` 的 wheel 含救援代码，venv 的 `pipeline.py` 与源仓逐字一致，MCP PID 30916 已重启。
