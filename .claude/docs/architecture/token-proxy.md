@@ -58,6 +58,7 @@
     - 阈值经 env `MODEL_PROXY_CONTEXT_WARN` 注入（`TokenProxyManager.contextWarnEnvKey` ↔ `proxy_response_note.CONTEXT_WARN_ENV_KEY`，**总是注入**，Python 侧 `_load_warn_tokens()` 在 import 时读一次、非法值回退默认）。与响应注记开关同理，该 env 不经 `config.py`，故由契约脚本单独断言两侧同名（`find_context_warn_env_violations`，selftest 有对应变异用例）。**改这个 env 名必须同步契约脚本的两个正则**，否则改名后 Python 静默用自己的默认值、配置形同虚设
   - **只追加在最终回复**：判据取**最后一个 content block 的类型**（`text` 才加，`tool_use` 不加），**不取 stop_reason**——后者要到 `message_delta` 才出现，那时 content block 已经 stop，来不及再补 delta。工具调用轮不加：那行的读者是用户，插在工具调用里既没意义、又可能干扰客户端对工具块的解析
   - **SSE 注入点是「延迟 `content_block_stop`」**：收到 stop 先缓存，等下一个事件才知道它是不是最后一个——是则在它前面补一个 `content_block_delta`（**复用该 block 的 index**，不新建 block、不管 index 递增），不是则原样放行；`finish()` 里残留的 stop 必是最后一个。这是全项目**唯一一处响应侧改写**
+  - **结构化回复不追加注记（2026-11-22）**：最终文本 `strip()` 后是**单个 JSON 对象**时跳过。`/goal` evaluator 对回复做严格 JSON 解析，尾部加一行必然报 `JSON validation failed`；非流式判 `append_note_to_body` 的 text block，SSE 判 `_note_delta` 前按 index 累积的文本。判据只认「`{` 开头且 `json.loads` 为 dict」，散文与围栏 JSON 照常追加
   - **无改写时也加**（显示 `{model} | 无改写`，`NOTE_EMPTY`）：模型名才是这行的主信息——新会话头几轮还没有 tool_result，skill_dedup / output_filter 都不触发，若此时整行消失就完全看不到当前模型（用户实测反馈）。代价是每条最终回复都要解析 SSE，「零开销纯透传」只剩开关关闭时那条路。400 错误响应与 `status >= 400` 一律不加
   - **feed/finish 收发 bytes 并使用增量 UTF-8 解码**（`codecs.getincrementaldecoder`）：SSE 分片会把多字节字符切成两半，逐片 `decode()` 会解出替换字符、污染 JSON。转换分支现有的 `chunk.decode(errors="replace")` 属同类隐患但不在本次范围
   - **注入的 delta 不进 `collected_body`**（先 extend 原始 chunk 再 feed）：usage 提取只看上游原始流，度量标尺不被自己改的内容污染

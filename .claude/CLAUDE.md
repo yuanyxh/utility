@@ -85,6 +85,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 规则注入必须注入**每一条**真实用户消息，不能只注入最后一条（注入点移动会让 prompt cache 前缀每次断）
 - 含 tool_result 的消息必须插到**最后一个 tool_result 之后**，禁止 `insert(0)`
 - 响应注记会被模型复述，请求侧必须剥离 assistant 消息里的注记行
+- 响应注记不得追加到**结构化回复**：最终文本是单个 JSON 对象时跳过（`/goal` evaluator 严格解析，尾部多一行即报 `JSON validation failed`）
 - 协议判据优先取入口路径，路径不表明协议时才回退请求体启发式
 - `finish_reason → stop_reason` 映射是单一常量 `FINISH_REASON_MAP`，转换层兜底、记录层保留原样；反向映射用 `STOP_REASON_MAP_REVERSE`
 - **上游端点路径必须按 provider 协议映射**（`PROVIDER_PATH_MAP` / `_provider_path`），不能直接拿客户端入口路径拼 URL——否则转换后的 body 打到对方协议不存在的端点上，上游 404；anthropic provider 缺 `anthropic-version` 时补默认值
