@@ -4,10 +4,11 @@
 
 | 事实 | 来源 | 适用范围 | 日期 |
 | --- | --- | --- | --- |
-| 基座按 agent-vibe 1.4.0 对齐，`seed_version: 1.4.0` | `.agent/profile.yaml` | 项目 | 2026-11-03 |
+| 基座按 agent-vibe 1.5.0 对齐，`seed_version: 1.5.0` | `.agent/profile.yaml` | 项目 | 2026-11-08 |
 | 配置唯一来源是 `Sources/Resources/default-config.yaml`，用户配置只做覆盖 | `Sources/Core/ConfigTypes.swift` | 配置 | 2026-11-03 |
 | RSS 解析失败统一存 `RSSItem.unknownDate`，并记录 feed 与原始串 | `Sources/RSS/RSSParser.swift` | RSS | 2026-11-03 |
-| 项目索引只有 `.utility/graph.sqlite`，`deps.sqlite` 链已移除 | `.claude/docs/architecture/project-graph.md` | 项目图 | 2026-11-02 |
+| 项目索引只有 `.agent-gateway/graph.sqlite`，`deps.sqlite` 链与 `.utility/` 目录已移除 | `.claude/docs/architecture/project-graph.md` | 项目图 | 2026-11-20 |
+| 定时提醒已移除，`notices.sqlite` 不再读写 | `Sources/CLI/UtilityCLI.swift` | CLI / 归档 | 2026-11-20 |
 
 ## 用户偏好
 
@@ -27,7 +28,6 @@
 
 | 线索 | 需要的证据 |
 | --- | --- |
-| 1.1.41 工作区改动尚未提交 | 用户授权后按主题拆分提交 |
 | RSS 历史未知日期条目已读状态 | 迁移与查询行为在真实库上的结果 |
 
 ## 规则

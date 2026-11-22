@@ -10,12 +10,14 @@
 
 ## 进行中
 
-- 换机迁移与首启引导：计划 `.agent/plans/2026-11-06-env-migration/`，T1–T11 完成。归档核心与设置导出面板、`EnvironmentProbe`、`CommandRunner`、`SetupProbe/SetupInstaller`、首启四步向导（导入→检测→安装→完成）均已落地；`GatewayInstaller` 强制 Python ≥ 3.12，Homebrew 缺失时写 `.command` 并打开 Terminal。文档：`README.md`/`README.zh.md`、`.claude/docs/architecture/portability.md`、CLAUDE 索引。验证：`swift build`、`run-tests.sh`（6/6）、`archive-check --roundtrip`、`setup-check`、swift-format 全过；隔离 HOME 截图确认向导 1/4 页，已有配置不出现向导；`Utility-1.1.91.dmg` 内二进制完整导出（1627 文件 / 117 MB）通过。修复：WAL 数据库缺少 `-shm` 时只读连接报 SQLITE_CANTOPEN（错误 14），读取器改为只读失败后回退读写；roundtrip 增加强制 WAL 无 sidecar 场景。待用户 L3：设置导出、向导导入、外部路径选择、真实安装与 Homebrew 拉起。未提交，待用户授权
-- GUI 化重构：T1-T6 代码完成，`swift build` 与 `run-tests.sh` 通过；待用户 L3 手测（Dock、主菜单、设置保存、面板键盘、OCR 退出）
-- 工作区协议化：计划 `.agent/plans/2026-11-05-workspace-protocol/`，T1-T13 完成并过两轮审查修复。状态层 + 五个窗格协议化（终端/子终端/文件树/Git/编辑器）、手型光标、⌘Z 脏点、git 忽略灰化、`ui` 字段 v2 持久化与 `.bak` 迁移、`--ui` CLI、文档与打包（`Utility-1.1.75.dmg` 已过期，需重打包）。审查修复两轮：滚动恢复布局、横幅跨文件泄漏、子目录灰化、status 失败被吞、切工作区残留；invalidate 代际号、脏重算 0.1ms、首启空态、备份只查一次、落盘收敛与 flush、指针方法去重、文档「窗格 vs 浮动面板」澄清。验证：`swift build`、`run-tests.sh`、l10n 双检查全过；列表选择三项回归（空白点击丢选中、选中底色变灰、图标与 x 按钮不变白）已修并经用户确认正常，代码已提交；已删 `PointerCursorController`（实测 0 次触发）、`FileTreeUIState.truncated`、`snapshot.workspaceID`/`focused`、`canHighlight`、`syntaxProvider` 注入参数；审查建议全部落地，`swift build` 与 `run-tests.sh` 全过
-- 终端工作区：T1-T12 代码、文档与打包完成；检查点 A、B 通过；打包产物 `Utility-1.1.64.dmg`（app 19M / DMG 7.4M，卷根含 `Utility.app` 与 `Applications` 软链）；L3 逐项手测待做（切换与退出三选、脏文档横幅、只读保存、删除后另存为、中英文切换）
-- 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：1.1.109 含 `ConfigManager.readConfigOrDefault` 回退模板、`writeDefault` 拷贝模板、首启使用系统代理。L3 通过：向导真实下载两个模型文件，SHA256 与常量一致，`setup-check` 两项 ok；recall 首调 3243 ms、热调 865 ms，rerank 降级警告 0。
-- 1.2.7 向导修复（2026-11-10，待提交）：安装页 ScrollView + 日志区限高、目标目录改选后重扫冲突、模型缺失时禁用「下一步」、`nextFromInstall` 未通过时给出缺失项、Homebrew 失败提示网络指引并注入代理、嵌入模型下载 30s 元数据超时 + 900s 总超时、`mcp.qdrantPath` 缺失检测与导入前改写。VM 内导入 L3 通过：备份目录生成、各表行数与归档一致、notes 1655 文件一致。验证：`swift build`、5 个向导测试、l10n 双检查、entries/graph 契约全过，1.2.7 已打包。
+- 换机迁移与首启引导：实现与隔离验证已完成（计划 `.agent/plans/2026-11-06-env-migration/`，T1–T11）。待用户 L3 仅剩「真实依赖安装与 Homebrew 拉起」；设置导出（2026-11-09 本机导出）、向导导入与外部路径改选（2026-11-10 VM 导入）已通过。
+
+## 历史（2026-11-07 至 11-10，已归档）
+
+- 工作区协议化（1.1.75）：文件树、编辑器、Git 面板与预览已随 2026-11-20 终端收敛删除，旧 L3 项失效；计划见 `.agent/plans/2026-11-05-workspace-protocol/`。
+- 终端工作区（1.1.64）：布局与 tmux 会话保留；脏文档横幅、只读保存、删除后另存为等编辑器项已随收敛失效；计划见 `.agent/plans/2026-11-05-terminal-workspace/`。
+- 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：L3 通过，模型 SHA256 与常量一致，`setup-check` 两项 ok。
+- 1.2.7 向导修复（2026-11-10）：已随 1.2.7 发布；VM 导入 L3 通过。
 
 ## 最近完成（2026-11-20）
 
@@ -84,6 +86,7 @@
 - 1.1.48 部署：MCP `project_lookup` 缺失图库与旧图库都在 30 秒后重建，第二次查询命中；部署版索引器被连续 SIGTERM 时注销会被中断，下一次查询会清理
 - 1.1.49 部署：安装包与随包 wheel 均含 `SIG_IGN` 修复；真实 `utility -a` 索引器登记 live，退出后直接为空；MCP 缺失图库 35 秒后重建并命中；旧 agent 会话 30624/30631 仍运行 1.1.48 索引器，重启会话后才会登记
 - 1.1.50 部署：安装包与随包 wheel 含 TZ / Overflow / 延迟导入修复；索引器登记 UTC 时间、退出后为空；MCP 缺失图库 35 秒后重建并命中；旧 agent 会话 41753/41760 仍是 1.1.49 索引器，需重启
+- GUI 化重构 L3 全部通过（1.1.59）：Dock 与三组主菜单、`Cmd+W` 驻留与 Dock 唤起、`Cmd+M`、`Cmd+H` 不自动恢复、设置保存与 `.bak`、`hideDockIcon` 热切换、面板键盘与 OCR ESC 退出（`.agent/plans/2026-11-04-gui-refactor/tasks.md`）
 
 ## 验证（2026-11-04）
 
