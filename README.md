@@ -691,7 +691,6 @@ Config lives in `~/.config/utility/config.yaml`, written with defaults on first 
 | `general.proxyEnabled` | `false` | use the macOS system proxy settings |
 | `general.httpTimeout` | `30` | HTTP request timeout, seconds |
 | `general.httpRetryCount` | `0` | HTTP retry count |
-| `general.aiTimeout` | `120` | agent subprocess timeout, seconds; `0` = unlimited |
 | `general.logMaxSize` | `10485760` | max size of one log file, bytes |
 | `general.logBackupCount` | `3` | rotated log files kept |
 | `notifications.enabled` | `true` | master switch for system notifications |

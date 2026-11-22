@@ -107,7 +107,7 @@ enum EnvKeys {
     static let aiAPIKey = "AI_API_KEY"
 
     /// Single LLM inference timeout (seconds, from `ai.llmTimeout`).
-    /// Applies only to Python-side LLM calls; the agent subprocess timeout goes through `general.aiTimeout` → `AGENT_TIMEOUT`.
+    /// Applies only to Python-side LLM calls.
     static let aiLLMTimeout = "AI_LLM_TIMEOUT"
 
     /// UI/prompt language (`zh-Hans` / `en`), from `general.language` (empty = system preference).

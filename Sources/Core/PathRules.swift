@@ -10,13 +10,6 @@ enum PathRules {
         skippedDirNames.contains(name)
     }
 
-    /// Noise files hidden even when dotfiles are shown.
-    static let alwaysHiddenFileNames: Set<String> = [".DS_Store", ".localized"]
-
-    static func isAlwaysHiddenFile(name: String) -> Bool {
-        alwaysHiddenFileNames.contains(name)
-    }
-
     /// True when any path segment hits the skip list.
     ///
     /// File events carry only their own path (`isDir` false); without checking

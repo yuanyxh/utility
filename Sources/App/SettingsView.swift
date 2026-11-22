@@ -33,11 +33,6 @@ struct SettingsView: View {
                         value: $model.config.general.httpTimeout,
                         format: .number,
                     )
-                    TextField(
-                        L10n.Settings.fieldAiTimeout,
-                        value: $model.config.general.aiTimeout,
-                        format: .number,
-                    )
                 }
 
                 Section(L10n.Settings.groupClipboard) {

@@ -19,6 +19,10 @@
 - 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：L3 通过，模型 SHA256 与常量一致，`setup-check` 两项 ok。
 - 1.2.7 向导修复（2026-11-10）：已随 1.2.7 发布；VM 导入 L3 通过。
 
+## 最近完成（2026-11-22）
+
+- 死代码清理（未提交）：删除 `VSTheme` 4 个编辑器残留色、`PathRules.alwaysHiddenFileNames/isAlwaysHiddenFile`、`NotificationManager.canPost`、`ScrolledInputTextView.clearUndo`、`TerminalShell.homeDirectory`；同步移除无消费者的 `general.aiTimeout` / `AGENT_TIMEOUT` 链（配置项、设置项、Swift 注入、文案键、README、默认配置）。验证：`swift build`、`run-tests.sh`（31 tests）、`gen-l10n.py --check`、`check-l10n-contract.py` 全过。
+
 ## 最近完成（2026-11-20）
 
 - 工作区收敛为纯终端布局：文件树、文件编辑器、Git 面板、Markdown/图片预览、语法高亮、草稿恢复全部删除（19 个源文件 + 2 个测试移入废纸篓），状态层只剩 `TerminalUIState`；布局为「工作区列表 + 主终端 + 子终端区域」，保留子终端底部分支状态栏与 `GitService.branch()`。CLI 只留 `--sessions/--dry-run/--roundtrip/--state/--reattach/--restore/--live`，删除 `workspace` 配置段与 54 个文案键（含文件菜单）。旧 `workspaces.json`（含 `ui`/`lastOpenedRelativePath`）仍可加载，写回时自然清除。验证：`swift build`、`run-tests.sh`（31 tests）、l10n 双检查通过；lume `utility-env` 隔离 HOME 启动 dev 构建，截图确认布局（`.agent/plans/2026-11-20-workspace-terminal-only/evidence/`），本机生产 `Utility.app` 与 tmux 会话未受影响。已随 1.2.34 部署并提交（`1f04ca0`）。

@@ -186,11 +186,6 @@ public final class ScrolledInputTextView: NSView {
         textView.undoManager?.redo()
     }
 
-    /// Clear the undo stack
-    public func clearUndo() {
-        textView.undoManager?.removeAllActions()
-    }
-
     // MARK: - API: Edit
 
     public func cut() {

@@ -24,10 +24,6 @@ enum TerminalShell {
     /// GUI PATH is minimal; include Homebrew for tmux/shell tools.
     static let searchPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-    static var homeDirectory: String {
-        FileManager.default.homeDirectoryForCurrentUser.path
-    }
-
     static func resolvedShell(configured: String) -> String {
         if !configured.isEmpty { return NSString(string: configured).expandingTildeInPath }
         if let shell = ProcessInfo.processInfo.environment["SHELL"], !shell.isEmpty {

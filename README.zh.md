@@ -638,7 +638,6 @@ utility --dir ~/myapp -a claude
 | `general.proxyEnabled` | `false` | 使用 macOS 系统代理设置 |
 | `general.httpTimeout` | `30` | HTTP 请求超时(秒) |
 | `general.httpRetryCount` | `0` | HTTP 重试次数 |
-| `general.aiTimeout` | `120` | Agent 子进程超时(秒)；`0` = 不限制 |
 | `general.logMaxSize` | `10485760` | 单日志文件大小上限(字节) |
 | `general.logBackupCount` | `3` | 保留的轮转日志数 |
 | `notifications.enabled` | `true` | 系统通知总开关 |

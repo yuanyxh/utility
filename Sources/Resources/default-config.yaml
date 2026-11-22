@@ -39,9 +39,6 @@ general:
   httpTimeout: 30       # default HTTP request timeout in seconds
   httpRetryCount: 0     # HTTP request retry count
 
-  # AI client timeout (default in Swift `ConfigDefaults.defaultAITimeout`)
-  aiTimeout: 120        # AI API request timeout in seconds; 0 = unlimited
-
 # ---------- AI ----------
 ai:
   # OpenAI-compatible API base URL (host only; the client appends /chat/completions)
@@ -54,8 +51,6 @@ ai:
   # (Swift `ConfigDefaults.llmTimeout`). Applies to the three LLM call sites on the
   # Python side (single summary / batch aggregate / rule extraction) and really gets
   # hit with a slow model (reasoning models, long context).
-  # **Not the same as general.aiTimeout above**: that one is the agent subprocess
-  # timeout (AGENT_TIMEOUT) — a different order of magnitude and meaning.
   llmTimeout: 120
 
 # ---------- Model proxy ----------

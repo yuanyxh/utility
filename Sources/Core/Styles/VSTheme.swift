@@ -7,7 +7,6 @@ enum VSTheme {
     static let separator = color(0x3C3C3C)
     static let text = color(0xCCCCCC)
     static let secondaryText = color(0x8C8C8C)
-    static let dimmedText = color(0x6E6E6E)
     static let selectionActive = color(0x094771)
     static let selectionInactive = color(0x37373D)
     static let selectionText = color(0xFFFFFF)
@@ -19,10 +18,6 @@ enum VSTheme {
     static let terminalForeground = color(0xCCCCCC)
     static let terminalCaret = color(0xAFAFAD)
     static let terminalSelection = color(0x264F78)
-
-    static let editorBackground = color(0x1E1E1E)
-    static let gutterBackground = color(0x1E1E1E)
-    static let gutterText = color(0x858585)
 
     static func editorFont(size: Double) -> NSFont {
         .monospacedSystemFont(ofSize: size, weight: .regular)

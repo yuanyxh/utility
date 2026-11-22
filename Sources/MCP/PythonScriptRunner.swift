@@ -123,9 +123,6 @@ enum PythonScriptRunner {
         if general.httpTimeout > 0 {
             env["SERVER_TIMEOUT"] = String(general.httpTimeout)
         }
-        if general.aiTimeout > 0 {
-            env["AGENT_TIMEOUT"] = String(Int(general.aiTimeout))
-        }
 
         // System proxy config
         if general.proxyEnabled, let proxyURL = URLSessionManager.shared.systemProxyURL {

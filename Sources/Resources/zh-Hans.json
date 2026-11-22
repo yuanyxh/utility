@@ -320,7 +320,6 @@
     "setup.mcp_disabled_hint": "MCP 已在设置中关闭",
     "settings.field_language": "界面语言",
     "settings.field_http_timeout": "HTTP 超时（秒）",
-    "settings.field_ai_timeout": "AI 超时（秒）",
     "settings.field_clipboard_max_days": "保留天数",
     "settings.field_clipboard_poll_interval": "轮询间隔（秒）",
     "settings.field_clipboard_hotkey": "剪贴板热键",

@@ -95,7 +95,6 @@ final class SettingsModel: ObservableObject {
             Double(config.knowledge.refillIntervalMinutes), 1, 1440,
         )
         nonNegative(L10n.Settings.fieldHttpTimeout, config.general.httpTimeout)
-        nonNegative(L10n.Settings.fieldAiTimeout, config.general.aiTimeout)
         nonNegative(L10n.Settings.fieldClipboardMaxDays, Double(config.clipboard.maxDays))
         nonNegative(L10n.Settings.fieldMaxAgeDays, Double(config.rss.daily.maxAgeDays))
 

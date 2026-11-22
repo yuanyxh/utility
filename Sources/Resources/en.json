@@ -320,7 +320,6 @@
     "setup.mcp_disabled_hint": "MCP is disabled in Settings",
     "settings.field_language": "UI language",
     "settings.field_http_timeout": "HTTP timeout (s)",
-    "settings.field_ai_timeout": "AI timeout (s)",
     "settings.field_clipboard_max_days": "Retention days",
     "settings.field_clipboard_poll_interval": "Poll interval (s)",
     "settings.field_clipboard_hotkey": "Clipboard hotkey",

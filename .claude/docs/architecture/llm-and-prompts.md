@@ -15,7 +15,7 @@
 - **503 重试策略是单一权威**：`DEFAULT_RETRY_503_MAX/DELAY` 定义在此，`token_proxy` 主转发路径 import 同一对常量（同类故障两处都要处理）。缺省 `retry_503=0` 即不重试——**自带重试环的调用方必须保持 0**（分类器按 `maxRetries` + 总预算重试，两层叠加会把打转型上游放大成 N×M 次调用）
 - 失败日志统一到 `~/.cache/utility/llm_client.log`（`msg=llm_call_failed` + `label` 保留各调用点原判定名，按旧名 grep 仍可命中）
 - **超时单一来源**：`config.yaml ai.llmTimeout` → Swift `EnvKeys.aiLLMTimeout` 注入 `AI_LLM_TIMEOUT` → `config.llm_timeout()` → `llm_client.DEFAULT_SYNC_TIMEOUT` → 三处 summarize 侧常量（`summary_llm.SUMMARY_LLM_TIMEOUT` / `summary_rules.RULES_LLM_TIMEOUT` / `summarize.AGGREGATE_LLM_TIMEOUT`）全部引用它。原先三处各写死 90/120/120——换个慢模型要改三处、漏一处就在长上下文上超时失败，且没人知道哪个值在生效。**缺省/非数字/非正值一律回退默认 120**（与 Swift `OpenAIClient.init` 的 `timeout > 0` 约定一致；**不要**套用 `general.httpTimeout` 那套「0 = 不限制」，同一个 0 在两处含义相反）。分类器/resolver 仍传自己的超时（分类器按总预算、resolver 用更短的探测值）——调用方显式传 `timeout=` 时以调用方为准
-- **⚠️ 两个 `aiTimeout` 别混**：`general.aiTimeout`（`ConfigDefaults.defaultAITimeout`）= agent/HTTP 调用超时，注入 `AGENT_TIMEOUT`；`ai.llmTimeout`（`ConfigDefaults.llmTimeout`）= Python 侧 LLM 单次推理超时，注入 `AI_LLM_TIMEOUT`。两者默认值恰好都是 120，合并会让「调大 agent 超时」意外改动 LLM 调用行为
+- **⚠️ 两个超时别混**：`ai.llmTimeout`（`ConfigDefaults.llmTimeout`）= Python 侧 LLM 单次推理超时，注入 `AI_LLM_TIMEOUT`；Swift `OpenAIClient` 的请求超时走 `ConfigDefaults.defaultAITimeout`（`OpenAIClient.init` 未显式传 `timeout` 时的回退），不读任何配置项。两者默认值恰好都是 120，合并会让一侧调整意外改动另一侧
 - ⚠️ **坑：类内同名方法会静默覆盖**——新写的 `_classify` 覆盖了已有的 `_classify(turns)`，调用方拿到的是 `TypeError: missing 3 required positional arguments`，且只在运行到该路径时才暴露。新方法命名要避开既有名（现为 `_classify_with_provider`）
 - 契约脚本（提示词/参数描述/env 注入点交叉断言）随 Python 源码迁到 `agent-gateway` 仓；本仓不再有 `check-router-config-contract.py`
 

@@ -8,11 +8,11 @@ import Foundation
 /// "decoding fallback", changing one place while missing the other produces a
 /// "YAML sets one default, absence yields another" behavioral split; `OpenAIClient`'s fallback is a third place. Hence centralized here, all three referencing the constants.
 enum ConfigDefaults {
-    /// AI API request timeout (seconds) — default for `general.aiTimeout`.
+    /// AI client request timeout (seconds) — fallback when `OpenAIClient` is built
+    /// without an explicit timeout.
     ///
-    /// ⚠️ The semantics are the **agent / HTTP call** timeout (Swift injects
-    /// `AGENT_TIMEOUT` for the Python-side agent subprocess), NOT the same as
-    /// `ai.llmTimeout` (Python-side single LLM inference timeout, injected as `AI_LLM_TIMEOUT`) — both values happen to be 120, very easy to confuse.
+    /// Not the same as `ai.llmTimeout` (Python-side single LLM inference timeout,
+    /// injected as `AI_LLM_TIMEOUT`).
     static let defaultAITimeout: TimeInterval = 120
 
     /// Single LLM inference timeout (seconds) — default for `ai.llmTimeout`.
@@ -312,10 +312,6 @@ public struct GeneralConfig: Codable {
     /// HTTP request retry count
     var httpRetryCount: Int = 0
 
-    /// AI client timeout
-    /// AI API request timeout (seconds), 0 = unlimited (default see `ConfigDefaults.defaultAITimeout`)
-    var aiTimeout: TimeInterval = ConfigDefaults.defaultAITimeout
-
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -325,8 +321,6 @@ public struct GeneralConfig: Codable {
         logBackupCount = try c.decodeIfPresent(Int.self, forKey: .logBackupCount) ?? 3
         httpTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .httpTimeout) ?? 30
         httpRetryCount = try c.decodeIfPresent(Int.self, forKey: .httpRetryCount) ?? 0
-        aiTimeout = try c.decodeIfPresent(TimeInterval.self, forKey: .aiTimeout)
-            ?? ConfigDefaults.defaultAITimeout
     }
 }
 
@@ -340,9 +334,8 @@ public struct AIConfig: Codable {
     /// Single LLM inference timeout (seconds). 0 or negative = use default (see `ConfigDefaults.llmTimeout`).
     ///
     /// Swift injects `AI_LLM_TIMEOUT`; three Python-side LLM call sites (single summary / batch aggregation /
-    /// rule extraction) share it. **Not reused from `general.aiTimeout`**: that one is the agent/HTTP call timeout
-    /// (`AGENT_TIMEOUT`); the semantics and magnitude differ, so merging them would let "raising the agent timeout" accidentally loosen
-    /// or tighten LLM calls, and vice versa.
+    /// rule extraction) share it. Independent from the Swift-side `OpenAIClient` timeout: the semantics and
+    /// magnitude differ, so merging them would let "raising one" accidentally loosen or tighten the other.
     var llmTimeout: TimeInterval = ConfigDefaults.llmTimeout
 
     public init() {}
