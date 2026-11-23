@@ -11,7 +11,8 @@
 - **配置唯一来源 `config.py`**，本模块不读 env、不持默认值。`proxy_usage` 的 `LLM_API_URL/LLM_API_KEY/LLM_MODEL` 三个别名已删除（同一份配置读第二遍 + 守卫条件散落）
 - **`LLMTarget` 两个判据别混**：`ready`（endpoint+model 齐备＝可发请求）+ `configured`（再要求 api_key）。**api_key 为空是合法的**——provider 的 `apiKey` 留空表示透传客户端 key，把它并进「可发请求」会让所有这些 provider 的分类直接失效
 - **协议差异按 `api_format` 分派**：鉴权头（`Bearer` ↔ `x-api-key` + `anthropic-version`）、响应取文本（`choices[0].message.content` ↔ `content[0].text`）。取文本的失败语义**有意不一致**：openai 缺 `choices` → `None`（失败），anthropic 缺 `content` → `""`（分类器既有语义：空答案）
-- **关思考分两层**：`disable_thinking` 管协议层（anthropic 注入 `thinking:disabled` + 删 `reasoning_effort/output_config`；openai 无标准字段故只删推理参数）；provider **私有**扩展走 `extra_body`（如 deepseek 的 OpenAI 兼容端点接受 `thinking`）——写进公共层会让其他 openai provider 收到未知字段而 400
+- **关思考按协议发字段**：`disable_thinking` 时所有协议都发 `thinking: {type: disabled}`；非 anthropic 追加 `reasoning_effort: none` 并删 `output_config`。MiMo 等 OpenAI 兼容端点不认 `enable_thinking=false`，只认 `thinking`，两种形态同时发送可覆盖两类端点；`extra_body` 只放调用方明确的 provider 私有扩展
+- `max_tokens` 包含推理 token：推理未被关闭时，模型会把预算烧在 reasoning 上并返回空内容（`finish_reason=length`），长输出调用方不要只靠调大预算
 - **503 重试策略是单一权威**：`DEFAULT_RETRY_503_MAX/DELAY` 定义在此，`token_proxy` 主转发路径 import 同一对常量（同类故障两处都要处理）。缺省 `retry_503=0` 即不重试——**自带重试环的调用方必须保持 0**（分类器按 `maxRetries` + 总预算重试，两层叠加会把打转型上游放大成 N×M 次调用）
 - 失败日志统一到 `~/.cache/utility/llm_client.log`（`msg=llm_call_failed` + `label` 保留各调用点原判定名，按旧名 grep 仍可命中）
 - **超时单一来源**：`config.yaml ai.llmTimeout` → Swift `EnvKeys.aiLLMTimeout` 注入 `AI_LLM_TIMEOUT` → `config.llm_timeout()` → `llm_client.DEFAULT_SYNC_TIMEOUT` → 三处 summarize 侧常量（`summary_llm.SUMMARY_LLM_TIMEOUT` / `summary_rules.RULES_LLM_TIMEOUT` / `summarize.AGGREGATE_LLM_TIMEOUT`）全部引用它。原先三处各写死 90/120/120——换个慢模型要改三处、漏一处就在长上下文上超时失败，且没人知道哪个值在生效。**缺省/非数字/非正值一律回退默认 120**（与 Swift `OpenAIClient.init` 的 `timeout > 0` 约定一致；**不要**套用 `general.httpTimeout` 那套「0 = 不限制」，同一个 0 在两处含义相反）。分类器/resolver 仍传自己的超时（分类器按总预算、resolver 用更短的探测值）——调用方显式传 `timeout=` 时以调用方为准

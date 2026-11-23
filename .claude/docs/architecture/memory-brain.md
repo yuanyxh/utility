@@ -56,6 +56,8 @@
 ## 检索与维护
 
 - 扩散/吸引子走 `GraphIndex`，SQL 仅作回退；扩展需带预算（`memory_expand` 默认 500 节点）。
+- 时间戳：历史 `datetime.now()` 写入的是 naive 本地时间，读取统一经 `forgetting.as_utc` 按本地时区解释后转 UTC；新写入 `last_decay_at` 带 `+00:00`。禁止把 naive 直接当 UTC，否则上海时区会偏移 8 小时。
+- 冷层摘要的 `importance` 取全部源记忆的最高值（无源或异常回退 5），避免重要事实被摘要后降级为普通条目。
 - 日常巩固：`consolidate.py` 在建边后做桥接；`llm_skipped` 时必须告警。
 - 日重放：预算 40 次 LLM 调用/天、20 分钟；推断边 `inferred=1`、权重 0.35、14 天未采纳撤销。
 - 实体/事实：`entities`/`entity_mentions`/`memory_edges`；事实写入按 evidence 幂等，
@@ -90,3 +92,5 @@ MiniLM 384，产生新的混维数据。
 - 配置：`mcp.neuron.*` 与 `mcp.brain.*` 都由宿主写入 `agent-gateway.yaml`；
   `brain` 键（`pairMode`/`sparseFloor`/`attractor`/`forgetting`/`buffer`/`replay`/`semantic`）
   默认即生产推荐值，改用户 `config.yaml` 的 `mcp.brain` 后重启生效。
+- 默认模板 `default-config.yaml` 中 `brain` 必须与 `neuron` 平级（`mcp.brain`），
+  不能嵌在 `mcp.neuron` 下——宿主 `Codable` 只解码 `MCPConfig.brain`。

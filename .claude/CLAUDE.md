@@ -99,10 +99,11 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 语言唯一判据 `L10n.resolvedLanguage()` / `GATEWAY_LANG`
 - 工具描述与参数描述固定英文，不进语言目录；参数描述只做 `inputSchema.description`，未登记的键抛 `MissingParamText`
 - `param.memory_content` 与 `TOOL_DESCRIPTIONS["remember"]` 必须同为三要素口径
+- `context` 只写情境/背景（触发问题、何时何地适用、关联项），**禁止**验证状态、待办与「为什么保留」类备注；`param.memory_context` 与 remember 描述必须同口径
 
 ### MCP 服务（server.py）
 - 记忆覆盖必须「先 add 成功后软标记旧条」，禁止先 delete；禁止原地更新正文；消费方用 `processed & (bit0|bit1)` 跳过已沉淀/已作废条目
-- 图节点 metadata 由 `link.record_hot_memory` 的 `node_meta` 白名单**整块覆盖**：新增要持久化的节点字段必须同时进白名单（`level`/`importance`/`protected` 已加），否则下一次写入即丢
+- 图节点 metadata 由 `link.record_hot_memory` 的 `node_meta` 白名单**整块覆盖**：新增要持久化的节点字段必须同时进白名单（`level`/`importance`/`protected`/`tags`/`confidence` 已加），否则下一次写入即丢
 - 摘要折叠：`_write_memory` 去重命中时返回既有节点 id，折叠方必须把它排除出归档名单；层级上限 3，达顶的节点不再折叠但仍占预算名额
 - 冷层集合维度不一致：`logger.error` + **禁用冷层**，不拒绝启动
 - 同义词 / 工具默认值 = 内置默认 + 用户增量；对应 env 不进 `config.py`，由契约脚本单独交叉断言
@@ -119,6 +120,8 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - 桥接边 `kind='bridge'` 绕过门槛、归档后可复活；`llm_skipped` 时必须告警
 - 提示词副本必须与 gateway 源仓一致；facts 按 evidence 幂等，同一证据不重复计 support
 - 分组继承 = 近邻多数投票、阈值 0.65；日任务 24h 增量、周任务全量回扫；重放种子只取有活跃突触的神经元，`neurons.importance` 由成员聚合
+- naive 时间戳代表本地时间，读取统一经 `forgetting.as_utc` 转 UTC；新写入必须带时区，禁止把 naive 当 UTC
+- 冷层摘要 `importance` 取源记忆最高值（无源回退 5），禁止固定写 5 让重要事实降级
 
 ### 知识面板
 - 补货**不能走 TaskScheduler**（sub-daily cron 会静默退化成每天一次），用 `KnowledgeService` 自建 Timer
