@@ -1,23 +1,23 @@
 # 依赖升级
 
-最近扫描：2026-11-03（未联网，仅记录锁定版本）
-命令：`none`（SwiftPM 无内置 outdated / audit 子命令）
+最近扫描：2026-11-23（`git ls-remote --tags --refs`，与 `Package.resolved` 对比）
+命令：`git ls-remote --tags --refs <repo>`；SwiftPM 无内置 outdated / audit 子命令
 范围：`Package.resolved` 中的直接依赖与工具链
 
 ## 候选项
 
 | 包或运行时 | 当前到最新 | 变更类型 | 推荐 |
 | --- | --- | --- | --- |
-| GRDB.swift | 7.11.0 到 未扫描 | - | 暂缓；下次联网时补扫 |
-| Yams | 5.4.0 到 未扫描 | - | 暂缓；下次联网时补扫 |
-| SwiftTerm | 1.99.1 到 未扫描 | - | 暂缓；下次联网时补扫 |
-| swift-argument-parser | 1.8.2 到 未扫描 | - | 暂缓；下次联网时补扫 |
+| GRDB.swift | 7.12.0 到 v7.12.0 | 已最新 | 无需动作 |
+| Yams | 6.2.2 到 6.2.2 | 已最新 | 无需动作 |
+| SwiftTerm | 1.99.2 到 v1.99.3 | patch | 低风险；下一批可随构建验证 |
+| swift-argument-parser | 1.8.2 到 1.8.2 | 已最新 | 无需动作 |
 
 ## 决策
 
 | 日期 | 事项 | 决策 | 依据 |
 | --- | --- | --- | --- |
-| - | - | - | - |
+| 2026-11-23 | 四项直接依赖扫描 | 仅 SwiftTerm 有 patch，暂不单独升级；下次构建/发布一并验证 | 其余已最新，patch 无安全公告驱动 |
 
 ## 规则
 

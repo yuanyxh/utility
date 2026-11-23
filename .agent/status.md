@@ -2,11 +2,9 @@
 
 ## 当前目标
 
-2026-11-16 审查后续：两仓按主题提交至 utility 1.2.16 / gateway schema v4，端到端验证待完成。
+2026-11-23 生产基线 1.2.40；`knowledge_expand` 空响应修复与 review 五项修复已随 wheel 部署，待观察一次真实补货产出。
 
-- 计划：`.agent/plans/2026-11-16-review-followups/`（15 个任务，4 个检查点）
-- 已完成：external 分类、边类型 v4、热层退避、监听重试、配置 CLI、图同步 CLI、两仓提交、打包、配置迁移、旧数据清理
-- 待办：lume VM 端到端、零调用工具评估、上期 T17 结论
+- `.agent/plans/2026-11-16-review-followups/` 15 项全部完成；上期三个待办均已在报告落结论：lume VM（`vm-report.md`，两项 proxy 端口测试受 VM 网络限制）、零调用工具（`tool-review.md`，`memory_expand` 2026-12-09 复盘）、上期 T17（`t17-merge.md`，无需改造）
 
 ## 进行中
 
@@ -19,9 +17,17 @@
 - 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：L3 通过，模型 SHA256 与常量一致，`setup-check` 两项 ok。
 - 1.2.7 向导修复（2026-11-10）：已随 1.2.7 发布；VM 导入 L3 通过。
 
+## 最近完成（2026-11-23）
+
+- 生产 1.2.40 部署核验（用户打包，15:16 安装 / 15:19 启动）：venv wheel 戳 15:19，安装版代码含 `thinking` 双形态、`tags`/`confidence` 白名单、`as_utc`、摘要继承 importance、`rerank_rescued` 降级、蓄水池抽样与 context 文案；应用包资源完整（`utility_utility.bundle`、Gateway wheel/prompts/契约、l10n）；`mcp.brain` 七键正确、网关 `memory.brain` 已写入；MCP 与 token proxy 分别监听 9001 / 8613。知识卡片最新仍为 10:25（部署前），补货实际产出待观察。
+- `knowledge_expand` 空响应修复：根因是 MiMo OpenAI 端点的 `enable_thinking=false` 不生效，推理 token 占满 `max_tokens` 后返回空内容（`finish_reason=length`）；实测 `thinking={"type":"disabled"}` 才能关闭推理。改动 gateway `llm/client.py`，对所有 OpenAI 端点同时发送 `thinking=disabled` 与 `reasoning_effort=none`，新增 `tests/test_llm_body.py`；gateway 919 tests、ruff check/format 全过；真实提示词 1,485 字符 2 秒返回 concept（修复前约 60 秒后失败）。已随 1.2.40 生效。
+- 生产 1.2.38：VERSION 已自增，`/Applications/Utility.app` 已安装；死代码清理提交 `bf8c33e`。
+- 记忆写入巡检（近三天 478 条）：无 content_hash 重复，事实边 predicate 完整；`tags` / `confidence` 此前从未进入 `memory_nodes` 镜像（9,109 条全缺），已补 `link.py` 的 `node_meta` 白名单并加 LinkTest 回归（920 tests）；空 project 115 条（含 45 条 consolidation 汇总节点），空 type 151 条；context 非空率 89.7%，但按要素归类只有 18.0% 是情境/触发型，验证/基线类占 40.0%，且 28.9% 的 context 比 fact 本身更长；已收紧 `param.memory_context` 与 remember 描述为情境/背景口径并落 CLAUDE.md 不变量；空值集中在 consolidation 汇总节点。
+- 2026-11-23 review 五项修复：冷层摘要继承源记忆最高 importance；naive 时间戳按本地时间解释、新写入带 UTC 时区；结果含 `rerank_rescued` 时状态强制 `weak_match`；自标定改均匀蓄水池抽样（上限 2000）；`default-config.yaml` 的 `brain` 移到 `mcp.brain`（宿主只解码该层级），`memory-brain.md` 补不变量。gateway 925 tests 与 ruff 全过；本仓 `swift build` 与 `run-tests.sh`（31 tests）全过；未提交。
+
 ## 最近完成（2026-11-22）
 
-- 死代码清理（未提交）：删除 `VSTheme` 4 个编辑器残留色、`PathRules.alwaysHiddenFileNames/isAlwaysHiddenFile`、`NotificationManager.canPost`、`ScrolledInputTextView.clearUndo`、`TerminalShell.homeDirectory`；同步移除无消费者的 `general.aiTimeout` / `AGENT_TIMEOUT` 链（配置项、设置项、Swift 注入、文案键、README、默认配置）。验证：`swift build`、`run-tests.sh`（31 tests）、`gen-l10n.py --check`、`check-l10n-contract.py` 全过。
+- 死代码清理（已提交 `bf8c33e`）：删除 `VSTheme` 4 个编辑器残留色、`PathRules.alwaysHiddenFileNames/isAlwaysHiddenFile`、`NotificationManager.canPost`、`ScrolledInputTextView.clearUndo`、`TerminalShell.homeDirectory`；同步移除无消费者的 `general.aiTimeout` / `AGENT_TIMEOUT` 链（配置项、设置项、Swift 注入、文案键、README、默认配置）。验证：`swift build`、`run-tests.sh`（31 tests）、`gen-l10n.py --check`、`check-l10n-contract.py` 全过。
 
 ## 最近完成（2026-11-20）
 
