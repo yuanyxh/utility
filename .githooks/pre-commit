@@ -4,4 +4,6 @@ set -euo pipefail
 # Check only the lines staged for this commit: the tree has legacy formatting
 # warnings that would otherwise block every commit.
 cd "$(git rev-parse --show-toplevel)"
+# 全仓校验命令见 .agent/profile.yaml，提交时由 lint-staged 对暂存文件执行等价子集：
+# xcrun swift-format lint --recursive --configuration .swift-format Sources
 python3 scripts/lint-staged-swift.py

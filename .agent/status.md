@@ -147,3 +147,8 @@
 - `verify-instantiation.sh`：0 warnings；2 errors 为既有校验器限制（`.githooks/pre-commit` 通过 `scripts/lint-staged-swift.py` 执行格式检查，校验器只匹配字面命令），未改钩子。
 - 未执行：首次 `steward` 体检；`sandbox` 尚未实际创建环境。
 - `CommandRunner` 已删除并统一到 `ProcessRunner`；上文迁移记录中的同类描述仅作历史，以本条为准。
+
+## 基座升级（2026-11-25）
+
+- seed_version 1.6.0 → 1.6.1：新增 `UIX-05` 表单三态与 `UIX-06` 文案排版；更新 `DOC-13` 英文标点空格；`build`/`hunt`/`review` 补 1.6.0 回路要求；修复 pre-commit 未覆盖 `verify.format`/`verify.lint` 的既有校验失败。
+- 验证：`verify-instantiation.sh` 0 errors / 0 warnings。

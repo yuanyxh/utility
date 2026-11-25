@@ -103,3 +103,10 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 **决策**：进行中只保留换机迁移与 GUI 化两项待 L3；工作区协议化、终端工作区、reranker 验证、1.2.7 向导修复转入历史段。
 
 **依据**：代码核对确认文件树与编辑器已删除，相关 L3 失效；reranker 与 1.2.7 已有 L3 通过或发布证据。
+
+## 2026-11-25 基座升级 1.6.0 → 1.6.1
+
+- 背景：种子仓库发布 1.6.1。
+- 决策：按 `protocols/zh/upgrade-seeds.md` 增量合并，不覆盖项目定制规则；pre-commit 注释补充 profile 全仓校验命令，实际仍由 lint-staged 对暂存文件执行。
+- 落地：新增 `UIX-05` 表单三态与 `UIX-06` 文案排版；更新 `DOC-13` 英文标点空格；`build`/`hunt`/`review` 补 1.6.0 回路要求；修复 pre-commit 未覆盖 `verify.format`/`verify.lint` 的既有校验失败。
+- 验证：`verify-instantiation.sh` 0 errors / 0 warnings。
