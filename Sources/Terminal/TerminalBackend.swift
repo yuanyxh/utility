@@ -133,8 +133,37 @@ final class TmuxBackend: Sendable {
         _ = tmux(["set-option", "-g", "terminal-features", "xterm-256color:RGB"])
     }
 
-    /// tmux 3.8 forwards OSC 777 to the client, so the SwiftTerm observer is
-    /// the only notification source here; no pipe-pane tap is needed.
+    /// Mirrors pane output to a log file for sessions without an attached
+    /// client: tmux only forwards OSC 777 to attached clients, so unmounted
+    /// workspaces would otherwise drop every notification.
+    static let notifyLogDir = AppPaths.cacheDir.appendingPathComponent(
+        "terminal-notify", isDirectory: true,
+    )
+
+    func notificationLogPath(id: String) -> String {
+        "\(Self.notifyLogDir.path)/\(id).log"
+    }
+
+    @discardableResult
+    func startNotificationTap(id: String) -> Bool {
+        try? FileManager.default.createDirectory(
+            at: Self.notifyLogDir, withIntermediateDirectories: true,
+        )
+        let command = "cat >> \(TerminalShell.quote(notificationLogPath(id: id)))"
+        let result = tmux(["pipe-pane", "-O", "-t", name(id), command])
+        guard result.status == 0 else {
+            debugLog("[Terminal] pipe-pane failed id=\(id): \(result.output)")
+            return false
+        }
+        return true
+    }
+
+    func stopNotificationTap(id: String) {
+        _ = tmux(["pipe-pane", "-t", name(id)])
+    }
+
+    /// tmux 3.8 forwards OSC 777 to the client, so attached sessions use the
+    /// SwiftTerm observer; the pipe-pane tap covers only detached sessions.
     func launch(id: String, cwd _: String, shell _: String) -> TerminalLaunch {
         TerminalLaunch(
             executable: "/usr/bin/env",

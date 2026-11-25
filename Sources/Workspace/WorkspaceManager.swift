@@ -53,6 +53,7 @@ final class WorkspaceManager {
 
     private let store = WorkspaceStore()
     private let sessionStore = TerminalSessionStore()
+    private let notificationTap = TmuxNotificationTap()
     private var windowController: WorkspaceWindowController?
     private var backend: TmuxBackend?
     private var storedByID: [String: StoredTerminalSession] = [:]
@@ -72,6 +73,9 @@ final class WorkspaceManager {
         EventBus.shared.subscribe(AppEvent.terminalOpenSession) { [weak self] payload in
             guard let id = payload as? String else { return }
             Task { @MainActor in self?.reveal(sessionID: id) }
+        }
+        notificationTap.onNotification = { [weak self] sessionID, title, body in
+            self?.handleNotification(sessionID: sessionID, title: title, body: body)
         }
     }
 
@@ -113,13 +117,15 @@ final class WorkspaceManager {
         didRestore = true
         persist()
         mountSelectedWorkspace()
+        syncNotificationTaps()
     }
 
     func shutdown() {
         guard didLoad else { return }
         isShuttingDown = true
+        notificationTap.stopAll()
         persist()
-        detachMountedSessions()
+        detachMountedSessions(keepNotificationTap: false)
     }
 
     // MARK: - Window
@@ -222,8 +228,9 @@ final class WorkspaceManager {
     func removeWorkspace(id: String) {
         ensureLoaded()
         guard let workspace = document.workspaces.first(where: { $0.id == id }) else { return }
-        detachMountedSessions()
+        detachMountedSessions(keepNotificationTap: false)
         for sessionID in sessionIDs(in: workspace) {
+            notificationTap.stop(id: sessionID)
             backend?.kill(id: sessionID)
         }
         document.workspaces.removeAll { $0.id == id }
@@ -315,7 +322,8 @@ final class WorkspaceManager {
             })
         else { return }
         backend?.kill(id: id)
-        detachMountedSessions(matching: { $0.id == id })
+        detachMountedSessions(keepNotificationTap: false, matching: { $0.id == id })
+        notificationTap.stop(id: id)
         document.workspaces[index].subSessionIDs.removeAll { $0 == id }
         if document.workspaces[index].selectedSubSessionID == id {
             document.workspaces[index].selectedSubSessionID =
@@ -420,6 +428,20 @@ final class WorkspaceManager {
         notifyObserver()
     }
 
+    /// Covers sessions restored outside the selected workspace, which never
+    /// pass through `detachMountedSessions` during startup.
+    private func syncNotificationTaps() {
+        guard let backend else { return }
+        let live = backend.liveIDs()
+        let mounted = Set(mountedSessions.map(\.id))
+        for workspace in document.workspaces {
+            for id in sessionIDs(in: workspace)
+            where live.contains(id) && !mounted.contains(id) {
+                notificationTap.start(id: id)
+            }
+        }
+    }
+
     private func ensureMainSession(workspace: Workspace) -> TerminalSession? {
         guard let index = document.workspaces.firstIndex(where: { $0.id == workspace.id }) else {
             return nil
@@ -486,6 +508,7 @@ final class WorkspaceManager {
         backend: TmuxBackend, tmuxExists: Bool,
     ) -> TerminalSession? {
         let shell = TerminalShell.resolvedShell(configured: config.shell)
+        notificationTap.stop(id: id)
         if !tmuxExists {
             do {
                 try backend.prepare(id: id, cwd: cwd, shell: shell)
@@ -510,11 +533,17 @@ final class WorkspaceManager {
         return session
     }
 
-    private func detachMountedSessions(matching predicate: (TerminalSession) -> Bool = { _ in true }) {
+    /// Detached tmux sessions keep running, so they switch to the pipe-pane tap
+    /// to keep delivering notifications while another workspace is selected.
+    private func detachMountedSessions(
+        keepNotificationTap: Bool = true,
+        matching predicate: (TerminalSession) -> Bool = { _ in true },
+    ) {
         let removed = mountedSessions.filter(predicate)
         for session in removed {
             session.terminate()
             session.view.removeFromSuperview()
+            if keepNotificationTap { notificationTap.start(id: session.id) }
         }
         mountedSessions.removeAll(where: predicate)
     }
@@ -536,7 +565,8 @@ final class WorkspaceManager {
                 backend?.kill(id: session.id)
             }
             removeReference(to: session.id)
-            detachMountedSessions { $0.id == session.id }
+            notificationTap.stop(id: session.id)
+            detachMountedSessions(keepNotificationTap: false) { $0.id == session.id }
             persist()
             notifyObserver()
         }
@@ -547,22 +577,31 @@ final class WorkspaceManager {
     }
 
     private func handleNotification(_ session: TerminalSession, title: String, body: String) {
-        guard !isSessionFocused(session) else {
+        handleNotification(sessionID: session.id, title: title, body: body)
+    }
+
+    private func handleNotification(sessionID: String, title: String, body: String) {
+        if let mounted = mountedSession(id: sessionID), isSessionFocused(mounted) {
             debugLog("[Workspace] notify suppressed focused=true title=\(title)")
             return
         }
         let now = Date()
-        if let last = lastNotification, last.sessionID == session.id,
+        if let last = lastNotification, last.sessionID == sessionID,
             now.timeIntervalSince(last.at) < 3
         {
             debugLog("[Workspace] notify deduplicated title=\(title) body=\(body)")
             return
         }
-        lastNotification = (session.id, now)
+        lastNotification = (sessionID, now)
+        debugLog("[Workspace] notify delivered id=\(sessionID) title=\(title)")
         notify(
             title: title.isEmpty ? L10n.Terminal.notifyTitle : title,
-            body: body.isEmpty ? L10n.Terminal.notifyBody(title: session.title) : body,
-            sessionID: session.id,
+            body: body.isEmpty
+                ? L10n.Terminal.notifyBody(
+                    title: self.title(for: sessionID, fallback: L10n.Terminal.notifyTitle),
+                )
+                : body,
+            sessionID: sessionID,
         )
     }
 

@@ -11,7 +11,7 @@
 - 恢复会话先 `window.layoutIfNeeded()` 并把视图预置为目标尺寸再 attach，避免首帧按默认尺寸渲染后再缩放
 - 通知只认程序显式发出的 OSC（Claude Code 在 `TERM_PROGRAM=ghostty` 下发 OSC 777），**不要按输出静默推断任务结束**：长时间 Bash 误报，TUI 流式输出刷屏
 - ⚠️ **tmux 3.8 会把 pane 内的 `TERM_PROGRAM` 改写成 `tmux`**（`TERM_PROGRAM_VERSION=3.8`），即使 server 环境是 ghostty；Claude 不认识 `tmux` 就不发 OSC 777，通知整条链路静默失效。`new-session` 必须用 `env TERM_PROGRAM=ghostty <shell>` 启动，已有会话不会自动修复，需重建或手动 export
-- 不做未读计数与侧栏角标：OSC 原样转发（同 Ghostty）。**聚焦抑制只认「产生通知的会话本身有焦点」**：`isSessionFocused(session)` 要求 app 活跃、终端窗口是 key window、且 `session.view` 位于 firstResponder 响应链上；app 在前台但用户在其他会话时不抑制（2026-11-12 从「app 活跃即抑制」收窄，旧文档描述的 `lastSeenOutputAt` 判据代码里从未存在）。不要用输出静默时长或输出时间戳推断任务结束
+- 不做未读计数与侧栏角标：OSC 原样转发（同 Ghostty）。**聚焦抑制只认「产生通知的会话本身有焦点」**：`isSessionFocused(session)` 要求 app 活跃、终端窗口是 key window、且 `session.view` 位于 firstResponder 响应链上；app 在前台但用户在其他会话时不抑制，未挂载会话没有 `session.view` 也一律通知（2026-11-12 从「app 活跃即抑制」收窄，旧文档描述的 `lastSeenOutputAt` 判据代码里从未存在）。不要用输出静默时长或输出时间戳推断任务结束
 - **必须保留 SwiftTerm 默认的 mouse reporting**：Claude 全屏 TUI 的滚轮滚动依赖终端转发鼠标事件（官方 issue #75143）；关掉后滚轮会被编码成 ↑/↓（`alternateScrollMode`），被 TUI 当成输入历史。拖选冲突用 `TerminalDropView.mouseDown` 临时挂起 `allowMouseReporting`（mouseUp 恢复，滚轮事件带自愈）解决——按下即本地选择，滚轮仍转发
 - 会话创建时喂 `ESC[?1007l` 关掉 alternate scroll：程序没开 mouse reporting 时滚轮不再变 ↑/↓（不会污染输入历史）；代价是 alternate screen 本身没有本地历史，滚轮保持无效
 - 非精确滚轮每 notch SwiftTerm 只发 **1 个** mouse report（`WheelReportBudget.requestedReports`），全屏 TUI 滚得极慢；`TerminalDropView` 的本地 scrollWheel 监听（`scrollWheel` 非 `open`，无法覆写）对非精确事件重复转发 `reportsPerNotch = 3` 次（预算 burst 6 / 100 reports/s）
@@ -21,4 +21,4 @@
 - 终端窗口失活后的兜底只在 accessory 模式生效：`wantsVisible` 意图标志（`showWindow` 置 true，热键隐藏/用户关闭置 false），`windowDidResignKey` 0.4s、`didResignActive` 0.3s/1.0s 各检查一次，命中 `wantsVisible && (!isVisible || NSApp.isHidden)` 就 `unhideWithoutActivation` + `orderFront`（不抢焦点）；regular 下直接返回，否则 `Cmd+H` 会被自动弹回；`isMiniaturized` 的窗口一律跳过，否则 `Cmd+M` 会被 0.4s 后拉回
 - 面板显示时若一个会话都没有，`showWindow` 直接 `createSession()`，避免空面板无输入对象；侧栏 `allowsEmptySelection = false`，点空白不会丢选中样式
 - 同一会话 3 秒内最多弹一条系统通知（`lastNotification`）：prompt 可能把同一事件发两遍，终端会看到两个横幅
-- **tmux 3.8 会把 OSC 777 转发给客户端**（实测），通知直接走 SwiftTerm 的 `observeOscEvents`，不要再用 `pipe-pane`（否则一次事件弹两条）；`set -g mouse on` 让普通 shell 滚轮进 copy-mode，`terminal-features xterm-256color:RGB` 开真彩，`allow-passthrough on` 留给支持 DCS 透传的程序
+- **tmux 3.8 只把 OSC 777 转发给已 attach 的客户端**（实测）：挂载中的会话走 SwiftTerm 的 `observeOscEvents`；未挂载会话（其他工作区）没有客户端，必须由 `TmuxNotificationTap` 用 `pipe-pane` 把 pane 输出写到 `~/.cache/utility/terminal-notify/<id>.log` 并增量解析 OSC。挂载时 `stop` tap、detach 后 `start`，切换瞬间靠 3 秒去重兜底；日志超过 4MB 关闭 pipe、删除、重开（不能原地 truncate，append 偏移会生成稀疏文件）。`set -g mouse on` 让普通 shell 滚轮进 copy-mode，`terminal-features xterm-256color:RGB` 开真彩，`allow-passthrough on` 留给支持 DCS 透传的程序

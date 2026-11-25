@@ -92,3 +92,10 @@ app 没有 CLI/URL scheme 等可脚本化入口时，自动化验证从第一轮
 `HOME=... ./utility` 对 `FileManager.homeDirectoryForCurrentUser` 与 `NSHomeDirectory()` 都无效，
 隔离实例会直接读写真实 `~/.config/utility`，把 `workspaces.json` / `terminal-sessions.json` 的会话 id 改掉。
 GUI 冒烟必须用 `CFFIXED_USER_HOME`，并用 `TMUX_TMPDIR` 隔离 socket；启动后先确认配置目录写到了隔离 HOME 再继续。
+
+## tmux 的 OSC 转发依赖客户端挂载（2026-11-25）
+
+`terminal.md` 曾据 tmux 3.8 实测禁用 `pipe-pane`，但实测只在会话 attach 时成立：切换工作区会 detach
+并 terminate 客户端，未挂载会话里的 OSC 777 没有接收方，通知整条链路静默丢失。
+判断通知源是否完备要看最坏路径——未挂载会话用 `pipe-pane` 写日志并增量解析 OSC，挂载时关闭 tap，
+不能只依据当前挂载会话的实测就宣布单一来源足够。
