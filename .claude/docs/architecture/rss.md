@@ -22,3 +22,4 @@
 - 迁移 v3 一次性清理历史重复链接：同一 link 保留未读行，全部已读时保留最早行
 - 迁移 v4 新增 `date_known` 列，并一次性把既有 `pub_date <= 1970-01-01` 的行标记为 0
 - 历史未知日期条目无法回溯真实日期，仅以哨兵存储；判定统一看 `date_known = 0`
+- 迁移 v5 新增 `created_at` 列记录插入时间：`date_known = 1` 的旧行回填为 `pub_date`，未知日期行保持 NULL；`RSSItem.createdAt` 为可选 `Date?`，读取 NULL 解回 `nil`，不改变 `unread()` 的日期窗判定

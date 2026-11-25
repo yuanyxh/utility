@@ -12,6 +12,8 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
     public var dateKnown: Bool
     public var feedName: String
     public var isRead: Bool
+    /// Insert time; nil when a legacy row had no parseable date.
+    public var createdAt: Date?
 
     public static let databaseTableName = "rss_item"
 
@@ -25,12 +27,13 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
         case dateKnown = "date_known"
         case feedName = "feed_name"
         case isRead = "is_read"
+        case createdAt = "created_at"
     }
 
     public init(
         id: String, title: String, link: String,
         itemDescription: String, pubDate: Date, dateKnown: Bool = true,
-        feedName: String, isRead: Bool = false,
+        feedName: String, isRead: Bool = false, createdAt: Date? = Date(),
     ) {
         self.id = id
         self.title = title
@@ -40,5 +43,6 @@ public struct RSSItem: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.dateKnown = dateKnown
         self.feedName = feedName
         self.isRead = isRead
+        self.createdAt = createdAt
     }
 }

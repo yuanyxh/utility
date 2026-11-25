@@ -105,6 +105,21 @@ public final class AppDatabase {
             )
         }
 
+        migrator.registerMigration("v5") { db in
+            try db.execute(
+                sql: """
+                        ALTER TABLE rss_item
+                        ADD COLUMN created_at DATETIME
+                    """,
+            )
+            try db.execute(
+                sql: """
+                        UPDATE rss_item SET created_at = pub_date
+                        WHERE created_at IS NULL AND date_known = 1
+                    """,
+            )
+        }
+
         return migrator
     }
 }
