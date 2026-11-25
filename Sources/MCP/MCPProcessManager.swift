@@ -308,12 +308,15 @@ final class MCPProcessManager {
             state = .initializing
         case .running:
             state = .running
+            PortProbe.recordState(service: PortProbe.Service.mcp, port: currentPort)
         case .restarting:
             state = .restarting
         case .crashed:
             state = .crashed
+            PortProbe.clearState(service: PortProbe.Service.mcp)
         case .stopped:
             state = .stopped
+            PortProbe.clearState(service: PortProbe.Service.mcp)
         }
     }
 

@@ -567,6 +567,23 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 
 改动后从**菜单栏 → MCP** 重启服务。
 
+### 工作区服务网格
+
+网关运行时，每个工作区注册为一张服务卡（`kind=workspace`），每 30s 刷新心跳。卡片状态由终端主会话派生：主 tmux 会话存活为 `ready`，否则 `offline`。agent 与网关通信，不直连应用。
+
+| 命令 | 用途 |
+| --- | --- |
+| `utility workspace enable --workspace <id> [--start-command <cmd>]` | 注册该工作区并监听收件箱 |
+| `utility workspace disable --workspace <id>` | 停止注册与监听 |
+| `utility workspace status [--json]` | 列出卡片与状态 |
+| `utility workspace list [--json]` | 列出卡片 |
+| `utility workspace send --to <id> --kind notify --text <text>` | 发送消息 |
+| `utility workspace inbox --service <id> [--limit N]` | 读取已投递消息 |
+
+CLI 端口取自 `mcp.port`，为空时回退到运行中应用写入的 `~/.config/utility/runtime/mcp.json`；`UTILITY_GATEWAY_URL` 覆盖两者。投递不保证送达：失败立即返回，重试由调用方决定。`service_start` 写入一条 control 消息，应用消费后挂载对应工作区。
+
+完整协议见 `.claude/docs/architecture/agent-mesh.md`。
+
 ---
 
 ### 三、每日知识总结

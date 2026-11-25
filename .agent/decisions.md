@@ -110,3 +110,18 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 - 决策：按 `protocols/zh/upgrade-seeds.md` 增量合并，不覆盖项目定制规则；pre-commit 注释补充 profile 全仓校验命令，实际仍由 lint-staged 对暂存文件执行。
 - 落地：新增 `UIX-05` 表单三态与 `UIX-06` 文案排版；更新 `DOC-13` 英文标点空格；`build`/`hunt`/`review` 补 1.6.0 回路要求；修复 pre-commit 未覆盖 `verify.format`/`verify.lint` 的既有校验失败。
 - 验证：`verify-instantiation.sh` 0 errors / 0 warnings。
+
+## 2026-11-25 Agent Mesh 落地决策
+
+- 分层：agent-gateway 提供网络层（文件注册表 + 目录投递 + peers 转发 + MCP `service_*`），utility 只做工作区适配；agent 始终连一个网关，网关即代理。
+- 语义：不保投递、不重试；`target_offline` + `startable` 由调用方显式 `service_start`；control start 是唯一绕过存活门槛的消息。
+- 验证中发现并修复：find 未解信封、peers 列表递归阻塞事件循环、启动竞态无重试、消费后卡在 `pending`、远程 `service_start` 不可达、过期卡对 peers 不可见。
+- 跨机约束：peer `name` 必须等于对方 `gatewayId`；非本机来源必须 Bearer，token 为空一律拒绝。
+- 待补：VM 无 tmux，`utility-env` 内 GUI 工作区注册未跑；VM→宿主反向消息未测（工作区网关无 mesh token）。
+
+## 2026-11-25 Agent Mesh review 修复决策
+
+- 启动语义采用状态驱动：工作区卡状态由主 tmux 会话存活派生，`service_start` 以 status 判定运行态，不只看心跳；用户确认。
+- 修复范围：全部阻断 + 应修项；跨机 bind 非回环时强制 token 且 REST/MCP 一并校验。
+- 关键修复：endpoint 限定 inbox 根、register/deregister 仅本机、心跳状态校验、远端错误码保留、control start 需 startable、事件循环禁同步 I/O、CLI 端口读 runtime 文件、App 合并磁盘 protocol、disable 真正停止注册与监听。
+- 修复后复验：lume 真实 agent 端到端通过——远端注册 401、无 token 401、非法状态 400、endpoint 越界 invalid_card；`service_start` 对 ready 卡返回 already_running，对 offline 卡投递 control 并拉起工作区。

@@ -27,6 +27,9 @@
 | `PythonDaemon` | 参数化常驻 Python 进程守护：启动/崩溃重启/健康检查/停止（`MCPProcessManager` 与 `TokenProxyManager` 共用） |
 | `TokenProxyManager` | token_proxy.py 服务编排：State 语义/EventBus 广播/providers 路由；进程生命周期委托 `PythonDaemon` |
 | `MCPMenuManager` | MCP 服务状态独立菜单栏管理（app 内部分离） |
+| `WorkspaceMeshCoordinator` | 工作区服务卡注册/注销 + 30s 心跳；门控 `MeshGate`（mcp.enabled + gateway 可用） |
+| `WorkspaceInboxWatcher` | 1s 轮询工作区 inbox；control 消息拉起工作区，其余转本地通知 |
+| `MeshClient` | 网关 `/mesh/*` HTTP 客户端（注册/心跳/发送/列表） |
 | `GraphScanner` | 项目调用图客户端：启动 `sync` 对账、文件事件增量、`.agent-gateway/graph.sqlite` 由 gateway 写入 |
 | `FileWatcher` | FSEvents 文件监控 + 3s 防抖，把变更镜像到图库 |
 | `NotificationManager` | 本地通知 |

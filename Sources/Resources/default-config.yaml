@@ -139,6 +139,8 @@ modelProxy:
 
 # ---------- MCP ----------
 mcp:
+  # Workspace mesh (service cards, /mesh/*) also requires this to be true
+  # and a reachable gateway; mesh keys live in agent-gateway.yaml (server.mesh.*).
   enabled: true
   # Local MCP service port; 0 = auto-detect a free port
   port: 0

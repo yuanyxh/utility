@@ -40,7 +40,13 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
     var mainSessionID: String?
     var subSessionIDs: [String]
     var selectedSubSessionID: String?
+    var protocolConfig: WorkspaceProtocolConfig?
     let createdAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, path, mainSessionID, subSessionIDs, selectedSubSessionID, createdAt
+        case protocolConfig = "protocol"
+    }
 
     init(
         id: String,
@@ -49,6 +55,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         mainSessionID: String? = nil,
         subSessionIDs: [String] = [],
         selectedSubSessionID: String? = nil,
+        protocolConfig: WorkspaceProtocolConfig? = nil,
         createdAt: Date = Date(),
     ) {
         self.id = id
@@ -57,6 +64,7 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         self.mainSessionID = mainSessionID
         self.subSessionIDs = subSessionIDs
         self.selectedSubSessionID = selectedSubSessionID
+        self.protocolConfig = protocolConfig
         self.createdAt = createdAt
     }
 
@@ -68,7 +76,20 @@ struct Workspace: Codable, Equatable, Identifiable, Sendable {
         mainSessionID = try c.decodeIfPresent(String.self, forKey: .mainSessionID)
         subSessionIDs = try c.decodeIfPresent([String].self, forKey: .subSessionIDs) ?? []
         selectedSubSessionID = try c.decodeIfPresent(String.self, forKey: .selectedSubSessionID)
+        protocolConfig = try c.decodeIfPresent(WorkspaceProtocolConfig.self, forKey: .protocolConfig)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(path, forKey: .path)
+        try c.encodeIfPresent(mainSessionID, forKey: .mainSessionID)
+        try c.encode(subSessionIDs, forKey: .subSessionIDs)
+        try c.encodeIfPresent(selectedSubSessionID, forKey: .selectedSubSessionID)
+        try c.encodeIfPresent(protocolConfig, forKey: .protocolConfig)
+        try c.encode(createdAt, forKey: .createdAt)
     }
 
     /// Standardized absolute path; empty input falls back to the home directory.
@@ -149,6 +170,7 @@ struct WorkspaceDocument: Codable, Equatable, Sendable {
                     mainSessionID: workspace.mainSessionID,
                     subSessionIDs: subs,
                     selectedSubSessionID: selectedSub ?? subs.first,
+                    protocolConfig: workspace.protocolConfig,
                     createdAt: workspace.createdAt,
                 ),
             )

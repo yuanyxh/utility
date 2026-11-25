@@ -616,6 +616,23 @@ Restart the service after adding or changing a skill.
 
 Restart from **menu bar → MCP** after changing any of these.
 
+### Workspace mesh
+
+When the gateway is running, every workspace registers as a service card (`kind=workspace`) and refreshes its heartbeat every 30s. The card status is derived from the main terminal: `ready` while the main tmux session is alive, `offline` otherwise. Agents talk to the gateway, never to the app directly.
+
+| Command | Purpose |
+| --- | --- |
+| `utility workspace enable --workspace <id> [--start-command <cmd>]` | register this workspace and watch its inbox |
+| `utility workspace disable --workspace <id>` | stop registering and watching |
+| `utility workspace status [--json]` | list cards with status |
+| `utility workspace list [--json]` | list cards |
+| `utility workspace send --to <id> --kind notify --text <text>` | send a message |
+| `utility workspace inbox --service <id> [--limit N]` | read delivered messages |
+
+The CLI resolves the port from `mcp.port`, falling back to `~/.config/utility/runtime/mcp.json` written by the running app; `UTILITY_GATEWAY_URL` overrides both. Delivery is not durable: failed sends return immediately and the caller decides whether to retry. `service_start` writes a control message into the inbox, and the app mounts the workspace when it consumes it.
+
+See `.claude/docs/architecture/agent-mesh.md` for the full protocol.
+
 ---
 
 ### 3. Daily summary

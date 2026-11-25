@@ -8,6 +8,7 @@
 
 ## 进行中
 
+- Agent Mesh（2026-11-25）：实现 + review 修复 + 部署验证完成（Utility 1.2.42）。网关 `services/mesh` 1016 tests、utility `run-tests.sh` 49 tests、ruff 与 l10n 全绿；证据 `.agent/plans/2026-11-25-agent-mesh/evidence/`（本机隔离、lume 真实 agent、生产 1.2.42）。生产实测：10 个工作区卡默认注册、状态与 tmux 会话一致、心跳 30s、状态校验与 CLI 自动端口正常。待补：VM 无 tmux，`utility-env` 内 GUI 工作区未验；VM→宿主反向消息未测；生产未启用 peers。
 - 换机迁移与首启引导：实现与隔离验证已完成（计划 `.agent/plans/2026-11-06-env-migration/`，T1–T11）。待用户 L3 仅剩「真实依赖安装与 Homebrew 拉起」；设置导出（2026-11-09 本机导出）、向导导入与外部路径改选（2026-11-10 VM 导入）已通过。
 
 ## 历史（2026-11-07 至 11-10，已归档）

@@ -14,6 +14,7 @@ struct UtilityCLI: ParsableCommand {
             RSSCommand.self,
             WebSearchCommand.self,
             WorkspaceCheckCommand.self,
+            WorkspaceCommand.self,
             ArchiveCheckCommand.self,
             SetupCheckCommand.self,
             ConfigCommand.self,

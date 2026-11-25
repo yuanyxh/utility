@@ -105,16 +105,28 @@ final class TmuxBackend: Sendable {
         TerminalShell.run("/usr/bin/env", ["tmux", "-L", socket] + arguments)
     }
 
-    func prepare(id: String, cwd: String, shell: String) throws {
+    func prepare(
+        id: String, cwd: String, shell: String,
+        initialCommand: String? = nil, environment: [String: String] = [:],
+    ) throws {
         if liveIDs().contains(id) { return }
         // tmux rewrites TERM_PROGRAM to "tmux" inside the pane; Claude only
         // emits OSC 777 for known terminals, so the value must be restored.
+        var paneCommand = ["env", "TERM_PROGRAM=ghostty"]
+        for (key, value) in environment.sorted(by: { $0.key < $1.key }) {
+            paneCommand.append("\(key)=\(value)")
+        }
+        paneCommand.append(shell)
+        if let initialCommand, !initialCommand.isEmpty {
+            paneCommand.append("-lc")
+            paneCommand.append(initialCommand)
+        }
         let result = TerminalShell.run(
             "/usr/bin/env",
             [
                 "tmux", "-L", socket, "-f", "/dev/null", "new-session",
-                "-d", "-s", name(id), "-c", cwd, "env", "TERM_PROGRAM=ghostty", shell,
-            ],
+                "-d", "-s", name(id), "-c", cwd,
+            ] + paneCommand,
         )
         guard result.status == 0 else {
             throw TmuxBackendError.commandFailed(result.output)

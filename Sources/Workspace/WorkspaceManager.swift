@@ -62,6 +62,14 @@ final class WorkspaceManager {
     private var isShuttingDown = false
     private var didReportMissingTmux = false
     private var pathTimer: Timer?
+    private var meshRetry: Timer?
+    private var protocolWatch: Timer?
+    private var statusWatch: Timer?
+    private var meshRetryAttempts = 0
+    private static let meshRetryLimit = 30
+    private let mesh = WorkspaceMeshCoordinator()
+    private let inboxWatcher = WorkspaceInboxWatcher()
+    private var inboxDirectories: [String: URL] = [:]
     /// Some prompts emit the same notification twice; keep one banner per burst.
     private var lastNotification: (sessionID: String, at: Date)?
 
@@ -76,6 +84,39 @@ final class WorkspaceManager {
         }
         notificationTap.onNotification = { [weak self] sessionID, title, body in
             self?.handleNotification(sessionID: sessionID, title: title, body: body)
+        }
+        mesh.onRegistered = { [weak self] _, _ in
+            self?.syncInboxDirectories()
+        }
+        EventBus.shared.subscribe("mcp_state_changed") { [weak self] payload in
+            let raw = payload as? String ?? ""
+            let state = MCPProcessManager.State(rawValue: raw) ?? .stopped
+            Task { @MainActor in
+                guard let self else { return }
+                if state == .running {
+                    self.refreshMesh()
+                } else {
+                    self.meshRetry?.invalidate()
+                    self.meshRetry = nil
+                    self.mesh.stop()
+                    self.inboxDirectories = [:]
+                    self.inboxWatcher.stop()
+                }
+            }
+        }
+        protocolWatch = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in self?.reloadProtocolsFromDisk() }
+        }
+        statusWatch = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in
+                guard let self, MeshGate.isEnabled else { return }
+                self.refreshMesh()
+            }
+        }
+        inboxWatcher.onMessage = { [weak self] serviceID, text in
+            self?.handleMeshMessage(serviceID: serviceID, text: text)
         }
     }
 
@@ -118,6 +159,7 @@ final class WorkspaceManager {
         persist()
         mountSelectedWorkspace()
         syncNotificationTaps()
+        refreshMesh()
     }
 
     func shutdown() {
@@ -126,6 +168,14 @@ final class WorkspaceManager {
         notificationTap.stopAll()
         persist()
         detachMountedSessions(keepNotificationTap: false)
+        meshRetry?.invalidate()
+        meshRetry = nil
+        protocolWatch?.invalidate()
+        protocolWatch = nil
+        statusWatch?.invalidate()
+        statusWatch = nil
+        mesh.stop()
+        inboxWatcher.stop()
     }
 
     // MARK: - Window
@@ -209,6 +259,7 @@ final class WorkspaceManager {
         document.selectedWorkspaceID = workspace.id
         persist()
         mountSelectedWorkspace()
+        refreshMesh()
         return workspace
     }
 
@@ -222,6 +273,7 @@ final class WorkspaceManager {
         document.workspaces[index].name = trimmed
         persist()
         notifyObserver()
+        refreshMesh()
         return true
     }
 
@@ -239,6 +291,7 @@ final class WorkspaceManager {
         }
         persist()
         mountSelectedWorkspace()
+        refreshMesh()
     }
 
     func selectWorkspace(id: String) {
@@ -477,6 +530,8 @@ final class WorkspaceManager {
             let session = startSession(
                 id: id, cwd: workspace.path, title: workspace.name, createdAt: Date(),
                 backend: backend, tmuxExists: false,
+                initialCommand: workspace.protocolConfig?.startCommand,
+                environment: meshEnvironment(for: workspace),
             )
         else { return nil }
         mountedSessions.append(session)
@@ -506,12 +561,16 @@ final class WorkspaceManager {
     private func startSession(
         id: String, cwd: String, title: String, createdAt: Date,
         backend: TmuxBackend, tmuxExists: Bool,
+        initialCommand: String? = nil, environment: [String: String] = [:],
     ) -> TerminalSession? {
         let shell = TerminalShell.resolvedShell(configured: config.shell)
         notificationTap.stop(id: id)
         if !tmuxExists {
             do {
-                try backend.prepare(id: id, cwd: cwd, shell: shell)
+                try backend.prepare(
+                    id: id, cwd: cwd, shell: shell,
+                    initialCommand: initialCommand, environment: environment,
+                )
             } catch {
                 notify(title: L10n.Terminal.startFailed, body: error.localizedDescription)
                 return nil
@@ -748,6 +807,117 @@ final class WorkspaceManager {
 
     private func newSessionID() -> String {
         String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
+    }
+
+    // MARK: - Mesh
+
+    private func refreshMesh() {
+        let enabled = MeshGate.isEnabled
+        let port = MCPProcessManager.shared.currentPort
+        let live = liveSessionIDs()
+        let entries = document.workspaces.compactMap {
+            workspace -> (workspace: Workspace, status: String)? in
+            guard workspace.protocolConfig?.enabled != false else { return nil }
+            let ready = workspace.mainSessionID.map { live.contains($0) } ?? false
+            return (workspace, ready ? "ready" : "offline")
+        }
+        debugLog(
+            "[Mesh] refresh enabled=\(enabled) port=\(port) count=\(entries.count)")
+        mesh.sync(entries: entries, port: port, enabled: enabled)
+        if !enabled {
+            inboxDirectories = [:]
+            inboxWatcher.stop()
+            meshRetry?.invalidate()
+            meshRetry = nil
+            meshRetryAttempts = 0
+            return
+        }
+        syncInboxDirectories()
+        let pending = port <= 0 || mesh.endpoints.count < entries.count
+        if pending, meshRetryAttempts < Self.meshRetryLimit {
+            meshRetryAttempts += 1
+            scheduleMeshRetry()
+        } else {
+            meshRetry?.invalidate()
+            meshRetry = nil
+            meshRetryAttempts = 0
+        }
+    }
+
+    private func syncInboxDirectories() {
+        inboxDirectories = mesh.endpoints
+        inboxWatcher.setDirectories(inboxDirectories)
+    }
+
+    private func liveSessionIDs() -> Set<String> {
+        guard let backend = resolvedBackend() else { return [] }
+        return Set(backend.liveIDs())
+    }
+
+    /// The CLI edits protocol fields on disk; merge them so a running app follows.
+    private func reloadProtocolsFromDisk() {
+        let url = AppPaths.configDir.appendingPathComponent("workspaces.json")
+        guard didLoad, !isShuttingDown,
+            let data = try? Data(contentsOf: url),
+            let disk = try? WorkspaceJSON.decode(data)
+        else { return }
+        var changed = false
+        for workspace in disk.workspaces {
+            guard
+                let index = document.workspaces.firstIndex(where: {
+                    $0.id == workspace.id
+                })
+            else { continue }
+            if document.workspaces[index].protocolConfig != workspace.protocolConfig {
+                document.workspaces[index].protocolConfig = workspace.protocolConfig
+                changed = true
+            }
+        }
+        guard changed else { return }
+        debugLog("[Mesh] protocols reloaded from disk")
+        refreshMesh()
+        notifyObserver()
+    }
+
+    /// The gateway reports a port only after it starts; keep polling until it does.
+    private func scheduleMeshRetry() {
+        guard meshRetry == nil else { return }
+        meshRetry = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in self?.refreshMesh() }
+        }
+    }
+
+    private func handleMeshMessage(serviceID: String, text: String) {
+        guard let data = text.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        let payload = json["payload"] as? [String: Any] ?? [:]
+        if json["kind"] as? String == "control", payload["action"] as? String == "start" {
+            debugLog("[Mesh] start request for \(serviceID)")
+            selectWorkspace(id: serviceID)
+            let live = liveSessionIDs()
+            let workspace = document.workspaces.first { $0.id == serviceID }
+            let ready = workspace?.mainSessionID.map { live.contains($0) } ?? false
+            mesh.report(serviceID: serviceID, status: ready ? "ready" : "offline")
+            refreshMesh()
+            return
+        }
+        let sender = json["sender"] as? String ?? serviceID
+        debugLog("[Mesh] message from \(sender)")
+        mesh.report(serviceID: serviceID, status: "ready")
+        notify(title: sender, body: payload["text"] as? String ?? text)
+    }
+
+    /// Exported to the agent so it can call `service_*` tools with its own id.
+    private func meshEnvironment(for workspace: Workspace) -> [String: String] {
+        guard MeshGate.isEnabled else { return [:] }
+        var environment = ["MESH_SERVICE_ID": workspace.id]
+        let port = MCPProcessManager.shared.currentPort
+        if port > 0 {
+            environment["MESH_GATEWAY_URL"] = HTTP.localBaseURL(port: port)
+        }
+        return environment
     }
 
     private func resolvedBackend() -> TmuxBackend? {

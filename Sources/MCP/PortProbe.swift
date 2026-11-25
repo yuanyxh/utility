@@ -54,6 +54,25 @@ enum PortProbe {
         return port
     }
 
+    /// Mirrors the Python daemon's runtime file so the CLI can find an auto port.
+    static func recordState(service: String, port: Int, pid: Int = Int(getpid())) {
+        let dir = AppPaths.configDir.appendingPathComponent("runtime")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let payload: [String: Any] = [
+            "service": service, "port": port, "pid": pid,
+            "startedAt": Date().timeIntervalSince1970,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: dir.appendingPathComponent("\(service).json"), options: .atomic)
+    }
+
+    static func clearState(service: String) {
+        let url = AppPaths.configDir
+            .appendingPathComponent("runtime")
+            .appendingPathComponent("\(service).json")
+        try? FileManager.default.removeItem(at: url)
+    }
+
     private static func isAlive(_ pid: Int) -> Bool {
         guard pid > 0 else { return false }
         if kill(pid_t(pid), 0) == 0 { return true }

@@ -72,6 +72,7 @@
 | LLM 调用与提示词 | `.claude/docs/architecture/llm-and-prompts.md` |
 | 知识面板 | `.claude/docs/architecture/knowledge-panel.md` |
 | MCP 服务 server.py | `.claude/docs/architecture/mcp-server.md` |
+| Agent Mesh / 服务卡 / 工作区协议 | `.claude/docs/architecture/agent-mesh.md` |
 | RSS 采集 / 解析 / 日报 | `.claude/docs/architecture/rss.md` |
 | 项目依赖图 graph.sqlite | `.claude/docs/architecture/project-graph.md` |
 | 检索性能约定 | `.claude/docs/architecture/retrieval.md` |

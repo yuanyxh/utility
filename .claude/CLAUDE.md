@@ -37,6 +37,7 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 | llm_client / 提示词 / MCP 描述文案 | `.claude/docs/architecture/llm-and-prompts.md` |
 | 知识面板 | `.claude/docs/architecture/knowledge-panel.md` |
 | MCP 服务 server.py | `.claude/docs/architecture/mcp-server.md` |
+| Agent Mesh / 服务卡 / 工作区协议 | `.claude/docs/architecture/agent-mesh.md` |
 | 项目依赖图 graph.sqlite / graphIndexer | `.claude/docs/architecture/project-graph.md` |
 | 组件总览 / 并发 / 内存基线 | `.claude/docs/architecture/overview.md` |
 | 多终端 tmux / SwiftTerm | `.claude/docs/architecture/terminal.md` |
