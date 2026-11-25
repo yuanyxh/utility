@@ -17,6 +17,10 @@
 - 首启 reranker 下载验证（2026-11-09，已提交 `0a0299d`）：L3 通过，模型 SHA256 与常量一致，`setup-check` 两项 ok。
 - 1.2.7 向导修复（2026-11-10）：已随 1.2.7 发布；VM 导入 L3 通过。
 
+## 最近完成（2026-11-25）
+
+- 基座升级 seed 1.5.0 → 1.6.0（按 `agent-vibe/protocols/zh/upgrade-seeds.md`）：新增 `rules/testing.md` TST-10 与 `knowledge/interaction-observability.md`，`environment.md` 补 `## 反馈回路` 段，`profile.yaml` 升版。`verify-instantiation.sh` 剩 2 项既有缺口：`pre-commit` 用暂存 lint 而非全量 `swift-format lint`，与 profile 声明的 verify.format/lint 不一致，未改动。
+
 ## 最近完成（2026-11-23）
 
 - 生产 1.2.40 部署核验（用户打包，15:16 安装 / 15:19 启动）：venv wheel 戳 15:19，安装版代码含 `thinking` 双形态、`tags`/`confidence` 白名单、`as_utc`、摘要继承 importance、`rerank_rescued` 降级、蓄水池抽样与 context 文案；应用包资源完整（`utility_utility.bundle`、Gateway wheel/prompts/契约、l10n）；`mcp.brain` 七键正确、网关 `memory.brain` 已写入；MCP 与 token proxy 分别监听 9001 / 8613。知识卡片最新仍为 10:25（部署前），补货实际产出待观察。

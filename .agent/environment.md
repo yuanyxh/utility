@@ -47,3 +47,15 @@
 | swiftlint | `swift build` + `swift-format lint` | 无独立静态检查，规则覆盖弱于 swiftlint |
 | UI 自动化入口 | 热键 + 截图 + 日志断言 | 端到端验证需要人参与；详见 TST-09 |
 | CI | 本地 `run-tests.sh` | 无远程回归记录 |
+
+## 反馈回路
+
+按交互面记录可重复回路（TST-10），命令取自上方「可脚本化驱动方式」。
+
+| 交互面 | 启动 | 驱动 | 观测 | 证据脚本 |
+| --- | --- | --- | --- | --- |
+| 视觉 | `./.build/debug/utility` | 热键或菜单（无 CLI 入口） | `screencapture -x` | 待补 |
+| 终端 | `./.build/debug/utility` | `option+space` 开面板 | `~/.cache/utility/debug.log` | 待补 |
+| 协议 | `./.build/debug/utility` | `curl 127.0.0.1:9001/health` | 响应与端口状态 | 待补 |
+
+首次回路运行：升级到 1.6.0 时无交互改动，按 TST-09 人工移交。

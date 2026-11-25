@@ -1,4 +1,4 @@
-seed_version: 1.5.0
+seed_version: 1.6.0
 project:
   name: utility
   one_liner: macOS 菜单栏工具箱：剪贴板、翻译、OCR、Stage 暂存、多终端、RSS、定时任务与本地 AI 层
