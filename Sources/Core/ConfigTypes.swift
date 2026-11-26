@@ -40,6 +40,7 @@ public struct AppConfig: Codable, @unchecked Sendable {
     var mcp: MCPConfig? = nil
     var modelProxy: ModelProxyConfig? = nil
     var terminal: TerminalConfig = .init()
+    var workspace: WorkspaceConfig = .init()
     var graph: GraphConfig = .init()
     var app: AppBehaviorConfig = .init()
 
@@ -61,6 +62,7 @@ public struct AppConfig: Codable, @unchecked Sendable {
         mcp = try? c.decodeIfPresent(MCPConfig.self, forKey: .mcp)
         modelProxy = try? c.decodeIfPresent(ModelProxyConfig.self, forKey: .modelProxy)
         terminal = (try? c.decodeIfPresent(TerminalConfig.self, forKey: .terminal)) ?? .init()
+        workspace = (try? c.decodeIfPresent(WorkspaceConfig.self, forKey: .workspace)) ?? .init()
         graph = (try? c.decodeIfPresent(GraphConfig.self, forKey: .graph)) ?? .init()
         app = (try? c.decodeIfPresent(AppBehaviorConfig.self, forKey: .app)) ?? .init()
     }
@@ -114,6 +116,20 @@ public struct TerminalConfig: Codable {
 }
 
 // MARK: - Workspace
+
+/// Workspace defaults (config.yaml `workspace`).
+public struct WorkspaceConfig: Codable {
+    /// Command run when a workspace main session is created; per-workspace
+    /// protocol.startCommand wins. Empty disables the fallback.
+    var agentCli: String = ""
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agentCli = try c.decodeIfPresent(String.self, forKey: .agentCli) ?? ""
+    }
+}
 
 // MARK: - Runtime
 

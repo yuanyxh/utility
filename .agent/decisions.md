@@ -125,3 +125,9 @@ tmux 未安装时窗口内提示 + 一次系统通知，不降级。
 - 修复范围：全部阻断 + 应修项；跨机 bind 非回环时强制 token 且 REST/MCP 一并校验。
 - 关键修复：endpoint 限定 inbox 根、register/deregister 仅本机、心跳状态校验、远端错误码保留、control start 需 startable、事件循环禁同步 I/O、CLI 端口读 runtime 文件、App 合并磁盘 protocol、disable 真正停止注册与监听。
 - 修复后复验：lume 真实 agent 端到端通过——远端注册 401、无 token 401、非法状态 400、endpoint 越界 invalid_card；`service_start` 对 ready 卡返回 already_running，对 offline 卡投递 control 并拉起工作区。
+
+## 2026-11-26 启动命令配置项
+
+- 新增 `workspace.agentCli` 作为全局默认启动命令；解析顺序：工作区 `protocol.startCommand` → `workspace.agentCli` → 无。会话创建与卡片 `start_command`/`startable` 共用同一解析。
+- 理由：生产 10 张卡 `start_command` 全为空，`startable=false`，`service_start` 无法拉起任何工作区；逐工作区配置成本高。
+- 验证：隔离 HOME 真实应用 + tmux，control start 后全局命令落盘 `AGENT_CLI_OK`；证据 `.agent/plans/2026-11-25-agent-mesh/evidence/agent-cli-config.md`。

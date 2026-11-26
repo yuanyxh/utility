@@ -24,7 +24,11 @@ final class WorkspaceMeshCoordinator {
 
     var isRunning: Bool { client != nil }
 
-    func sync(entries: [(workspace: Workspace, status: String)], port: Int, enabled: Bool) {
+    func sync(
+        entries: [(workspace: Workspace, status: String, startCommand: String?)],
+        port: Int,
+        enabled: Bool,
+    ) {
         guard enabled, port > 0 else {
             stop()
             return
@@ -37,13 +41,15 @@ final class WorkspaceMeshCoordinator {
         let desired = Set(entries.map { $0.workspace.id })
         for entry in entries {
             let workspace = entry.workspace
-            let fingerprint = Self.fingerprint(workspace, status: entry.status)
+            let fingerprint = Self.fingerprint(
+                workspace, status: entry.status, startCommand: entry.startCommand)
             statuses[workspace.id] = entry.status
             if registered.contains(workspace.id), fingerprints[workspace.id] == fingerprint {
                 continue
             }
             fingerprints[workspace.id] = fingerprint
-            register(workspace, status: entry.status, client: client)
+            register(
+                workspace, status: entry.status, startCommand: entry.startCommand, client: client)
         }
         for serviceID in registered.subtracting(desired) {
             registered.remove(serviceID)
@@ -54,13 +60,15 @@ final class WorkspaceMeshCoordinator {
         }
     }
 
-    private static func fingerprint(_ workspace: Workspace, status: String) -> String {
+    private static func fingerprint(
+        _ workspace: Workspace, status: String, startCommand: String?,
+    ) -> String {
         let config = workspace.protocolConfig
         return [
             workspace.name,
             status,
             config?.serviceName ?? "",
-            config?.startCommand ?? "",
+            startCommand ?? "",
             (config?.capabilities ?? []).joined(separator: ","),
         ].joined(separator: "|")
     }
@@ -89,6 +97,7 @@ final class WorkspaceMeshCoordinator {
     private func register(
         _ workspace: Workspace,
         status: String,
+        startCommand: String?,
         client: MeshClientProtocol,
     ) {
         let config = workspace.protocolConfig
@@ -99,8 +108,8 @@ final class WorkspaceMeshCoordinator {
             endpoint: workspace.id,
             capabilities: config?.capabilities ?? ["agent"],
             status: status,
-            startCommand: config?.startCommand,
-            startable: config?.startCommand?.isEmpty == false,
+            startCommand: startCommand,
+            startable: startCommand?.isEmpty == false,
         )
         registered.insert(workspace.id)
         Task { [weak self] in

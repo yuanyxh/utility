@@ -28,6 +28,20 @@ struct WorkspaceProtocolConfig: Codable, Equatable, Sendable {
     }
 }
 
+extension WorkspaceProtocolConfig {
+    /// Per-workspace command wins; blank values fall through to the fallback.
+    static func resolvedStartCommand(own: String?, fallback: String?) -> String? {
+        for candidate in [own, fallback] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !value.isEmpty
+            {
+                return value
+            }
+        }
+        return nil
+    }
+}
+
 /// Mesh only runs behind an enabled gateway; either side being off disables it.
 enum MeshGate {
     static func isEnabled(

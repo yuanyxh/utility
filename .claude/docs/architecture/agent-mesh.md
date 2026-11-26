@@ -129,6 +129,13 @@ utility workspace inbox --service <id> --limit 20
 utility workspace list --json   # jq 可解析
 ```
 
+启动命令解析顺序：工作区 `protocol.startCommand` → 全局 `workspace.agentCli`（`config.yaml`）→ 无命令（`startable=false`）。只有解析出命令的工作区才能被 `service_start` 拉起。
+
+```yaml
+workspace:
+  agentCli: claude --continue   # 空 = 不启用全局回退
+```
+
 CLI 端口来源：`mcp.port > 0` 优先，否则读 `~/.config/utility/runtime/mcp.json`（应用启动网关时写入）；`UTILITY_GATEWAY_URL` 可覆盖（联合调试）。
 
 ## 不变量

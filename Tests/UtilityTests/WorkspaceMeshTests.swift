@@ -70,7 +70,7 @@ final class WorkspaceMeshCoordinatorTests: XCTestCase {
         let registered = expectation(description: "registered")
         coordinator.onRegistered = { _, _ in registered.fulfill() }
         coordinator.sync(
-            entries: [(makeWorkspace(startCommand: "claude"), "offline")],
+            entries: [(makeWorkspace(), "offline", "claude")],
             port: 9001, enabled: true)
         await fulfillment(of: [registered], timeout: 1)
         XCTAssertEqual(fake.registered.map(\.id), ["ws-1"])
@@ -86,11 +86,11 @@ final class WorkspaceMeshCoordinatorTests: XCTestCase {
         let first = expectation(description: "first")
         coordinator.onRegistered = { _, _ in first.fulfill() }
         coordinator.sync(
-            entries: [(makeWorkspace(), "offline")], port: 9001, enabled: true)
+            entries: [(makeWorkspace(), "offline", nil)], port: 9001, enabled: true)
         await fulfillment(of: [first], timeout: 1)
         coordinator.onRegistered = nil
         coordinator.sync(
-            entries: [(makeWorkspace(), "ready")], port: 9001, enabled: true)
+            entries: [(makeWorkspace(), "ready", nil)], port: 9001, enabled: true)
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertEqual(fake.registered.map(\.status), ["offline", "ready"])
         coordinator.stop()
@@ -99,7 +99,7 @@ final class WorkspaceMeshCoordinatorTests: XCTestCase {
     func testDisabledDoesNothing() {
         let fake = FakeMeshClient()
         let coordinator = WorkspaceMeshCoordinator { _ in fake }
-        coordinator.sync(entries: [(makeWorkspace(), "ready")], port: 9001, enabled: false)
+        coordinator.sync(entries: [(makeWorkspace(), "ready", nil)], port: 9001, enabled: false)
         XCTAssertFalse(coordinator.isRunning)
         XCTAssertTrue(fake.registered.isEmpty)
     }
@@ -109,11 +109,40 @@ final class WorkspaceMeshCoordinatorTests: XCTestCase {
         let coordinator = WorkspaceMeshCoordinator { _ in fake }
         let registered = expectation(description: "registered")
         coordinator.onRegistered = { _, _ in registered.fulfill() }
-        coordinator.sync(entries: [(makeWorkspace(), "ready")], port: 9001, enabled: true)
+        coordinator.sync(entries: [(makeWorkspace(), "ready", nil)], port: 9001, enabled: true)
         await fulfillment(of: [registered], timeout: 1)
         coordinator.sync(entries: [], port: 9001, enabled: true)
         try? await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(fake.deregistered, ["ws-1"])
+        coordinator.stop()
+    }
+
+    func testUsesProvidedStartCommand() async {
+        let fake = FakeMeshClient()
+        let coordinator = WorkspaceMeshCoordinator { _ in fake }
+        let registered = expectation(description: "registered")
+        coordinator.onRegistered = { _, _ in registered.fulfill() }
+        coordinator.sync(
+            entries: [(makeWorkspace(), "offline", "claude --continue")],
+            port: 9001, enabled: true)
+        await fulfillment(of: [registered], timeout: 1)
+        XCTAssertEqual(fake.registered.first?.startCommand, "claude --continue")
+        XCTAssertTrue(fake.registered.first?.startable == true)
+        coordinator.stop()
+    }
+
+    func testStartCommandChangeReregisters() async {
+        let fake = FakeMeshClient()
+        let coordinator = WorkspaceMeshCoordinator { _ in fake }
+        let first = expectation(description: "first")
+        coordinator.onRegistered = { _, _ in first.fulfill() }
+        coordinator.sync(entries: [(makeWorkspace(), "ready", nil)], port: 9001, enabled: true)
+        await fulfillment(of: [first], timeout: 1)
+        coordinator.onRegistered = nil
+        coordinator.sync(
+            entries: [(makeWorkspace(), "ready", "claude")], port: 9001, enabled: true)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fake.registered.map(\.startCommand), [nil, "claude"])
         coordinator.stop()
     }
 }

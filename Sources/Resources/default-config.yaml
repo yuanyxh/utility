@@ -384,6 +384,12 @@ terminal:
   # Keep the window above other apps' windows; restart required.
   alwaysOnTop: false
 
+# ---------- Workspace ----------
+workspace:
+  # Fallback command when a workspace main session is created (empty = plain shell).
+  # A workspace's own protocol.startCommand wins. Example: claude --continue
+  agentCli: ''
+
 # ---------- RSS ----------
 rss:
   feeds: []

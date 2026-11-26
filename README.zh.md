@@ -580,6 +580,8 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 | `utility workspace send --to <id> --kind notify --text <text>` | 发送消息 |
 | `utility workspace inbox --service <id> [--limit N]` | 读取已投递消息 |
 
+启动命令解析顺序：工作区自身 `protocol.startCommand` → `config.yaml` 的全局 `workspace.agentCli` → 无。只有解析出命令的工作区可被 `service_start` 拉起；设置 `workspace.agentCli: claude --continue` 即可让所有工作区默认启动 agent CLI。
+
 CLI 端口取自 `mcp.port`，为空时回退到运行中应用写入的 `~/.config/utility/runtime/mcp.json`；`UTILITY_GATEWAY_URL` 覆盖两者。投递不保证送达：失败立即返回，重试由调用方决定。`service_start` 写入一条 control 消息，应用消费后挂载对应工作区。
 
 完整协议见 `.claude/docs/architecture/agent-mesh.md`。

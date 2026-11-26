@@ -530,7 +530,7 @@ final class WorkspaceManager {
             let session = startSession(
                 id: id, cwd: workspace.path, title: workspace.name, createdAt: Date(),
                 backend: backend, tmuxExists: false,
-                initialCommand: workspace.protocolConfig?.startCommand,
+                initialCommand: effectiveStartCommand(for: workspace),
                 environment: meshEnvironment(for: workspace),
             )
         else { return nil }
@@ -811,15 +811,23 @@ final class WorkspaceManager {
 
     // MARK: - Mesh
 
+    /// Per-workspace protocol.startCommand wins over config `workspace.agentCli`.
+    func effectiveStartCommand(for workspace: Workspace) -> String? {
+        WorkspaceProtocolConfig.resolvedStartCommand(
+            own: workspace.protocolConfig?.startCommand,
+            fallback: ConfigManager.shared.config.workspace.agentCli,
+        )
+    }
+
     private func refreshMesh() {
         let enabled = MeshGate.isEnabled
         let port = MCPProcessManager.shared.currentPort
         let live = liveSessionIDs()
         let entries = document.workspaces.compactMap {
-            workspace -> (workspace: Workspace, status: String)? in
+            workspace -> (workspace: Workspace, status: String, startCommand: String?)? in
             guard workspace.protocolConfig?.enabled != false else { return nil }
             let ready = workspace.mainSessionID.map { live.contains($0) } ?? false
-            return (workspace, ready ? "ready" : "offline")
+            return (workspace, ready ? "ready" : "offline", effectiveStartCommand(for: workspace))
         }
         debugLog(
             "[Mesh] refresh enabled=\(enabled) port=\(port) count=\(entries.count)")

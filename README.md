@@ -629,6 +629,8 @@ When the gateway is running, every workspace registers as a service card (`kind=
 | `utility workspace send --to <id> --kind notify --text <text>` | send a message |
 | `utility workspace inbox --service <id> [--limit N]` | read delivered messages |
 
+The start command resolves in order: the workspace's own `protocol.startCommand`, then the global `workspace.agentCli` in `config.yaml`, then none. Only workspaces with a resolved command are startable — set `workspace.agentCli: claude --continue` to make every workspace launch an agent CLI by default.
+
 The CLI resolves the port from `mcp.port`, falling back to `~/.config/utility/runtime/mcp.json` written by the running app; `UTILITY_GATEWAY_URL` overrides both. Delivery is not durable: failed sends return immediately and the caller decides whether to retry. `service_start` writes a control message into the inbox, and the app mounts the workspace when it consumes it.
 
 See `.claude/docs/architecture/agent-mesh.md` for the full protocol.

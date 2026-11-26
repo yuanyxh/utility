@@ -57,6 +57,31 @@ final class WorkspaceProtocolTests: XCTestCase {
                 mcpEnabled: true, gatewayAvailable: true, gatewayRunning: false))
     }
 
+    func testResolvedStartCommandPrefersOwn() {
+        let resolved = WorkspaceProtocolConfig.resolvedStartCommand(
+            own: "claude --continue", fallback: "claude")
+        XCTAssertEqual(resolved, "claude --continue")
+    }
+
+    func testResolvedStartCommandFallsBack() {
+        let resolved = WorkspaceProtocolConfig.resolvedStartCommand(
+            own: "  ", fallback: " claude ")
+        XCTAssertEqual(resolved, "claude")
+    }
+
+    func testResolvedStartCommandEmptyMeansNil() {
+        XCTAssertNil(WorkspaceProtocolConfig.resolvedStartCommand(own: nil, fallback: ""))
+        XCTAssertNil(WorkspaceProtocolConfig.resolvedStartCommand(own: "", fallback: nil))
+    }
+
+    func testWorkspaceConfigDecodesAgentCli() throws {
+        let config = try JSONDecoder().decode(
+            WorkspaceConfig.self, from: Data(#"{"agentCli":"claude --continue"}"#.utf8))
+        XCTAssertEqual(config.agentCli, "claude --continue")
+        let empty = try JSONDecoder().decode(WorkspaceConfig.self, from: Data("{}".utf8))
+        XCTAssertEqual(empty.agentCli, "")
+    }
+
     func testProtocolEnabledDefaultsTrue() throws {
         let json = #"{"startCommand":"claude"}"#
         let config = try JSONDecoder().decode(
