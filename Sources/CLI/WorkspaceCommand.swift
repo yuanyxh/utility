@@ -57,10 +57,14 @@ enum WorkspaceMeshCLI {
         }
     }
 
-    static func sendMessage(sender: String, recipient: String, kind: String, text: String) throws -> String {
+    static func sendMessage(
+        sender: String, recipient: String, kind: String, text: String, replyTo: String? = nil
+    ) throws -> String {
         do {
             return try blocking {
-                try await client().send(sender: sender, recipient: recipient, kind: kind, text: text)
+                try await client().send(
+                    sender: sender, recipient: recipient, kind: kind, text: text,
+                    replyTo: replyTo)
             }
         } catch let error as MeshError where error.code == "http_404" {
             throw ValidationError(L10n.CLI.workspaceNotEnabled)
@@ -198,6 +202,9 @@ extension WorkspaceCommand {
         @Option(name: .customLong("sender"))
         var sender = "cli"
 
+        @Option(name: .customLong("reply-to"))
+        var replyTo: String?
+
         func run() throws {
             let target = to
             let kindValue = kind
@@ -205,6 +212,7 @@ extension WorkspaceCommand {
             let senderValue = sender
             let identifier = try WorkspaceMeshCLI.sendMessage(
                 sender: senderValue, recipient: target, kind: kindValue, text: textValue,
+                replyTo: replyTo,
             )
             print(identifier)
         }

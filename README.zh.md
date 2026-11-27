@@ -580,9 +580,9 @@ cp -R examples/zh-Hans/MCP/* ~/.config/utility/notes/MCP/
 | `utility workspace send --to <id> --kind notify --text <text>` | 发送消息 |
 | `utility workspace inbox --service <id> [--limit N]` | 读取已投递消息 |
 
-启动命令解析顺序：工作区自身 `protocol.startCommand` → `config.yaml` 的全局 `workspace.agentCli` → 无。只有解析出命令的工作区可被 `service_start` 拉起；设置 `workspace.agentCli: claude --continue` 即可让所有工作区默认启动 agent CLI。
+启动命令解析顺序：工作区自身 `protocol.startCommand` → `config.yaml` 的全局 `workspace.agentCli` → 无。只有解析出命令的工作区可被 `service_start` 拉起；设置 `workspace.agentCli: /opt/homebrew/bin/claude --continue` 即可让所有工作区可被拉起。`service_start` 在没有会话时新建会话，主会话是普通 shell 时则把命令注入该 shell。本地点击工作区只打开普通 shell。卡片仅在主会话前台进程与启动命令的可执行文件名一致时报 `ready`，空 shell 不会被当成已运行的 agent。
 
-CLI 端口取自 `mcp.port`，为空时回退到运行中应用写入的 `~/.config/utility/runtime/mcp.json`；`UTILITY_GATEWAY_URL` 覆盖两者。投递不保证送达：失败立即返回，重试由调用方决定。`service_start` 写入一条 control 消息，应用消费后挂载对应工作区。
+CLI 端口取自 `mcp.port`，为空时回退到运行中应用写入的 `~/.config/utility/runtime/mcp.json`；`UTILITY_GATEWAY_URL` 覆盖两者。投递不保证送达：失败立即返回，重试由调用方决定。`service_start` 写入一条 control 消息，应用消费后挂载对应工作区。`kind=task` 或 `kind=reply` 的消息会以单行提示词注入目标 agent 会话；agent 未运行时先拉起并排队（上限 10 条，15 秒后丢弃）。`kind=notify` 仍只弹系统通知。回执使用 `utility workspace send --to <sender> --kind reply --reply-to <消息 id> --text <摘要>`。
 
 完整协议见 `.claude/docs/architecture/agent-mesh.md`。
 

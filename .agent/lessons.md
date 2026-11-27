@@ -28,6 +28,14 @@ app 没有 CLI/URL scheme 等可脚本化入口时，自动化验证从第一轮
 
 `resolvedBackend()` 内弹通知，最后只能靠布尔标记去重。解析返回结果，提示由调用方决定。
 
+## agent TUI 不会因 send-keys 的换行而提交（2026-11-27）
+
+`tmux send-keys -t <session> "<text>" Enter` 在 claude 这类 TUI 里会把换行当成粘贴内容，文本停在输入框不提交。必须先单独发送文本，再补两次 `Enter`（间隔 150 ms）。只有 pane 内出现回答才算提交成功。
+
+## 强制退出会连带清理 tmux 会话（2026-11-27）
+
+退出后 Dock 若仍显示「在后台运行」而被强制退出，系统会清理该应用拉起的 tmux server，工作区会话与 agent 进程一并丢失；重启按旧 session id 重建，但 TUI 进程是新的。排查退出异常时未取证不要反复强制退出。
+
 ## 机制先分清再开药方（2026-10-29）
 
 「滚不动」对应三种不同机制（alternate buffer、WheelReportBudget、allowMouseReporting），

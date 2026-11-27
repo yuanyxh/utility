@@ -2,9 +2,10 @@
 
 ## 变更
 
-- `config.yaml` 新增 `workspace.agentCli`：所有工作区主会话的默认启动命令
+- `config.yaml` 新增 `workspace.agentCli`：远程拉起工作区时使用的启动命令
 - 解析顺序：工作区 `protocol.startCommand` → 全局 `workspace.agentCli` → 无
-- 解析结果同时用于会话创建（`ensureMainSession`）与服务卡 `start_command` / `startable`
+- 解析结果用于服务卡 `start_command` / `startable`，以及 `control start` 新建会话时的命令
+- 2026-11-26 修正：本地点击工作区改为打开普通 shell，不再执行 `agentCli`；只有 `service_start` 新建会话才使用启动命令（`pendingStartCommand` 仅在 `handleMeshMessage` 的 control start 分支设置）
 
 ## L2（单测）
 

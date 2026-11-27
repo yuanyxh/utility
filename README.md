@@ -629,9 +629,9 @@ When the gateway is running, every workspace registers as a service card (`kind=
 | `utility workspace send --to <id> --kind notify --text <text>` | send a message |
 | `utility workspace inbox --service <id> [--limit N]` | read delivered messages |
 
-The start command resolves in order: the workspace's own `protocol.startCommand`, then the global `workspace.agentCli` in `config.yaml`, then none. Only workspaces with a resolved command are startable — set `workspace.agentCli: claude --continue` to make every workspace launch an agent CLI by default.
+The start command resolves in order: the workspace's own `protocol.startCommand`, then the global `workspace.agentCli` in `config.yaml`, then none. Only workspaces with a resolved command are startable — set `workspace.agentCli: /opt/homebrew/bin/claude --continue` to make every workspace startable. `service_start` creates a session when none exists and types the command into the main session when it is a plain shell. Clicking a workspace locally opens a plain shell. A card reports `ready` only while the pane's foreground process matches the command's executable, so an empty shell is never mistaken for a running agent.
 
-The CLI resolves the port from `mcp.port`, falling back to `~/.config/utility/runtime/mcp.json` written by the running app; `UTILITY_GATEWAY_URL` overrides both. Delivery is not durable: failed sends return immediately and the caller decides whether to retry. `service_start` writes a control message into the inbox, and the app mounts the workspace when it consumes it.
+The CLI resolves the port from `mcp.port`, falling back to `~/.config/utility/runtime/mcp.json` written by the running app; `UTILITY_GATEWAY_URL` overrides both. Delivery is not durable: failed sends return immediately and the caller decides whether to retry. `service_start` writes a control message into the inbox, and the app mounts the workspace when it consumes it. Messages with `kind=task` or `kind=reply` are typed into the target agent session as a single-line prompt; when the agent is not running it is started first and the prompt is queued (10 max, dropped after 15 s). `kind=notify` stays a system notification. Reply with `utility workspace send --to <sender> --kind reply --reply-to <message-id> --text <summary>`.
 
 See `.claude/docs/architecture/agent-mesh.md` for the full protocol.
 

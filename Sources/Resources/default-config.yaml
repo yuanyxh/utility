@@ -386,8 +386,9 @@ terminal:
 
 # ---------- Workspace ----------
 workspace:
-  # Fallback command when a workspace main session is created (empty = plain shell).
-  # A workspace's own protocol.startCommand wins. Example: claude --continue
+  # Command service_start runs in a workspace; local clicks always open a plain shell.
+  # A workspace's own protocol.startCommand wins. Empty keeps every workspace
+  # offline and unstartable. Example: /opt/homebrew/bin/claude --continue
   agentCli: ''
 
 # ---------- RSS ----------

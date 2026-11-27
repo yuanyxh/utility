@@ -70,6 +70,17 @@ final class WorkspaceManager {
     private let mesh = WorkspaceMeshCoordinator()
     private let inboxWatcher = WorkspaceInboxWatcher()
     private var inboxDirectories: [String: URL] = [:]
+    /// Start command for the next session created by a remote `control start`.
+    /// Local clicks open a plain shell; only mesh-started sessions run the agent CLI.
+    private var pendingStartCommand: String?
+    /// Attempts left while waiting for a launched agent to appear in its pane.
+    private var agentChecks: [String: Int] = [:]
+    /// Service ids with a launch in flight; repeated starts would type it twice.
+    private var startingServices: Set<String> = []
+    /// Prompts waiting for their workspace's agent to become ready.
+    private var pendingTasks: [String: MeshTaskQueue] = [:]
+    /// Token of the active cleanup; stale timers must not clear a newer queue.
+    private var taskTokens: [String: UUID] = [:]
     /// Some prompts emit the same notification twice; keep one banner per burst.
     private var lastNotification: (sessionID: String, at: Date)?
 
@@ -164,10 +175,14 @@ final class WorkspaceManager {
 
     func shutdown() {
         guard didLoad else { return }
+        debugLog("[Shutdown] workspace.shutdown start")
         isShuttingDown = true
         notificationTap.stopAll()
+        debugLog("[Shutdown] notify taps stopped")
         persist()
+        debugLog("[Shutdown] workspace persisted")
         detachMountedSessions(keepNotificationTap: false)
+        debugLog("[Shutdown] sessions detached")
         meshRetry?.invalidate()
         meshRetry = nil
         protocolWatch?.invalidate()
@@ -175,7 +190,9 @@ final class WorkspaceManager {
         statusWatch?.invalidate()
         statusWatch = nil
         mesh.stop()
+        debugLog("[Shutdown] mesh stopped")
         inboxWatcher.stop()
+        debugLog("[Shutdown] workspace.shutdown done")
     }
 
     // MARK: - Window
@@ -530,7 +547,7 @@ final class WorkspaceManager {
             let session = startSession(
                 id: id, cwd: workspace.path, title: workspace.name, createdAt: Date(),
                 backend: backend, tmuxExists: false,
-                initialCommand: effectiveStartCommand(for: workspace),
+                initialCommand: pendingStartCommand,
                 environment: meshEnvironment(for: workspace),
             )
         else { return nil }
@@ -600,7 +617,9 @@ final class WorkspaceManager {
     ) {
         let removed = mountedSessions.filter(predicate)
         for session in removed {
+            if isShuttingDown { debugLog("[Shutdown] terminate \(session.id)") }
             session.terminate()
+            if isShuttingDown { debugLog("[Shutdown] terminated \(session.id)") }
             session.view.removeFromSuperview()
             if keepNotificationTap { notificationTap.start(id: session.id) }
         }
@@ -822,11 +841,11 @@ final class WorkspaceManager {
     private func refreshMesh() {
         let enabled = MeshGate.isEnabled
         let port = MCPProcessManager.shared.currentPort
-        let live = liveSessionIDs()
+        let sessions = meshSessions()
         let entries = document.workspaces.compactMap {
             workspace -> (workspace: Workspace, status: String, startCommand: String?)? in
             guard workspace.protocolConfig?.enabled != false else { return nil }
-            let ready = workspace.mainSessionID.map { live.contains($0) } ?? false
+            let ready = isAgentRunning(workspace, sessions: sessions)
             return (workspace, ready ? "ready" : "offline", effectiveStartCommand(for: workspace))
         }
         debugLog(
@@ -857,9 +876,61 @@ final class WorkspaceManager {
         inboxWatcher.setDirectories(inboxDirectories)
     }
 
-    private func liveSessionIDs() -> Set<String> {
-        guard let backend = resolvedBackend() else { return [] }
-        return Set(backend.liveIDs())
+    private struct MeshSessions {
+        let live: Set<String>
+        let foreground: [String: String]
+    }
+
+    private func meshSessions() -> MeshSessions {
+        guard let backend = resolvedBackend() else {
+            return MeshSessions(live: [], foreground: [:])
+        }
+        return MeshSessions(
+            live: Set(backend.liveIDs()), foreground: backend.foregroundCommands())
+    }
+
+    private func isAgentRunning(_ workspace: Workspace, sessions: MeshSessions) -> Bool {
+        MeshAgentState.isRunning(
+            startCommand: effectiveStartCommand(for: workspace),
+            mainSessionID: workspace.mainSessionID,
+            live: sessions.live,
+            foreground: sessions.foreground,
+        )
+    }
+
+    /// Re-evaluates the card until the agent shows up in its pane or 15s pass.
+    private func scheduleAgentCheck(serviceID: String) {
+        let attempts = agentChecks[serviceID, default: 0]
+        guard attempts < 15 else {
+            finishAgentCheck(serviceID: serviceID)
+            return
+        }
+        agentChecks[serviceID] = attempts + 1
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let self else { return }
+            let sessions = self.meshSessions()
+            guard
+                let workspace = self.document.workspaces.first(where: { $0.id == serviceID }),
+                !self.isAgentRunning(workspace, sessions: sessions)
+            else {
+                self.finishAgentCheck(serviceID: serviceID)
+                return
+            }
+            self.refreshMesh()
+            self.scheduleAgentCheck(serviceID: serviceID)
+        }
+    }
+
+    private func finishAgentCheck(serviceID: String) {
+        agentChecks[serviceID] = nil
+        startingServices.remove(serviceID)
+        if let workspace = document.workspaces.first(where: { $0.id == serviceID }),
+            isAgentRunning(workspace, sessions: meshSessions())
+        {
+            flushPendingTasks(serviceID: serviceID)
+        }
+        refreshMesh()
     }
 
     /// The CLI edits protocol fields on disk; merge them so a running app follows.
@@ -901,20 +972,171 @@ final class WorkspaceManager {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
         let payload = json["payload"] as? [String: Any] ?? [:]
-        if json["kind"] as? String == "control", payload["action"] as? String == "start" {
+        let kind = json["kind"] as? String ?? "notify"
+        if kind == "control", payload["action"] as? String == "start" {
             debugLog("[Mesh] start request for \(serviceID)")
-            selectWorkspace(id: serviceID)
-            let live = liveSessionIDs()
-            let workspace = document.workspaces.first { $0.id == serviceID }
-            let ready = workspace?.mainSessionID.map { live.contains($0) } ?? false
-            mesh.report(serviceID: serviceID, status: ready ? "ready" : "offline")
-            refreshMesh()
+            startRequested(serviceID: serviceID)
             return
         }
         let sender = json["sender"] as? String ?? serviceID
+        let body = payload["text"] as? String ?? ""
+        if kind == "task" || kind == "reply" {
+            let messageID = json["id"] as? String ?? ""
+            guard !messageID.isEmpty,
+                !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                debugLog("[Mesh] \(kind) ignored: invalid message")
+                return
+            }
+            debugLog("[Mesh] \(kind) from \(sender) id=\(messageID)")
+            deliverMeshPrompt(
+                serviceID: serviceID, sender: sender, messageID: messageID, text: body,
+                expectsReply: kind == "task")
+            return
+        }
         debugLog("[Mesh] message from \(sender)")
-        mesh.report(serviceID: serviceID, status: "ready")
-        notify(title: sender, body: payload["text"] as? String ?? text)
+        notify(title: sender, body: body.isEmpty ? text : body)
+    }
+
+    private func deliverMeshPrompt(
+        serviceID: String, sender: String, messageID: String, text: String, expectsReply: Bool
+    ) {
+        guard let workspace = document.workspaces.first(where: { $0.id == serviceID }) else {
+            return
+        }
+        let prompt = MeshTaskPrompt.render(
+            id: messageID, sender: sender, serviceID: workspace.id, text: text,
+            expectsReply: expectsReply)
+        let sessions = meshSessions()
+        let ready = isAgentRunning(workspace, sessions: sessions)
+        if ready, let mainID = workspace.mainSessionID, let backend = resolvedBackend(),
+            backend.sendCommand(prompt, to: mainID)
+        {
+            return
+        }
+        enqueueTask(serviceID: serviceID, prompt: prompt)
+        if ready {
+            scheduleAgentCheck(serviceID: serviceID)
+        } else {
+            startRequested(serviceID: serviceID)
+        }
+    }
+
+    private func enqueueTask(serviceID: String, prompt: String) {
+        var queue = pendingTasks[serviceID, default: MeshTaskQueue()]
+        let startsWindow = queue.isEmpty
+        if queue.push(prompt) {
+            debugLog("[Mesh] task queue full id=\(serviceID)")
+        }
+        pendingTasks[serviceID] = queue
+        if startsWindow {
+            scheduleTaskCleanup(serviceID: serviceID)
+        }
+    }
+
+    private func flushPendingTasks(serviceID: String) {
+        guard let queue = pendingTasks.removeValue(forKey: serviceID) else { return }
+        taskTokens[serviceID] = nil
+        guard !queue.prompts.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            for (index, prompt) in queue.prompts.enumerated() {
+                if index > 0 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                guard let self else { return }
+                if !self.sendPendingPrompt(serviceID: serviceID, prompt: prompt) {
+                    self.enqueueTask(serviceID: serviceID, prompt: prompt)
+                }
+            }
+        }
+    }
+
+    private func sendPendingPrompt(serviceID: String, prompt: String) -> Bool {
+        guard let workspace = document.workspaces.first(where: { $0.id == serviceID }),
+            let mainID = workspace.mainSessionID,
+            let backend = resolvedBackend(),
+            isAgentRunning(workspace, sessions: meshSessions())
+        else { return false }
+        return backend.sendCommand(prompt, to: mainID)
+    }
+
+    private func scheduleTaskCleanup(serviceID: String) {
+        let token = UUID()
+        taskTokens[serviceID] = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard let self, self.taskTokens[serviceID] == token,
+                self.pendingTasks[serviceID]?.isEmpty == false
+            else { return }
+            self.pendingTasks[serviceID] = nil
+            self.taskTokens[serviceID] = nil
+            debugLog("[Mesh] task queue expired id=\(serviceID)")
+        }
+    }
+
+    /// A start request means "run the agent"; a live tmux session with a plain
+    /// shell is not started, so the command is typed into that shell.
+    private func startRequested(serviceID: String) {
+        guard !startingServices.contains(serviceID) else { return }
+        guard let workspace = document.workspaces.first(where: { $0.id == serviceID }),
+            let command = effectiveStartCommand(for: workspace),
+            let backend = resolvedBackend()
+        else {
+            refreshMesh()
+            return
+        }
+        let sessions = meshSessions()
+        if isAgentRunning(workspace, sessions: sessions) {
+            flushPendingTasks(serviceID: serviceID)
+            return
+        }
+        startingServices.insert(serviceID)
+        defer { refreshMesh() }
+        if let mainID = workspace.mainSessionID, sessions.live.contains(mainID) {
+            guard MeshAgentState.isShell(sessions.foreground[mainID]) else {
+                debugLog("[Mesh] start blocked: pane busy id=\(mainID)")
+                startingServices.remove(serviceID)
+                return
+            }
+            guard backend.sendCommand(agentLaunchCommand(for: workspace, base: command), to: mainID)
+            else {
+                debugLog("[Mesh] start failed: send-keys id=\(mainID)")
+                startingServices.remove(serviceID)
+                return
+            }
+            scheduleAgentCheck(serviceID: serviceID)
+            return
+        }
+        dropDeadMainSession(serviceID: serviceID, live: sessions.live)
+        pendingStartCommand = command
+        selectWorkspace(id: serviceID)
+        if let latest = document.workspaces.first(where: { $0.id == serviceID }) {
+            _ = ensureMainSession(workspace: latest)
+        }
+        pendingStartCommand = nil
+        notifyObserver()
+        scheduleAgentCheck(serviceID: serviceID)
+    }
+
+    /// Wraps the launch command so a reused shell still gets mesh env and cwd.
+    private func agentLaunchCommand(for workspace: Workspace, base: String) -> String {
+        let env = meshEnvironment(for: workspace)
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\(TerminalShell.quote($0.value))" }
+            .joined(separator: " ")
+        let body = env.isEmpty ? base : "\(env) \(base)"
+        return "(cd \(TerminalShell.quote(workspace.path)) && \(body))"
+    }
+
+    /// `selectWorkspace` may bail out while sub sessions are mounted, so a main
+    /// session whose tmux process died is dropped before it is rebuilt.
+    private func dropDeadMainSession(serviceID: String, live: Set<String>) {
+        guard let index = document.workspaces.firstIndex(where: { $0.id == serviceID }),
+            let mainID = document.workspaces[index].mainSessionID,
+            !live.contains(mainID)
+        else { return }
+        detachMountedSessions(keepNotificationTap: false) { $0.id == mainID }
+        document.workspaces[index].mainSessionID = nil
     }
 
     /// Exported to the agent so it can call `service_*` tools with its own id.

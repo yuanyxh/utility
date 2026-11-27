@@ -82,7 +82,9 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
 
     func terminate() {
         isRunning = false
+        debugLog("[Shutdown] process terminate start id=\(id)")
         view.process.terminate()
+        debugLog("[Shutdown] process terminate returned id=\(id)")
     }
 
     // MARK: - LocalProcessTerminalViewDelegate

@@ -122,16 +122,20 @@ struct MeshClient: MeshClientProtocol, Sendable {
         return try JSONDecoder().decode([MeshCard].self, from: data)
     }
 
-    func send(sender: String, recipient: String, kind: String, text: String) async throws -> String {
-        let body: [String: Any] = [
-            "message": [
-                "sender": sender,
-                "recipient": recipient,
-                "kind": kind,
-                "payload": ["text": text],
-            ]
+    func send(
+        sender: String, recipient: String, kind: String, text: String,
+        replyTo: String? = nil,
+    ) async throws -> String {
+        var message: [String: Any] = [
+            "sender": sender,
+            "recipient": recipient,
+            "kind": kind,
+            "payload": ["text": text],
         ]
-        let json = try await post("/mesh/send", body: body)
+        if let replyTo, !replyTo.isEmpty {
+            message["reply_to"] = replyTo
+        }
+        let json = try await post("/mesh/send", body: ["message": message])
         return json["message_id"] as? String ?? ""
     }
 

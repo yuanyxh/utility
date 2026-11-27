@@ -30,6 +30,95 @@ private final class FakeMeshClient: MeshClientProtocol, @unchecked Sendable {
     func list() async throws -> [MeshCard] { [] }
 }
 
+final class MeshAgentStateTests: XCTestCase {
+    func testExecutableNameUsesFirstTokenBasename() {
+        XCTAssertEqual(
+            MeshAgentState.executableName(in: "/opt/homebrew/bin/claude --continue"),
+            "claude")
+        XCTAssertEqual(MeshAgentState.executableName(in: "claude"), "claude")
+        XCTAssertNil(MeshAgentState.executableName(in: "   "))
+    }
+
+    func testAgentRequiresForegroundMatch() {
+        let live: Set<String> = ["abc"]
+        XCTAssertTrue(
+            MeshAgentState.isRunning(
+                startCommand: "/opt/homebrew/bin/claude --continue",
+                mainSessionID: "abc", live: live, foreground: ["abc": "claude"]))
+        XCTAssertFalse(
+            MeshAgentState.isRunning(
+                startCommand: "claude", mainSessionID: "abc", live: live,
+                foreground: ["abc": "zsh"]))
+        XCTAssertFalse(
+            MeshAgentState.isRunning(
+                startCommand: "claude", mainSessionID: "abc", live: [],
+                foreground: ["abc": "claude"]))
+        XCTAssertFalse(
+            MeshAgentState.isRunning(
+                startCommand: nil, mainSessionID: "abc", live: live,
+                foreground: ["abc": "claude"]))
+    }
+
+    func testShellDetection() {
+        XCTAssertTrue(MeshAgentState.isShell("zsh"))
+        XCTAssertFalse(MeshAgentState.isShell("claude"))
+        XCTAssertFalse(MeshAgentState.isShell(nil))
+    }
+}
+
+final class MeshTaskPromptTests: XCTestCase {
+    func testRendersSingleLineWithReplyInstructions() {
+        let prompt = MeshTaskPrompt.render(
+            id: "m1", sender: "ws-a", serviceID: "ws-b", text: "line one\nline two",
+            expectsReply: true)
+        XCTAssertFalse(prompt.contains("\n"))
+        XCTAssertTrue(prompt.contains("MESH TASK m1 from ws-a"))
+        XCTAssertTrue(prompt.contains("line one line two"))
+        XCTAssertTrue(prompt.contains("reply_to=\"m1\""))
+        XCTAssertTrue(prompt.contains("sender=\"ws-b\""))
+        XCTAssertTrue(prompt.contains("recipient=\"ws-a\""))
+    }
+
+    func testReplyOmitsReplyInstructions() {
+        let prompt = MeshTaskPrompt.render(
+            id: "m2", sender: "ws-a", serviceID: "ws-b", text: "done", expectsReply: false)
+        XCTAssertFalse(prompt.contains("When done"))
+        XCTAssertTrue(prompt.contains("MESH REPLY m2 from ws-a: done"))
+    }
+
+    func testSenderNewlinesAreFlattened() {
+        let prompt = MeshTaskPrompt.render(
+            id: "m3", sender: "ws-a\nws-b", serviceID: "ws-b", text: "x", expectsReply: true)
+        XCTAssertFalse(prompt.contains("\n"))
+        XCTAssertTrue(prompt.contains("from ws-a ws-b"))
+    }
+
+    func testTruncatesLongText() {
+        let text = String(repeating: "a", count: 9_000)
+        let trimmed = MeshTaskPrompt.truncate(text)
+        XCTAssertTrue(trimmed.hasSuffix("..."))
+        XCTAssertLessThan(trimmed.utf8.count, 8_200)
+    }
+
+    func testTruncateKeepsShortText() {
+        XCTAssertEqual(MeshTaskPrompt.truncate("  hello  "), "hello")
+    }
+}
+
+final class MeshTaskQueueTests: XCTestCase {
+    func testDropsOldestWhenFull() {
+        var queue = MeshTaskQueue(limit: 2)
+        XCTAssertFalse(queue.push("a"))
+        XCTAssertFalse(queue.push("b"))
+        XCTAssertTrue(queue.push("c"))
+        XCTAssertEqual(queue.prompts, ["b", "c"])
+    }
+
+    func testIsEmptyAfterInit() {
+        XCTAssertTrue(MeshTaskQueue().isEmpty)
+    }
+}
+
 final class MeshCardTests: XCTestCase {
     func testDecodesGatewaySnakeCase() throws {
         let json = """

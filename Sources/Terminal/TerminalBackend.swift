@@ -189,7 +189,7 @@ final class TmuxBackend: Sendable {
         let result = tmux(["kill-session", "-t", name(id)])
         guard result.status != 0 else { return }
         guard !result.output.contains("can't find session"),
-              !result.output.contains("no server running")
+            !result.output.contains("no server running")
         else { return }
         debugLog("[Terminal] kill-session failed id=\(id): \(result.output)")
     }
@@ -208,6 +208,42 @@ final class TmuxBackend: Sendable {
             paths[id] = String(parts[1])
         }
         return paths
+    }
+
+    /// Foreground process per session; tells a running agent from a plain shell.
+    func foregroundCommands() -> [String: String] {
+        let result = tmux(["list-panes", "-a", "-F", "#{session_name}\t#{pane_current_command}"])
+        guard result.status == 0 else { return [:] }
+        var commands: [String: String] = [:]
+        for line in result.output.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let name = String(parts[0])
+            guard name.hasPrefix(TerminalShell.sessionPrefix) else { continue }
+            let id = String(name.dropFirst(TerminalShell.sessionPrefix.count))
+            if commands[id] == nil { commands[id] = String(parts[1]) }
+        }
+        return commands
+    }
+
+    /// Types a command into an existing session; the extra Enter submits it.
+    /// Agent TUIs absorb the newline of a send-keys batch as pasted text.
+    @discardableResult
+    func sendCommand(_ command: String, to id: String) -> Bool {
+        let text = tmux(["send-keys", "-t", name(id), command])
+        guard text.status == 0 else {
+            debugLog("[Terminal] send-keys failed id=\(id): \(text.output)")
+            return false
+        }
+        for _ in 0..<2 {
+            usleep(150_000)
+            let enter = tmux(["send-keys", "-t", name(id), "Enter"])
+            guard enter.status == 0 else {
+                debugLog("[Terminal] submit failed id=\(id): \(enter.output)")
+                return false
+            }
+        }
+        return true
     }
 
     func liveIDs() -> Set<String> {

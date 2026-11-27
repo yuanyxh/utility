@@ -115,6 +115,11 @@ macOS 菜单栏工具，Swift + AppKit + SPM。
 - `read_url` 内置，已取代 `read` skill：本地优先，`use_proxy=true` 才走 defuddle/jina；失败必须返回 `ok:false` + `error_code` + `attempts`，禁止把登录壳或空内容当成功
 - 页面读取不要把 `Enable JavaScript` 等字样当挑战页（只有搜索引擎请求启用 `detect_challenge`）；结构容器 `html/body/main/article` 不得被 boilerplate 规则跳过
 
+### Agent Mesh
+- 服务卡 `ready` 必须由主会话前台进程名匹配 `start_command` 首个 token 派生（`MeshAgentState`）；空 shell 是 `offline`，未配置启动命令的工作区始终 offline
+- `kind=task` / `reply` 注入主会话为单行提示词；task 附 `reply_to` 回执指令，reply 不附（防回执乒乓）
+- 向 agent TUI 注入命令必须分两步：先发文本，再补两次 `Enter`（TUI 会把批内换行当粘贴内容）
+
 ### 记忆神经网（memory brain）
 - `neurons.centroid` 必须与 `EMBEDDER_MODEL` 同源同维；换模型先跑 `memory_centroids.py`（VACUUM INTO 备份）再 `--sparse --force`，否则图按维度分裂
 - 建边写入权重用原始余弦、门槛 0.62；高置信自动接受只是全量回填的临时策略，已回滚，禁止恢复为默认

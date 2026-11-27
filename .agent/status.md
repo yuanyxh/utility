@@ -2,13 +2,16 @@
 
 ## 当前目标
 
-2026-11-23 生产基线 1.2.40；`knowledge_expand` 空响应修复与 review 五项修复已随 wheel 部署，待观察一次真实补货产出。
+2026-11-27 生产基线 1.2.48；Agent Mesh 卡状态判据与任务载荷已部署并通过 L3，工作区改动待提交。
 
 - `.agent/plans/2026-11-16-review-followups/` 15 项全部完成；上期三个待办均已在报告落结论：lume VM（`vm-report.md`，两项 proxy 端口测试受 VM 网络限制）、零调用工具（`tool-review.md`，`memory_expand` 2026-12-09 复盘）、上期 T17（`t17-merge.md`，无需改造）
 
 ## 进行中
 
 - Agent Mesh（2026-11-25）：实现 + review 修复 + 部署验证完成（Utility 1.2.42）。网关 `services/mesh` 1016 tests、utility `run-tests.sh` 49 tests、ruff 与 l10n 全绿；证据 `.agent/plans/2026-11-25-agent-mesh/evidence/`（本机隔离、lume 真实 agent、生产 1.2.42）。生产实测：10 个工作区卡默认注册、状态与 tmux 会话一致、心跳 30s、状态校验与 CLI 自动端口正常。待补：VM 无 tmux，`utility-env` 内 GUI 工作区未验；VM→宿主反向消息未测；生产未启用 peers。2026-11-26 新增全局启动命令 `workspace.agentCli`（解析 `protocol.startCommand` → `agentCli` → 无），隔离 HOME 端到端验证 `service_start` 可拉起命令；utility 55 tests 通过，未提交。
+- 2026-11-27 卡状态判据修复：`ready` 改为主会话前台进程名匹配 `startCommand` 首 token（`MeshAgentState`），空 shell 不再冒充 ready；`service_start` 对已有 shell 用 send-keys 注入启动命令。生产 1.2.46 实测：agent-gateway 由假 ready 变 offline，拉起后 8 秒内 pane 变 claude。
+- 2026-11-27 任务载荷与回执：`kind=task/reply` 注入主会话单行提示词，未就绪先拉起并排队；CLI 新增 `--reply-to`。1.2.48 实测：task 自动提交执行、agent 回执并注入发送方会话，闭环通过。
+- 待办：Dock 退出误报（进程 exit 0 后仍显示「在后台运行」，强制退出会丢 tmux 会话），用户暂不处理；`VM→宿主` 反向消息与 peers 仍未验。
 - 换机迁移与首启引导：实现与隔离验证已完成（计划 `.agent/plans/2026-11-06-env-migration/`，T1–T11）。待用户 L3 仅剩「真实依赖安装与 Homebrew 拉起」；设置导出（2026-11-09 本机导出）、向导导入与外部路径改选（2026-11-10 VM 导入）已通过。
 
 ## 历史（2026-11-07 至 11-10，已归档）

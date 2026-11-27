@@ -34,16 +34,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
 
         do { try ConfigManager.shared.load() } catch {
-            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Notify.configLoadFailed, body: error.localizedDescription,
-            ))
+            EventBus.shared.publish(
+                AppEvent.notify,
+                payload: NotificationPayload(
+                    title: L10n.Notify.configLoadFailed, body: error.localizedDescription,
+                ))
         }
         applyActivationPolicy()
         MainActor.assumeIsolated { AppMainMenu.install() }
         do { try AppDatabase.shared.setup() } catch {
-            EventBus.shared.publish(AppEvent.notify, payload: NotificationPayload(
-                title: L10n.Notify.dbInitFailed, body: error.localizedDescription,
-            ))
+            EventBus.shared.publish(
+                AppEvent.notify,
+                payload: NotificationPayload(
+                    title: L10n.Notify.dbInitFailed, body: error.localizedDescription,
+                ))
         }
 
         NotificationManager.shared.requestAuthorization()
@@ -80,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         installEventHandler()
 
         if ConfigManager.shared.config.app.showTerminalOnLaunch,
-           ConfigManager.shared.config.terminal.enabled
+            ConfigManager.shared.config.terminal.enabled
         {
             MainActor.assumeIsolated { WorkspaceManager.shared.showWindow() }
         }
@@ -96,27 +100,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         terminateRequested = true
         let alreadyReplied = terminationAllowed
         terminationLock.unlock()
+        debugLog("[Shutdown] shouldTerminate requested repeated=\(alreadyAsked)")
         // A repeated request rides the pending shutdown; once replied there is nobody left to
         // answer, so quit immediately instead of waiting for a reply that will never come.
         guard !alreadyAsked else {
+            debugLog("[Shutdown] shouldTerminate repeated replied=\(alreadyReplied)")
             return alreadyReplied ? .terminateNow : .terminateLater
         }
 
         for window in sender.windows {
             window.orderOut(nil)
         }
+        debugLog("[Shutdown] windows hidden")
         let group = DispatchGroup()
         DispatchQueue.global(qos: .userInitiated).async(group: group) {
             MCPProcessManager.shared.stopAndWait()
+            debugLog("[Shutdown] mcp stopped")
         }
         DispatchQueue.global(qos: .userInitiated).async(group: group) {
             TokenProxyManager.shared.stopAndWait()
+            debugLog("[Shutdown] proxy stopped")
         }
         group.notify(queue: .global(qos: .userInitiated)) { [weak self] in
+            debugLog("[Shutdown] children stopped")
             self?.replyTermination()
         }
         // A child that never dies must not keep the app alive past the shutdown budget.
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 6) { [weak self] in
+            debugLog("[Shutdown] budget expired")
             self?.replyTermination()
         }
         return .terminateLater
@@ -127,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let alreadyReplied = terminationAllowed
         terminationAllowed = true
         terminationLock.unlock()
+        debugLog("[Shutdown] reply already=\(alreadyReplied)")
         guard !alreadyReplied else { return }
         DispatchQueue.main.async {
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -134,10 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
 
     func applicationWillTerminate(_: Notification) {
+        debugLog("[Shutdown] willTerminate")
         menuBar.terminateAllTasks()
+        debugLog("[Shutdown] menu tasks terminated")
         MainActor.assumeIsolated {
             WorkspaceManager.shared.shutdown()
         }
+        debugLog("[Shutdown] willTerminate done")
     }
 
     /// Start MCP Python server if enabled in config.
@@ -225,9 +240,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     /// after every restart/reload past 17:00 each day.
     private func updateMCPSummaryTask() {
         guard let mcp = ConfigManager.shared.config.mcp,
-              mcp.summaryEnabled,
-              mcp.enabled,
-              PythonScriptRunner.isGatewayAvailable
+            mcp.summaryEnabled,
+            mcp.enabled,
+            PythonScriptRunner.isGatewayAvailable
         else {
             TaskScheduler.shared.unregisterInternalTask(named: "mcp-summary")
             debugLog("[MCP] Summary task disabled or unavailable")
@@ -340,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             EventTypeSpec(
                 eventClass: OSType(kEventClassKeyboard),
                 eventKind: UInt32(kEventHotKeyPressed),
-            ),
+            )
         ]
         InstallEventHandler(
             GetEventDispatcherTarget(),

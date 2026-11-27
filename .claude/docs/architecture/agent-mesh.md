@@ -72,8 +72,11 @@ agent（Claude 等） ──MCP/HTTP──▶ agent-gateway（唯一入口 + 代
 - `service_start` 在本机与 peers 中查找目标；**以 `status` 判定是否在运行**（`offline` 即拉起），不只看心跳
 - control start 消息**绕过存活门槛**，可投递给已过期卡，但目标必须 `startable`
 - `service_start` 向目标 inbox 写 `kind=control, payload={"action":"start"}`，本机卡状态置 `starting`
-- utility 的 inbox watcher 收到 control → `selectWorkspace(id:)`，随后按主 tmux 会话是否存活回写 `ready/offline`
-- 状态可见性：utility 每次刷新按主会话存活派生 `ready/offline` 并随心跳上报；`busy/blocked` 只能由 agent 自报
+- utility 的 inbox watcher 收到 control → 主会话前台是 shell 时用 `tmux send-keys` 注入启动命令；没有可用会话时新建主会话
+- `ready` 判据是主会话**前台进程名等于启动命令首个 token**（`MeshAgentState`），只开着一个 shell 的会话是 `offline`；未配置启动命令的工作区始终 `offline` 且 `startable=false`
+- 状态可见性：utility 每次刷新按上述判据派生 `ready/offline` 并随心跳上报；`busy/blocked` 只能由 agent 自报
+- `kind=task` / `kind=reply` 注入目标主会话：渲染为单行提示词；`task` 附 `reply_to` 回执指令，`reply` 不附（防回执乒乓）；agent 未就绪时先拉起并按 FIFO 排队，上限 10 条、15 s 超时丢弃
+- `kind=notify` 仍只弹系统通知；回执由 agent 调用 `service_send(kind=reply)` 或 `utility workspace send --reply-to <id>` 发出
 
 ## 跨机转发
 
@@ -90,9 +93,9 @@ agent（Claude 等） ──MCP/HTTP──▶ agent-gateway（唯一入口 + 代
 | `WorkspaceProtocolConfig` | 工作区协议配置，编码在 `workspaces.json` 的 `"protocol"` 键（nil 不写） |
 | `MeshGate` | 门控：`mcp.enabled` + `PythonScriptRunner.isGatewayAvailable` 同时为真 |
 | `WorkspaceMeshCoordinator` | 注册/注销服务卡，30s 心跳；`endpoint` 用相对 id，由网关归一为绝对 inbox 路径 |
-| `WorkspaceInboxWatcher` | 1s 轮询 inbox；control 消息拉起工作区，其余走通知；启动前的旧文件不重复通知 |
+| `WorkspaceInboxWatcher` | 1s 轮询 inbox；control 拉起工作区，task/reply 注入会话，其余走通知；启动前的旧文件不重复通知 |
 | `MeshClient` | `/mesh/*` 的 URLSession 客户端 |
-| `WorkspaceManager` | 生命周期编排；启动主会话时注入 `MESH_SERVICE_ID`、`MESH_GATEWAY_URL` |
+| `WorkspaceManager` | 生命周期编排；新建主会话或向已有 shell 注入启动命令时带上 `MESH_SERVICE_ID`、`MESH_GATEWAY_URL` 与工作区 cwd |
 
 协议开关只影响服务卡注册与 inbox 监听；`mcp.enabled=false` 时整条链路静默。
 
@@ -131,6 +134,8 @@ utility workspace list --json   # jq 可解析
 
 启动命令解析顺序：工作区 `protocol.startCommand` → 全局 `workspace.agentCli`（`config.yaml`）→ 无命令（`startable=false`）。只有解析出命令的工作区才能被 `service_start` 拉起。
 
+启动命令只用于 `service_start` 的新建会话：本地点击工作区打开普通 shell，不执行 `agentCli`；卡片上的 `start_command` 仅表示远程拉起时使用的命令。
+
 ```yaml
 workspace:
   agentCli: claude --continue   # 空 = 不启用全局回退
@@ -155,7 +160,7 @@ CLI 端口来源：`mcp.port > 0` 优先，否则读 `~/.config/utility/runtime/
 
 - 部署版 Utility.app 里的旧 gateway 没有 `/mesh/*`，CLI 会收到 404；已映射为「工作区协议未启用」提示
 - `server.mcp.bind` 默认 `127.0.0.1`；跨机必须显式改 bind、设置 token（REST/MCP 同时受保护）并配置 `advertiseUrl`
-- tmux 会话恢复不会重跑 `start_command`；启动命令只在新建会话时执行（control start 命中存活会话时同样不重跑）
+- tmux 会话恢复不会重跑 `start_command`；启动命令只在 control start 新建会话时执行（命中存活会话时不重跑，本地点击也不执行）
 - CLI 与运行中的 App 同时写 `workspaces.json`：App 每 2s 合并磁盘上的 protocol 字段，其余字段以 App 为准
 - 旧版 utility 读 `workspaces.json` 会丢弃未知字段；带 `protocol` 的文件需新版本写回
 - 工作区卡在恢复会话时以 `.build/debug/utility` 自测需隔离 HOME，避免与真实注册表混淆
